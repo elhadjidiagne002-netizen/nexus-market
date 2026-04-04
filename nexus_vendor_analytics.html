@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS Market — Analytics Vendeur</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+/* ─── RESET & VARIABLES ──────────────────────────────────────────────────── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --green     : #00853E;
+  --green-lt  : #33A85A;
+  --green-bg  : #F0FDF4;
+  --yellow    : #FDEF42;
+  --red       : #E11B22;
+  --red-lt    : #FEE2E2;
+  --orange    : #F97316;
+  --blue      : #3B82F6;
+  --purple    : #8B5CF6;
+  --bg        : #F9F7F0;
+  --surface   : #FFFFFF;
+  --border    : #E5E7EB;
+  --text      : #1F2937;
+  --text-2    : #6B7280;
+  --text-3    : #9CA3AF;
+  --shadow    : 0 2px 12px rgba(0,133,62,.08);
+  --radius    : 16px;
+  --radius-sm : 10px;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* ─── TOPBAR ─────────────────────────────────────────────────────────────── */
+.topbar {
+  background: var(--green);
+  color: white;
+  padding: .9rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 12px rgba(0,0,0,.15);
+}
+.topbar-left    { display: flex; align-items: center; gap: .75rem; }
+.logo-mark      { background: white; color: var(--green); font-weight: 900; font-size: .85rem;
+                  padding: .35rem .5rem; border-radius: 8px; letter-spacing: -.5px; }
+.topbar h1      { font-size: 1rem; font-weight: 700; }
+.topbar-right   { display: flex; align-items: center; gap: .75rem; }
+.period-tabs    { display: flex; background: rgba(255,255,255,.18); border-radius: 8px; overflow: hidden; }
+.period-tab     { padding: .35rem .7rem; font-size: .78rem; font-weight: 700; cursor: pointer;
+                  border: none; background: none; color: rgba(255,255,255,.75); transition: all .15s; }
+.period-tab.active { background: white; color: var(--green); }
+.refresh-btn    { background: rgba(255,255,255,.2); border: none; color: white; padding: .4rem .8rem;
+                  border-radius: 8px; font-size: .82rem; cursor: pointer; font-weight: 600; transition: background .15s; }
+.refresh-btn:hover { background: rgba(255,255,255,.3); }
+.back-btn       { background: rgba(255,255,255,.15); border: none; color: white; padding: .4rem .8rem;
+                  border-radius: 8px; font-size: .82rem; cursor: pointer; font-weight: 600; text-decoration: none;
+                  display: inline-flex; align-items: center; gap: .3rem; }
+.back-btn:hover { background: rgba(255,255,255,.25); }
+
+/* ─── LAYOUT ─────────────────────────────────────────────────────────────── */
+.page    { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+.section-title { font-size: .7rem; font-weight: 800; text-transform: uppercase;
+                 letter-spacing: 1px; color: var(--text-2); margin-bottom: .75rem; }
+
+/* ─── KPI GRID ───────────────────────────────────────────────────────────── */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: .9rem;
+  margin-bottom: 1.5rem;
+}
+.kpi-card {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 1.1rem 1.25rem;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+.kpi-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--kpi-color, var(--green));
+}
+.kpi-icon    { font-size: 1.35rem; margin-bottom: .4rem; }
+.kpi-label   { font-size: .72rem; color: var(--text-2); font-weight: 600; text-transform: uppercase;
+               letter-spacing: .4px; margin-bottom: .25rem; }
+.kpi-value   { font-size: 1.55rem; font-weight: 800; color: var(--text); line-height: 1.1; }
+.kpi-value.sm{ font-size: 1.2rem; }
+.kpi-sub     { font-size: .73rem; color: var(--text-3); margin-top: .25rem; }
+.kpi-badge   { display: inline-flex; align-items: center; gap: .2rem; font-size: .71rem;
+               font-weight: 700; padding: .15rem .45rem; border-radius: 20px; margin-top: .3rem; }
+.kpi-badge.up   { background: #D1FAE5; color: #065F46; }
+.kpi-badge.down { background: var(--red-lt); color: #991B1B; }
+.kpi-badge.flat { background: #F3F4F6; color: #374151; }
+
+/* ─── TWO-COL ─────────────────────────────────────────────────────────────── */
+.two-col   { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+.three-col { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+@media (max-width: 900px) {
+  .two-col, .three-col { grid-template-columns: 1fr; }
+}
+
+/* ─── CARD ────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  padding: 1.25rem;
+}
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.card-header h2 { font-size: .9rem; font-weight: 700; color: var(--text); }
+.card-tag  { font-size: .7rem; font-weight: 700; padding: .2rem .55rem; border-radius: 20px;
+             background: var(--green-bg); color: var(--green); }
+
+/* ─── CHARTS ──────────────────────────────────────────────────────────────── */
+.chart-wrap { position: relative; }
+.chart-wrap canvas { max-width: 100%; }
+
+/* ─── TABLE ───────────────────────────────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; font-size: .83rem; }
+.data-table th {
+  text-align: left; font-size: .68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--text-2); padding: .5rem .75rem;
+  border-bottom: 1px solid var(--border);
+}
+.data-table td { padding: .65rem .75rem; border-bottom: 1px solid #F3F4F6; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--green-bg); }
+.product-thumb {
+  width: 36px; height: 36px; border-radius: 8px; object-fit: cover;
+  background: #F3F4F6; flex-shrink: 0;
+}
+.product-cell { display: flex; align-items: center; gap: .6rem; }
+.product-name { font-weight: 600; }
+.product-cat  { font-size: .72rem; color: var(--text-2); }
+.bar-cell     { display: flex; align-items: center; gap: .5rem; }
+.mini-bar     { height: 6px; border-radius: 3px; background: var(--green); min-width: 4px; }
+.stars        { color: #F59E0B; font-size: .8rem; }
+
+/* ─── RATING DIST ─────────────────────────────────────────────────────────── */
+.rating-row { display: flex; align-items: center; gap: .6rem; margin-bottom: .5rem; }
+.rating-star{ font-size: .78rem; color: var(--text-2); white-space: nowrap; width: 1.8rem; }
+.rating-bar-wrap { flex: 1; background: #F3F4F6; border-radius: 4px; height: 8px; overflow: hidden; }
+.rating-bar-fill { height: 100%; border-radius: 4px; background: #F59E0B; transition: width .5s ease; }
+.rating-count{ font-size: .75rem; color: var(--text-2); white-space: nowrap; width: 2rem; text-align: right; }
+
+/* ─── COHORT TABLE ────────────────────────────────────────────────────────── */
+.cohort-row { display: flex; align-items: center; justify-content: space-between;
+              padding: .5rem 0; border-bottom: 1px solid #F3F4F6; font-size: .83rem; }
+.cohort-row:last-child { border-bottom: none; }
+.cohort-month { font-weight: 600; min-width: 4.5rem; }
+.cohort-bar-wrap { flex: 1; margin: 0 .75rem; background: #F3F4F6; border-radius: 4px; height: 8px; overflow: hidden; }
+.cohort-bar-fill { height: 100%; border-radius: 4px; background: var(--blue); transition: width .6s ease; }
+.cohort-count { color: var(--text-2); min-width: 3.5rem; text-align: right; }
+
+/* ─── CITY LIST ───────────────────────────────────────────────────────────── */
+.city-row { display: flex; align-items: center; justify-content: space-between;
+            padding: .45rem 0; font-size: .83rem; border-bottom: 1px solid #F3F4F6; }
+.city-row:last-child { border-bottom: none; }
+.city-pct { font-weight: 700; color: var(--green); font-size: .78rem; }
+
+/* ─── REVIEW CARD ─────────────────────────────────────────────────────────── */
+.review-item { padding: .75rem 0; border-bottom: 1px solid #F3F4F6; }
+.review-item:last-child { border-bottom: none; }
+.review-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: .3rem; }
+.review-user { font-weight: 600; font-size: .82rem; }
+.review-date { font-size: .72rem; color: var(--text-3); }
+.review-text { font-size: .82rem; color: var(--text-2); line-height: 1.5; }
+.review-helpful { font-size: .72rem; color: var(--text-3); margin-top: .25rem; }
+
+/* ─── NPS WIDGET ──────────────────────────────────────────────────────────── */
+.nps-gauge { text-align: center; padding: .5rem 0; }
+.nps-score { font-size: 2.8rem; font-weight: 900; line-height: 1; }
+.nps-score.pos { color: var(--green); }
+.nps-score.neg { color: var(--red); }
+.nps-label { font-size: .75rem; color: var(--text-2); margin-top: .2rem; }
+
+/* ─── ALERT BADGE ─────────────────────────────────────────────────────────── */
+.alert-row { display: flex; align-items: center; gap: .6rem; padding: .6rem .85rem;
+             background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px;
+             font-size: .82rem; color: #92400E; margin-bottom: .6rem; }
+.alert-row:last-child { margin-bottom: 0; }
+
+/* ─── LOADING / SKELETON ──────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, #F3F4F6 25%, #E5E7EB 50%, #F3F4F6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite;
+  border-radius: 6px;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+.skeleton-kpi { height: 4.5rem; margin-bottom: .5rem; }
+
+/* ─── EMPTY STATE ─────────────────────────────────────────────────────────── */
+.empty-state { text-align: center; padding: 2.5rem 1rem; color: var(--text-3); }
+.empty-state .icon { font-size: 2.5rem; margin-bottom: .5rem; }
+.empty-state p { font-size: .85rem; }
+
+/* ─── LOGIN OVERLAY ───────────────────────────────────────────────────────── */
+#login-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 999;
+}
+.login-card {
+  background: white; border-radius: 20px; padding: 2.25rem;
+  max-width: 380px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,.3);
+}
+.login-card h2 { font-size: 1.1rem; font-weight: 800; margin-bottom: 1rem; text-align: center; }
+.login-field { margin-bottom: .9rem; }
+.login-field label { font-size: .78rem; font-weight: 700; color: var(--text-2);
+                     text-transform: uppercase; letter-spacing: .4px; display: block; margin-bottom: .35rem; }
+.login-field input {
+  width: 100%; padding: .7rem .9rem; border: 2px solid var(--border); border-radius: 8px;
+  font-size: .9rem; outline: none; transition: border-color .2s; font-family: inherit;
+}
+.login-field input:focus { border-color: var(--green); }
+.login-btn {
+  width: 100%; padding: .85rem; background: var(--green); color: white; border: none;
+  border-radius: 10px; font-size: .95rem; font-weight: 700; cursor: pointer; font-family: inherit;
+  transition: background .2s; margin-top: .25rem;
+}
+.login-btn:hover { background: var(--green-lt); }
+.login-error { background: var(--red-lt); color: #991B1B; border-radius: 8px; padding: .65rem .9rem;
+               font-size: .82rem; font-weight: 600; margin-bottom: .75rem; display: none; }
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN OVERLAY ─────────────────────────────────────────────────────── -->
+<div id="login-overlay">
+  <div class="login-card">
+    <div style="text-align:center;margin-bottom:1rem">
+      <div style="background:var(--green);color:white;font-weight:900;font-size:.9rem;
+                  padding:.4rem .7rem;border-radius:8px;display:inline-block">NX</div>
+    </div>
+    <h2>📊 Analytics Vendeur</h2>
+    <div class="login-error" id="login-err"></div>
+    <div class="login-field">
+      <label>Email</label>
+      <input type="email" id="inp-email" placeholder="vendeur@nexus.sn" autofocus
+             onkeydown="if(event.key==='Enter')document.getElementById('inp-pw').focus()">
+    </div>
+    <div class="login-field">
+      <label>Mot de passe</label>
+      <input type="password" id="inp-pw" placeholder="••••••••"
+             onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <!-- Champ API URL configurable pour compatibilité universelle -->
+    <div class="login-field">
+      <label>URL API <span style="color:var(--text-3);font-weight:400">(ex: https://api.nexus.sn)</span></label>
+      <input type="text" id="inp-api" placeholder="http://localhost:3001" value="http://localhost:3001">
+    </div>
+    <button class="login-btn" id="login-btn" onclick="doLogin()">Accéder aux analytics</button>
+    <p style="text-align:center;margin-top:.75rem;font-size:.75rem;color:var(--text-3)">
+      <a href="nexus_market.html" style="color:var(--green)">← Retour à NEXUS Market</a>
+    </p>
+  </div>
+</div>
+
+<!-- ── TOPBAR ─────────────────────────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo-mark">NX</div>
+    <h1>Analytics Vendeur</h1>
+  </div>
+  <div class="topbar-right" style="gap:.5rem">
+    <div class="period-tabs">
+      <button class="period-tab" data-p="7d"  onclick="setPeriod('7d')">7J</button>
+      <button class="period-tab active" data-p="30d" onclick="setPeriod('30d')">30J</button>
+      <button class="period-tab" data-p="90d" onclick="setPeriod('90d')">90J</button>
+      <button class="period-tab" data-p="365d" onclick="setPeriod('365d')">1A</button>
+    </div>
+    <button class="refresh-btn" onclick="loadAll()">↻ Actualiser</button>
+    <a class="back-btn" href="nexus_market.html">← Marché</a>
+  </div>
+</div>
+
+<!-- ── PAGE ───────────────────────────────────────────────────────────────── -->
+<div class="page">
+
+  <!-- Alertes critiques -->
+  <div id="alerts-section" style="margin-bottom:1rem;display:none"></div>
+
+  <!-- KPIs -->
+  <div class="section-title">Indicateurs clés</div>
+  <div class="kpi-grid" id="kpi-grid">
+    <div class="kpi-card skeleton skeleton-kpi"></div>
+    <div class="kpi-card skeleton skeleton-kpi"></div>
+    <div class="kpi-card skeleton skeleton-kpi"></div>
+    <div class="kpi-card skeleton skeleton-kpi"></div>
+    <div class="kpi-card skeleton skeleton-kpi"></div>
+    <div class="kpi-card skeleton skeleton-kpi"></div>
+  </div>
+
+  <!-- Graphique revenus -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-header">
+      <h2>📈 Évolution des revenus</h2>
+      <div style="display:flex;gap:.5rem">
+        <select id="group-select" onchange="loadRevenue()" style="font-size:.78rem;padding:.25rem .5rem;border:1px solid var(--border);border-radius:6px;outline:none">
+          <option value="day">Par jour</option>
+          <option value="week">Par semaine</option>
+          <option value="month">Par mois</option>
+        </select>
+        <span class="card-tag" id="rev-total-badge">—</span>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:250px">
+      <canvas id="chart-revenue"></canvas>
+    </div>
+  </div>
+
+  <!-- Produits + Avis -->
+  <div class="three-col">
+
+    <!-- Top produits -->
+    <div class="card">
+      <div class="card-header">
+        <h2>🏷️ Performance produits</h2>
+        <select id="prod-sort" onchange="renderProducts()" style="font-size:.78rem;padding:.25rem .5rem;border:1px solid var(--border);border-radius:6px;outline:none">
+          <option value="revenue">Revenus</option>
+          <option value="units">Unités</option>
+          <option value="rating">Note</option>
+          <option value="conversion">Conversion</option>
+        </select>
+      </div>
+      <div id="products-table"></div>
+    </div>
+
+    <!-- Distribution avis -->
+    <div class="card">
+      <div class="card-header"><h2>⭐ Avis clients</h2></div>
+      <div id="nps-widget" class="nps-gauge" style="margin-bottom:.75rem"></div>
+      <div id="rating-dist"></div>
+      <div style="height:1px;background:var(--border);margin:1rem 0"></div>
+      <div class="card-header" style="margin-bottom:.5rem">
+        <h2 style="font-size:.82rem">Derniers avis</h2>
+      </div>
+      <div id="recent-reviews"></div>
+    </div>
+
+    <!-- NPS trend -->
+    <div class="card">
+      <div class="card-header"><h2>📅 Tendance notes</h2></div>
+      <div class="chart-wrap" style="height:160px;margin-bottom:1rem">
+        <canvas id="chart-rating-trend"></canvas>
+      </div>
+      <div class="card-header" style="margin-bottom:.5rem"><h2 style="font-size:.82rem">Alertes stock</h2></div>
+      <div id="low-stock-alerts"></div>
+    </div>
+  </div>
+
+  <!-- Clients -->
+  <div class="two-col">
+    <!-- Top acheteurs -->
+    <div class="card">
+      <div class="card-header">
+        <h2>👥 Meilleurs acheteurs</h2>
+        <span class="card-tag" id="buyers-badge">—</span>
+      </div>
+      <div id="top-customers-table"></div>
+    </div>
+
+    <!-- Villes + cohortes -->
+    <div class="card">
+      <div class="card-header"><h2>🗺️ Livraisons par ville</h2></div>
+      <div class="chart-wrap" style="height:180px;margin-bottom:1.25rem">
+        <canvas id="chart-cities"></canvas>
+      </div>
+      <div class="card-header" style="margin-bottom:.5rem"><h2 style="font-size:.82rem">Nouveaux acheteurs / mois</h2></div>
+      <div id="cohort-list"></div>
+    </div>
+  </div>
+
+  <p style="text-align:center;font-size:.72rem;color:var(--text-3);margin-top:1.5rem;padding-bottom:1.5rem">
+    NEXUS Market Analytics v1.0 — Données mises à jour en temps réel
+  </p>
+</div>
+
+<script>
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let API_URL = 'http://localhost:3001';
+let TOKEN   = null;
+let PERIOD  = '30d';
+let overviewData = null;
+let revenueData  = null;
+let productsData = null;
+let customersData= null;
+let reviewsData  = null;
+
+const charts = {};
+
+// ─── UTILITIES ────────────────────────────────────────────────────────────────
+const fcfa = (v) => Math.round((v || 0) * 655.957).toLocaleString('fr-FR') + ' F';
+const pct  = (v) => (v !== null && v !== undefined) ? (v > 0 ? '+' : '') + v + '%' : '—';
+const fmt  = (n) => n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(0)+'k' : n;
+
+async function api(path, opts = {}) {
+  const r = await fetch(API_URL + path, {
+    ...opts,
+    headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+}
+
+// ─── AUTH ─────────────────────────────────────────────────────────────────────
+async function doLogin() {
+  const email  = document.getElementById('inp-email').value.trim();
+  const pw     = document.getElementById('inp-pw').value;
+  const apiUrl = document.getElementById('inp-api').value.trim().replace(/\/$/, '');
+  const errEl  = document.getElementById('login-err');
+  const btn    = document.getElementById('login-btn');
+
+  if (!email || !pw) { showLoginErr('Remplissez tous les champs'); return; }
+
+  errEl.style.display = 'none';
+  btn.textContent = 'Connexion…';
+  btn.disabled    = true;
+  API_URL = apiUrl;
+
+  try {
+    const data = await fetch(API_URL + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pw }),
+    }).then(r => r.json());
+
+    if (!data.token) throw new Error(data.error || 'Identifiants invalides');
+    if (!['vendor', 'admin'].includes(data.user?.role)) throw new Error('Accès réservé aux vendeurs et administrateurs');
+
+    TOKEN = data.token;
+    document.getElementById('login-overlay').style.display = 'none';
+    loadAll();
+  } catch (e) {
+    showLoginErr(e.message);
+  } finally {
+    btn.textContent = 'Accéder aux analytics';
+    btn.disabled    = false;
+  }
+}
+
+function showLoginErr(msg) {
+  const el = document.getElementById('login-err');
+  el.textContent = '❌ ' + msg;
+  el.style.display = 'block';
+}
+
+// ─── LOAD ALL ─────────────────────────────────────────────────────────────────
+async function loadAll() {
+  await Promise.allSettled([
+    loadOverview(),
+    loadRevenue(),
+    loadProducts(),
+    loadCustomers(),
+    loadReviews(),
+  ]);
+}
+
+function setPeriod(p) {
+  PERIOD = p;
+  document.querySelectorAll('.period-tab').forEach(t => t.classList.toggle('active', t.dataset.p === p));
+  loadAll();
+}
+
+// ─── OVERVIEW ─────────────────────────────────────────────────────────────────
+async function loadOverview() {
+  try {
+    overviewData = await api('/api/vendor/analytics/overview');
+    renderKPIs();
+    renderAlerts();
+  } catch (e) { console.error('overview', e); }
+}
+
+function renderKPIs() {
+  if (!overviewData) return;
+  const o  = overviewData.allTime;
+  const p30= overviewData.period30d;
+  const p7 = overviewData.period7d;
+
+  const isLong = ['90d', '365d'].includes(PERIOD);
+  const periodData = isLong ? overviewData.allTime : (PERIOD === '7d' ? { revenue: p7.revenue, orders: p7.orders, growth: p7.revGrowth } : { revenue: p30.revenue, orders: p30.orders, growth: p30.revGrowth });
+
+  const revDisplay   = isLong ? o.netRevenue  : periodData.revenue;
+  const ordDisplay   = isLong ? o.totalOrders : periodData.orders;
+  const growthLabel  = isLong ? null : periodData.growth;
+
+  document.getElementById('kpi-grid').innerHTML = `
+    ${kpiCard('💰', 'Revenus nets', fcfa(revDisplay), growthLabel !== null ? badge(growthLabel) : '', 'Après commission', '--kpi-color:#00853E')}
+    ${kpiCard('📦', 'Commandes', ordDisplay, growthLabel !== null ? badge(growthLabel) : '', PERIOD === '7d' ? '7 derniers jours' : PERIOD === '30d' ? '30 derniers jours' : 'Toutes périodes', '--kpi-color:#3B82F6')}
+    ${kpiCard('🛒', 'Panier moyen', fcfa(o.avgBasket), '', 'Commandes livrées', '--kpi-color:#8B5CF6')}
+    ${kpiCard('👥', 'Acheteurs uniques', fmt(o.uniqueBuyers), '', 'Clients distincts', '--kpi-color:#F97316')}
+    ${kpiCard('⭐', 'Note boutique', o.avgRating + ' / 5', '', o.totalReviews + ' avis total', '--kpi-color:#F59E0B')}
+    ${kpiCard('🏷️', 'Produits actifs', o.activeProducts, o.lowStockCount > 0 ? `<span class="kpi-badge down">⚠️ ${o.lowStockCount} stock bas</span>` : '', 'Modérés & visibles', '--kpi-color:#10B981')}
+  `;
+}
+
+function kpiCard(icon, label, value, extra, sub, style) {
+  return `<div class="kpi-card" style="${style}">
+    <div class="kpi-icon">${icon}</div>
+    <div class="kpi-label">${label}</div>
+    <div class="kpi-value ${String(value).length > 9 ? 'sm' : ''}">${value}</div>
+    ${extra || ''}
+    <div class="kpi-sub">${sub}</div>
+  </div>`;
+}
+
+function badge(growth) {
+  if (growth === null || growth === undefined) return '';
+  const cls = growth > 0 ? 'up' : growth < 0 ? 'down' : 'flat';
+  const ico = growth > 0 ? '↑' : growth < 0 ? '↓' : '→';
+  return `<span class="kpi-badge ${cls}">${ico} ${Math.abs(growth)}%</span>`;
+}
+
+function renderAlerts() {
+  if (!overviewData) return;
+  const o   = overviewData.allTime;
+  const sec = document.getElementById('alerts-section');
+  const alerts = [];
+  if (o.lowStockCount > 0)
+    alerts.push(`⚠️ <strong>${o.lowStockCount} produit(s)</strong> avec stock ≤ 5 unités — réapprovisionnement recommandé`);
+  if (o.cancelRate > 10)
+    alerts.push(`📊 Taux d'annulation élevé : <strong>${o.cancelRate}%</strong> — analysez les causes`);
+  if (o.pendingOffers > 0)
+    alerts.push(`💰 <strong>${o.pendingOffers} offre(s)</strong> en attente de réponse`);
+
+  if (alerts.length === 0) { sec.style.display = 'none'; return; }
+  sec.style.display = 'block';
+  sec.innerHTML = alerts.map(a => `<div class="alert-row">🔔 ${a}</div>`).join('');
+}
+
+// ─── REVENUE CHART ────────────────────────────────────────────────────────────
+async function loadRevenue() {
+  try {
+    const group = document.getElementById('group-select')?.value || 'day';
+    revenueData = await api(`/api/vendor/analytics/revenue?period=${PERIOD}&group=${group}`);
+    renderRevenueChart();
+  } catch (e) { console.error('revenue', e); }
+}
+
+function renderRevenueChart() {
+  if (!revenueData) return;
+  const { series, totals } = revenueData;
+
+  document.getElementById('rev-total-badge').textContent = fcfa(totals.net_revenue) + ' nets';
+
+  const labels  = series.map(d => {
+    const dt = new Date(d.day);
+    return dt.toLocaleDateString('fr-FR', { month:'short', day:'numeric' });
+  });
+  const rev    = series.map(d => Math.round((d.revenue     || 0) * 655.957));
+  const netRev = series.map(d => Math.round((d.net_revenue || 0) * 655.957));
+
+  destroyChart('chart-revenue');
+  const ctx = document.getElementById('chart-revenue').getContext('2d');
+  charts['chart-revenue'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Revenus bruts',
+          data : rev,
+          borderColor: '#00853E',
+          backgroundColor: 'rgba(0,133,62,.08)',
+          fill: true,
+          tension: 0.4,
+          pointRadius: series.length > 30 ? 0 : 3,
+          borderWidth: 2,
+        },
+        {
+          label: 'Revenus nets',
+          data : netRev,
+          borderColor: '#3B82F6',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.4,
+          pointRadius: series.length > 30 ? 0 : 2,
+          borderWidth: 2,
+          borderDash: [4, 3],
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 12 } },
+        tooltip: {
+          callbacks: {
+            label: ctx => ' ' + ctx.parsed.y.toLocaleString('fr-FR') + ' F CFA'
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 8 } },
+        y: { grid: { color: '#F3F4F6' }, ticks: { font: { size: 10 }, callback: v => fmt(v) + ' F' } }
+      }
+    }
+  });
+}
+
+// ─── PRODUCTS ─────────────────────────────────────────────────────────────────
+async function loadProducts() {
+  try {
+    const sort = document.getElementById('prod-sort')?.value || 'revenue';
+    productsData = await api(`/api/vendor/analytics/products?limit=10&sort=${sort}`);
+    renderProducts();
+  } catch (e) { console.error('products', e); }
+}
+
+function renderProducts() {
+  if (!productsData) return;
+  const { products, totals } = productsData;
+  const sort = document.getElementById('prod-sort')?.value || 'revenue';
+  const container = document.getElementById('products-table');
+
+  if (!products?.length) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">📦</div><p>Aucun produit actif</p></div>';
+    return;
+  }
+
+  const maxVal = Math.max(...products.map(p => p[sort] || p.revenue || 0), 1);
+
+  container.innerHTML = `<table class="data-table">
+    <thead><tr>
+      <th>Produit</th>
+      <th>Revenus</th>
+      <th>${sort === 'rating' ? 'Note' : sort === 'conversion' ? 'Conv.' : 'Unités'}</th>
+    </tr></thead>
+    <tbody>
+    ${products.map(p => {
+      const sortVal = sort === 'rating' ? p.rating : sort === 'conversion' ? p.conversion + '%' : sort === 'units' ? p.unitsSold : p.unitsSold;
+      const barPct  = Math.round(((p[sort] || p.revenue || 0) / maxVal) * 100);
+      return `<tr>
+        <td>
+          <div class="product-cell">
+            ${p.imageUrl ? `<img src="${p.imageUrl}" class="product-thumb" onerror="this.style.display='none'">` : ''}
+            <div>
+              <div class="product-name">${p.name}</div>
+              <div class="product-cat">${p.category} · Stock: ${p.stock}</div>
+            </div>
+          </div>
+        </td>
+        <td>
+          <div>${fcfa(p.revenue)}</div>
+          <div class="bar-cell" style="margin-top:.25rem">
+            <div class="mini-bar" style="width:${Math.max(barPct,.5)*1.2}px"></div>
+            <span style="font-size:.7rem;color:var(--text-3)">${p.revenueShare}%</span>
+          </div>
+        </td>
+        <td>
+          <div style="font-weight:700">${sortVal}</div>
+          <div class="stars">${'★'.repeat(Math.round(p.rating))}${'☆'.repeat(5-Math.round(p.rating))}</div>
+        </td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>`;
+}
+
+// ─── REVIEWS ──────────────────────────────────────────────────────────────────
+async function loadReviews() {
+  try {
+    reviewsData = await api('/api/vendor/analytics/reviews');
+    renderReviews();
+    renderRatingTrendChart();
+    renderLowStock();
+  } catch (e) { console.error('reviews', e); }
+}
+
+function renderReviews() {
+  if (!reviewsData) return;
+  const { distribution: dist, total, avg, npsScore, recent, positiveRate } = reviewsData;
+
+  // NPS
+  document.getElementById('nps-widget').innerHTML = `
+    <div class="nps-score ${npsScore >= 0 ? 'pos' : 'neg'}">${avg}</div>
+    <div class="nps-label">⭐ Note moyenne — ${total} avis · ${positiveRate}% positifs</div>
+  `;
+
+  // Distribution
+  const maxCount = Math.max(...Object.values(dist), 1);
+  document.getElementById('rating-dist').innerHTML = [5,4,3,2,1].map(star => `
+    <div class="rating-row">
+      <div class="rating-star">${star}★</div>
+      <div class="rating-bar-wrap">
+        <div class="rating-bar-fill" style="width:${Math.round((dist[star]||0)/maxCount*100)}%"></div>
+      </div>
+      <div class="rating-count">${dist[star]||0}</div>
+    </div>
+  `).join('');
+
+  // Récents
+  document.getElementById('recent-reviews').innerHTML = recent.length === 0
+    ? '<div class="empty-state" style="padding:1rem 0"><p>Aucun avis encore</p></div>'
+    : recent.map(r => `
+      <div class="review-item">
+        <div class="review-meta">
+          <span class="review-user">${r.userName}</span>
+          <div>
+            <span class="stars">${'★'.repeat(r.rating)}</span>
+            <span class="review-date" style="margin-left:.4rem">${new Date(r.createdAt).toLocaleDateString('fr-FR')}</span>
+          </div>
+        </div>
+        ${r.comment ? `<div class="review-text">"${r.comment}"</div>` : ''}
+        ${r.helpful > 0 ? `<div class="review-helpful">👍 ${r.helpful} personne(s) ont trouvé cet avis utile</div>` : ''}
+      </div>
+    `).join('');
+}
+
+function renderRatingTrendChart() {
+  if (!reviewsData?.trend) return;
+  const trend = reviewsData.trend;
+  const labels = trend.map(t => {
+    const [y, m] = t.month.split('-');
+    return new Date(y, m-1, 1).toLocaleDateString('fr-FR', { month:'short' });
+  });
+
+  destroyChart('chart-rating-trend');
+  const ctx = document.getElementById('chart-rating-trend').getContext('2d');
+  charts['chart-rating-trend'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Nb avis',
+          data : trend.map(t => t.count),
+          backgroundColor: 'rgba(0,133,62,.25)',
+          yAxisID: 'y1',
+          order: 2,
+        },
+        {
+          label: 'Note moy.',
+          data : trend.map(t => t.avg || 0),
+          borderColor: '#F59E0B',
+          type: 'line',
+          tension: 0.4,
+          borderWidth: 2,
+          pointRadius: 3,
+          yAxisID: 'y2',
+          order: 1,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { font: { size: 10 }, boxWidth: 10 } } },
+      scales: {
+        y1: { position: 'left',  grid: { display: false }, ticks: { font: { size: 9 }, stepSize: 1 } },
+        y2: { position: 'right', min: 0, max: 5, ticks: { font: { size: 9 } }, grid: { display: false } },
+        x:  { grid: { display: false }, ticks: { font: { size: 9 } } },
+      }
+    }
+  });
+}
+
+function renderLowStock() {
+  if (!overviewData) return;
+  const container = document.getElementById('low-stock-alerts');
+  // Produits low stock depuis productsData
+  const lowStockProducts = (productsData?.products || []).filter(p => p.stock <= 5 && p.stock >= 0);
+  if (!lowStockProducts.length) {
+    container.innerHTML = '<div style="font-size:.8rem;color:var(--text-3);padding:.5rem 0">✅ Tous les stocks sont OK</div>';
+    return;
+  }
+  container.innerHTML = lowStockProducts.slice(0, 4).map(p => `
+    <div class="alert-row" style="padding:.45rem .65rem;font-size:.78rem;margin-bottom:.35rem">
+      ⚠️ <strong>${p.name}</strong> — ${p.stock} unité${p.stock !== 1 ? 's' : ''} restante${p.stock !== 1 ? 's' : ''}
+    </div>
+  `).join('');
+}
+
+// ─── CUSTOMERS ────────────────────────────────────────────────────────────────
+async function loadCustomers() {
+  try {
+    customersData = await api('/api/vendor/analytics/customers');
+    renderCustomers();
+    renderCitiesChart();
+  } catch (e) { console.error('customers', e); }
+}
+
+function renderCustomers() {
+  if (!customersData) return;
+  const { topCustomers, returningRate, totalUniqueCustomers, newCustomers30d } = customersData;
+
+  document.getElementById('buyers-badge').textContent =
+    `${totalUniqueCustomers} total · ${returningRate}% fidèles`;
+
+  const container = document.getElementById('top-customers-table');
+  if (!topCustomers?.length) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">👥</div><p>Aucun acheteur encore</p></div>';
+    return;
+  }
+
+  const maxSpend = Math.max(...topCustomers.map(c => c.totalSpent), 1);
+  container.innerHTML = `<table class="data-table">
+    <thead><tr><th>Acheteur</th><th>Dépenses</th><th>Cmdes</th></tr></thead>
+    <tbody>
+    ${topCustomers.slice(0, 8).map((c, i) => `
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:.5rem">
+            <div style="width:28px;height:28px;border-radius:50%;background:var(--green);color:white;
+                        display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:700;flex-shrink:0">
+              ${c.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase()}
+            </div>
+            <div>
+              <div style="font-weight:600;font-size:.82rem">${c.name}</div>
+              ${c.isReturning ? '<div style="font-size:.67rem;color:var(--green);font-weight:700">🔄 Fidèle</div>' : '<div style="font-size:.67rem;color:var(--text-3)">Nouveau</div>'}
+            </div>
+          </div>
+        </td>
+        <td>
+          <div style="font-weight:700;font-size:.82rem">${fcfa(c.totalSpent)}</div>
+          <div class="bar-cell" style="margin-top:.2rem">
+            <div class="mini-bar" style="width:${Math.round(c.totalSpent/maxSpend*60)}px;background:var(--blue)"></div>
+          </div>
+        </td>
+        <td style="font-weight:700;color:var(--green)">${c.ordersCount}</td>
+      </tr>
+    `).join('')}
+    </tbody>
+  </table>`;
+}
+
+function renderCitiesChart() {
+  if (!customersData?.cityBreakdown?.length) return;
+  const cities = customersData.cityBreakdown.slice(0, 6);
+  const colors = ['#00853E','#3B82F6','#F59E0B','#8B5CF6','#F97316','#10B981'];
+
+  destroyChart('chart-cities');
+  const ctx = document.getElementById('chart-cities').getContext('2d');
+  charts['chart-cities'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: cities.map(c => c.city),
+      datasets: [{
+        data: cities.map(c => c.orders),
+        backgroundColor: colors.slice(0, cities.length),
+        borderWidth: 2,
+        borderColor: '#fff',
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { font: { size: 10 }, boxWidth: 10, padding: 8 } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw} commandes (${cities[ctx.dataIndex].pct}%)` } }
+      },
+      cutout: '60%',
+    }
+  });
+
+  // Cohorts
+  const cohortCont = document.getElementById('cohort-list');
+  const cohorts = customersData.cohortData || [];
+  const maxNew  = Math.max(...cohorts.map(c => c.newCustomers), 1);
+  cohortCont.innerHTML = cohorts.map(c => {
+    const [y, m] = c.month.split('-');
+    const label = new Date(y, m-1, 1).toLocaleDateString('fr-FR', { month:'long', year:'numeric' });
+    return `<div class="cohort-row">
+      <div class="cohort-month">${label}</div>
+      <div class="cohort-bar-wrap">
+        <div class="cohort-bar-fill" style="width:${Math.round(c.newCustomers/maxNew*100)}%"></div>
+      </div>
+      <div class="cohort-count">${c.newCustomers} nouveau${c.newCustomers !== 1 ? 'x' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+</script>
+</body>
+</html>
