@@ -1,0 +1,1889 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS Market — Déploiement Vercel</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════
+   RESET & VARIABLES
+═══════════════════════════════════════════════════════ */
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+:root {
+  --v: #000000;        /* Vercel black */
+  --v2: #111111;
+  --v3: #1a1a1a;
+  --v4: #222222;
+  --accent: #ffffff;
+  --dim:  rgba(255,255,255,.55);
+  --dim2: rgba(255,255,255,.25);
+  --dim3: rgba(255,255,255,.08);
+  --border: rgba(255,255,255,.1);
+  --border2: rgba(255,255,255,.18);
+  --green: #00e676;
+  --green-d: #00c853;
+  --yellow: #ffee58;
+  --red: #ff5252;
+  --blue: #40c4ff;
+  --r: 12px; --r-sm: 8px; --r-xs: 5px;
+  --ff: 'DM Sans', sans-serif;
+  --fd: 'Syne', sans-serif;
+  --fm: 'DM Mono', monospace;
+  --shadow: 0 0 0 1px var(--border);
+}
+
+html { background: var(--v); color: var(--accent); font-family: var(--ff); }
+body { min-height: 100vh; position: relative; overflow-x: hidden; }
+
+/* Grain overlay */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  background-size: 200px;
+  opacity: .4;
+}
+
+/* ═══════════════════════════════════════════════════════
+   LAYOUT
+═══════════════════════════════════════════════════════ */
+.shell { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; position: relative; z-index: 1; }
+
+/* ═══════════════════════════════════════════════════════
+   SIDEBAR
+═══════════════════════════════════════════════════════ */
+.sidebar {
+  border-right: 1px solid var(--border);
+  padding: 28px 20px 28px;
+  display: flex; flex-direction: column;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 24px; border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+.brand-icon {
+  width: 32px; height: 32px; background: var(--accent); border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+}
+/* Vercel triangle logo */
+.brand-icon svg { width: 16px; height: 16px; }
+.brand-name { font-family: var(--fd); font-size: 14px; font-weight: 700; letter-spacing: -.3px; }
+.brand-sub  { font-size: 10.5px; color: var(--dim); margin-top: 1px; }
+
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: var(--r-sm);
+  font-size: 12.5px; font-weight: 500; color: var(--dim);
+  cursor: pointer; border: none; background: none;
+  text-align: left; width: 100%; transition: all .15s;
+  position: relative;
+}
+.nav-item:hover { background: var(--dim3); color: var(--accent); }
+.nav-item.active { background: var(--dim3); color: var(--accent); }
+.nav-item.done .ni-dot { background: var(--green); }
+
+.ni-dot {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid var(--dim2); display: flex; align-items: center;
+  justify-content: center; font-size: 10px; color: var(--dim2);
+  transition: all .2s;
+}
+.nav-item.active .ni-dot {
+  border-color: var(--accent); color: var(--accent);
+  background: rgba(255,255,255,.08);
+}
+.nav-item.done .ni-dot {
+  border-color: var(--green); color: var(--green);
+  background: rgba(0,230,118,.1);
+}
+
+.nav-section { font-size: 10px; font-weight: 600; letter-spacing: 1.5px;
+               color: var(--dim2); padding: 14px 10px 6px;
+               text-transform: uppercase; }
+
+.sidebar-footer {
+  margin-top: auto; padding-top: 20px; border-top: 1px solid var(--border);
+}
+.prog-track { height: 2px; background: var(--dim3); border-radius: 1px; overflow: hidden; }
+.prog-fill  { height: 100%; background: var(--green); border-radius: 1px; transition: width .5s cubic-bezier(.4,0,.2,1); }
+.prog-text  { display: flex; justify-content: space-between; align-items: center;
+              font-size: 10.5px; color: var(--dim); margin-top: 8px; }
+.prog-pct   { color: var(--green); font-weight: 600; font-family: var(--fm); }
+
+/* ═══════════════════════════════════════════════════════
+   MAIN
+═══════════════════════════════════════════════════════ */
+.main { padding: 48px 56px; max-width: 840px; }
+
+.step-panel { display: none; animation: fadeUp .3s ease both; }
+.step-panel.active { display: block; }
+@keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+
+/* ── Page heading ── */
+.page-eyebrow {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--dim); margin-bottom: 10px;
+}
+.page-title {
+  font-family: var(--fd); font-size: 30px; font-weight: 800;
+  letter-spacing: -.5px; line-height: 1.15; margin-bottom: 10px;
+  color: var(--accent);
+}
+.page-desc { font-size: 14px; color: var(--dim); line-height: 1.7; margin-bottom: 32px; max-width: 560px; }
+
+/* ── Cards ── */
+.card {
+  background: var(--v3); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 24px; margin-bottom: 16px;
+  transition: border-color .2s;
+}
+.card:hover { border-color: var(--border2); }
+.card-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+}
+.card-label .step-badge {
+  width: 18px; height: 18px; border-radius: 50%; background: var(--accent);
+  color: var(--v); font-size: 10px; font-weight: 800;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.card-title { font-family: var(--fd); font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.card-body  { font-size: 13px; color: var(--dim); line-height: 1.7; }
+
+/* ── Steps list ── */
+.steps-list { display: flex; flex-direction: column; gap: 10px; }
+.step-row {
+  display: flex; gap: 14px; align-items: flex-start;
+  padding: 14px 16px; background: var(--v4); border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+}
+.sn {
+  width: 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,.1);
+  color: var(--dim); font-size: 11px; font-weight: 700; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; margin-top: 1px;
+}
+.step-row h4 { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.step-row p  { font-size: 12px; color: var(--dim); line-height: 1.6; }
+.step-row a  { color: var(--green); text-decoration: none; font-weight: 500; }
+.step-row a:hover { text-decoration: underline; }
+
+/* ── Code block ── */
+.code {
+  background: #0a0a0a; border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 14px 16px;
+  font-family: var(--fm); font-size: 12px; line-height: 1.8;
+  position: relative; overflow-x: auto; margin: 10px 0;
+}
+.code-label {
+  font-size: 9px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--dim2); margin-bottom: 6px;
+}
+.copy-btn {
+  position: absolute; top: 10px; right: 10px;
+  background: var(--dim3); border: 1px solid var(--border); color: var(--dim);
+  padding: 4px 10px; border-radius: 5px; font-size: 11px; cursor: pointer;
+  font-family: var(--ff); transition: all .15s;
+}
+.copy-btn:hover { background: rgba(255,255,255,.12); color: var(--accent); }
+.copy-btn.ok { background: rgba(0,230,118,.15); border-color: var(--green); color: var(--green); }
+
+.c-comment { color: #555; }
+.c-key     { color: #ffee58; }
+.c-val     { color: #a5d6a7; }
+.c-kw      { color: #81d4fa; }
+.c-str     { color: #f48fb1; }
+.c-ok      { color: var(--green); }
+.c-err     { color: var(--red); }
+
+/* ── Alerts ── */
+.alert {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 13px 14px; border-radius: var(--r-sm);
+  font-size: 12.5px; line-height: 1.65; margin: 12px 0;
+  border: 1px solid;
+}
+.a-info   { background: rgba(64,196,255,.07); border-color: rgba(64,196,255,.2); color: #b3e5fc; }
+.a-warn   { background: rgba(255,238,88,.06); border-color: rgba(255,238,88,.2); color: #fff9c4; }
+.a-ok     { background: rgba(0,230,118,.07);  border-color: rgba(0,230,118,.2);  color: #b9f6ca; }
+.a-err    { background: rgba(255,82,82,.07);   border-color: rgba(255,82,82,.2);  color: #ffcdd2; }
+.a-icon   { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+
+/* ── Inputs ── */
+.field { margin-bottom: 16px; }
+.field label {
+  display: block; font-size: 11px; font-weight: 600; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--dim); margin-bottom: 7px;
+}
+.field input, .field select, .field textarea {
+  width: 100%; padding: 10px 13px;
+  background: var(--v4); border: 1px solid var(--border);
+  border-radius: var(--r-sm); font-family: var(--fm); font-size: 12.5px;
+  color: var(--accent); outline: none; transition: border-color .2s;
+  resize: vertical;
+}
+.field input:focus, .field select:focus { border-color: rgba(255,255,255,.4); }
+.field input.ok  { border-color: var(--green); }
+.field input.err { border-color: var(--red); }
+.field-hint { font-size: 11px; color: var(--dim2); margin-top: 5px; }
+.field-hint.ok  { color: var(--green); }
+.field-hint.err { color: var(--red); }
+
+/* ── Buttons ── */
+.btn-row { display: flex; gap: 10px; align-items: center; margin-top: 28px; flex-wrap: wrap; }
+.btn {
+  padding: 10px 22px; border-radius: var(--r-sm); font-family: var(--ff);
+  font-size: 13px; font-weight: 600; cursor: pointer; border: none;
+  display: inline-flex; align-items: center; gap: 8px; transition: all .2s;
+}
+.btn-primary {
+  background: var(--accent); color: var(--v);
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(255,255,255,.15); }
+.btn-primary:disabled { opacity: .35; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-ghost {
+  background: transparent; color: var(--dim);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { border-color: var(--border2); color: var(--accent); }
+.btn-green  { background: var(--green); color: #000; }
+.btn-green:hover { background: var(--green-d); transform: translateY(-1px); }
+
+/* ── Spinner ── */
+.spin {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(0,0,0,.2); border-top-color: #000;
+  border-radius: 50%; animation: rot .6s linear infinite;
+}
+@keyframes rot { to { transform: rotate(360deg); } }
+
+/* ── Status tests ── */
+.test-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 14px; background: var(--v4); border-radius: var(--r-sm);
+  border: 1px solid var(--border); margin-bottom: 8px;
+}
+.test-name { font-size: 13px; font-weight: 500; }
+.test-val  { font-size: 12px; font-family: var(--fm); font-weight: 600; }
+.tv-ok   { color: var(--green); }
+.tv-err  { color: var(--red); }
+.tv-wait { color: var(--dim); }
+.tv-warn { color: var(--yellow); }
+
+/* ── ENV builder ── */
+.env-row {
+  display: grid; grid-template-columns: 1fr 1.5fr;
+  gap: 8px; align-items: center;
+  padding: 8px 12px; border-radius: var(--r-sm);
+  border: 1px solid var(--border); margin-bottom: 6px;
+  background: var(--v4);
+}
+.env-key  { font-family: var(--fm); font-size: 11.5px; color: #ffee58; }
+.env-val  { font-family: var(--fm); font-size: 11.5px; color: #a5d6a7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.env-req  { color: var(--red); font-size: 10px; }
+.env-opt  { color: var(--dim2); font-size: 10px; }
+
+/* ── Final success ── */
+.success-hero {
+  border: 1px solid rgba(0,230,118,.25); border-radius: 16px; padding: 40px;
+  background: radial-gradient(ellipse at top, rgba(0,230,118,.08) 0%, transparent 70%);
+  text-align: center; margin-bottom: 24px;
+}
+.success-icon { font-size: 52px; margin-bottom: 16px; }
+.success-hero h2 { font-family: var(--fd); font-size: 26px; font-weight: 800; margin-bottom: 10px; }
+.success-hero p  { font-size: 13px; color: var(--dim); line-height: 1.7; max-width: 440px; margin: 0 auto; }
+
+.url-display {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--v4); border: 1px solid var(--green);
+  border-radius: var(--r-sm); padding: 12px 16px; margin: 20px auto;
+  max-width: 440px; cursor: pointer;
+}
+.url-display span { font-family: var(--fm); font-size: 13px; color: var(--green); flex: 1; }
+
+/* ── Chip/Badge ── */
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 20px; font-size: 10.5px; font-weight: 600;
+}
+.chip-ok   { background: rgba(0,230,118,.12); color: var(--green); border: 1px solid rgba(0,230,118,.2); }
+.chip-warn { background: rgba(255,238,88,.1);  color: var(--yellow); border: 1px solid rgba(255,238,88,.2); }
+.chip-err  { background: rgba(255,82,82,.1);    color: var(--red); border: 1px solid rgba(255,82,82,.2); }
+.chip-blue { background: rgba(64,196,255,.1);   color: var(--blue); border: 1px solid rgba(64,196,255,.2); }
+
+/* ── Tag grid ── */
+.tag-grid { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+
+/* ── Responsive ── */
+@media (max-width: 740px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: fixed; left: -260px; top: 0; z-index: 200; transition: left .3s; height: 100vh; }
+  .sidebar.open { left: 0; }
+  .main { padding: 24px 20px; }
+  .env-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ═══ SIDEBAR ════════════════════════════════════════════ -->
+<aside class="sidebar" id="sidebar">
+  <div class="brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 76 65" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M37.5274 0L75.0548 65H0L37.5274 0Z" fill="black"/>
+      </svg>
+    </div>
+    <div>
+      <div class="brand-name">Vercel Deploy</div>
+      <div class="brand-sub">NEXUS Market</div>
+    </div>
+  </div>
+
+    <div class="nav-section">Préparation</div>
+  <button class="nav-item active" onclick="goTo(0)" id="nav-0"><div class="ni-dot">1</div> Compte Vercel</button>
+  <button class="nav-item" onclick="goTo(1)" id="nav-1"><div class="ni-dot">2</div> Installer Git</button>
+  <button class="nav-item" onclick="goTo(2)" id="nav-2"><div class="ni-dot">3</div> Créer le dépôt GitHub</button>
+  <button class="nav-item" onclick="goTo(3)" id="nav-3"><div class="ni-dot">4</div> Premier push GitHub</button>
+  <button class="nav-item" onclick="goTo(4)" id="nav-4"><div class="ni-dot">5</div> Préparer les fichiers</button>
+
+  <div class="nav-section">Configuration</div>
+  <button class="nav-item" onclick="goTo(5)" id="nav-5"><div class="ni-dot">6</div> Variables d'env.</button>
+  <button class="nav-item" onclick="goTo(6)" id="nav-6"><div class="ni-dot">7</div> Déployer sur Vercel</button>
+
+  <div class="nav-section">Finalisation</div>
+  <button class="nav-item" onclick="goTo(7)" id="nav-7"><div class="ni-dot">8</div> Tester le site</button>
+  <button class="nav-item" onclick="goTo(8)" id="nav-8"><div class="ni-dot">✓</div> Terminé</button>
+
+  <div class="sidebar-footer">
+    <div class="prog-track"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+    <div class="prog-text">
+      <span id="prog-label">Étape 1 / 6</span>
+      <span class="prog-pct" id="prog-pct">0%</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══ MAIN ════════════════════════════════════════════════ -->
+<main class="main">
+
+<!-- ══ STEP 0 — Compte Vercel ═════════════════════════════ -->
+<section class="step-panel active" id="step-0">
+  <div class="page-eyebrow">Étape 1 / 8 · Préparation</div>
+  <h1 class="page-title">Créer votre compte<br>Vercel</h1>
+  <p class="page-desc">Vercel héberge votre frontend gratuitement avec HTTPS automatique, CDN mondial et déploiements en 30 secondes.</p>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">?</span> Qu'est-ce que Vercel ?</div>
+    <div class="tag-grid">
+      <span class="chip chip-ok">✓ Gratuit pour commencer</span>
+      <span class="chip chip-ok">✓ HTTPS automatique</span>
+      <span class="chip chip-ok">✓ URL personnalisée</span>
+      <span class="chip chip-ok">✓ CDN mondial</span>
+      <span class="chip chip-blue">→ nexus.vercel.app</span>
+    </div>
+    <div class="card-body" style="margin-top:12px">
+      Vercel héberge vos fichiers HTML/CSS/JS en ligne. Votre <code style="background:var(--v4);padding:1px 5px;border-radius:3px;font-size:11px">nexus_market.html</code> sera accessible depuis n'importe quel appareil dans le monde.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">1</span> Instructions</div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn">1</div>
+        <div>
+          <h4>Ouvrir Vercel</h4>
+          <p>Cliquez : <a href="https://vercel.com/signup" target="_blank">vercel.com/signup → "Continue with GitHub"</a> (le plus simple)</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">2</div>
+        <div>
+          <h4>Se connecter avec GitHub</h4>
+          <p>Si vous n'avez pas de compte GitHub → <a href="https://github.com/signup" target="_blank">github.com/signup</a> (gratuit, 1 minute)</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">3</div>
+        <div>
+          <h4>Autoriser Vercel</h4>
+          <p>Cliquez "Authorize Vercel" sur la page GitHub → Vercel crée votre compte automatiquement.</p>
+        </div>
+      </div>
+    </div>
+    <div class="alert a-info" style="margin-top:14px">
+      <span class="a-icon">💡</span>
+      <div>Utilisez le même compte GitHub pour tout — Vercel, le dépôt de code, et les mises à jour automatiques seront tous liés.</div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <a href="https://vercel.com/signup" target="_blank" class="btn btn-primary">Créer un compte Vercel →</a>
+    <button class="btn btn-ghost" onclick="goTo(1)">Compte créé — Continuer →</button>
+  </div>
+</section>
+
+<!-- ══ STEP 1 — GitHub ════════════════════════════════════ -->
+
+
+<!-- ══ STEP 1 — Installer Git ═════════════════════════ -->
+<section class="step-panel" id="step-1">
+  <div class="page-eyebrow">Étape 2 / 8 · Préparation</div>
+  <h1 class="page-title">Installer Git<br>sur votre ordinateur</h1>
+  <p class="page-desc">Git est l’outil qui synchronise vos fichiers locaux avec GitHub. Il est indispensable pour envoyer votre code sur Vercel.</p>
+
+  <div class="card">
+    <div class="card-label">❓ Git est-il déjà installé ?</div>
+    <div class="card-body" style="margin-bottom:12px">Ouvrez PowerShell et tapez cette commande :</div>
+    <div class="code">
+      <button class="copy-btn" onclick="cp(this,'check-git')">Copier</button>
+      <div id="check-git"><span class="c-kw">git</span> --version</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+      <div style="background:rgba(0,230,118,.07);border:1px solid rgba(0,230,118,.2);border-radius:var(--r-sm);padding:14px">
+        <div style="font-size:11px;font-weight:600;color:var(--green);margin-bottom:6px">✅ Si vous voyez</div>
+        <div style="font-family:var(--fm);font-size:12px;color:var(--dim)">git version 2.x.x</div>
+        <div style="font-size:11.5px;color:var(--dim);margin-top:8px">Git est installé → passez directement à la configuration ci-dessous.</div>
+      </div>
+      <div style="background:rgba(255,82,82,.07);border:1px solid rgba(255,82,82,.2);border-radius:var(--r-sm);padding:14px">
+        <div style="font-size:11px;font-weight:600;color:var(--red);margin-bottom:6px">❌ Si vous voyez une erreur</div>
+        <div style="font-family:var(--fm);font-size:12px;color:var(--dim)">"command not found"</div>
+        <div style="font-size:11.5px;color:var(--dim);margin-top:8px">Git n’est pas installé → suivez les instructions ci-dessous.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">1</span> Télécharger et installer Git</div>
+    <div class="steps-list">
+      <div class="step-row"><div class="sn">1</div><div>
+        <h4>Ouvrir le site officiel Git</h4>
+        <p><a href="https://git-scm.com/download/win" target="_blank">git-scm.com/download/win</a> → Le téléchargement démarre automatiquement (fichier <code style="font-size:11px;font-family:var(--fm)">Git-x.x.x-64-bit.exe</code>)</p>
+      </div></div>
+      <div class="step-row"><div class="sn">2</div><div>
+        <h4>Lancer l’installateur</h4>
+        <p>Double-clic sur le fichier téléchargé → Cliquez <strong>"Next"</strong> à chaque étape (options par défaut correctes) → <strong>"Install"</strong> → <strong>"Finish"</strong></p>
+      </div></div>
+      <div class="step-row"><div class="sn">3</div><div>
+        <h4>Vérifier l’installation</h4>
+        <p>Fermez et rouvrez PowerShell → <code style="font-size:11px;font-family:var(--fm)">git --version</code> → vous devez voir <code style="font-size:11px;font-family:var(--fm);color:var(--green)">git version 2.x.x</code></p>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">2</span> Configurer Git (une seule fois)</div>
+    <div class="card-body" style="margin-bottom:12px">Git a besoin de connaître votre identité pour signer chaque modification. Utilisez la même adresse email que votre compte GitHub.</div>
+    <div class="code">
+      <button class="copy-btn" onclick="cp(this,'git-config')">Copier</button>
+      <div id="git-config"><span class="c-comment"># Remplacez par vos vraies informations</span>
+<span class="c-kw">git</span> config --global user.name <span class="c-str">"Votre Nom"</span>
+<span class="c-kw">git</span> config --global user.email <span class="c-str">"<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="9aecf5eee8ffdafff7fbf3f6b4f9f5f7">[email&#160;protected]</a>"</span>
+<span class="c-kw">git</span> config --global init.defaultBranch <span class="c-str">main</span>
+<span class="c-comment"># Vérifier :</span>
+<span class="c-kw">git</span> config --global --list</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">3</span> Créer un token d’accès GitHub (PAT)</div>
+    <div class="card-body" style="margin-bottom:12px">GitHub n’accepte plus les mots de passe pour les pushes depuis PowerShell. Le <strong>Personal Access Token</strong> remplace votre mot de passe pour <code>git push</code>.</div>
+    <div class="steps-list">
+      <div class="step-row"><div class="sn">1</div><div>
+        <h4>Ouvrir les paramètres GitHub</h4>
+        <p><a href="https://github.com/settings/tokens/new" target="_blank">github.com/settings/tokens/new</a> (connectez-vous si besoin)</p>
+      </div></div>
+      <div class="step-row"><div class="sn">2</div><div>
+        <h4>Configurer le token</h4>
+        <p>• Note : <code style="font-size:11px;font-family:var(--fm)">nexus-market-token</code><br>
+        • Expiration : <strong>90 days</strong><br>
+        • Scopes : cochez <strong>✅ repo</strong> (tout cocher dans repo)<br>
+        • Cliquez <strong>"Generate token"</strong></p>
+      </div></div>
+      <div class="step-row"><div class="sn">3</div><div>
+        <h4>Copier et sauvegarder le token</h4>
+        <p>GitHub l’affiche <strong>une seule fois</strong> (commence par <code style="font-size:11px;font-family:var(--fm);color:var(--yellow)">ghp_...</code>). Copiez-le dans un endroit sûr — vous l’utiliserez comme mot de passe lors du premier push.</p>
+      </div></div>
+    </div>
+    <div class="alert a-err" style="margin-top:12px">
+      <span class="a-icon">🔐</span>
+      <div><strong>Ne partagez jamais ce token !</strong> Il donne accès complet à vos dépôts. Si perdu, créez-en un nouveau depuis GitHub Settings → Developer settings → Personal access tokens.</div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="goTo(0)">← Retour</button>
+    <button class="btn btn-primary" onclick="goTo(2)">Git installé → Continuer →</button>
+  </div>
+</section>
+
+<!-- ══ STEP 2 — Créer le dépôt GitHub ══════════════════════ -->
+<section class="step-panel" id="step-2">
+  <div class="page-eyebrow">Étape 3 / 8 · Préparation</div>
+  <h1 class="page-title">Créer votre dépôt<br>GitHub</h1>
+  <p class="page-desc">Un dépôt GitHub est le coffre-fort de votre code en ligne. Vercel lit ce dépôt pour déployer votre site automatiquement à chaque modification.</p>
+
+  <div class="card">
+    <div class="card-label">🧠 Comment ça fonctionne</div>
+    <div style="display:flex;align-items:center;border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin:10px 0">
+      <div style="background:var(--v4);padding:14px 18px;text-align:center;flex:1">
+        <div style="font-size:20px">💻</div>
+        <div style="font-size:11px;font-weight:600">Votre PC</div>
+        <div style="font-size:10px;color:var(--dim)">nexus-market/</div>
+      </div>
+      <div style="padding:0 10px;color:var(--dim);font-size:11px;text-align:center;font-family:var(--fm)">
+        <div>git push</div><div>→</div>
+      </div>
+      <div style="background:var(--v4);padding:14px 18px;text-align:center;flex:1">
+        <div style="font-size:20px">🐙</div>
+        <div style="font-size:11px;font-weight:600">GitHub</div>
+        <div style="font-size:10px;color:var(--dim)">dépôt en ligne</div>
+      </div>
+      <div style="padding:0 10px;color:var(--dim);font-size:11px;text-align:center;font-family:var(--fm)">
+        <div>auto-deploy</div><div>→</div>
+      </div>
+      <div style="background:var(--v4);padding:14px 18px;text-align:center;flex:1">
+        <div style="font-size:20px">▲</div>
+        <div style="font-size:11px;font-weight:600">Vercel</div>
+        <div style="font-size:10px;color:var(--dim)">site en ligne</div>
+      </div>
+    </div>
+    <div class="card-body">Chaque <code style="font-size:11px;font-family:var(--fm)">git push</code> déclenche un redéploiement automatique en <strong>~20 secondes</strong>.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">1</span> Créer le dépôt sur GitHub.com</div>
+    <div class="steps-list">
+      <div class="step-row"><div class="sn">1</div><div>
+        <h4>Ouvrir la page de création</h4>
+        <p><a href="https://github.com/new" target="_blank">github.com/new</a></p>
+      </div></div>
+      <div class="step-row"><div class="sn">2</div><div>
+        <h4>Remplir le formulaire</h4>
+        <p>
+          • <strong>Repository name</strong> : <code style="font-size:11px;font-family:var(--fm);color:var(--yellow)">nexus-market</code><br>
+          • <strong>Visibility</strong> : ⚫ <strong>Private</strong> (recommandé)<br>
+          • <strong>Ne cochez rien</strong> dans "Initialize this repository" (pas de README, pas de .gitignore)<br>
+          • Cliquez <strong>"Create repository"</strong>
+        </p>
+      </div></div>
+      <div class="step-row"><div class="sn">3</div><div>
+        <h4>Ne fermez pas la page GitHub</h4>
+        <p>GitHub affiche une page avec des commandes → vous en aurez besoin à l'étape suivante pour lier votre dossier local.</p>
+      </div></div>
+    </div>
+    <div class="alert a-info" style="margin-top:12px">
+      <span class="a-icon">💡</span>
+      <div><strong>Pourquoi Private ?</strong> Vos fichiers contiennent des configurations sensibles. Private = seul vous voyez le code. Les deux (Public/Private) fonctionnent avec Vercel gratuit.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">📝 Notez votre URL de dépôt</div>
+    <div class="field">
+      <label>URL du dépôt GitHub</label>
+      <input type="text" id="repo-url" placeholder="https://github.com/monnom/nexus-market"
+             oninput="validateRepo(this)">
+      <div class="field-hint" id="repo-hint">Ex : https://github.com/pheni/nexus-market</div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="goTo(1)">← Retour</button>
+    <button class="btn btn-primary" onclick="goTo(3)">Dépôt créé → Continuer →</button>
+  </div>
+</section>
+
+<!-- ══ STEP 3 — Premier push GitHub ═════════════════════ -->
+<section class="step-panel" id="step-3">
+  <div class="page-eyebrow">Étape 4 / 8 · Préparation</div>
+  <h1 class="page-title">Envoyer vos fichiers<br>sur GitHub</h1>
+  <p class="page-desc">Initialisez Git dans votre dossier nexus-market et envoyez tous vos fichiers sur GitHub pour la première fois.</p>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">1</span> Créer le .gitignore en premier</div>
+    <div class="card-body" style="margin-bottom:10px"><strong>Avant tout</strong>, créez ce fichier pour empêcher vos clés secrètes d’aller sur GitHub. Sauvegardez-le en tant que <code style="font-family:var(--fm);font-size:11px;color:var(--yellow)">.gitignore</code> dans votre dossier nexus-market.</div>
+    <div class="code">
+      <div class="code-label">.gitignore — C:\Users\pheni\Downloads\nexus-market\.gitignore</div>
+      <button class="copy-btn" onclick="cp(this,'gitignore-full')">Copier</button>
+      <div id="gitignore-full"><span class="c-comment"># ── Secrets — ne JAMAIS envoyer sur GitHub ───</span>
+<span class="c-str">.env</span>
+<span class="c-str">.env.backup</span>
+<span class="c-str">.env.local</span>
+<span class="c-str">.env.*.local</span>
+
+<span class="c-comment"># ── Dépendances npm ─────────────────────</span>
+<span class="c-str">node_modules/</span>
+<span class="c-str">npm-debug.log*</span>
+
+<span class="c-comment"># ── Logs ─────────────────────────────</span>
+<span class="c-str">*.log</span>
+<span class="c-str">logs/</span>
+
+<span class="c-comment"># ── Système Windows ─────────────────────</span>
+<span class="c-str">Thumbs.db</span>
+<span class="c-str">desktop.ini</span>
+
+<span class="c-comment"># ── Fichier reset démo (dangereux en prod) ──</span>
+<span class="c-str">nexus_reset.html</span>
+<span class="c-str">.env.backup</span></div>
+    </div>
+    <div class="alert a-err" style="margin-top:10px">
+      <span class="a-icon">🔐</span>
+      <div><strong>Critique :</strong> si <code>.env</code> n’est pas dans <code>.gitignore</code>, vos clés Supabase, Stripe et SMTP seront visibles publiquement sur GitHub — une faille de sécurité critique.</div>
+    </div>
+    <div class="alert a-info" style="margin-top:8px">
+      <span class="a-icon">💡</span>
+      <div>Pour créer <code>.gitignore</code> : Bloc-notes → Fichier → Enregistrer sous → Type : "Tous les fichiers" → Nom : <strong>.gitignore</strong> (avec le point au début, pas d’extension .txt)</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">2</span> Premier push — commandes PowerShell</div>
+    <div class="card-body" style="margin-bottom:14px">Copiez et exécutez ces commandes <strong>une par une</strong> dans PowerShell :</div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">1</div>
+        <div style="flex:1">
+          <h4>Aller dans le dossier</h4>
+          <div class="code" style="margin-top:6px">
+            <button class="copy-btn" onclick="cp(this,'git-cd')">Copier</button>
+            <div id="git-cd"><span class="c-kw">cd</span> <span class="c-str">"C:\Users\pheni\Downloads\nexus-market"</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">2</div>
+        <div style="flex:1">
+          <h4>Initialiser Git</h4>
+          <div class="code" style="margin-top:6px">
+            <button class="copy-btn" onclick="cp(this,'git-init')">Copier</button>
+            <div id="git-init"><span class="c-kw">git</span> init
+<span class="c-comment"># Résultat attendu : "Initialized empty Git repository..."</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">3</div>
+        <div style="flex:1">
+          <h4>Vérifier que .env n’apparaît pas</h4>
+          <div class="code" style="margin-top:6px">
+            <button class="copy-btn" onclick="cp(this,'git-status')">Copier</button>
+            <div id="git-status"><span class="c-kw">git</span> status
+<span class="c-comment"># .env ne doit PAS apparaître dans la liste</span>
+<span class="c-comment"># Si .env apparaîet → vérifiez votre .gitignore</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">4</div>
+        <div style="flex:1">
+          <h4>Ajouter et commiter tous les fichiers</h4>
+          <div class="code" style="margin-top:6px">
+            <button class="copy-btn" onclick="cp(this,'git-add-commit')">Copier</button>
+            <div id="git-add-commit"><span class="c-kw">git</span> add .
+<span class="c-kw">git</span> commit -m <span class="c-str">"Initial commit — NEXUS Market v3.1"</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">5</div>
+        <div style="flex:1">
+          <h4>Lier au dépôt GitHub (remplacez USERNAME)</h4>
+          <div class="code" style="margin-top:6px">
+            <button class="copy-btn" onclick="cp(this,'git-remote')">Copier</button>
+            <div id="git-remote"><span class="c-kw">git</span> remote add origin https://github.com/<span class="c-str">USERNAME</span>/nexus-market.git
+<span class="c-kw">git</span> remote -v</div>
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.3);color:var(--green);font-weight:700">▲</div>
+        <div style="flex:1">
+          <h4>Premier push vers GitHub</h4>
+          <div class="code" style="margin-top:6px;border-color:rgba(0,230,118,.3)">
+            <button class="copy-btn" onclick="cp(this,'git-push-first')">Copier</button>
+            <div id="git-push-first"><span class="c-kw">git</span> push -u origin main</div>
+          </div>
+          <div style="margin-top:8px;font-size:12px;color:var(--dim);background:var(--v4);padding:10px;border-radius:var(--r-xs);border:1px solid var(--border)">
+            💬 GitHub demande votre <strong>username</strong> GitHub<br>
+            🔐 GitHub demande votre <strong>"password"</strong> → entrez votre <strong>token PAT</strong> (<code style="font-family:var(--fm);font-size:11px;color:var(--yellow)">ghp_...</code>), pas votre vrai mot de passe<br>
+            <span style="color:var(--dim2);font-size:11px">Le curseur ne bouge pas quand vous tapez le token — c’est normal (caractères masqués)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="alert a-ok" style="margin-top:14px">
+      <span class="a-icon">✅</span>
+      <div>Si tout va bien : <code style="font-family:var(--fm);font-size:11px">Branch 'main' set up to track remote branch 'main' from 'origin'</code>. Vérifiez sur GitHub.com que vos fichiers sont bien visibles !</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">3</span> Option B — GitHub Desktop (sans ligne de commande)</div>
+    <div class="steps-list">
+      <div class="step-row"><div class="sn">A</div><div>
+        <h4>Télécharger GitHub Desktop</h4>
+        <p><a href="https://desktop.github.com" target="_blank">desktop.github.com</a> → Installer → Se connecter avec votre compte GitHub</p>
+      </div></div>
+      <div class="step-row"><div class="sn">B</div><div>
+        <h4>Ajouter le dossier local</h4>
+        <p>Menu <strong>File → Add local repository</strong> → Sélectionnez <code style="font-family:var(--fm);font-size:11px">C:\Users\pheni\Downloads\nexus-market</code></p>
+      </div></div>
+      <div class="step-row"><div class="sn">C</div><div>
+        <h4>Premier commit</h4>
+        <p>Dans le panneau gauche, tous vos fichiers apparaîssent → Summary : <strong>"Initial commit"</strong> → <strong>"Commit to main"</strong></p>
+      </div></div>
+      <div class="step-row"><div class="sn">D</div><div>
+        <h4>Publier sur GitHub</h4>
+        <p><strong>"Publish repository"</strong> → Nom : <strong>nexus-market</strong> → Cochez <strong>"Keep this code private"</strong> → <strong>"Publish repository"</strong></p>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">🚨 Problèmes fréquents</div>
+    <div class="steps-list">
+      <div class="step-row"><div class="sn">❌</div><div>
+        <h4>"Support for password authentication was removed"</h4>
+        <p>Vous avez tapé votre mot de passe GitHub. Relancez <code style="font-family:var(--fm);font-size:11px">git push</code> et entrez votre <strong>token PAT</strong> (<code style="font-family:var(--fm);font-size:11px;color:var(--yellow)">ghp_...</code>) au lieu du mot de passe.</p>
+      </div></div>
+      <div class="step-row"><div class="sn">❌</div><div>
+        <h4>"error: remote origin already exists"</h4>
+        <p>Supprimez l’ancien remote : <code style="font-family:var(--fm);font-size:11px">git remote remove origin</code> puis recréez-le avec <code style="font-family:var(--fm);font-size:11px">git remote add origin https://...</code></p>
+      </div></div>
+      <div class="step-row"><div class="sn">❌</div><div>
+        <h4>"src refspec main does not match any"</h4>
+        <p>Vous n’avez pas encore fait de commit. Faites d’abord <code style="font-family:var(--fm);font-size:11px">git add .</code> puis <code style="font-family:var(--fm);font-size:11px">git commit -m "init"</code></p>
+      </div></div>
+      <div class="step-row"><div class="sn">❌</div><div>
+        <h4>"Please tell me who you are"</h4>
+        <p>Exécutez les commandes <code style="font-family:var(--fm);font-size:11px">git config --global user.email</code> et <code style="font-family:var(--fm);font-size:11px">git config --global user.name</code> de l'étape 1.</p>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="goTo(2)">← Retour</button>
+    <button class="btn btn-primary" onclick="goTo(4)">Fichiers sur GitHub → Continuer →</button>
+  </div>
+</section>
+
+
+
+<section class="step-panel" id="step-4">
+  <div class="page-eyebrow">Étape 5 / 8 · Préparation</div>
+  <h1 class="page-title">Préparer les fichiers<br>pour Vercel</h1>
+  <p class="page-desc">Vercel a besoin d'un fichier de configuration minimal et d'un ajustement de votre frontend pour pointer vers l'API en production.</p>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">1</span> Créer vercel.json (configuration Vercel)</div>
+    <div class="card-body" style="margin-bottom:10px">
+      Créez un fichier <code style="background:var(--v4);padding:1px 6px;border-radius:3px;font-size:11px;font-family:var(--fm);color:var(--yellow)">vercel.json</code> à la racine de votre dossier <code style="font-size:11px;font-family:var(--fm)">nexus-market</code> avec ce contenu :
+    </div>
+    <div class="code">
+      <div class="code-label">vercel.json</div>
+      <button class="copy-btn" onclick="cp(this,'vercel-json')">Copier</button>
+      <div id="vercel-json"><span class="c-comment">// Fichier : C:\Users\pheni\Downloads\nexus-market\vercel.json</span>
+{
+  <span class="c-key">"version"</span>: <span class="c-val">2</span>,
+  <span class="c-key">"builds"</span>: [
+    { <span class="c-key">"src"</span>: <span class="c-str">"*.html"</span>, <span class="c-key">"use"</span>: <span class="c-str">"@vercel/static"</span> },
+    { <span class="c-key">"src"</span>: <span class="c-str">"server.js"</span>, <span class="c-key">"use"</span>: <span class="c-str">"@vercel/node"</span> }
+  ],
+  <span class="c-key">"routes"</span>: [
+    { <span class="c-key">"src"</span>: <span class="c-str">"/api/(.*)"</span>, <span class="c-key">"dest"</span>: <span class="c-str">"/server.js"</span> },
+    { <span class="c-key">"src"</span>: <span class="c-str">"/webhooks/(.*)"</span>, <span class="c-key">"dest"</span>: <span class="c-str">"/server.js"</span> },
+    { <span class="c-key">"src"</span>: <span class="c-str">"/(.*\\.html)"</span>, <span class="c-key">"dest"</span>: <span class="c-str">"/$1"</span> },
+    { <span class="c-key">"src"</span>: <span class="c-str">"/(.*)"</span>, <span class="c-key">"dest"</span>: <span class="c-str">"/nexus_market.html"</span> }
+  ]
+}</div>
+    </div>
+    <div class="alert a-info">
+      <span class="a-icon">ℹ️</span>
+      <div>Ce fichier dit à Vercel : les fichiers <code>.html</code> sont du contenu statique, et <code>server.js</code> est l'API backend.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">2</span> Créer un fichier .gitignore</div>
+    <div class="card-body" style="margin-bottom:10px">
+      Créez <code style="background:var(--v4);padding:1px 6px;border-radius:3px;font-size:11px;font-family:var(--fm);color:var(--yellow)">.gitignore</code> pour ne pas envoyer les fichiers sensibles sur GitHub :
+    </div>
+    <div class="code">
+      <div class="code-label">.gitignore</div>
+      <button class="copy-btn" onclick="cp(this,'gitignore-content')">Copier</button>
+      <div id="gitignore-content"><span class="c-comment"># Fichier : C:\Users\pheni\Downloads\nexus-market\.gitignore</span>
+<span class="c-str">.env</span>
+<span class="c-str">.env.backup</span>
+<span class="c-str">node_modules/</span>
+<span class="c-str">.env.local</span>
+<span class="c-str">*.log</span></div>
+    </div>
+    <div class="alert a-warn">
+      <span class="a-icon">🔒</span>
+      <div><strong>Critique :</strong> le fichier <code>.env</code> contient vos clés secrètes. Sans <code>.gitignore</code>, il serait visible publiquement sur GitHub.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">3</span> Mettre à jour NEXUS_CONFIG dans nexus_market.html</div>
+    <div class="card-body" style="margin-bottom:10px">
+      Cherchez la section <code style="font-family:var(--fm);font-size:11px;background:var(--v4);padding:1px 6px;border-radius:3px">NEXUS_CONFIG</code> dans <code style="font-family:var(--fm);font-size:11px">nexus_market.html</code> (~ligne 975) et mettez à jour l'URL de l'API :
+    </div>
+    <div class="code">
+      <div class="code-label">nexus_market.html — NEXUS_CONFIG</div>
+      <button class="copy-btn" onclick="cp(this,'nexus-config')">Copier</button>
+      <div id="nexus-config"><span class="c-comment">// Remplacer localhost par votre URL Vercel</span>
+<span class="c-kw">const</span> NEXUS_CONFIG = {
+  <span class="c-key">apiUrl</span>: <span class="c-str" id="api-url-preview">"https://nexus-market.vercel.app"</span>,
+  <span class="c-key">stripe</span>: {
+    <span class="c-key">publishableKey</span>: <span class="c-str">"pk_test_VOTRE_CLE_STRIPE"</span>
+  }
+};</div>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>Votre URL Vercel (optionnel — vous la connaîtrez après déploiement)</label>
+      <input type="text" id="vercel-url" placeholder="https://nexus-market.vercel.app"
+             oninput="updateApiPreview(this.value)">
+      <div class="field-hint">Format : https://votre-projet.vercel.app</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label"><span class="step-badge">4</span> Pousser les modifications sur GitHub</div>
+    <div class="card-body" style="margin-bottom:10px">Après avoir créé ces fichiers, envoyez-les sur GitHub :</div>
+    <div class="code">
+      <button class="copy-btn" onclick="cp(this,'git-push')">Copier</button>
+      <div id="git-push"><span class="c-kw">git</span> add vercel.json .gitignore
+<span class="c-kw">git</span> commit -m <span class="c-str">"Add Vercel config"</span>
+<span class="c-kw">git</span> push</div>
+    </div>
+    <div class="alert a-info">
+      <span class="a-icon">💡</span>
+      <div>Avec GitHub Desktop : cliquez le bouton <strong>"Commit to main"</strong> puis <strong>"Push origin"</strong></div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="goTo(3)">← Retour</button>
+    <button class="btn btn-primary" onclick="goTo(5)">Fichiers prêts → Continuer →</button>
+  </div>
+</section>
+
+<!-- ══ STEP 3 — Variables d'environnement ════════════════ -->
+
+
+<section class="step-panel" id="step-5">
+  <div class="page-eyebrow">Étape 6 / 8 · Configuration</div>
+  <h1 class="page-title">Variables d'environnement<br>sur Vercel</h1>
+  <p class="page-desc">Vos clés secrètes ne doivent jamais aller sur GitHub. Vous les entrez directement dans le tableau de bord Vercel.</p>
+
+  <!-- WHERE TO FIND EACH VALUE -->
+  <div class="card">
+    <div class="card-label">🗺️ Où trouver chaque clé — guide complet</div>
+    <div class="card-body" style="margin-bottom:14px">Cliquez sur chaque service pour voir comment récupérer vos clés :</div>
+
+    <!-- SUPABASE -->
+    <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:10px">
+      <div style="background:var(--v4);padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <span style="font-size:18px">🟢</span>
+        <div>
+          <div style="font-size:13px;font-weight:600">Supabase — SUPABASE_URL + SUPABASE_SERVICE_KEY</div>
+          <div style="font-size:11px;color:var(--dim)">Obligatoire • Base de données de votre application</div>
+        </div>
+      </div>
+      <div style="padding:12px 16px">
+        <div class="steps-list" style="gap:6px">
+          <div class="step-row">
+            <div class="sn" style="font-size:10px">1</div>
+            <div><h4>Ouvrir votre projet Supabase</h4>
+              <p><a href="https://supabase.com/dashboard" target="_blank">supabase.com/dashboard</a> → cliquez sur votre projet</p>
+            </div>
+          </div>
+          <div class="step-row">
+            <div class="sn" style="font-size:10px">2</div>
+            <div><h4>Aller dans Settings → API</h4>
+              <p>Dans le menu gauche → <strong>Settings</strong> (icône engrenage) → <strong>API</strong></p>
+            </div>
+          </div>
+          <div class="step-row">
+            <div class="sn" style="font-size:10px">3</div>
+            <div><h4>Copier les valeurs</h4>
+              <p>
+                • <strong>SUPABASE_URL</strong> → champ <code style="font-family:var(--fm);font-size:11px">"Project URL"</code> (commence par <code style="font-family:var(--fm);font-size:11px;color:var(--green)">https://xxxx.supabase.co</code>)<br>
+                • <strong>SUPABASE_SERVICE_KEY</strong> → section <strong>"Service role"</strong> (commence par <code style="font-family:var(--fm);font-size:11px;color:var(--yellow)">eyJ...</code>) — <strong>PAS</strong> l'anon key !
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="alert a-err" style="margin-top:8px">
+          <span class="a-icon">⚠️</span>
+          <div>Utilisez la <strong>Service role key</strong> (pas la <em>anon/public key</em>). La service role donne un accès complet à la BDD — ne la partagez jamais publiquement.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JWT SECRET -->
+    <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:10px">
+      <div style="background:var(--v4);padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <span style="font-size:18px">🔑</span>
+        <div>
+          <div style="font-size:13px;font-weight:600">JWT_SECRET — Générer une clé sécurisée</div>
+          <div style="font-size:11px;color:var(--dim)">Obligatoire • Clé de chiffrement pour les tokens d'authentification</div>
+        </div>
+      </div>
+      <div style="padding:12px 16px">
+        <div class="card-body" style="margin-bottom:10px">Le JWT Secret est une longue chaîne aléatoire que <strong>vous créez vous-même</strong>. Il doit faire au moins 32 caractères. Utilisez une de ces méthodes :</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="background:var(--v4);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px">
+            <div style="font-size:11px;font-weight:600;margin-bottom:8px">💻 PowerShell</div>
+            <div class="code" style="margin:0">
+              <button class="copy-btn" onclick="cp(this,'jwt-gen')">Copier</button>
+              <div id="jwt-gen"><span class="c-comment"># Génère 64 chars aléatoires</span>
+-join ((65..90)+(97..122)+(48..57) | Get-Random -Count 64 | %{[char]$_})</div>
+            </div>
+          </div>
+          <div style="background:var(--v4);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px">
+            <div style="font-size:11px;font-weight:600;margin-bottom:8px">🌐 En ligne (plus simple)</div>
+            <div style="font-size:12px;color:var(--dim);line-height:1.8">
+              → <a href="https://generate-secret.vercel.app/64" target="_blank">generate-secret.vercel.app/64</a><br>
+              → Copiez la valeur générée<br>
+              → C'est votre JWT_SECRET
+            </div>
+          </div>
+        </div>
+        <div class="alert a-warn" style="margin-top:10px">
+          <span class="a-icon">⚠️</span>
+          <div>Sauvegardez ce secret dans un endroit sûr ! Si vous le perdez, tous les utilisateurs devront se reconnecter.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STRIPE -->
+    <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:10px">
+      <div style="background:var(--v4);padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <span style="font-size:18px">💳</span>
+        <div>
+          <div style="font-size:13px;font-weight:600">Stripe — STRIPE_SECRET_KEY (optionnel)</div>
+          <div style="font-size:11px;color:var(--dim)">Optionnel • Nécessaire seulement si vous acceptez des paiements</div>
+        </div>
+      </div>
+      <div style="padding:12px 16px">
+        <div class="steps-list" style="gap:6px">
+          <div class="step-row"><div class="sn" style="font-size:10px">1</div>
+            <div><h4>Ouvrir le Dashboard Stripe</h4>
+              <p><a href="https://dashboard.stripe.com/test/apikeys" target="_blank">dashboard.stripe.com/test/apikeys</a></p>
+            </div>
+          </div>
+          <div class="step-row"><div class="sn" style="font-size:10px">2</div>
+            <div><h4>Copier la clé secrète de test</h4>
+              <p><strong>Secret key</strong> → cliquez <strong>"Reveal test key"</strong> → copiez la valeur (commence par <code style="font-family:var(--fm);font-size:11px;color:var(--yellow)">sk_test_...</code>)</p>
+            </div>
+          </div>
+        </div>
+        <div class="alert a-info" style="margin-top:8px">
+          <span class="a-icon">💡</span>
+          <div>Commencez avec la clé <code>sk_test_</code> (test). En production, remplacez par <code>sk_live_</code> uniquement quand tout fonctionne.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SMTP GMAIL -->
+    <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:10px">
+      <div style="background:var(--v4);padding:12px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <span style="font-size:18px">📧</span>
+        <div>
+          <div style="font-size:13px;font-weight:600">Gmail SMTP — SMTP_USER + SMTP_PASS (optionnel)</div>
+          <div style="font-size:11px;color:var(--dim)">Optionnel • Pour l'envoi d'emails de confirmation</div>
+        </div>
+      </div>
+      <div style="padding:12px 16px">
+        <div class="steps-list" style="gap:6px">
+          <div class="step-row"><div class="sn" style="font-size:10px">1</div>
+            <div><h4>Activer la validation en 2 étapes Gmail</h4>
+              <p><a href="https://myaccount.google.com/security" target="_blank">myaccount.google.com/security</a> → <strong>"Validation en 2 étapes"</strong> → activer si pas déjà fait</p>
+            </div>
+          </div>
+          <div class="step-row"><div class="sn" style="font-size:10px">2</div>
+            <div><h4>Créer un "Mot de passe d'application"</h4>
+              <p><a href="https://myaccount.google.com/apppasswords" target="_blank">myaccount.google.com/apppasswords</a> → Sélectionner <strong>"Autre"</strong> → Nom : <strong>"nexus-market"</strong> → <strong>"Générer"</strong></p>
+            </div>
+          </div>
+          <div class="step-row"><div class="sn" style="font-size:10px">3</div>
+            <div><h4>Copier le mot de passe généré</h4>
+              <p>Gmail affiche un code en 4 blocs de 4 lettres (<code style="font-family:var(--fm);font-size:11px">xxxx xxxx xxxx xxxx</code>) → c'est votre <strong>SMTP_PASS</strong>. Votre vrai mot de passe Gmail ne fonctionne <strong>pas</strong> ici.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">📝 Entrez vos valeurs pour générer la liste</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="field">
+        <label>Supabase URL</label>
+        <input type="text" id="ev-supa-url" placeholder="https://xxxx.supabase.co" oninput="refreshEnvList()">
+      </div>
+      <div class="field">
+        <label>Supabase Service Key</label>
+        <input type="password" id="ev-supa-key" placeholder="eyJ..." oninput="refreshEnvList()">
+      </div>
+      <div class="field">
+        <label>JWT Secret</label>
+        <input type="text" id="ev-jwt" placeholder="f79745bc..." oninput="refreshEnvList()">
+      </div>
+      <div class="field">
+        <label>Stripe Secret Key</label>
+        <input type="text" id="ev-stripe" placeholder="sk_test_..." oninput="refreshEnvList()">
+      </div>
+      <div class="field">
+        <label>Email SMTP (Gmail)</label>
+        <input type="email" id="ev-smtp-user" placeholder="votre@gmail.com" oninput="refreshEnvList()">
+      </div>
+      <div class="field">
+        <label>SMTP App Password</label>
+        <input type="password" id="ev-smtp-pass" placeholder="xxxx xxxx xxxx xxxx" oninput="refreshEnvList()">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">⚙️ Variables à ajouter dans Vercel</div>
+    <div class="card-body" style="margin-bottom:14px">
+      Vercel → votre projet → <strong>Settings → Environment Variables</strong> → ajoutez chaque ligne :
+    </div>
+    <div id="env-list"></div>
+    <div class="alert a-warn" style="margin-top:12px">
+      <span class="a-icon">⚠️</span>
+      <div>Dans Vercel, pour chaque variable : copiez le <strong>nom</strong> dans "Key", copiez la <strong>valeur</strong> dans "Value", cliquez <strong>Save</strong>. Répétez pour chaque ligne.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">📋 Comment ajouter les variables dans Vercel</div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn">1</div>
+        <div><h4>Ouvrir votre projet Vercel</h4>
+          <p><a href="https://vercel.com/dashboard" target="_blank">vercel.com/dashboard</a> → cliquer sur votre projet nexus-market</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">2</div>
+        <div><h4>Aller dans Settings → Environment Variables</h4>
+          <p>Cliquer l'onglet <strong>"Settings"</strong> en haut → puis <strong>"Environment Variables"</strong> dans le menu gauche</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">3</div>
+        <div><h4>Ajouter chaque variable</h4>
+          <p>Pour chaque ligne de la liste ci-dessus → entrer le nom → entrer la valeur → choisir <strong>"All Environments"</strong> → <strong>"Save"</strong></p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">4</div>
+        <div><h4>Redéployer après ajout</h4>
+          <p>Onglet <strong>"Deployments"</strong> → cliquer les 3 points du dernier déploiement → <strong>"Redeploy"</strong></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="goTo(4)">← Retour</button>
+    <button class="btn btn-primary" onclick="goTo(6)">Variables configurées → Continuer →</button>
+  </div>
+</section>
+
+<!-- ══ STEP 4 — Déployer ══════════════════════════════════ -->
+
+
+<section class="step-panel" id="step-6">
+  <div class="page-eyebrow">Étape 7 / 8 · Déploiement</div>
+  <h1 class="page-title">Déployer sur Vercel</h1>
+  <p class="page-desc">Le moment de vérité. Importez votre dépôt GitHub dans Vercel — votre site sera en ligne en moins de 2 minutes. Cette étape est détaillée pour vous guider pixel par pixel.</p>
+
+  <!-- CHECKLIST PRE-DEPLOY -->
+  <div class="card">
+    <div class="card-label">✅ Vérifications avant de déployer</div>
+    <div class="card-body" style="margin-bottom:14px">Avant de cliquer sur "Deploy", assurez-vous que tout est en ordre :</div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">☑</div>
+        <div><h4>Vos fichiers sont sur GitHub</h4>
+          <p>Allez sur <a href="https://github.com" target="_blank">github.com</a> → votre dépôt <code style="font-family:var(--fm);font-size:11px">nexus-market</code> → vous voyez vos fichiers (<code>server.js</code>, <code>nexus_market.html</code>, <code>vercel.json</code>)</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">☑</div>
+        <div><h4>Le fichier .env n'est PAS visible sur GitHub</h4>
+          <p>Dans votre dépôt GitHub, vous ne devez <strong>pas</strong> voir de fichier <code style="font-family:var(--fm);font-size:11px">.env</code>. Si vous le voyez → retournez à l'étape 3 (gitignore).</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">☑</div>
+        <div><h4>vercel.json est présent à la racine</h4>
+          <p>Vérifiez que le fichier <code style="font-family:var(--fm);font-size:11px">vercel.json</code> est bien à la racine de votre dépôt (pas dans un sous-dossier).</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.15);color:var(--green)">☑</div>
+        <div><h4>Vous avez vos clés prêtes</h4>
+          <p>Supabase URL, Supabase Service Key, JWT Secret → vous en aurez besoin dans les variables d'environnement (déjà fait à l'étape 6).</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ETAPE 1: IMPORT -->
+  <div class="card">
+    <div class="card-label"><span class="step-badge">1</span> Créer un nouveau projet sur Vercel</div>
+    <div class="card-body" style="margin-bottom:14px">Voici exactement ce que vous allez voir et faire sur le site Vercel :</div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn">1</div>
+        <div>
+          <h4>Aller sur la page d'import Vercel</h4>
+          <p>Ouvrez <a href="https://vercel.com/new" target="_blank">vercel.com/new</a> (connectez-vous si besoin). Vous arrivez sur une page intitulée <strong>"Import Git Repository"</strong>.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">2</div>
+        <div>
+          <h4>Ce que vous voyez : la liste de vos dépôts GitHub</h4>
+          <p>Vercel affiche automatiquement vos dépôts GitHub. Si vous ne voyez pas <strong>nexus-market</strong> dans la liste :</p>
+          <div style="margin-top:8px;background:rgba(255,238,88,.06);border:1px solid rgba(255,238,88,.2);border-radius:var(--r-sm);padding:12px">
+            <div style="font-size:11px;font-weight:600;color:var(--yellow);margin-bottom:6px">⚠️ nexus-market n'apparaît pas ?</div>
+            <div style="font-size:12px;color:var(--dim);line-height:1.7">
+              → Cliquez <strong>"Adjust GitHub App Permissions"</strong> ou <strong>"Add GitHub Account"</strong><br>
+              → Sélectionnez <strong>"All repositories"</strong> (ou cherchez nexus-market dans la liste)<br>
+              → Cliquez <strong>"Save"</strong> et revenez sur la page
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">3</div>
+        <div>
+          <h4>Cliquer "Import" à côté de nexus-market</h4>
+          <p>Trouvez la ligne <strong>nexus-market</strong> → cliquez le bouton bleu <strong>"Import"</strong> sur la droite.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ETAPE 2: CONFIGURATION PAGE -->
+  <div class="card">
+    <div class="card-label"><span class="step-badge">2</span> Configurer le projet — que mettre dans chaque champ</div>
+    <div class="card-body" style="margin-bottom:14px">Vercel affiche une page <strong>"Configure Project"</strong>. Voici exactement quoi entrer dans chaque champ :</div>
+
+    <!-- Visual mock of Vercel's configure page -->
+    <div style="border:1px solid var(--border2);border-radius:var(--r);overflow:hidden;margin-bottom:14px">
+      <div style="background:#0a0a0a;padding:10px 16px;border-bottom:1px solid var(--border);font-size:11px;color:var(--dim);font-family:var(--fm)">vercel.com → Configure Project</div>
+      <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+
+        <div style="display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:start;padding:10px;border-radius:var(--r-sm);border:1px solid rgba(0,230,118,.2);background:rgba(0,230,118,.04)">
+          <div style="font-size:11px;font-weight:600;color:var(--dim)">Project Name</div>
+          <div>
+            <div style="background:var(--v4);border:1px solid var(--green);border-radius:5px;padding:7px 10px;font-family:var(--fm);font-size:12px;color:var(--green)">nexus-market</div>
+            <div style="font-size:11px;color:var(--dim);margin-top:4px">✅ Laissez tel quel — Vercel le remplit automatiquement depuis GitHub</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:start;padding:10px;border-radius:var(--r-sm);border:1px solid rgba(255,238,88,.2);background:rgba(255,238,88,.03)">
+          <div style="font-size:11px;font-weight:600;color:var(--dim)">Framework Preset</div>
+          <div>
+            <div style="background:var(--v4);border:1px solid var(--yellow);border-radius:5px;padding:7px 10px;font-family:var(--fm);font-size:12px;color:var(--yellow)">Other</div>
+            <div style="font-size:11px;color:var(--dim);margin-top:4px">⚠️ <strong>Sélectionnez "Other"</strong> dans le menu déroulant. Ne choisissez pas Next.js, React, etc. — ce projet est du HTML/Node.js pur.</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:start;padding:10px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--v4)">
+          <div style="font-size:11px;font-weight:600;color:var(--dim)">Root Directory</div>
+          <div>
+            <div style="background:#0a0a0a;border:1px solid var(--border);border-radius:5px;padding:7px 10px;font-family:var(--fm);font-size:12px;color:var(--dim2)">(vide)</div>
+            <div style="font-size:11px;color:var(--dim);margin-top:4px">✅ Laissez complètement vide. Vercel utilise la racine de votre dépôt.</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:start;padding:10px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--v4)">
+          <div style="font-size:11px;font-weight:600;color:var(--dim)">Build Command</div>
+          <div>
+            <div style="background:#0a0a0a;border:1px solid var(--border);border-radius:5px;padding:7px 10px;font-family:var(--fm);font-size:12px;color:var(--dim2)">(vide)</div>
+            <div style="font-size:11px;color:var(--dim);margin-top:4px">✅ Laissez vide. Vercel n'a pas besoin de compiler ce projet.</div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:160px 1fr;gap:10px;align-items:start;padding:10px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--v4)">
+          <div style="font-size:11px;font-weight:600;color:var(--dim)">Output Directory</div>
+          <div>
+            <div style="background:#0a0a0a;border:1px solid var(--border);border-radius:5px;padding:7px 10px;font-family:var(--fm);font-size:12px;color:var(--dim2)">(vide)</div>
+            <div style="font-size:11px;color:var(--dim);margin-top:4px">✅ Laissez vide. Les fichiers sont déjà à la racine.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="alert a-info">
+      <span class="a-icon">💡</span>
+      <div><strong>Important :</strong> Ne touchez pas à la section "Environment Variables" ici — vous les avez déjà configurées à l'étape 6. Si vous ne les avez pas encore fait, revenez en arrière.</div>
+    </div>
+  </div>
+
+  <!-- ETAPE 3: DEPLOY BUTTON -->
+  <div class="card">
+    <div class="card-label"><span class="step-badge">3</span> Cliquer "Deploy" et comprendre les logs</div>
+    <div class="card-body" style="margin-bottom:14px">Une fois que vous cliquez <strong>"Deploy"</strong>, voici ce qui se passe :</div>
+
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn" style="font-size:9px">~10s</div>
+        <div>
+          <h4>Cloning</h4>
+          <p>Vercel télécharge votre code depuis GitHub. Vous verrez dans les logs : <code style="font-family:var(--fm);font-size:11px;color:var(--green)">Cloning github.com/USERNAME/nexus-market</code></p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="font-size:9px">~30s</div>
+        <div>
+          <h4>Installing dependencies</h4>
+          <p>Vercel installe les packages npm de votre <code>package.json</code> (express, cors, etc.). Log attendu : <code style="font-family:var(--fm);font-size:11px;color:var(--green)">npm install</code> suivi de la liste des packages.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="font-size:9px">~20s</div>
+        <div>
+          <h4>Building</h4>
+          <p>Vercel prépare les fichiers statiques et configure les routes API définies dans votre <code>vercel.json</code>.</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn" style="background:rgba(0,230,118,.2);color:var(--green);font-weight:700">🎉</div>
+        <div>
+          <h4>Congratulations! — Déploiement réussi</h4>
+          <p>Vercel affiche un grand message vert avec votre URL. <strong>Copiez cette URL</strong> — elle ressemble à <code style="font-family:var(--fm);font-size:11px;color:var(--green)">nexus-market-abc123.vercel.app</code></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mock of deploy logs -->
+    <div class="code" style="margin-top:14px">
+      <div class="code-label">📋 Exemple de logs de déploiement réussi</div>
+      <div style="line-height:2">
+<span class="c-comment">▲ Vercel CLI</span>
+<span class="c-ok">✓</span> <span class="c-val">Cloning github.com/pheni/nexus-market</span>
+<span class="c-ok">✓</span> <span class="c-val">Installing dependencies...</span>
+<span class="c-comment">  added 47 packages in 8s</span>
+<span class="c-ok">✓</span> <span class="c-val">Building...</span>
+<span class="c-ok">✓</span> <span class="c-val">Build completed</span>
+<span class="c-comment">  Deployed functions: /api/health, /api/products...</span>
+<span class="c-ok">✓</span> <span class="c-val">Deployment complete</span>
+<span class="c-kw">🎉</span> <span class="c-ok">https://nexus-market-abc123.vercel.app</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ETAPE 4: URL -->
+  <div class="card">
+    <div class="card-label"><span class="step-badge">4</span> Notez votre URL Vercel</div>
+    <div class="card-body" style="margin-bottom:12px">
+      Après le déploiement, Vercel vous donne une URL comme <code style="font-family:var(--fm);font-size:11.5px;color:var(--green)">nexus-market-xxxxxx.vercel.app</code>. Entrez-la ici pour mettre à jour les autres étapes automatiquement.
+    </div>
+    <div class="field">
+      <label>Votre URL Vercel (copiez depuis le dashboard)</label>
+      <input type="text" id="deploy-url" placeholder="https://nexus-market-xxxxxx.vercel.app"
+             oninput="S.deployUrl = this.value; updateApiPreview(this.value)">
+      <div class="field-hint">Vous la trouverez sur la page de confirmation Vercel (commençant par https://)</div>
+    </div>
+    <div class="alert a-info" style="margin-top:8px">
+      <span class="a-icon">💡</span>
+      <div>Vercel génère parfois un nom aléatoire comme <code style="font-family:var(--fm);font-size:11px">nexus-market-ph7x2.vercel.app</code>. Ce n'est pas grave — vous pouvez changer le nom dans Settings → Domains plus tard.</div>
+    </div>
+  </div>
+
+  <!-- ETAPE 5: UPDATE CONFIG -->
+  <div class="card">
+    <div class="card-label"><span class="step-badge">5</span> Mettre à jour NEXUS_CONFIG avec l'URL réelle</div>
+    <div class="card-body" style="margin-bottom:10px">
+      Maintenant que vous avez l'URL, mettez à jour <code style="font-family:var(--fm);font-size:11px">nexus_market.html</code> pour pointer vers votre vraie URL (et non localhost) :
+    </div>
+    <div class="steps-list" style="margin-bottom:12px">
+      <div class="step-row"><div class="sn">1</div>
+        <div><h4>Ouvrez nexus_market.html dans VS Code ou Notepad</h4>
+          <p>Fichier → Ouvrir → <code style="font-family:var(--fm);font-size:11px">C:\Users\pheni\Downloads\nexus-market\nexus_market.html</code></p>
+        </div>
+      </div>
+      <div class="step-row"><div class="sn">2</div>
+        <div><h4>Cherchez NEXUS_CONFIG (Ctrl+F)</h4>
+          <p>Appuyez <strong>Ctrl+F</strong> → tapez <code style="font-family:var(--fm);font-size:11px">NEXUS_CONFIG</code> → allez à la ligne qui contient <code style="font-family:var(--fm);font-size:11px">apiUrl</code></p>
+        </div>
+      </div>
+      <div class="step-row"><div class="sn">3</div>
+        <div><h4>Remplacez l'URL localhost par votre URL Vercel</h4>
+          <p>Changez <code style="font-family:var(--fm);font-size:11px;color:var(--red)">http://localhost:3000</code> par votre URL Vercel ci-dessous :</p>
+        </div>
+      </div>
+    </div>
+    <div class="code">
+      <div class="code-label">nexus_market.html — ligne ~975 — AVANT → APRÈS</div>
+      <button class="copy-btn" onclick="cp(this,'config-final')">Copier</button>
+      <div id="config-final"><span class="c-comment">// AVANT (localhost — ne fonctionne qu'en local)</span>
+<span class="c-comment">// apiUrl: "http://localhost:3000",</span>
+
+<span class="c-comment">// APRÈS (votre URL Vercel — fonctionne partout dans le monde)</span>
+<span class="c-kw">const</span> NEXUS_CONFIG = {
+  <span class="c-key">apiUrl</span>: <span class="c-str" id="config-url-val">"https://nexus-market.vercel.app"</span>,
+  <span class="c-key">stripe</span>: { <span class="c-key">publishableKey</span>: <span class="c-str">"pk_test_VOTRE_CLE"</span> }
+};</div>
+    </div>
+    <div class="code" style="margin-top:10px">
+      <div class="code-label">Pousser les modifications sur GitHub</div>
+      <button class="copy-btn" onclick="cp(this,'git-push-config')">Copier</button>
+      <div id="git-push-config"><span class="c-kw">git</span> add nexus_market.html
+<span class="c-kw">git</span> commit -m <span class="c-str">"Update API URL to production Vercel"</span>
+<span class="c-kw">git</span> push
+<span class="c-comment"># → Vercel redéploie automatiquement en ~20 secondes</span></div>
+    </div>
+  </div>
+
+  <!-- ERREURS FREQUENTES -->
+  <div class="card">
+    <div class="card-label">🚨 Erreurs fréquentes lors du déploiement</div>
+    <div class="steps-list">
+
+      <div class="step-row">
+        <div class="sn">❌</div>
+        <div>
+          <h4>"Build failed" — Échec de compilation</h4>
+          <p><strong>Cause :</strong> Vercel ne trouve pas <code>package.json</code> ou il y a une erreur de syntaxe dans votre code.<br>
+          <strong>Solution :</strong> Vérifiez que <code>package.json</code> est à la racine de votre dépôt GitHub (pas dans un sous-dossier). Cliquez sur les logs rouges dans Vercel pour voir l'erreur exacte.</p>
+        </div>
+      </div>
+
+      <div class="step-row">
+        <div class="sn">❌</div>
+        <div>
+          <h4>"Function Invocation Failed" — l'API ne répond pas</h4>
+          <p><strong>Cause :</strong> Les variables d'environnement sont manquantes ou incorrectes (SUPABASE_URL, JWT_SECRET...).<br>
+          <strong>Solution :</strong> Allez dans votre projet Vercel → <strong>Settings → Environment Variables</strong> → vérifiez que toutes les variables obligatoires sont présentes → puis <strong>Deployments → Redeploy</strong>.</p>
+        </div>
+      </div>
+
+      <div class="step-row">
+        <div class="sn">❌</div>
+        <div>
+          <h4>"404 Not Found" sur /api/health</h4>
+          <p><strong>Cause :</strong> Le fichier <code>vercel.json</code> est absent ou mal configuré.<br>
+          <strong>Solution :</strong> Vérifiez que <code>vercel.json</code> est bien visible sur GitHub à la racine de votre dépôt. Si absent, revenez à l'étape 5 pour le créer et le pousser.</p>
+        </div>
+      </div>
+
+      <div class="step-row">
+        <div class="sn">❌</div>
+        <div>
+          <h4>"Cannot find module" dans les logs</h4>
+          <p><strong>Cause :</strong> Un package npm utilisé dans <code>server.js</code> n'est pas listé dans <code>package.json</code>.<br>
+          <strong>Solution :</strong> Ajoutez le package manquant dans <code>package.json</code> → pushez → Vercel redéploie.</p>
+        </div>
+      </div>
+
+      <div class="step-row">
+        <div class="sn">❌</div>
+        <div>
+          <h4>Site visible mais l'API répond "Unauthorized" ou erreur 500</h4>
+          <p><strong>Cause :</strong> JWT_SECRET incorrect ou SUPABASE_SERVICE_KEY mal copié (souvent des espaces en trop).<br>
+          <strong>Solution :</strong> Dans Vercel → Settings → Environment Variables → supprimez et re-collez chaque valeur en faisant attention aux espaces. Redéployez.</p>
+        </div>
+      </div>
+
+      <div class="step-row">
+        <div class="sn">❌</div>
+        <div>
+          <h4>Le déploiement réussit mais le site affiche une page blanche</h4>
+          <p><strong>Cause :</strong> NEXUS_CONFIG dans <code>nexus_market.html</code> pointe encore vers <code>localhost</code>.<br>
+          <strong>Solution :</strong> Mettez à jour <code>apiUrl</code> avec votre URL Vercel (étape 5 ci-dessus) puis pushez.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- COMMENT VOIR LES LOGS -->
+  <div class="card">
+    <div class="card-label">🔍 Comment voir les logs de déploiement sur Vercel</div>
+    <div class="card-body" style="margin-bottom:12px">Si quelque chose ne fonctionne pas, les logs sont vos meilleurs alliés :</div>
+    <div class="steps-list">
+      <div class="step-row"><div class="sn">1</div>
+        <div><h4>Aller dans l'onglet "Deployments"</h4>
+          <p>Dans votre projet Vercel → cliquez l'onglet <strong>"Deployments"</strong> en haut de la page.</p>
+        </div>
+      </div>
+      <div class="step-row"><div class="sn">2</div>
+        <div><h4>Cliquer sur le dernier déploiement</h4>
+          <p>Vous voyez une liste chronologique. Cliquez sur le déploiement rouge ❌ (échoué) pour voir les détails.</p>
+        </div>
+      </div>
+      <div class="step-row"><div class="sn">3</div>
+        <div><h4>Lire les logs de build</h4>
+          <p>La section <strong>"Build Logs"</strong> montre exactement où la compilation a échoué. Les lignes rouges indiquent l'erreur. Copiez le message d'erreur et cherchez-le sur Google si vous ne comprenez pas.</p>
+        </div>
+      </div>
+      <div class="step-row"><div class="sn">4</div>
+        <div><h4>Logs des fonctions (erreurs API)</h4>
+          <p>Pour les erreurs qui surviennent <em>après</em> le déploiement (quand l'API répond mal) → onglet <strong>"Functions"</strong> dans votre projet Vercel → voir les logs en temps réel.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- REDEPLOY -->
+  <div class="card">
+    <div class="card-label">🔄 Comment redéployer manuellement</div>
+    <div class="card-body" style="margin-bottom:12px">Si vous avez modifié les variables d'environnement ou voulez forcer un nouveau déploiement :</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div style="background:var(--v4);border:1px solid var(--border);border-radius:var(--r-sm);padding:14px">
+        <div style="font-size:11px;font-weight:600;margin-bottom:8px">🖥️ Via l'interface Vercel</div>
+        <div style="font-size:12px;color:var(--dim);line-height:1.8">
+          Vercel → votre projet<br>
+          → onglet <strong>Deployments</strong><br>
+          → cliquer <strong>···</strong> (3 points)<br>
+          → <strong>"Redeploy"</strong><br>
+          → confirmer
+        </div>
+      </div>
+      <div style="background:var(--v4);border:1px solid var(--border);border-radius:var(--r-sm);padding:14px">
+        <div style="font-size:11px;font-weight:600;margin-bottom:8px">💻 Via PowerShell (plus rapide)</div>
+        <div style="font-size:12px;color:var(--dim);line-height:1.8">
+          Un simple push suffit :<br>
+          <code style="font-family:var(--fm);font-size:11px;color:var(--green)">git commit --allow-empty -m "redeploy"</code><br>
+          <code style="font-family:var(--fm);font-size:11px;color:var(--green)">git push</code><br>
+          → Vercel redéploie en ~20s
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="goTo(5)">← Retour</button>
+    <button class="btn btn-primary" onclick="goTo(7)">Déployé → Tester le site →</button>
+  </div>
+</section>
+
+<!-- ══ STEP 5 — Tester ════════════════════════════════════ -->
+
+
+<section class="step-panel" id="step-7">
+  <div class="page-eyebrow">Étape 8 / 8 · Vérification</div>
+  <h1 class="page-title">Tester votre site<br>en production</h1>
+  <p class="page-desc">Vérifiez que tout fonctionne depuis l'URL publique Vercel.</p>
+
+  <div class="card">
+    <div class="card-label">🔍 Tests automatiques</div>
+    <div class="card-body" style="margin-bottom:14px">
+      Entrez votre URL Vercel pour lancer les tests :
+    </div>
+    <div class="field">
+      <label>URL Vercel de production</label>
+      <input type="text" id="test-url" placeholder="https://nexus-market-xxxxxx.vercel.app"
+             oninput="S.testUrl = this.value">
+    </div>
+
+    <div id="test-results">
+      <div class="test-item"><span class="test-name">Site accessible (HTTP 200)</span><span class="test-val tv-wait" id="tr-site">— en attente</span></div>
+      <div class="test-item"><span class="test-name">API Health check (/api/health)</span><span class="test-val tv-wait" id="tr-api">— en attente</span></div>
+      <div class="test-item"><span class="test-name">Supabase connecté</span><span class="test-val tv-wait" id="tr-supa">— en attente</span></div>
+      <div class="test-item"><span class="test-name">Stripe configuré</span><span class="test-val tv-wait" id="tr-stripe">— en attente</span></div>
+      <div class="test-item"><span class="test-name">Email SMTP actif</span><span class="test-val tv-wait" id="tr-email">— en attente</span></div>
+    </div>
+
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn btn-primary" onclick="runProdTests()" id="btn-run-tests">🔍 Lancer les tests</button>
+    </div>
+    <div id="test-msg" style="margin-top:12px;display:none"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">🔧 Que faire si les tests échouent</div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn">❌</div>
+        <div><h4>Site inaccessible (test rouge)</h4>
+          <p>→ Vérifiez que l'URL est bien copiée avec <code>https://</code><br>
+          → Allez dans votre projet Vercel → onglet <strong>Deployments</strong> → vérifiez que le statut est vert ✅<br>
+          → Si le déploiement est en erreur : lisez les logs de build pour identifier le problème</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">❌</div>
+        <div><h4>API inaccessible (/api/health en erreur)</h4>
+          <p>→ Vérifiez que <code>vercel.json</code> est présent dans votre dépôt GitHub<br>
+          → Vérifiez que les variables d'environnement sont configurées dans Vercel → Settings → Environment Variables<br>
+          → Re-déployez : Vercel → Deployments → ··· → Redeploy</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">⚠️</div>
+        <div><h4>Supabase non connecté (test orange)</h4>
+          <p>→ La <code>SUPABASE_SERVICE_KEY</code> est incorrecte ou expirée<br>
+          → Retournez dans Supabase Dashboard → Settings → API → recopiez la <strong>service role key</strong><br>
+          → Mettez à jour dans Vercel → Settings → Environment Variables → puis Redeploy</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">⚠️</div>
+        <div><h4>Stripe absent (avertissement orange)</h4>
+          <p>→ C'est normal si vous n'avez pas encore configuré les paiements — le site fonctionne sans Stripe<br>
+          → Pour activer : ajoutez <code>STRIPE_SECRET_KEY</code> dans Vercel → Settings → Redeploy</p>
+        </div>
+      </div>
+    </div>
+    <div class="alert a-info" style="margin-top:12px">
+      <span class="a-icon">💡</span>
+      <div><strong>Astuce debug :</strong> Ouvrez <code style="font-family:var(--fm);font-size:11px">https://votre-url.vercel.app/api/health</code> directement dans votre navigateur. Si vous voyez <code style="font-family:var(--fm);font-size:11px;color:var(--green)">{status: "OK"}</code>, l'API fonctionne parfaitement.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">📋 Checklist manuelle</div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn">✓</div>
+        <div><h4>Ouvrir le site dans un navigateur</h4>
+          <p>Votre URL <code style="font-family:var(--fm);font-size:11px" id="check-url-display">https://nexus-market.vercel.app</code> → vérifier que la page s'affiche</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">✓</div>
+        <div><h4>Connexion admin</h4>
+          <p>Ouvrir <code style="font-family:var(--fm);font-size:11px" id="admin-url-display">https://nexus-market.vercel.app/nexus_admin.html</code> → se connecter avec votre compte admin</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">✓</div>
+        <div><h4>HTTPS automatique</h4>
+          <p>Vérifier le cadenas 🔒 dans la barre d'adresse → Vercel configure le SSL automatiquement</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">✓</div>
+        <div><h4>Partager l'URL</h4>
+          <p>Envoyez l'URL à un ami ou testez sur mobile → votre site est accessible partout dans le monde</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">🌐 Domaine personnalisé (optionnel)</div>
+    <div class="card-body" style="margin-bottom:10px">
+      Pour avoir <code style="font-family:var(--fm);font-size:11px;color:var(--green)">nexus.sn</code> au lieu de <code style="font-family:var(--fm);font-size:11px">nexus-market.vercel.app</code> :
+    </div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn">1</div>
+        <div><h4>Vercel → votre projet → Settings → Domains</h4>
+          <p>Entrer votre domaine → Vercel vous donne les enregistrements DNS à configurer</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">2</div>
+        <div><h4>Configurer les DNS chez votre registrar</h4>
+          <p>Ajouter un enregistrement CNAME : <code style="font-size:11px;font-family:var(--fm)">@ → cname.vercel-dns.com</code></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="goTo(6)">← Retour</button>
+    <button class="btn btn-green" onclick="goTo(8)">🎉 Voir le résumé final</button>
+  </div>
+</section>
+
+<!-- ══ STEP 6 — Terminé ═══════════════════════════════════ -->
+
+
+<section class="step-panel" id="step-8">
+  <div class="success-hero">
+    <div class="success-icon">🚀</div>
+    <h2>Votre site est en ligne !</h2>
+    <p>NEXUS Market tourne maintenant sur Vercel avec HTTPS, CDN mondial et déploiements automatiques.</p>
+    <div class="url-display" id="final-url-box" onclick="openSite()" title="Cliquer pour ouvrir">
+      <span id="final-url-text">https://nexus-market.vercel.app</span>
+      <span style="color:var(--dim);font-size:12px">↗</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">📋 Ce qui a été mis en place</div>
+    <div class="tag-grid">
+      <span class="chip chip-ok">✓ Site accessible en ligne</span>
+      <span class="chip chip-ok">✓ HTTPS automatique</span>
+      <span class="chip chip-ok">✓ CDN mondial Vercel</span>
+      <span class="chip chip-ok">✓ API backend déployée</span>
+      <span class="chip chip-ok">✓ Variables d'env. sécurisées</span>
+      <span class="chip chip-ok">✓ Déploiements auto via GitHub</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">🔄 Workflow mise à jour</div>
+    <div class="card-body" style="margin-bottom:12px">Pour mettre à jour votre site en production :</div>
+    <div class="code">
+      <button class="copy-btn" onclick="cp(this,'workflow')">Copier</button>
+      <div id="workflow"><span class="c-comment"># Modifier vos fichiers localement</span>
+<span class="c-comment"># Puis dans PowerShell :</span>
+<span class="c-kw">git</span> add .
+<span class="c-kw">git</span> commit -m <span class="c-str">"Description de votre modification"</span>
+<span class="c-kw">git</span> push
+<span class="c-comment"># → Vercel redéploie automatiquement en ~20s</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">🔧 Prochaines étapes suggérées</div>
+    <div class="steps-list">
+      <div class="step-row">
+        <div class="sn">→</div>
+        <div><h4>Configurer un domaine personnalisé</h4>
+          <p>Vercel → Settings → Domains → ajouter <code style="font-size:11px;font-family:var(--fm)">nexus.sn</code></p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">→</div>
+        <div><h4>Activer Stripe en production</h4>
+          <p>Remplacer <code style="font-size:11px;font-family:var(--fm)">sk_test_</code> par <code style="font-size:11px;font-family:var(--fm)">sk_live_</code> dans les variables Vercel</p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">→</div>
+        <div><h4>Configurer les webhooks Stripe en prod</h4>
+          <p>Stripe dashboard → Webhooks → ajouter <code style="font-size:11px;font-family:var(--fm)" id="webhook-url-display">https://nexus-market.vercel.app/webhooks/stripe</code></p>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="sn">→</div>
+        <div><h4>Supprimer nexus_reset.html du dépôt</h4>
+          <p>Ce fichier réinitialise toutes les données — il ne doit pas être accessible en ligne.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-ghost" onclick="goTo(7)">← Retour</button>
+    <button class="btn btn-primary" onclick="openSite()">Ouvrir mon site →</button>
+  </div>
+</section>
+
+</main>
+</div><!-- .shell -->
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+const S = {
+  current: 0, done: new Set(),
+  repoUrl: '', deployUrl: '', testUrl: '', githubPat: ''
+};
+
+// ═══════════════════════════════════════════════════════
+//  NAVIGATION
+// ═══════════════════════════════════════════════════════
+function goTo(n) {
+  S.done.add(S.current);
+  S.current = n;
+
+  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+  document.getElementById('step-' + n).classList.add('active');
+  document.getElementById('nav-' + n).classList.add('active');
+
+  S.done.forEach(i => {
+    const el = document.getElementById('nav-' + i);
+    if (el) el.classList.add('done');
+  });
+
+  const pct = Math.round((S.done.size / 8) * 100);
+  document.getElementById('prog-fill').style.width = pct + '%';
+  document.getElementById('prog-pct').textContent  = pct + '%';
+  document.getElementById('prog-label').textContent = `Étape ${n + 1} / 9`;
+
+  if (n === 5) refreshEnvList();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ═══════════════════════════════════════════════════════
+//  STEP 1 — REPO VALIDATION
+// ═══════════════════════════════════════════════════════
+function validateRepo(el) {
+  const ok = /^https:\/\/github\.com\/[^/]+\/[^/]+/.test(el.value.trim());
+  el.className = el.value.length > 10 ? (ok ? 'ok' : 'err') : '';
+  document.getElementById('repo-hint').textContent = ok
+    ? '✅ URL GitHub valide'
+    : el.value.length > 10 ? '❌ Format : https://github.com/username/repo' : 'Ex : https://github.com/pheni/nexus-market';
+  S.repoUrl = ok ? el.value.trim() : '';
+}
+
+// ═══════════════════════════════════════════════════════
+//  STEP 2 — API URL preview
+// ═══════════════════════════════════════════════════════
+function updateApiPreview(val) {
+  const url = val || 'https://nexus-market.vercel.app';
+  const el1 = document.getElementById('api-url-preview');
+  const el2 = document.getElementById('config-url-val');
+  const el3 = document.getElementById('final-url-text');
+  const el4 = document.getElementById('check-url-display');
+  const el5 = document.getElementById('admin-url-display');
+  const el6 = document.getElementById('webhook-url-display');
+  if (el1) el1.textContent = `"${url}"`;
+  if (el2) el2.textContent = `"${url}"`;
+  if (el3) el3.textContent = url;
+  if (el4) el4.textContent = url;
+  if (el5) el5.textContent = url + '/nexus_admin.html';
+  if (el6) el6.textContent = url + '/webhooks/stripe';
+  S.deployUrl = url;
+}
+
+// ═══════════════════════════════════════════════════════
+//  STEP 3 — ENV LIST
+// ═══════════════════════════════════════════════════════
+function refreshEnvList() {
+  const get = id => document.getElementById(id)?.value?.trim() || '';
+  const vars = [
+    { k:'SUPABASE_URL',         v: get('ev-supa-url') || 'https://xxxx.supabase.co',  req:true  },
+    { k:'SUPABASE_SERVICE_KEY', v: get('ev-supa-key') || 'eyJ...',                    req:true  },
+    { k:'JWT_SECRET',           v: get('ev-jwt')      || 'votre_jwt_secret_64chars',   req:true  },
+    { k:'STRIPE_SECRET_KEY',    v: get('ev-stripe')   || 'sk_test_REMPLACER',          req:false },
+    { k:'STRIPE_WEBHOOK_SECRET',v: 'whsec_REMPLACER',                                  req:false },
+    { k:'SMTP_HOST',            v: 'smtp.gmail.com',                                   req:false },
+    { k:'SMTP_PORT',            v: '587',                                               req:false },
+    { k:'SMTP_USER',            v: get('ev-smtp-user') || 'votre@gmail.com',           req:false },
+    { k:'SMTP_PASS',            v: get('ev-smtp-pass') || 'xxxx_xxxx_xxxx_xxxx',       req:false },
+    { k:'SMTP_FROM',            v: 'NEXUS Market <no-reply@nexus.sn>',                 req:false },
+    { k:'NODE_ENV',             v: 'production',                                        req:true  },
+    { k:'FRONTEND_URL',         v: S.deployUrl || 'https://nexus-market.vercel.app',   req:true  },
+  ];
+
+  const cont = document.getElementById('env-list');
+  cont.innerHTML = vars.map(({k,v,req}) => `
+    <div class="env-row">
+      <div>
+        <div class="env-key">${k}</div>
+        <div>${req ? '<span class="env-req">Obligatoire</span>' : '<span class="env-opt">Optionnel</span>'}</div>
+      </div>
+      <div class="env-val" title="${v}">${v}</div>
+    </div>
+  `).join('');
+}
+
+// ═══════════════════════════════════════════════════════
+//  STEP 5 — PROD TESTS
+// ═══════════════════════════════════════════════════════
+async function runProdTests() {
+  const btn  = document.getElementById('btn-run-tests');
+  const msgEl = document.getElementById('test-msg');
+  const url  = (document.getElementById('test-url')?.value || S.deployUrl || '').trim().replace(/\/$/, '');
+
+  if (!url || !url.startsWith('https://')) {
+    msgEl.style.display = 'block';
+    msgEl.innerHTML = '<div class="alert a-warn"><span class="a-icon">⚠️</span><div>Entrez d\'abord votre URL Vercel (https://...)</div></div>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spin"></div> Tests en cours...';
+  msgEl.style.display = 'none';
+
+  const set = (id, state, msg) => {
+    const el   = document.getElementById(id);
+    const icon = { ok:'✅', err:'❌', warn:'⚠️', wait:'⏳' }[state] || '⏳';
+    el.textContent = icon + ' ' + msg;
+    el.className   = 'test-val ' + (state==='ok'?'tv-ok':state==='err'?'tv-err':state==='warn'?'tv-warn':'tv-wait');
+  };
+
+  ['tr-site','tr-api','tr-supa','tr-stripe','tr-email'].forEach(id => set(id,'wait','...'));
+
+  // Test 1 : Site accessible
+  let siteOk = false;
+  try {
+    const r = await fetch(url, { mode:'no-cors' });
+    siteOk = true;
+    set('tr-site', 'ok', 'Site accessible ✓');
+  } catch(e) {
+    set('tr-site', 'err', 'Inaccessible — vérifiez votre URL Vercel');
+  }
+
+  // Test 2 : API /health
+  let apiData = null, apiOk = false;
+  try {
+    const r = await fetch(url + '/api/health', { signal: AbortSignal.timeout(10000) });
+    if (r.ok) {
+      apiData = await r.json();
+      apiOk   = apiData?.status === 'OK';
+      set('tr-api', apiOk ? 'ok' : 'err', apiOk ? 'API opérationnelle ✓' : `Statut: ${apiData?.status}`);
+    } else {
+      set('tr-api', 'err', `HTTP ${r.status} — API non joignable`);
+    }
+  } catch(e) {
+    set('tr-api', 'err', 'API inaccessible — vérifiez les variables d\'env. Vercel');
+  }
+
+  // Tests 3-5 depuis la réponse /health
+  if (apiData?.services) {
+    const s = apiData.services;
+    set('tr-supa',   s.database === 'ok' ? 'ok' : 'err', s.database === 'ok' ? 'Supabase connecté ✓' : 'Supabase non connecté — vérifiez SUPABASE_SERVICE_KEY');
+    set('tr-stripe', s.stripe  ? 'ok' : 'warn', s.stripe  ? 'Stripe configuré ✓' : 'Stripe absent (paiements en simulation)');
+    set('tr-email',  s.email   ? 'ok' : 'warn', s.email   ? 'SMTP actif ✓' : 'Email non configuré (envois désactivés)');
+  } else if (apiOk) {
+    set('tr-supa',   'warn', 'Non vérifiable (API répond mais pas de détails services)');
+    set('tr-stripe', 'warn', 'Non vérifiable');
+    set('tr-email',  'warn', 'Non vérifiable');
+  } else {
+    ['tr-supa','tr-stripe','tr-email'].forEach(id => set(id, 'warn', 'API requise pour ce test'));
+  }
+
+  const allOk = siteOk && apiOk;
+  msgEl.style.display = 'block';
+  msgEl.innerHTML = allOk
+    ? `<div class="alert a-ok"><span class="a-icon">🎉</span><div><strong>Tout fonctionne !</strong> Votre site est en ligne et l'API répond correctement.</div></div>`
+    : `<div class="alert a-warn"><span class="a-icon">🔧</span><div>Certains tests ont échoué. Vérifiez les variables d'environnement dans Vercel → Settings → Environment Variables, puis re-déployez.</div></div>`;
+
+  btn.disabled = false;
+  btn.textContent = '↻ Relancer les tests';
+}
+
+// ═══════════════════════════════════════════════════════
+//  UTILITIES
+// ═══════════════════════════════════════════════════════
+function cp(btn, id) {
+  const el = document.getElementById(id);
+  const text = el ? el.innerText.replace(/^\s*\/\/.+\n/, '').trim() : '';
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ Copié';
+    btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = 'Copier'; btn.classList.remove('ok'); }, 2000);
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = '✓ Copié'; btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = 'Copier'; btn.classList.remove('ok'); }, 2000);
+  });
+}
+
+function openSite() {
+  con
