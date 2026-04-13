@@ -6,13 +6,17 @@ on:
   workflow_dispatch: # Permet de le lancer manuellement
 
 env:
-  SUPABASE_URL: https://pqcqbstbdujzaclsiosv.supabase.co
-  FRONTEND_URL: https://nexus-market-md360.vercel.app
+  SUPABASE_URL:   https://pqcqbstbdujzaclsiosv.supabase.co
+  FRONTEND_URL:   https://nexus-market-md360.vercel.app
+  # ⚠️  Remplace par l'URL exacte de ton service Render (visible dans Render Dashboard → Settings)
+  # Format : https://<nom-du-service>.onrender.com
+  BACKEND_URL:    https://nexus-market-md360.onrender.com
+  RENDER_DEPLOY_HOOK: https://api.render.com/deploy/srv-d7a3q9buibrs73dfte40?key=P9MJhknELek
 
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       # ── 1. Ping Supabase ──────────────────────────────────────────
@@ -30,23 +34,38 @@ jobs:
           fi
           echo "✅ Supabase réveillé (status $STATUS)"
 
-      # ── 2. Ping Render Backend ────────────────────────────────────
-      # ⚠️  Remplace BACKEND_URL dans GitHub Secrets par l'URL de ton serveur Render
-      #     ex: https://nexus-backend-xxxx.onrender.com
+      # ── 2. Ping Render Backend (health check) ─────────────────────
       - name: Ping Render Backend
+        id: render_ping
         run: |
-          echo "🔔 Ping Render backend..."
+          echo "🔔 Ping Render backend (health check)..."
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 60 \
-            -X GET "${{ secrets.BACKEND_URL }}/api/health")
+            -X GET "${{ env.BACKEND_URL }}/api/health")
           echo "Render HTTP status: $STATUS"
-          if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 400 ]; then
-            echo "⚠️  Render ne répond pas (status $STATUS) — cold start possible, non bloquant"
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ]; then
+            echo "✅ Render opérationnel (status $STATUS)"
           else
-            echo "✅ Render réveillé (status $STATUS)"
+            echo "⚠️  Render endormi ou erreur (status $STATUS) — déclenchement du deploy hook..."
           fi
 
-      # ── 3. Ping Vercel Frontend ───────────────────────────────────
+      # ── 3. Déclencher le deploy hook si le backend ne répond pas ──
+      - name: Wake Up Render via Deploy Hook
+        if: steps.render_ping.outputs.status != '200'
+        run: |
+          echo "🚀 Déclenchement du redéploiement Render..."
+          RESPONSE=$(curl -s -w "\nHTTP:%{http_code}" \
+            -X GET "${{ env.RENDER_DEPLOY_HOOK }}")
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP:" | cut -d: -f2)
+          echo "Deploy hook status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
+            echo "✅ Redéploiement déclenché — le serveur sera disponible dans ~1 minute"
+          else
+            echo "❌ Échec du déclenchement (status $HTTP_STATUS)"
+          fi
+
+      # ── 4. Ping Vercel Frontend ───────────────────────────────────
       - name: Ping Vercel Frontend
         run: |
           echo "🔔 Ping Vercel..."
@@ -54,18 +73,19 @@ jobs:
             --max-time 15 \
             -X GET "${{ env.FRONTEND_URL }}")
           echo "Vercel HTTP status: $STATUS"
-          if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 400 ]; then
-            echo "⚠️  Vercel ne répond pas (status $STATUS)"
-          else
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ]; then
             echo "✅ Vercel opérationnel (status $STATUS)"
+          else
+            echo "⚠️  Vercel ne répond pas (status $STATUS)"
           fi
 
-      # ── 4. Résumé ─────────────────────────────────────────────────
+      # ── 5. Résumé ─────────────────────────────────────────────────
       - name: Résumé
         run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Keep-alive terminé ✓"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  NEXUS Market — Keep-alive terminé ✓"
           echo "  $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "  Supabase : pqcqbstbdujzaclsiosv"
+          echo "  Supabase : pqcqbstbdujzaclsiosv.supabase.co"
+          echo "  Backend  : nexus-market-md360.onrender.com"
           echo "  Frontend : nexus-market-md360.vercel.app"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
