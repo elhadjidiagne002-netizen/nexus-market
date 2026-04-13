@@ -413,6 +413,13 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       return res.json({ token, user: safeUser, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
     }
 
+    // Chemin 1b : vendeur en attente de validation
+    const { data: pendingVendor } = await supabase.from('pending_vendors').select('id, status').eq('email', email.trim().toLowerCase()).single();
+    if (pendingVendor) {
+      if (pendingVendor.status === 'pending')  return res.status(403).json({ error: 'Votre demande vendeur est en cours de validation (délai : 48h). Vous recevrez un email dès approbation.' });
+      if (pendingVendor.status === 'rejected') return res.status(403).json({ error: "Votre demande vendeur a été refusée. Contactez support@nexus.sn pour plus d'informations." });
+    }
+
     // Chemin 2 : [FIX] Fallback Supabase Auth (users créés via Supabase, sans password_hash)
     const supabaseAnon = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
     const { data: sbData, error: sbErr } = await supabaseAnon.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
@@ -944,6 +951,21 @@ app.patch('/api/messages/read', verifyToken, async (req, res) => {
 });
 
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+// POST /api/notifications — Créer une notification (appelé par addNotification frontend)
+app.post('/api/notifications', verifyToken, async (req, res) => {
+  try {
+    const { userId, type, title, message, link } = req.body;
+    const targetId = userId === 'admin'
+      ? (await supabase.from('profiles').select('id').eq('role', 'admin').limit(1).single()).data?.id
+      : userId;
+    if (!targetId) return res.status(404).json({ error: 'Destinataire introuvable' });
+    await pushNotification(targetId, { type: type || 'system', title, message, link });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/notifications', verifyToken, async (req, res) => {
   const { data } = await supabase.from('notifications').select('*').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(30);
   res.json(data || []);
