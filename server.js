@@ -98,7 +98,9 @@ const Logger = {
 };
 
 const requestLogger = (req, res, next) => {
-  if (req.path === '/api/health') return next();
+  // [PERF] Exclure les routes à fort volume du logging Supabase (évite saturer server_logs)
+  const SKIP_LOG = ['/api/health', '/api/notifications', '/api/products'];
+  if (SKIP_LOG.some(p => req.path.startsWith(p)) && req.method === 'GET') return next();
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
@@ -262,30 +264,17 @@ app.set('trust proxy', 1);
 
 app.use(helmet({ contentSecurityPolicy: false }));
 
-// --- CONFIGURATION CORS ROBUSTE ---
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://127.0.0.1:5500',
-  'https://nexus-market-md360.vercel.app',
-];
-
+// CORS — Assoupli pour accepter dynamiquement toutes les requêtes (idéal pour les previews Vercel)
+// Évite les blocages liés aux URLs générées aléatoirement par Vercel (callback(new Error(...))
+// faisait planter le middleware → erreur 500 sans headers CORS → faux blocage côté navigateur).
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Autorise si : pas d'origine (mobile/Postman), dans la liste, domaine vercel.app, ou hors production
-    if (!origin ||
-        allowedOrigins.indexOf(origin) !== -1 ||
-        origin.endsWith('.vercel.app') ||
-        process.env.NODE_ENV !== 'production') {
-      callback(null, true);
-    } else {
-      console.error('[CORS] Origine bloquée:', origin);
-      callback(new Error('Non autorisé par CORS'));
-    }
+  origin: (origin, callback) => {
+    // On autorise toutes les origines.
+    callback(null, true);
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'stripe-signature'],
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Requested-With','stripe-signature'],
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions)); // preflight AVANT tout rate-limit
@@ -299,7 +288,7 @@ app.use(requestLogger); // Log HTTP → Supabase
 // [FIX 429] Rate limits augmentés + /api/health exempté (ping wake-up)
 // CORS déjà ouvert à toutes origines → les previews Vercel passent sans problème
 const apiLimiter     = rateLimit({ windowMs: 15*60*1000, max: 500, standardHeaders: true, legacyHeaders: false, message: { error: 'Trop de requêtes.' } });
-const authLimiter    = rateLimit({ windowMs: 15*60*1000, max: 50,  standardHeaders: true, legacyHeaders: false, message: { error: 'Trop de tentatives, réessayez dans 15 minutes.' } });
+const authLimiter    = rateLimit({ windowMs: 15*60*1000, max: 100, standardHeaders: true, legacyHeaders: false, message: { error: 'Trop de tentatives.' } });
 const paymentLimiter = rateLimit({ windowMs: 60*60*1000, max: 50,  standardHeaders: true, legacyHeaders: false, message: { error: 'Limite paiements atteinte.' } });
 
 app.use('/api/', (req, res, next) => {
@@ -308,33 +297,45 @@ app.use('/api/', (req, res, next) => {
 });
 
 // ─── AUTH MIDDLEWARE ──────────────────────────────────────────────────────────
-// [FIX 3] verifyToken accepte 2 types de tokens :
-//   1. JWT custom signé par le backend (JWT_SECRET) — utilisateurs connectés via /api/auth/login
-//   2. JWT Supabase — utilisateurs avec une session Supabase active (fallback apiFetch)
+// [PERF] Cache profil Supabase en mémoire — évite 2-3 requêtes DB sur chaque appel API.
+// TTL 5 min : acceptable car les changements de rôle sont rares.
+const _profileCache = new Map(); // token → { user, expiresAt }
+const PROFILE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 const verifyToken = async (req, res, next) => {
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token manquant' });
   const token = auth.slice(7);
 
-  // 1. Essayer le JWT custom (rapide, synchrone)
+  // 1. JWT custom (synchrone, < 1ms)
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     return next();
   } catch (_) { /* pas un JWT custom → essayer Supabase */ }
 
-  // 2. Essayer le JWT Supabase
+  // 2. Cache mémoire — évite les requêtes Supabase répétées
+  const cached = _profileCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) {
+    req.user = cached.user;
+    return next();
+  }
+
+  // 3. JWT Supabase — au plus 2 requêtes, résultat mis en cache
   try {
     const { data: { user }, error } = await supabase.auth.getUser(token);
     if (!error && user) {
-      const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-      if (!profile) {
-        // [FIX ADMIN] Chercher par email — profiles.id backend ≠ Supabase Auth uid
-        const { data: byEmail } = await supabase.from('profiles').select('*')
-          .eq('email', (user.email || '').trim().toLowerCase()).single();
-        req.user = byEmail || { id: user.id, email: user.email, role: user.user_metadata?.role || 'buyer', name: user.user_metadata?.name || user.email };
+      let profile = null;
+      const { data: byId } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+      if (byId) {
+        profile = byId;
       } else {
-        req.user = profile;
+        // Fallback par email (profils créés avant synchronisation Auth↔DB)
+        const { data: byEmail } = await supabase.from('profiles').select('*')
+          .eq('email', (user.email || '').trim().toLowerCase()).maybeSingle();
+        profile = byEmail || { id: user.id, email: user.email, role: user.user_metadata?.role || 'buyer', name: user.user_metadata?.name || user.email };
       }
+      req.user = profile;
+      _profileCache.set(token, { user: profile, expiresAt: Date.now() + PROFILE_CACHE_TTL });
       return next();
     }
   } catch (_) { /* token invalide */ }
@@ -368,7 +369,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const { data: existing } = await supabase.from('profiles').select('id').eq('email', email).single();
     if (existing) return res.status(409).json({ error: 'Cet email est déjà utilisé' });
 
-    const hashedPw = await bcrypt.hash(password, 12);
+    const hashedPw = await bcrypt.hash(password, 10);
     const avatar   = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 
     if (role === 'vendor') {
@@ -492,7 +493,7 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
     const { data: reset } = await supabase.from('password_resets').select('*').eq('email', email).eq('code', code).single();
     if (!reset || new Date(reset.expires_at) < new Date()) return res.status(400).json({ error: 'Code invalide ou expiré' });
 
-    const hash = await bcrypt.hash(newPassword, 12);
+    const hash = await bcrypt.hash(newPassword, 10);
     await supabase.from('profiles').update({ password_hash: hash }).eq('email', email);
     // [FIX 2] Nom de table corrigé
     await supabase.from('password_resets').delete().eq('email', email);
@@ -560,7 +561,7 @@ app.patch('/api/auth/change-password', verifyToken, async (req, res) => {
     const { data: user } = await supabase.from('profiles').select('password_hash').eq('id', req.user.id).single();
     const valid = await bcrypt.compare(currentPassword, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
-    const hash = await bcrypt.hash(newPassword, 12);
+    const hash = await bcrypt.hash(newPassword, 10);
     await supabase.from('profiles').update({ password_hash: hash }).eq('id', req.user.id);
     res.json({ message: 'Mot de passe modifié avec succès' });
   } catch (e) {
@@ -570,6 +571,8 @@ app.patch('/api/auth/change-password', verifyToken, async (req, res) => {
 
 // ─── PRODUCTS ────────────────────────────────────────────────────────────────
 app.get('/api/products', async (req, res) => {
+  // [PERF] Cache CDN 60s + cache client 30s — le catalogue ne change pas à chaque seconde
+  res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=120');
   try {
     const { category, search, vendor, min_price, max_price, sort, page = 1, limit = 20, include_pending } = req.query;
     let query = supabase.from('products').select('*', { count: 'exact' }).eq('active', true);
