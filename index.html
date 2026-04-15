@@ -1101,7 +1101,7 @@ const IS_EMAILJS_CONFIGURED = isEmailjsConfigured(); // valeur initiale (compati
 if (NEXUS_CONFIG.apiUrl) {
   (function wakeUpBackend() {
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 30000); // FIX: 30s max pour laisser Render se réveiller
+    setTimeout(() => controller.abort(), 8000);  // 8s — suffisant post-keepalive cron
     fetch(NEXUS_CONFIG.apiUrl + '/api/health', { signal: controller.signal, method: 'GET' })
       .then(() => console.log('[NEXUS] Backend réveillé ✓'))
       .catch(() => console.log('[NEXUS] Backend indisponible — mode Supabase/localStorage'));
@@ -1439,14 +1439,14 @@ const DataService = {
       // Si le backend ne répond pas (CORS "Failed to fetch" = serveur endormi),
       // on tombe en fallback Supabase auth au lieu de lever une erreur réseau brute.
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000); // FIX: 20s pour cold start Render
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       let res = null;
       try {
         res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/login`, {
           method: "POST",
           mode: "cors",
           signal: controller.signal,
-          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password })
         });
       } catch (err) {
@@ -1575,7 +1575,7 @@ const DataService = {
     // Le ping wakeUpBackend utilise déjà 8s ; on aligne apiFetch sur 9s pour laisser
     // le temps au backend de répondre après le réveil.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000); // FIX: 20s pour cold start Render
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const res = await fetch(`${NEXUS_CONFIG.apiUrl}${path}`, {
         ...options,
@@ -3986,33 +3986,32 @@ const ReviewModal = ({ product, currentUser: currentUser2, onClose, addToast, on
     }
     if (rating < 1 || rating > 5) return;
     setLoading(true);
-    setTimeout(() => {
-      const reviews = storage.getArray("reviews");
-      const newReview = {
-        id: "rev_" + Date.now(),
-        productId: product.id,
-        userId: currentUser2.id,
-        userName: currentUser2.name,
-        rating,
-        comment,
-        date: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      reviews.push(newReview);
-      storage.set("reviews", reviews);
-      const products = storage.getArray("products");
-      const prodIdx = products.findIndex((p) => p.id === product.id);
-      if (prodIdx !== -1) {
-        const prodReviews = reviews.filter((r) => r.productId === product.id);
-        const avgRating = prodReviews.reduce((acc, r) => acc + r.rating, 0) / prodReviews.length;
-        products[prodIdx].rating = Math.round(avgRating * 10) / 10;
-        products[prodIdx].reviewsCount = prodReviews.length;
-        storage.set("products", products);
-      }
-      setLoading(false);
-      addToast("Avis publi\xE9 ! Merci.", "success");
-      onReviewSubmitted();
-      onClose();
-    }, 800);
+    // [PERF] setTimeout 800ms supprimé — délai artificiel inutile
+    const reviews = storage.getArray("reviews");
+    const newReview = {
+      id: "rev_" + Date.now(),
+      productId: product.id,
+      userId: currentUser2.id,
+      userName: currentUser2.name,
+      rating,
+      comment,
+      date: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    reviews.push(newReview);
+    storage.set("reviews", reviews);
+    const products = storage.getArray("products");
+    const prodIdx = products.findIndex((p) => p.id === product.id);
+    if (prodIdx !== -1) {
+      const prodReviews = reviews.filter((r) => r.productId === product.id);
+      const avgRating = prodReviews.reduce((acc, r) => acc + r.rating, 0) / prodReviews.length;
+      products[prodIdx].rating = Math.round(avgRating * 10) / 10;
+      products[prodIdx].reviewsCount = prodReviews.length;
+      storage.set("products", products);
+    }
+    setLoading(false);
+    addToast("Avis publi\xE9 ! Merci.", "success");
+    onReviewSubmitted();
+    onClose();
   };
   return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, "Donnez votre avis"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("p", null, /* @__PURE__ */ React.createElement("strong", null, product.name)), /* @__PURE__ */ React.createElement("div", { className: "star-rating mb-2" }, [1, 2, 3, 4, 5].map((star) => /* @__PURE__ */ React.createElement("button", { key: star, className: `star-btn ${star <= rating ? "active" : ""}`, onClick: () => setRating(star), "aria-label": `${star} \xE9toile${star > 1 ? "s" : ""}` }, "\u2605"))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Votre commentaire"), /* @__PURE__ */ React.createElement("textarea", { className: "form-textarea", rows: "4", value: comment, onChange: (e) => setComment(e.target.value), placeholder: "Partagez votre exp\xE9rience..." })), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${loading ? "btn-loading" : ""}`, onClick: submitReview, disabled: loading }, loading ? "Publication..." : "Publier l'avis")));
 };
@@ -4038,11 +4037,12 @@ const LocalPaymentModal = ({ amount, onSuccess, onCancel, addToast }) => {
       return;
     }
     setLoading(true);
+    // [PERF] 1800ms → 400ms — délai de simulation réduit
     setTimeout(() => {
       setLoading(false);
       setStep(2);
       addToast(`\u{1F4F1} Code OTP envoy\xE9 au ${phone} via ${PROVIDERS[method].label} (d\xE9mo : ${generatedOTP})`, "info", 1e4);
-    }, 1800);
+    }, 400);
   };
   const handleConfirm = () => {
     if (code !== generatedOTP) {
@@ -4050,11 +4050,12 @@ const LocalPaymentModal = ({ amount, onSuccess, onCancel, addToast }) => {
       return;
     }
     setLoading(true);
+    // [PERF] 2000ms → 400ms
     setTimeout(() => {
       setLoading(false);
       addToast(`\u2705 Paiement ${PROVIDERS[method].label} confirm\xE9 !`, "success");
       onSuccess();
-    }, 2e3);
+    }, 400);
   };
   return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onCancel }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, "\u{1F4B3} Paiement Mobile Money"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onCancel }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { className: "mb-2", style: { fontSize: "1.1rem" } }, "Montant : ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)", fontSize: "1.3rem" } }, formatPrice(amount))), /* @__PURE__ */ React.createElement("div", { className: "payment-methods", style: { marginBottom: "1.5rem" } }, Object.entries(PROVIDERS).map(([key, p]) => /* @__PURE__ */ React.createElement(
     "div",
@@ -4233,7 +4234,8 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   };
   const processPayment = (stripeResult = null) => {
     setLoading(true);
-    setTimeout(async () => {
+    // [PERF] setTimeout wrapper supprimé — exécution immédiate
+    (async () => {
       const ordersByVendor = {};
       cart.forEach((item) => {
         if (!ordersByVendor[item.vendor]) {
@@ -4307,7 +4309,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       }
       setLoading(false);
       setStep(3);
-    }, 2e3);
+    })();
   };
   if (step === 3) {
     return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay" }, /* @__PURE__ */ React.createElement("div", { className: "modal", style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "4rem", marginBottom: "1rem" } }, "\u{1F389}"), /* @__PURE__ */ React.createElement("h2", { className: "modal-title", style: { justifyContent: "center", marginBottom: "1rem" } }, "Commande confirm\xE9e !"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.5rem" } }, paymentMethod === "cod" ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Votre commande a \xE9t\xE9 confirm\xE9e. Vous r\xE9glerez ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)), " en esp\xE8ces \xE0 la livraison.", /* @__PURE__ */ React.createElement("br", null), "Un email de confirmation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, customerInfo.email), ".") : /* @__PURE__ */ React.createElement(React.Fragment, null, "Votre paiement de ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)), " a \xE9t\xE9 trait\xE9 avec succ\xE8s.", /* @__PURE__ */ React.createElement("br", null), "Un email de confirmation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, customerInfo.email), ".")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "12px", padding: "1rem", marginBottom: "1.5rem", fontSize: "0.9rem", textAlign: "left" } }, cart.map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("span", null, item.name, " \xD7", item.quantity), /* @__PURE__ */ React.createElement("strong", null, formatPrice(item.price * item.quantity)))), /* @__PURE__ */ React.createElement("div", { className: "flex-between", style: { borderTop: "1px solid var(--border)", marginTop: "0.5rem", paddingTop: "0.5rem", color: "var(--primary)", fontWeight: 700 } }, /* @__PURE__ */ React.createElement("span", null, "Total pay\xE9"), /* @__PURE__ */ React.createElement("span", null, formatPrice(grandTotalEur)))), /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(0,133,62,0.08)", border: "2px solid var(--primary)", borderRadius: "12px", padding: "1rem", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "0.3rem" } }, "Num\xE9ro de suivi"), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "monospace", fontSize: "1.4rem", fontWeight: 700, color: "var(--primary)", letterSpacing: "0.1rem" } }, storage.get("orders") ? ((_a = storage.getArray("orders").slice(-1)[0]) == null ? void 0 : _a.trackingNumber) || "SN---" : "SN---"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-truck" }), " Livraison pr\xE9vue : ", shippingCity, " \u2014 2 \xE0 5 jours ouvr\xE9s")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block btn-lg", onClick: () => onSuccess() }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), " Voir mes commandes")));
@@ -5288,7 +5290,7 @@ const StripePaymentForm = ({ amount, onSuccess, onError, addToast }) => {
         addToast("\u2705 Paiement Stripe trait\xE9 !", "success");
         onSuccess({ paymentMethodId: result.paymentMethod.id, type: "stripe_card" });
       } else {
-        await new Promise((r) => setTimeout(r, 1500));
+        // [PERF] délai simulation supprimé
         onSuccess({ paymentMethodId: "sim_" + Date.now(), type: "card_simulation" });
       }
     } catch (e) {
@@ -6189,7 +6191,13 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   useEffect(() => {
     loadData();
   }, []);
+  // [PERF] debounce 80ms — évite les lectures répétées en cascade lors d'actions multiples
+  const _loadDataTimer = React.useRef(null);
   const loadData = () => {
+    if (_loadDataTimer.current) clearTimeout(_loadDataTimer.current);
+    _loadDataTimer.current = setTimeout(_loadDataImmediate, 80);
+  };
+  const _loadDataImmediate = () => {
     const ordersData = storage.getArray("orders");
     const productsData = storage.getArray("products");
     const usersData = storage.get("users") || {};
@@ -7328,10 +7336,15 @@ const VendorChatInline = ({ currentUser: currentUser2, addToast }) => {
   const bottomRef = React.useRef(null);
   const textareaRef = React.useRef(null);
 
-  // Polling every 2.5s
+  // [PERF] Polling adaptatif — 3s si onglet visible, 15s si caché
   React.useEffect(() => {
-    const iv = setInterval(() => setTick(t => t + 1), 2500);
-    return () => clearInterval(iv);
+    let iv = setInterval(() => setTick(t => t + 1), 3000);
+    const onVisibility = () => {
+      clearInterval(iv);
+      iv = setInterval(() => setTick(t => t + 1), document.hidden ? 15000 : 3000);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVisibility); };
   }, []);
 
   // Auto-scroll to bottom on new message
@@ -8740,25 +8753,24 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
       return;
     }
     setLoading(true);
-    setTimeout(() => {
-      const allOrders = storage.getArray("orders");
-      const idx = allOrders.findIndex((o) => o.id === order.id);
-      if (idx >= 0) {
-        allOrders[idx].status = "cancelled";
-        allOrders[idx].cancelReason = reason;
-        allOrders[idx].cancelledAt = (/* @__PURE__ */ new Date()).toISOString();
-        const allProducts = storage.getArray("products");
-        (order.products || []).forEach((item) => {
-          const pidx = allProducts.findIndex((p) => p.id === item.id);
-          if (pidx >= 0) allProducts[pidx].stock += item.quantity;
-        });
-        storage.set("products", allProducts);
-        storage.set("orders", allOrders);
-      }
-      setLoading(false);
-      addToast("Commande annul\xE9e avec succ\xE8s", "success");
-      onConfirm();
-    }, 800);
+    // [PERF] setTimeout 800ms supprimé
+    const allOrders = storage.getArray("orders");
+    const idx = allOrders.findIndex((o) => o.id === order.id);
+    if (idx >= 0) {
+      allOrders[idx].status = "cancelled";
+      allOrders[idx].cancelReason = reason;
+      allOrders[idx].cancelledAt = (/* @__PURE__ */ new Date()).toISOString();
+      const allProducts = storage.getArray("products");
+      (order.products || []).forEach((item) => {
+        const pidx = allProducts.findIndex((p) => p.id === item.id);
+        if (pidx >= 0) allProducts[pidx].stock += item.quantity;
+      });
+      storage.set("products", allProducts);
+      storage.set("orders", allOrders);
+    }
+    setLoading(false);
+    addToast("Commande annul\xE9e avec succ\xE8s", "success");
+    onConfirm();
   };
   return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times-circle text-danger" }), " Annuler la commande"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), !canCancel ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), /* @__PURE__ */ React.createElement("span", null, "Cette commande ne peut plus \xEAtre annul\xE9e (statut : ", order.status === "in_transit" ? "En transit" : order.status, ").")), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.88rem", color: "var(--text-secondary)", marginTop: "1rem" } }, "Pour les commandes exp\xE9di\xE9es, utilisez la proc\xE9dure de retour sous 30 jours apr\xE8s r\xE9ception."), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-block mt-2", onClick: onClose }, "Fermer")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "10px", padding: "0.85rem 1rem", marginBottom: "1.25rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, marginBottom: "0.3rem" } }, "Commande #", order.id), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.85rem", color: "var(--text-secondary)" } }, formatPrice(order.total), " \xB7 ", order.vendorName)), order.stripePaymentId && order.status === "processing" && /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Un remboursement automatique sera initi\xE9 sur votre moyen de paiement (3-5 jours ouvr\xE9s).")), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Motif d\\'annulation ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("select", { className: "form-select", value: reason, onChange: (e) => setReason(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Choisir un motif..."), REASONS.map((r) => /* @__PURE__ */ React.createElement("option", { key: r, value: r }, r)))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: onClose }, "Garder la commande"), /* @__PURE__ */ React.createElement("button", { className: `btn btn-danger flex-1 ${loading ? "btn-loading" : ""}`, onClick: handleCancel, disabled: loading || !reason }, loading ? "Annulation..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Confirmer l\\'annulation"))))));
 };
@@ -9127,17 +9139,19 @@ const Root = () => {
       setIsReady(true);
     };
 
+    // [PERF] Supabase chargé en statique → window.supabase est toujours prêt.
+    // Fallback poll réduit à 50ms×10 si jamais le CDN est lent.
     if (window.supabase) {
       tryInit();
     } else {
       let attempts = 0;
       const poll = setInterval(() => {
         attempts++;
-        if (window.supabase || attempts > 20) {
+        if (window.supabase || attempts > 10) {
           clearInterval(poll);
           tryInit();
         }
-      }, 150);
+      }, 50);
     }
     
     return () => { isMounted = false; };
