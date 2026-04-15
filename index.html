@@ -1526,7 +1526,9 @@ const DataService = {
     return { id: authUser.id, email, name, role, avatar, status: "active", created_at: authUser.created_at || new Date().toISOString() };
   },
   async signOut() {
+    this._voluntarySignOut = true;
     if (this._sb) { await this._sb.auth.signOut(); }
+    this._voluntarySignOut = false;
     if (NEXUS_CONFIG.apiUrl) {
       const token = sessionStorage.getItem("nexus_jwt");
       if (token) await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/logout`, {
@@ -1616,7 +1618,9 @@ const DataService = {
           callback(event, prof || this._buildProfileFromAuthUser(session.user));
         } else if (event === "SIGNED_OUT" || event === "USER_DELETED") {
           callback(event, null);
-          window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+          if (!this._voluntarySignOut) {
+            window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+          }
         } else if (event === "TOKEN_REFRESHED" && !session) {
           // Token refresh failed = session really expired
           window.dispatchEvent(new CustomEvent("nexus:session-expired"));
@@ -8930,7 +8934,8 @@ const App = ({ onUserChange }) => {
     // ── Écouter les changements d'auth Supabase (token refresh, etc.) ────────
     const { subscription } = DataService.onAuthStateChange((event, prof) => {
       if (event === "SIGNED_IN" && prof) handleLogin(prof);
-      if (event === "SIGNED_OUT") handleLogout();
+      // SIGNED_OUT est déjà géré directement par handleLogout() via le bouton
+      // ou par l'écouteur nexus:session-expired pour les déconnexions forcées
     });
 
     restoreSupabaseSession().finally(() => {
