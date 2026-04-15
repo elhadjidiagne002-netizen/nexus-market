@@ -262,17 +262,30 @@ app.set('trust proxy', 1);
 
 app.use(helmet({ contentSecurityPolicy: false }));
 
-// CORS — Assoupli pour accepter dynamiquement toutes les requêtes (idéal pour les previews Vercel)
-// Évite les blocages liés aux URLs générées aléatoirement par Vercel (callback(new Error(...))
-// faisait planter le middleware → erreur 500 sans headers CORS → faux blocage côté navigateur).
+// --- CONFIGURATION CORS ROBUSTE ---
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:5500',
+  'https://nexus-market-md360.vercel.app',
+];
+
 const corsOptions = {
-  origin: (origin, callback) => {
-    // On autorise toutes les origines.
-    callback(null, true);
+  origin: function (origin, callback) {
+    // Autorise si : pas d'origine (mobile/Postman), dans la liste, domaine vercel.app, ou hors production
+    if (!origin ||
+        allowedOrigins.indexOf(origin) !== -1 ||
+        origin.endsWith('.vercel.app') ||
+        process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      console.error('[CORS] Origine bloquée:', origin);
+      callback(new Error('Non autorisé par CORS'));
+    }
   },
   credentials: true,
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization','X-Requested-With','stripe-signature'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'stripe-signature'],
 };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions)); // preflight AVANT tout rate-limit
@@ -286,7 +299,7 @@ app.use(requestLogger); // Log HTTP → Supabase
 // [FIX 429] Rate limits augmentés + /api/health exempté (ping wake-up)
 // CORS déjà ouvert à toutes origines → les previews Vercel passent sans problème
 const apiLimiter     = rateLimit({ windowMs: 15*60*1000, max: 500, standardHeaders: true, legacyHeaders: false, message: { error: 'Trop de requêtes.' } });
-const authLimiter    = rateLimit({ windowMs: 15*60*1000, max: 100, standardHeaders: true, legacyHeaders: false, message: { error: 'Trop de tentatives.' } });
+const authLimiter    = rateLimit({ windowMs: 15*60*1000, max: 50,  standardHeaders: true, legacyHeaders: false, message: { error: 'Trop de tentatives, réessayez dans 15 minutes.' } });
 const paymentLimiter = rateLimit({ windowMs: 60*60*1000, max: 50,  standardHeaders: true, legacyHeaders: false, message: { error: 'Limite paiements atteinte.' } });
 
 app.use('/api/', (req, res, next) => {
