@@ -1602,8 +1602,15 @@ const DataService = {
   },
   async signOut() {
     this._voluntarySignOut = true;
+    // [FIX] On NE remet PAS _voluntarySignOut à false ici de façon synchrone.
+    // L'event SIGNED_OUT de Supabase arrive de façon asynchrone APRÈS ce await.
+    // Si on reset ici, onAuthStateChange voit false → déclenche nexus:session-expired à tort.
+    // Le reset est fait dans onAuthStateChange dès réception du SIGNED_OUT.
     if (this._sb) { await this._sb.auth.signOut(); }
-    this._voluntarySignOut = false;
+    // [FIX] Sécurité : si Supabase non configuré, reset manuel après délai court
+    if (!this._sb) {
+      setTimeout(() => { this._voluntarySignOut = false; }, 500);
+    }
     if (NEXUS_CONFIG.apiUrl) {
       const token = sessionStorage.getItem("nexus_jwt");
       if (token) await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/logout`, {
@@ -1723,8 +1730,12 @@ const DataService = {
         } else if (event === "SIGNED_OUT" || event === "USER_DELETED") {
           callback(event, null);
           if (!this._voluntarySignOut) {
+            // Déconnexion forcée (token expiré côté Supabase, ou session révoquée)
             window.dispatchEvent(new CustomEvent("nexus:session-expired"));
           }
+          // [FIX] Reset ici, APRÈS la vérification — c'est le bon endroit car
+          // l'event est asynchrone et arrive après le signOut() de l'appelant.
+          this._voluntarySignOut = false;
         } else if (event === "TOKEN_REFRESHED" && !session) {
           // Token refresh failed = session really expired
           window.dispatchEvent(new CustomEvent("nexus:session-expired"));
@@ -4687,29 +4698,41 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         // localStorage garde le format local (avec id et camelCase)
         pending.push({ id, ...pendingEntry, role:"vendor", date:new Date().toISOString() });
         storage.set("pendingVendors", pending);
-        // Supabase : sans id custom (laisse Supabase générer l'UUID)
-        if (DataService._sb) {
+        // [FIX] Appel backend API — utilise la service-role key (bypass RLS)
+        // Le backend insère dans pending_vendors ET notifie les admins automatiquement
+        if (NEXUS_CONFIG.apiUrl) {
+          const _vendorRes = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: form.email, password: form.password,
+              name: form.name, role: "vendor",
+              shopName: form.shopName, shopCategory: form.shopCategory || "Général",
+              phone: form.phone || null
+            })
+          });
+          const _vendorJson = await _vendorRes.json();
+          if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
+        } else if (DataService._sb) {
+          // [FALLBACK] Supabase direct uniquement si pas de backend configuré
           await DataService._sb.from("pending_vendors").insert(pendingEntry).then(r=>r).catch(()=>{});
-        }
-        // Email admin : notifier d'une nouvelle demande vendeur
-        const adminUsers = Object.values(storage.get("users") || {}).filter(u => u.role === "admin");
-        adminUsers.forEach(adminUser => {
-          if (adminUser.email) {
-            EmailService.send({
-              to: adminUser.email,
-              subject: `\u{1F3EA} Nouvelle demande vendeur : ${form.shopName}`,
-              templateId: "vendor_new_request",
-              ejsTemplateId: NEXUS_CONFIG.emailjs.vendorAdminTemplateId || NEXUS_CONFIG.emailjs.orderTemplateId,
-              variables: {
-                vendor_name: form.shopName, owner_name: form.name,
-                vendor_email: form.email, shop_category: form.shopCategory,
-                action_url: window.location.origin + "/nexus_admin.html"
-              }
-            });
-          }
-        });
-        if (DataService._sb) {
-          DataService.addNotification("admin", { type: "vendor", title: "\u{1F3EA} Nouvelle demande vendeur", message: `${form.shopName} (${form.name}) a soumis une demande de boutique.` });
+          // Email admin via EmailJS (mode hors-ligne uniquement)
+          const adminUsers = Object.values(storage.get("users") || {}).filter(u => u.role === "admin");
+          adminUsers.forEach(adminUser => {
+            if (adminUser.email) {
+              EmailService.send({
+                to: adminUser.email,
+                subject: `\u{1F3EA} Nouvelle demande vendeur : ${form.shopName}`,
+                templateId: "vendor_new_request",
+                ejsTemplateId: NEXUS_CONFIG.emailjs.vendorAdminTemplateId || NEXUS_CONFIG.emailjs.orderTemplateId,
+                variables: {
+                  vendor_name: form.shopName, owner_name: form.name,
+                  vendor_email: form.email, shop_category: form.shopCategory,
+                  action_url: window.location.origin + "/nexus_admin.html"
+                }
+              });
+            }
+          });
         }
         setDone(true);
       } else if (role === "buyer_pro") {
