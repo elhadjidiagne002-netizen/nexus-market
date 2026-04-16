@@ -41,6 +41,7 @@ const bcrypt       = require('bcryptjs');
 const nodemailer   = require('nodemailer');
 const stripe       = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createClient } = require('@supabase/supabase-js');
+const multer       = require('multer');
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 const app  = express();
@@ -50,6 +51,12 @@ const PORT = process.env.PORT || 3000;
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY  // [FIX 3] votre .env utilise SUPABASE_SERVICE_KEY
+);
+
+// ─── SUPABASE ANON (singleton — évite de recréer un client à chaque login) ──────
+const supabaseAnon = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY
 );
 
 // ─── LOGGER (écrit dans Supabase + console) ──────────────────────────────────
@@ -258,26 +265,67 @@ const emailTemplates = {
 
 // ─── MIDDLEWARE ─────────────────────────────────────────────────────────────
 
-// [FIX] trust proxy — Render est derrière un load balancer.
-// Sans ça, toutes les IPs sont identiques → rate-limit global → 429 pour tous.
+// [FIX] trust proxy — Render + Cloudflare.
+// '1' = faire confiance au premier proxy (Render LB).
+// Cloudflare injecte CF-Connecting-IP — on s'appuie dessus via le middleware ci-dessous.
 app.set('trust proxy', 1);
+
+// Middleware IP réel — extrait l'IP cliente derrière Cloudflare et Render
+app.use((req, _res, next) => {
+  const cfIp = req.headers['cf-connecting-ip'];
+  const realIp = req.headers['x-real-ip'];
+  if (cfIp) req.ip = cfIp;
+  else if (realIp) req.ip = realIp;
+  next();
+});
 
 app.use(helmet({ contentSecurityPolicy: false }));
 
-// CORS — Assoupli pour accepter dynamiquement toutes les requêtes (idéal pour les previews Vercel)
-// Évite les blocages liés aux URLs générées aléatoirement par Vercel (callback(new Error(...))
-// faisait planter le middleware → erreur 500 sans headers CORS → faux blocage côté navigateur).
+// ── CORS ──────────────────────────────────────────────────────────────────────
+// [FIX] Réflexion explicite de l'Origin (au lieu de callback(null,true) qui
+// peut être muet sur certains proxies).  credentials:true interdit l'usage de '*',
+// on reflète donc l'origine entrante si elle existe, sinon on répond false.
+// L'expose des headers 'Authorization' et 'Content-Type' est nécessaire pour que
+// le navigateur puisse lire les réponses JSON derrière un proxy Cloudflare/Render.
+const ALLOWED_ORIGIN_PATTERNS = [
+  /vercel\.app$/,
+  /localhost/,
+  /127\.0\.0\.1/,
+  /nexus\.sn$/,
+  /nexus-market/,
+];
 const corsOptions = {
   origin: (origin, callback) => {
-    // On autorise toutes les origines.
-    callback(null, true);
+    // Requêtes sans Origin (curl, Postman, cron-job.org) → toujours autorisé
+    if (!origin) return callback(null, true);
+    // Reflète l'origine si elle correspond à un pattern connu
+    if (ALLOWED_ORIGIN_PATTERNS.some(p => p.test(origin))) {
+      return callback(null, origin);
+    }
+    // En mode development, tout accepter
+    if (process.env.NODE_ENV !== 'production') return callback(null, origin);
+    callback(null, false);
   },
   credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization','X-Requested-With','stripe-signature'],
+  exposedHeaders: ['Content-Type','Authorization'],
+  maxAge: 86400,  // Cache préflight 24h — réduit les requêtes OPTIONS répétées
 };
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // preflight AVANT tout rate-limit
+// Réponse préflight explicite AVANT le rate-limit et tout autre middleware
+app.options('*', (req, res) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGIN_PATTERNS.some(p => p.test(origin))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,stripe-signature');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  res.sendStatus(204);
+});
 
 // Webhook Stripe — AVANT json parser (body brut requis)
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
@@ -285,14 +333,33 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), hand
 app.use(express.json({ limit: '2mb' }));
 app.use(requestLogger); // Log HTTP → Supabase
 
-// [FIX 429] Rate limits augmentés + /api/health exempté (ping wake-up)
-// CORS déjà ouvert à toutes origines → les previews Vercel passent sans problème
-const apiLimiter     = rateLimit({ windowMs: 15*60*1000, max: 500, standardHeaders: true, legacyHeaders: false, message: { error: 'Trop de requêtes.' } });
-const authLimiter    = rateLimit({ windowMs: 15*60*1000, max: 100, standardHeaders: true, legacyHeaders: false, message: { error: 'Trop de tentatives.' } });
-const paymentLimiter = rateLimit({ windowMs: 60*60*1000, max: 50,  standardHeaders: true, legacyHeaders: false, message: { error: 'Limite paiements atteinte.' } });
+// [FIX] Rate limits — keyGenerator utilise l'IP réelle (après fix CF-Connecting-IP ci-dessus)
+// skipSuccessfulRequests:true sur authLimiter → les logins réussis ne comptent pas dans la fenêtre
+const keyGen = (req) => req.ip || req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']?.split(',')[0].trim() || 'unknown';
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 500,
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: keyGen,
+  message: { error: 'Trop de requêtes. Réessayez dans 15 minutes.' },
+});
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30, // 30 tentatives par IP par 15 min
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: keyGen,
+  skipSuccessfulRequests: true, // [FIX] Les logins réussis ne consomment pas le quota
+  message: { error: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.' },
+});
+const paymentLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, max: 50,
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: keyGen,
+  message: { error: 'Limite paiements atteinte. Réessayez dans une heure.' },
+});
 
 app.use('/api/', (req, res, next) => {
-  if (req.path === '/health') return next();
+  // Exempter health check et webhooks Stripe du rate-limit général
+  if (req.path === '/health' || req.path.startsWith('/webhooks/')) return next();
   return apiLimiter(req, res, next);
 });
 
@@ -301,6 +368,14 @@ app.use('/api/', (req, res, next) => {
 // TTL 5 min : acceptable car les changements de rôle sont rares.
 const _profileCache = new Map(); // token → { user, expiresAt }
 const PROFILE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// [FIX] Purge des entrées expirées toutes les 10 min — évite la fuite mémoire sur Render Free
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of _profileCache.entries()) {
+    if (val.expiresAt < now) _profileCache.delete(key);
+  }
+}, 10 * 60 * 1000);
 
 const verifyToken = async (req, res, next) => {
   const auth = req.headers.authorization;
@@ -353,9 +428,13 @@ const formatFCFA = (eur) => `${Math.round(eur * 655.957).toLocaleString('fr-FR')
 
 const pushNotification = async (userId, { type, title, message, link }) => {
   if (!userId) return;
-  await supabase.from('notifications').insert({
-    user_id: userId, type, title, message, link: link || null, read: false
-  });
+  try {
+    await supabase.from('notifications').insert({
+      user_id: userId, type, title, message, link: link || null, read: false
+    });
+  } catch (e) {
+    Logger.warn('notification', 'push.error', e.message, { meta: { userId, type } });
+  }
 };
 
 // ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
@@ -435,7 +514,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
 
     // Chemin 2 : [FIX] Fallback Supabase Auth (users créés via Supabase, sans password_hash)
-    const supabaseAnon = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+    // [FIX] Utilise le singleton supabaseAnon (évite la création d'un client par login)
     const { data: sbData, error: sbErr } = await supabaseAnon.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
     if (sbErr || !sbData?.user) return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
 
@@ -532,8 +611,12 @@ app.post('/api/auth/sync-profile', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
-// POST /api/auth/logout
+// POST /api/auth/logout — invalide le cache profil pour ce token
 app.post('/api/auth/logout', async (req, res) => {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith('Bearer ')) {
+    _profileCache.delete(auth.slice(7));
+  }
   res.json({ message: 'Déconnecté' });
 });
 
@@ -569,6 +652,40 @@ app.patch('/api/auth/change-password', verifyToken, async (req, res) => {
   }
 });
 
+// ─── FILE UPLOAD ─────────────────────────────────────────────────────────────
+// [FIX] Route /api/upload manquante — le frontend l'appelait mais elle n'existait pas,
+// forçant le fallback Supabase Storage direct (qui peut échouer si RLS bloque).
+// Utilise multer (memoryStorage) + Supabase Storage service-role (bypass RLS).
+const uploadMiddleware = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8 Mo max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Seules les images sont acceptées'));
+  },
+});
+
+app.post('/api/upload', verifyToken, uploadMiddleware.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
+    const ext      = req.file.mimetype.split('/')[1] || 'jpg';
+    const filename = `products/${req.user.id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error } = await supabase.storage
+      .from('nexus-images')
+      .upload(filename, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: true,
+      });
+    if (error) throw error;
+    const { data: { publicUrl } } = supabase.storage.from('nexus-images').getPublicUrl(filename);
+    Logger.info('upload', 'image.uploaded', `Image uploadée: ${filename}`, { userId: req.user.id });
+    res.json({ url: publicUrl, filename });
+  } catch (e) {
+    Logger.error('upload', 'image.error', e.message, { userId: req.user?.id });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── PRODUCTS ────────────────────────────────────────────────────────────────
 app.get('/api/products', async (req, res) => {
   // [PERF] Cache CDN 60s + cache client 30s — le catalogue ne change pas à chaque seconde
@@ -579,7 +696,11 @@ app.get('/api/products', async (req, res) => {
     if (include_pending !== 'true') query = query.eq('moderated', true);
     if (category && category !== 'all') query = query.eq('category', category);
     if (vendor) query = query.eq('vendor_id', vendor);
-    if (search) query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%,category.ilike.%${search}%`);
+    if (search) {
+      // [FIX] Échapper les caractères spéciaux LIKE avant interpolation
+      const safeSearch = search.replace(/[%_\\]/g, '\\$&').slice(0, 100);
+      query = query.or(`name.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%,category.ilike.%${safeSearch}%`);
+    }
     if (min_price) query = query.gte('price', parseFloat(min_price));
     if (max_price) query = query.lte('price', parseFloat(max_price));
     switch (sort) {
@@ -705,7 +826,8 @@ app.patch('/api/products/:id/moderate', verifyToken, requireRole('admin'), async
 // ─── ORDERS ──────────────────────────────────────────────────────────────────
 app.get('/api/orders', verifyToken, async (req, res) => {
   try {
-    const { page = 1, limit = 20, status } = req.query;
+    const { page = 1, status } = req.query;
+    const limit = Math.min(parseInt(req.query.limit || '20'), 100); // [FIX] cap à 100
     let query = supabase.from('orders').select('*', { count: 'exact' });
     if (req.user.role === 'buyer')  query = query.eq('buyer_id', req.user.id);
     if (req.user.role === 'vendor') query = query.eq('vendor_id', req.user.id);
@@ -740,6 +862,12 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       paymentMethod, buyerAddress, buyerPhone, shippingCity, couponCode
     } = req.body;
     if (!vendorId || !products || !total) return res.status(400).json({ error: 'Données commande incomplètes' });
+    if (!Array.isArray(products) || products.length === 0) return res.status(400).json({ error: 'Panier vide' });
+    if (parseFloat(total) <= 0) return res.status(400).json({ error: 'Montant invalide' });
+    // [FIX sécurité] S'assurer que chaque produit a un prix positif (empêche les commandes à 0€)
+    if (products.some(p => !p.name || typeof p.price !== 'number' || p.price < 0)) {
+      return res.status(400).json({ error: 'Données produit invalides' });
+    }
 
     const { data: buyerProfile } = await supabase.from('profiles').select('name, email').eq('id', req.user.id).single();
     const commissionRate = 0.15;
@@ -1293,26 +1421,27 @@ app.get('/api/health', async (req, res) => {
     dbStatus = 'ok';
   } catch { dbStatus = 'error'; }
 
-  // [FIX 3] Lire STRIPE_PUBLIC_KEY (votre .env) au lieu de NEXT_PUBLIC_STRIPE_KEY
   const stripePub    = process.env.STRIPE_PUBLIC_KEY || '';
   const stripeSecret = process.env.STRIPE_SECRET_KEY || '';
 
+  // [FIX sécurité] Ne jamais exposer les valeurs des clés — uniquement des booléens
   res.json({
     status    : dbStatus === 'ok' ? 'OK' : 'DEGRADED',
     service   : 'NEXUS Market API v3.1.4',
     timestamp : new Date().toISOString(),
     latency_ms: Date.now() - start,
     services  : {
-      database : dbStatus,
-      stripe   : (stripePub.startsWith('pk_test_') || stripePub.startsWith('pk_live_')) && (stripeSecret.startsWith('sk_test_') || stripeSecret.startsWith('sk_live_')),
-      stripe_mode: stripePub.startsWith('pk_live_') ? 'live' : 'test',
-      email    : !!(process.env.SMTP_USER && process.env.SMTP_PASS),
-      webhook  : !!(process.env.STRIPE_WEBHOOK_SECRET),
+      database    : dbStatus,
+      stripe      : !!(stripePub && stripeSecret &&
+                      (stripePub.startsWith('pk_test_') || stripePub.startsWith('pk_live_')) &&
+                      (stripeSecret.startsWith('sk_test_') || stripeSecret.startsWith('sk_live_'))),
+      stripe_mode : stripePub.startsWith('pk_live_') ? 'live' : 'test',
+      email       : !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+      webhook     : !!(process.env.STRIPE_WEBHOOK_SECRET),
     },
     project: {
       name : 'NEXUS Market Sénégal',
       url  : process.env.FRONTEND_URL || 'https://nexus-market-md360.vercel.app',
-      admin: process.env.ADMIN_EMAIL  || 'admin@nexus.sn',
     },
   });
 });
@@ -1364,6 +1493,18 @@ app.use((err, req, res, _next) => {
 //         Pour Vercel serverless → module.exports = app; suffit (Vercel gère le listen)
 //         Pour Render/Railway → l'écoute est nécessaire
 // ══════════════════════════════════════════════════════════════════════════════
+// ─── GLOBAL ERROR GUARDS ─────────────────────────────────────────────────────
+// [FIX] Évite que le process Node.js crash sur une promesse non gérée (ex: Supabase timeout)
+process.on('unhandledRejection', (reason, promise) => {
+  Logger.error('system', 'unhandledRejection', String(reason), { meta: { promise: String(promise) } });
+});
+process.on('uncaughtException', (err) => {
+  Logger.error('system', 'uncaughtException', err.message, { meta: { stack: err.stack?.slice(0, 300) } });
+  // Ne pas quitter le process pour les erreurs non critiques
+  if (err.code === 'ECONNRESET' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') return;
+  process.exit(1); // Quitter sur les erreurs vraiment fatales
+});
+
 app.listen(PORT, () => {
   const env     = process.env.NODE_ENV || 'development';
   const hasDb   = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY);
