@@ -1096,18 +1096,80 @@ const IS_STRIPE_CONFIGURED  = isStripeConfigured();
 const isEmailjsConfigured   = () => !!(NEXUS_CONFIG.emailjs.publicKey && NEXUS_CONFIG.emailjs.serviceId);
 const IS_EMAILJS_CONFIGURED = isEmailjsConfigured(); // valeur initiale (compatibilité)
 
-// PERF FIX: Ping backend au chargement de la page pour réveiller le serveur Render (cold start ~30s)
-// Ce ping fire-and-forget s'exécute en arrière-plan et ne bloque rien.
+// [FIX] Wake-up backend avec retry exponentiel — cold start Render peut prendre 30-50s.
+// window.__nexusBackendReady = true dès que le backend répond, ce qui permet à signIn
+// d'attendre la disponibilité plutôt que de tomber prématurément en fallback Supabase.
+window.__nexusBackendReady = false;
 if (NEXUS_CONFIG.apiUrl) {
   (function wakeUpBackend() {
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 8000);  // 8s — suffisant post-keepalive cron
-    fetch(NEXUS_CONFIG.apiUrl + '/api/health', { signal: controller.signal, method: 'GET' })
-      .then(() => console.log('[NEXUS] Backend réveillé ✓'))
-      .catch(() => console.log('[NEXUS] Backend indisponible — mode Supabase/localStorage'));
+    const delays = [0, 5000, 12000, 25000, 45000]; // tentatives à 0s, 5s, 12s, 25s, 45s
+    let attempt = 0;
+    const ping = () => {
+      if (window.__nexusBackendReady) return;
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 6000);
+      fetch(NEXUS_CONFIG.apiUrl + '/api/health', { signal: ctrl.signal, method: 'GET' })
+        .then(r => {
+          clearTimeout(tid);
+          if (r.ok || r.status === 401 || r.status === 404) {
+            // 401/404 = backend vivant mais route non authentifiée → OK
+            window.__nexusBackendReady = true;
+            window.dispatchEvent(new Event('nexus:backend-ready'));
+            console.log('[NEXUS] Backend réveillé ✓ (tentative ' + (attempt + 1) + ')');
+          } else { scheduleNext(); }
+        })
+        .catch(() => { clearTimeout(tid); scheduleNext(); });
+    };
+    const scheduleNext = () => {
+      attempt++;
+      if (attempt < delays.length) setTimeout(ping, delays[attempt]);
+      else console.log('[NEXUS] Backend indisponible — mode Supabase/localStorage');
+    };
+    ping();
   })();
 }
 const EUR_TO_FCFA = 655.957;
+
+// [FIX] Normalise un profil utilisateur venant de l'API (snake_case → camelCase)
+const normalizeUser = (u) => {
+  if (!u) return u;
+  return {
+    ...u,
+    id:        u.id,
+    email:     u.email,
+    name:      u.name,
+    role:      u.role      || 'buyer',
+    avatar:    u.avatar    || (u.name || u.email || '?').slice(0, 2).toUpperCase(),
+    status:    u.status    || 'active',
+    shopName:  u.shop_name || u.shopName  || null,
+    shopCat:   u.shop_category || u.shopCat || null,
+    phone:     u.phone     || null,
+    createdAt: u.created_at || u.createdAt || null,
+  };
+};
+
+// [FIX] Normalise un produit venant de l'API backend (snake_case) vers le format
+// attendu par les composants React (camelCase). Idempotent : si déjà normalisé, ne change rien.
+const normalizeProduct = (p) => {
+  if (!p) return p;
+  return {
+    ...p,
+    id:            p.id,
+    name:          p.name,
+    category:      p.category,
+    price:         p.price,
+    originalPrice: p.original_price ?? p.originalPrice ?? null,
+    stock:         p.stock,
+    description:   p.description,
+    imageUrl:      p.image_url   || p.imageUrl   || null,
+    vendor:        p.vendor_id   || p.vendor      || null,
+    vendorName:    p.vendor_name || p.vendorName  || '',
+    rating:        p.rating      || 0,
+    reviewsCount:  p.reviews_count ?? p.reviewsCount ?? 0,
+    active:        p.active      !== false,
+    moderated:     p.moderated   === true,
+  };
+};
 const formatPrice = (priceEur) => {
   const priceFcfa = priceEur * EUR_TO_FCFA;
   return priceFcfa.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " FCFA";
@@ -1196,13 +1258,15 @@ const DataService = {
     })();
 
     if (NEXUS_CONFIG.apiUrl) {
-      const params = new URLSearchParams({ page, limit, ...(category ? { category } : {}), ...(search ? { q: search } : {}) });
+      // [FIX] param 'search' (pas 'q') — correspond à req.query.search dans server.js
+      const params = new URLSearchParams({ page, limit, ...(category ? { category } : {}), ...(search ? { search } : {}) });
       const res = await this.apiFetch(`/api/products?${params}`).catch(() => null);
       if (res && res.ok) {
         const json = await res.json();
-        const data = json.data || json;
-        // Mettre à jour le cache local silencieusement
-        if (Array.isArray(data) && data.length > 0) storage.set("products", data);
+        // [FIX] API retourne { products, total } — normaliser snake_case → camelCase
+        const raw = json.products || json.data || (Array.isArray(json) ? json : []);
+        const data = raw.map(normalizeProduct);
+        if (data.length > 0) storage.set("products", data);
         return data;
       }
       // Backend timeout/erreur → fallback immédiat
@@ -1215,8 +1279,9 @@ const DataService = {
       q = q.range((page-1)*limit, page*limit-1).order("created_at", { ascending: false });
       const { data, error } = await q;
       if (!error && data) {
-        storage.set("products", data); // mise à jour cache
-        return data;
+        const normalized = data.map(normalizeProduct);
+        storage.set("products", normalized);
+        return normalized;
       }
     }
     return localProds;
@@ -1245,7 +1310,11 @@ const DataService = {
     if (NEXUS_CONFIG.apiUrl) {
       const params = new URLSearchParams({ page, limit, ...(status ? { status } : {}) });
       const res = await this.apiFetch(`/api/orders?${params}`).catch(() => null);
-      if (res && res.ok) { const json = await res.json(); return json.data || json; }
+      if (res && res.ok) {
+        const json = await res.json();
+        // [FIX] API retourne { orders, total } — extraire le bon champ
+        return json.orders || json.data || (Array.isArray(json) ? json : []);
+      }
     }
 
     // CORRECTION : On bloque TOTALEMENT la requête si on n'a ni buyer ni vendor
@@ -1435,11 +1504,18 @@ const DataService = {
   async signIn(email, password) {
     // ── Backend JWT (prioritaire si configuré) ────────────────────────────
     if (NEXUS_CONFIG.apiUrl) {
-      // [FIX] AbortController 9s — évite de bloquer indéfiniment sur un cold start Render.
-      // Si le backend ne répond pas (CORS "Failed to fetch" = serveur endormi),
-      // on tombe en fallback Supabase auth au lieu de lever une erreur réseau brute.
+      // [FIX] Attendre que le backend soit prêt (cold start Render jusqu'à 50s).
+      // Si __nexusBackendReady est déjà true (cron keepalive actif) → immédiat.
+      // Sinon on attend l'événement nexus:backend-ready jusqu'à 40s max.
+      if (!window.__nexusBackendReady) {
+        await new Promise(resolve => {
+          const onReady = () => { window.removeEventListener('nexus:backend-ready', onReady); resolve(); };
+          window.addEventListener('nexus:backend-ready', onReady);
+          setTimeout(resolve, 40000); // timeout de sécurité 40s → on tente quand même
+        });
+      }
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s pour la requête elle-même
       let res = null;
       try {
         res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/login`, {
@@ -1450,10 +1526,9 @@ const DataService = {
           body: JSON.stringify({ email, password })
         });
       } catch (err) {
-        // AbortError = timeout 9s ; TypeError "Failed to fetch" = backend endormi/CORS
         if (err.name === 'AbortError' || err.name === 'TypeError') {
-          console.warn('[signIn] Backend indisponible (' + err.message + ') — fallback Supabase Auth');
-          res = null; // → fallback ci-dessous
+          console.warn('[signIn] Backend injoignable (' + err.message + ') — fallback Supabase Auth');
+          res = null;
         } else {
           clearTimeout(timeoutId);
           throw err;
@@ -1473,9 +1548,9 @@ const DataService = {
         if (this._sb) {
           await this._sb.auth.signInWithPassword({
             email: email.trim().toLowerCase(), password
-          }).catch(() => {}); // Silencieux — les backend users peuvent ne pas être dans Supabase Auth
+          }).catch(() => {});
         }
-        return json.user;
+        return normalizeUser(json.user);
       }
       // res === null → backend injoignable → fallback Supabase (sans throw)
     }
@@ -1573,16 +1648,28 @@ const DataService = {
         }
       } catch (_) {}
     }
-    // [FIX] AbortController avec timeout 9s — le cold start Render peut dépasser 4s.
-    // Le ping wakeUpBackend utilise déjà 8s ; on aligne apiFetch sur 9s pour laisser
-    // le temps au backend de répondre après le réveil.
+    // [FIX] Timeout 12s — suffisant pour un backend déjà réveillé.
+    // Si __nexusBackendReady est false, on attend l'événement (max 5s) avant d'essayer.
+    if (!window.__nexusBackendReady) {
+      await new Promise(r => {
+        const h = () => { window.removeEventListener('nexus:backend-ready', h); r(); };
+        window.addEventListener('nexus:backend-ready', h);
+        setTimeout(r, 5000);
+      });
+    }
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const reqHeaders = {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {})
+    };
     try {
       const res = await fetch(`${NEXUS_CONFIG.apiUrl}${path}`, {
         ...options,
+        mode: "cors",
         signal: controller.signal,
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) }
+        headers: reqHeaders,
       });
       clearTimeout(timeoutId);
       if (res.status === 401) {
@@ -1593,19 +1680,36 @@ const DataService = {
     } catch (err) {
       clearTimeout(timeoutId);
       if (err.name === 'AbortError') {
-        console.warn('[NEXUS] Backend timeout (>9s) — fallback Supabase/localStorage');
-        return null; // → fallback déclenché par l'appelant
+        console.warn('[NEXUS] Backend timeout (>12s) — fallback Supabase/localStorage');
+        return null;
+      }
+      // TypeError "Failed to fetch" = CORS / réseau — fallback silencieux
+      if (err.name === 'TypeError') {
+        console.warn('[NEXUS] Réseau/CORS:', err.message, '— fallback');
+        return null;
       }
       throw err;
     }
   },
   async restoreSession() {
+    // [FIX] Essayer d'abord le backend /api/auth/me (token JWT valide)
+    if (NEXUS_CONFIG.apiUrl) {
+      const jwt = sessionStorage.getItem("nexus_jwt");
+      const exp = sessionStorage.getItem("nexus_jwt_exp");
+      if (jwt && exp && Date.now() < Number(exp)) {
+        const res = await this.apiFetch("/api/auth/me").catch(() => null);
+        if (res && res.ok) {
+          const user = await res.json();
+          return normalizeUser(user);
+        }
+      }
+    }
     if (this._sb) {
       const { data: { session } } = await this._sb.auth.getSession();
       if (!session) return null;
       const uid = session.user.id;
       const prof = await this._fetchProfile(uid);
-      return prof || this._buildProfileFromAuthUser(session.user);
+      return normalizeUser(prof || this._buildProfileFromAuthUser(session.user));
     }
     return null;
   },
@@ -4417,6 +4521,10 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
     }
     setLoading(true);
     setError("");
+    // [FIX UX] Informer l'utilisateur si le backend est encore en train de démarrer
+    if (!window.__nexusBackendReady) {
+      addToast("\u23F3 Le serveur démarre, connexion dans quelques secondes…", "info", 8000);
+    }
     try {
       const user = await DataService.signIn(email, password);
       if (targetRole && user.role !== targetRole && !(targetRole === "vendor" && user.role === "vendor") && !(targetRole === "buyer" && user.role === "buyer_pro")) {
@@ -5752,7 +5860,7 @@ const ProductEditModal = ({ product, onSave, onDelete, onClose, addToast }) => {
           const saved = await res.json();
           const all = storage.getArray("products");
           const idx = all.findIndex((p) => p.id === product.id);
-          if (idx !== -1) all[idx] = { ...all[idx], ...saved, imageUrl: saved.image_url || form.imageUrl };
+          if (idx !== -1) all[idx] = { ...all[idx], ...normalizeProduct(saved) };
           storage.set("products", all);
           setLoading(false);
           addToast("Produit mis \xE0 jour !", "success");
@@ -7680,7 +7788,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         if (res && res.ok) {
           const saved = await res.json();
           const all = storage.getArray("products");
-          all.push({ ...saved, vendor: saved.vendor_id, vendorName: saved.vendor_name, imageUrl: saved.image_url || imageUrl });
+          all.push(normalizeProduct(saved));
           storage.set("products", all);
           setShowAddProduct(false);
           setNewProduct({ name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true });
