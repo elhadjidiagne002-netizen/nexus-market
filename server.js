@@ -445,7 +445,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Email invalide' });
 
   try {
-    const { data: existing } = await supabase.from('profiles').select('id').eq('email', email).single();
+    const { data: existing } = await supabase.from('profiles').select('id').eq('email', email).maybeSingle();
     if (existing) return res.status(409).json({ error: 'Cet email est déjà utilisé' });
 
     const hashedPw = await bcrypt.hash(password, 10);
@@ -472,7 +472,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     }
 
     const { data, error } = await supabase.from('profiles').insert({
-      name, email, password_hash: hashedPw, role: 'buyer', avatar, phone: phone || null
+      name, email, password_hash: hashedPw, role: 'buyer', avatar, phone: phone || null,
+      status: 'active'
     }).select().single();
     if (error) throw error;
 
