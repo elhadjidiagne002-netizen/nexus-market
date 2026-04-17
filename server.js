@@ -688,6 +688,29 @@ app.post('/api/upload', verifyToken, uploadMiddleware.single('file'), async (req
 });
 
 // ─── PRODUCTS ────────────────────────────────────────────────────────────────
+// GET /api/products/check-stock — Vérifie la disponibilité de plusieurs produits
+// Utilisé par le frontend avant d'afficher le bouton "Commander"
+// et juste avant la validation du checkout.
+app.get('/api/products/check-stock', async (req, res) => {
+  try {
+    const { ids } = req.query; // ids=uuid1,uuid2,uuid3
+    if (!ids) return res.status(400).json({ error: 'ids requis' });
+    const productIds = ids.split(',').filter(Boolean).slice(0, 50); // max 50 produits
+    const { data, error } = await supabase.rpc('get_product_stocks', {
+      p_ids: productIds,
+    });
+    if (error) throw error;
+    // Retourne un objet { [id]: { stock, active } }
+    const result = {};
+    for (const row of (data || [])) {
+      result[row.id] = { stock: row.stock, active: row.active };
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/products', async (req, res) => {
   // [PERF] Cache CDN 60s + cache client 30s — le catalogue ne change pas à chaque seconde
   res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=120');
@@ -856,51 +879,132 @@ app.get('/api/orders/:id', verifyToken, async (req, res) => {
   }
 });
 
+// ── Helper : convertit les produits du panier en format RPC ─────────────────
+const cartToStockItems = (products) =>
+  products
+    .filter(p => p.id)
+    .map(p => ({ product_id: p.id, quantity: Math.max(1, parseInt(p.quantity) || 1) }));
+
+// ── POST /api/orders ─────────────────────────────────────────────────────────
+// Flux complet :
+//   1. Validation des entrées
+//   2. Vérification + décrémentation ATOMIQUE du stock (RPC Supabase)
+//      → Si un produit est en rupture, la transaction est annulée (ROLLBACK)
+//      → Aucun stock n'est décrémenté si un seul article manque
+//   3. Création de la commande en base
+//   4. Si l'INSERT order échoue → re-crédit du stock (rollback manuel)
+//   5. Notifications vendeur
+// ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/orders', verifyToken, async (req, res) => {
+  const {
+    vendorId, products, subtotal, total, discountAmount = 0, commission,
+    paymentMethod, buyerAddress, buyerPhone, shippingCity, couponCode
+  } = req.body;
+
+  // ── Validation des entrées ────────────────────────────────────────────────
+  if (!vendorId || !products || !total)
+    return res.status(400).json({ error: 'Données commande incomplètes' });
+  if (!Array.isArray(products) || products.length === 0)
+    return res.status(400).json({ error: 'Panier vide' });
+  if (parseFloat(total) <= 0)
+    return res.status(400).json({ error: 'Montant invalide' });
+  if (products.some(p => !p.name || typeof p.price !== 'number' || p.price < 0))
+    return res.status(400).json({ error: 'Données produit invalides' });
+
+  const stockItems = cartToStockItems(products);
+
   try {
-    const {
-      vendorId, products, subtotal, total, discountAmount = 0, commission,
-      paymentMethod, buyerAddress, buyerPhone, shippingCity, couponCode
-    } = req.body;
-    if (!vendorId || !products || !total) return res.status(400).json({ error: 'Données commande incomplètes' });
-    if (!Array.isArray(products) || products.length === 0) return res.status(400).json({ error: 'Panier vide' });
-    if (parseFloat(total) <= 0) return res.status(400).json({ error: 'Montant invalide' });
-    // [FIX sécurité] S'assurer que chaque produit a un prix positif (empêche les commandes à 0€)
-    if (products.some(p => !p.name || typeof p.price !== 'number' || p.price < 0)) {
-      return res.status(400).json({ error: 'Données produit invalides' });
+    // ── Étape 1 : Vérification ET décrémentation atomique du stock ────────
+    // check_and_reserve_stock() :
+    //   - Lock FOR UPDATE sur chaque ligne produit (empêche la race condition)
+    //   - Vérifie stock >= quantité demandée pour TOUS les produits
+    //   - Si tous OK → décrémente d'un coup dans la même transaction
+    //   - Si un seul KO → RAISE EXCEPTION → ROLLBACK total (rien n'est décrémenté)
+    const { data: stockResults, error: stockErr } = await supabase.rpc(
+      'check_and_reserve_stock',
+      { p_items: JSON.stringify(stockItems) }
+    );
+
+    if (stockErr) {
+      // L'exception SQL contient le message STOCK_INSUFFICIENT ou STOCK_RACE
+      const msg = stockErr.message || '';
+      if (msg.includes('STOCK_INSUFFICIENT') || msg.includes('STOCK_RACE')) {
+        // Extraire les produits en rupture pour un message précis
+        const outOfStock = (stockResults || [])
+          .filter(r => !r.success)
+          .map(r => `${r.product_name} (demandé: ${r.requested}, disponible: ${r.available})`)
+          .join(', ');
+        Logger.warn('order', 'stock.insufficient', msg, {
+          userId: req.user.id, meta: { vendorId, outOfStock }
+        });
+        return res.status(409).json({
+          error: 'Stock insuffisant',
+          detail: outOfStock || 'Certains articles ne sont plus disponibles.',
+          code: 'STOCK_INSUFFICIENT',
+          items: (stockResults || []).filter(r => !r.success),
+        });
+      }
+      // Autre erreur Supabase (connexion, timeout…) → 503
+      throw stockErr;
     }
 
-    const { data: buyerProfile } = await supabase.from('profiles').select('name, email').eq('id', req.user.id).single();
+    // ── Étape 2 : Créer la commande ───────────────────────────────────────
+    const { data: buyerProfile } = await supabase
+      .from('profiles').select('name, email').eq('id', req.user.id).single();
+
     const commissionRate = 0.15;
-    const calculatedCommission = commission || Math.round(total * commissionRate * 100) / 100;
+    const calculatedCommission = commission ||
+      Math.round(parseFloat(total) * commissionRate * 100) / 100;
 
-    const { data, error } = await supabase.from('orders').insert({
-      buyer_id: req.user.id,
-      buyer_name: buyerProfile?.name || req.user.name,
-      buyer_email: buyerProfile?.email || req.user.email,
-      buyer_address: buyerAddress || null,
-      buyer_phone: buyerPhone || null,
-      vendor_id: vendorId,
-      vendor_name: products[0]?.vendorName || 'Vendeur',
+    const { data: order, error: orderErr } = await supabase.from('orders').insert({
+      buyer_id:        req.user.id,
+      buyer_name:      buyerProfile?.name  || req.user.name,
+      buyer_email:     buyerProfile?.email || req.user.email,
+      buyer_address:   buyerAddress  || null,
+      buyer_phone:     buyerPhone    || null,
+      vendor_id:       vendorId,
+      vendor_name:     products[0]?.vendorName || 'Vendeur',
       products,
-      subtotal: parseFloat(subtotal),
-      discount_amount: parseFloat(discountAmount),
-      total: parseFloat(total),
-      commission: calculatedCommission,
-      payment_method: paymentMethod || 'mobile',
-      shipping_city: shippingCity || null,
-      coupon_code: couponCode || null,
-      status: 'pending_payment',
+      subtotal:        parseFloat(subtotal)      || parseFloat(total),
+      discount_amount: parseFloat(discountAmount) || 0,
+      total:           parseFloat(total),
+      commission:      calculatedCommission,
+      payment_method:  paymentMethod || 'mobile',
+      shipping_city:   shippingCity  || null,
+      coupon_code:     couponCode    || null,
+      status:          'pending_payment',
+      stock_reserved:  true,  // flag : le stock a déjà été décrémenté
     }).select().single();
-    if (error) throw error;
 
-    Logger.info('order', 'created', `Commande #${data.id} créée — ${formatFCFA(total)}`, { userId: req.user.id, userEmail: req.user.email, meta: { orderId: data.id, total, vendorId } });
+    if (orderErr) {
+      // ── Rollback stock : l'INSERT a échoué → re-créditer ─────────────
+      Logger.error('order', 'create.rollback', `INSERT order échoué — re-crédit stock`, {
+        userId: req.user.id, meta: { vendorId, items: stockItems, error: orderErr.message }
+      });
+      await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) })
+        .catch(e => Logger.error('order', 'rollback.failed', e.message));
+      throw orderErr;
+    }
+
+    // ── Étape 3 : Notifications ───────────────────────────────────────────
+    Logger.info('order', 'created',
+      `Commande #${order.id} créée — ${formatFCFA(total)} (stock réservé)`,
+      { userId: req.user.id, userEmail: req.user.email, meta: { orderId: order.id, total, vendorId } }
+    );
     await pushNotification(vendorId, {
-      type: 'order', title: '🛒 Nouvelle commande', message: `Commande #${data.id.slice(-6)} — ${formatFCFA(total)}`, link: `/orders/${data.id}`
+      type: 'order',
+      title: '🛒 Nouvelle commande',
+      message: `Commande #${order.id.slice(-6)} — ${formatFCFA(total)}`,
+      link: `/orders/${order.id}`,
     });
-    res.status(201).json(data);
+
+    res.status(201).json(order);
+
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    Logger.error('order', 'create.error', e.message, {
+      userId: req.user.id, meta: { vendorId, total }
+    });
+    res.status(500).json({ error: 'Erreur lors de la création de la commande' });
   }
 });
 
@@ -941,22 +1045,85 @@ app.patch('/api/orders/:id/status', verifyToken, requireRole('vendor', 'admin'),
 app.patch('/api/orders/:id/cancel', verifyToken, async (req, res) => {
   const { reason } = req.body;
   try {
-    const { data: order } = await supabase.from('orders').select('*').eq('id', req.params.id).single();
+    const { data: order } = await supabase
+      .from('orders').select('*').eq('id', req.params.id).single();
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    if (req.user.role !== 'admin' && order.buyer_id !== req.user.id && order.vendor_id !== req.user.id) {
+
+    // Autorisation
+    if (req.user.role !== 'admin'
+        && order.buyer_id  !== req.user.id
+        && order.vendor_id !== req.user.id) {
       return res.status(403).json({ error: 'Non autorisé' });
     }
-    const { data, error } = await supabase.from('orders').update({
-      status: 'cancelled', cancel_reason: reason || null, cancelled_at: new Date().toISOString()
-    }).eq('id', req.params.id).select().single();
-    if (error) throw error;
 
-    // Remettre le stock
-    for (const item of (order.products || [])) {
-      if (item.id) await supabase.rpc('increment_stock', { product_id: item.id, qty: item.quantity || 1 });
+    // Statuts annulables : pas encore livré ni déjà annulé
+    const cancellable = ['pending_payment', 'processing'];
+    if (!cancellable.includes(order.status)) {
+      return res.status(409).json({
+        error: `Impossible d'annuler une commande en statut "${order.status}". Seules les commandes en attente ou en traitement peuvent être annulées.`,
+        code: 'CANNOT_CANCEL',
+      });
     }
-    res.json(data);
+
+    // Mise à jour du statut
+    const { data: updated, error: updErr } = await supabase
+      .from('orders')
+      .update({
+        status:       'cancelled',
+        cancel_reason: reason || null,
+        cancelled_at:  new Date().toISOString(),
+        cancelled_by:  req.user.id,
+      })
+      .eq('id', req.params.id)
+      .select().single();
+    if (updErr) throw updErr;
+
+    // ── Re-crédit du stock si le stock avait été réservé ─────────────────
+    // On ne re-crédite que si stock_reserved = true pour éviter le double
+    // re-crédit en cas d'appel répété (idempotence).
+    if (order.stock_reserved) {
+      const stockItems = cartToStockItems(order.products || []);
+      if (stockItems.length > 0) {
+        const { error: releaseErr } = await supabase.rpc(
+          'release_stock',
+          { p_items: JSON.stringify(stockItems) }
+        );
+        if (releaseErr) {
+          Logger.error('order', 'cancel.release_stock.error', releaseErr.message, {
+            userId: req.user.id, meta: { orderId: order.id, stockItems }
+          });
+          // On continue quand même : la commande est annulée, le stock sera
+          // réconcilié manuellement via l'interface admin.
+        } else {
+          // Marquer le stock comme libéré pour éviter le double re-crédit
+          await supabase.from('orders')
+            .update({ stock_reserved: false })
+            .eq('id', req.params.id);
+          Logger.info('order', 'cancel.stock_released',
+            `Stock re-crédité pour commande #${order.id}`,
+            { userId: req.user.id, meta: { orderId: order.id, stockItems } }
+          );
+        }
+      }
+    }
+
+    // Notification acheteur/vendeur
+    const otherPartyId = req.user.id === order.buyer_id ? order.vendor_id : order.buyer_id;
+    await pushNotification(otherPartyId, {
+      type: 'order',
+      title: '❌ Commande annulée',
+      message: `Commande #${order.id.slice(-6)}${reason ? ' — ' + reason : ''}`,
+      link: `/orders/${order.id}`,
+    });
+
+    Logger.info('order', 'cancelled', `Commande #${order.id} annulée`, {
+      userId: req.user.id, userRole: req.user.role,
+      meta: { orderId: order.id, reason }
+    });
+
+    res.json(updated);
   } catch (e) {
+    Logger.error('order', 'cancel.error', e.message, { userId: req.user.id, meta: { orderId: req.params.id } });
     res.status(500).json({ error: e.message });
   }
 });
@@ -1034,11 +1201,41 @@ async function handleStripeWebhook(req, res) {
     }
     if (event.type === 'payment_intent.payment_failed') {
       const pi = event.data.object;
-      await supabase.from('orders').update({ payment_status: 'failed' }).eq('stripe_payment_id', pi.id);
+      // Marquer l'ordre comme échoué
+      const { data: failedOrder } = await supabase
+        .from('orders').select('id, products, stock_reserved')
+        .eq('stripe_payment_id', pi.id).maybeSingle();
+      await supabase.from('orders')
+        .update({ payment_status: 'failed', status: 'cancelled', cancelled_at: new Date().toISOString() })
+        .eq('stripe_payment_id', pi.id);
+      // Re-crédit du stock si réservé
+      if (failedOrder?.stock_reserved) {
+        const stockItems = cartToStockItems(failedOrder.products || []);
+        if (stockItems.length > 0) {
+          await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) }).catch(e =>
+            Logger.error('payment', 'stripe.failed.release_stock', e.message, { meta: { orderId: failedOrder.id } })
+          );
+          await supabase.from('orders').update({ stock_reserved: false }).eq('id', failedOrder.id);
+          Logger.info('payment', 'stripe.failed.stock_released', `Stock re-crédité après échec Stripe`, { meta: { orderId: failedOrder.id } });
+        }
+      }
     }
     if (event.type === 'charge.refunded') {
       const charge = event.data.object;
-      await supabase.from('orders').update({ payment_status: 'refunded', status: 'cancelled' }).eq('stripe_payment_id', charge.payment_intent);
+      const { data: refundedOrder } = await supabase
+        .from('orders').select('id, products, stock_reserved')
+        .eq('stripe_payment_id', charge.payment_intent).maybeSingle();
+      await supabase.from('orders')
+        .update({ payment_status: 'refunded', status: 'cancelled', cancelled_at: new Date().toISOString() })
+        .eq('stripe_payment_id', charge.payment_intent);
+      // Re-crédit du stock si réservé et pas encore libéré
+      if (refundedOrder?.stock_reserved) {
+        const stockItems = cartToStockItems(refundedOrder.products || []);
+        if (stockItems.length > 0) {
+          await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) }).catch(() => {});
+          await supabase.from('orders').update({ stock_reserved: false }).eq('id', refundedOrder.id);
+        }
+      }
     }
     res.json({ received: true });
   } catch (e) {
