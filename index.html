@@ -1987,34 +1987,72 @@ const DataService = {
 
   // ── PAYOUT REQUESTS ───────────────────────────────────────────────
   async getPayouts(vendorId) {
+    // [FIX] Route backend sécurisée avec vérification solde
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch("/api/payouts/requests").catch(() => null);
+      if (res && res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json && json.requests) {
+          storage.set("payout_requests", json.requests);
+          return json.requests;
+        }
+      }
+    }
     if (this._sb) {
       let q = this._sb.from("payout_requests").select("*");
       if (vendorId) q = q.eq("vendor_id", vendorId);
-      const { data, error } = await q.order("date", { ascending: false });
-      if (!error && data) {
-        const mapped = data.map(r => ({
-          id: r.id, vendorId: r.vendor_id, vendorName: r.vendor_name,
-          amount: r.amount, method: r.method, provider: r.provider,
-          destination: r.destination, status: r.status, date: r.date
-        }));
-        storage.set("payout_requests", mapped); return mapped;
-      }
+      const { data, error } = await q.order("created_at", { ascending: false });
+      if (!error && data) { storage.set("payout_requests", data); return data; }
     }
     const all = storage.getArray("payout_requests");
     return vendorId ? all.filter(r => r.vendorId === vendorId) : all;
   },
-  async savePayout(req) {
+  async getPayoutBalance() {
+    // [FIX] Solde calculé côté serveur (ne peut pas être manipulé)
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch("/api/payouts/balance").catch(() => null);
+      if (res && res.ok) return res.json().catch(() => null);
+    }
+    return null;
+  },
+  async savePayout(payoutReq) {
+    // [FIX] Création via backend avec validation solde disponible
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch("/api/payouts/requests", {
+        method: "POST",
+        body: JSON.stringify({
+          amount: payoutReq.amount, method: payoutReq.method,
+          provider: payoutReq.provider, destination: payoutReq.destination
+        })
+      });
+      if (res && res.ok) {
+        const data = await res.json();
+        const all = storage.getArray("payout_requests");
+        all.unshift(data); storage.set("payout_requests", all);
+        return data;
+      } else if (res) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Erreur lors de la demande de retrait");
+      }
+    }
+    // Fallback Supabase direct
     if (this._sb) {
-      const row = { id: req.id, vendor_id: req.vendorId, vendor_name: req.vendorName,
-        amount: req.amount, method: req.method, provider: req.provider,
-        destination: req.destination, status: req.status || "pending",
-        date: req.date || new Date().toISOString() };
+      const row = { vendor_id: payoutReq.vendorId, vendor_name: payoutReq.vendorName,
+        amount: payoutReq.amount, method: payoutReq.method, provider: payoutReq.provider,
+        destination: payoutReq.destination, status: "pending" };
       await this._sb.from("payout_requests").insert(row).then(r=>r).catch(()=>{});
     }
     const all = storage.getArray("payout_requests");
-    all.push(req); storage.set("payout_requests", all);
+    all.push(payoutReq); storage.set("payout_requests", all);
   },
   async updatePayout(id, updates) {
+    // [FIX] Mise à jour via backend (admin seulement côté serveur)
+    if (NEXUS_CONFIG.apiUrl && updates.status) {
+      const res = await this.apiFetch(`/api/payouts/requests/${id}`, {
+        method: "PATCH", body: JSON.stringify({ status: updates.status, adminNote: updates.adminNote })
+      }).catch(() => null);
+      if (res && res.ok) return res.json().catch(() => null);
+    }
     if (this._sb) await this._sb.from("payout_requests").update({ status: updates.status }).eq("id", id).then(r=>r).catch(()=>{});
     const all = storage.getArray("payout_requests");
     const idx = all.findIndex(r => r.id === id);
@@ -2023,6 +2061,18 @@ const DataService = {
 
   // ── LOYALTY POINTS ────────────────────────────────────────────────
   async getLoyaltyPoints(userId) {
+    // [FIX] Priorité backend API — source de vérité serveur
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch("/api/loyalty").catch(() => null);
+      if (res && res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json && typeof json.points === "number") {
+          const pts = storage.get("loyalty_points") || {};
+          pts[userId] = json.points; storage.set("loyalty_points", pts);
+          return json.points;
+        }
+      }
+    }
     if (this._sb) {
       const { data, error } = await this._sb.from("loyalty_points").select("points").eq("user_id", userId).maybeSingle();
       if (!error && data) {
@@ -2034,10 +2084,12 @@ const DataService = {
     return (storage.get("loyalty_points") || {})[userId] || 0;
   },
   async addLoyaltyPoints(userId, delta) {
+    // [FIX] Points crédités côté backend lors de la commande — cette méthode
+    // sert uniquement de fallback localStorage pour le mode hors-ligne
     const pts = storage.get("loyalty_points") || {};
     pts[userId] = (pts[userId] || 0) + delta;
     storage.set("loyalty_points", pts);
-    if (this._sb) {
+    if (this._sb && !NEXUS_CONFIG.apiUrl) {
       await this._sb.from("loyalty_points")
         .upsert({ user_id: userId, points: pts[userId] }, { onConflict: "user_id" })
         .catch(()=>{});
@@ -2191,6 +2243,11 @@ const DataService = {
 
   // ── REFERRALS ─────────────────────────────────────────────────────
   async getReferrals(userId) {
+    // [FIX] Route backend sécurisée
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch("/api/referrals").catch(() => null);
+      if (res && res.ok) return res.json().catch(() => []);
+    }
     if (this._sb) {
       const { data, error } = await this._sb.from("referrals").select("*").eq("referrer_id", userId);
       if (!error && data) return data;
@@ -2198,6 +2255,15 @@ const DataService = {
     return (storage.get("referrals") || []).filter(r => r.referrerId === userId);
   },
   async saveReferral(ref) {
+    // [FIX] Enregistrement via backend — validation anti-auto-parrainage côté serveur
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch("/api/referrals", {
+        method: "POST",
+        body: JSON.stringify({ referralCode: ref.code, referredEmail: ref.referredEmail })
+      }).catch(() => null);
+      if (res && res.ok) return res.json().catch(() => null);
+      // Même si le backend échoue, on ne bloque pas l'inscription
+    }
     if (this._sb) {
       await this._sb.from("referrals").upsert({
         referrer_id: ref.referrerId, referred_id: ref.referredId || null,
@@ -4537,14 +4603,20 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       }
       if (currentUser2) storage.set(`cart_${currentUser2.id}`, []);
       else storage.set("guest_cart", []);
-      // ── Déduire les points utilisés ─────────────────────────
+      // ── [FIX] Déduire les points via backend (vérification solde serveur) ─
       if (currentUser2 && pointsUsed > 0) {
+        if (NEXUS_CONFIG.apiUrl) {
+          DataService.apiFetch("/api/loyalty/redeem", {
+            method: "POST", body: JSON.stringify({ points: pointsUsed })
+          }).catch(() => {});
+        }
         const pts = storage.get("loyalty_points") || {};
         pts[currentUser2.id] = Math.max(0, (pts[currentUser2.id] || 0) - pointsUsed);
         storage.set("loyalty_points", pts);
       }
-      // ── Récompense parrainage : 1ère commande ───────────────
-      if (currentUser2) {
+      // ── Récompense parrainage gérée côté backend (rewardReferrer appelé dans /api/orders)
+      // Fallback localStorage uniquement si pas de backend
+      if (currentUser2 && !NEXUS_CONFIG.apiUrl) {
         const refs = storage.get("referrals") || [];
         const pendingRef = refs.find(r => r.newUserId === currentUser2.id && r.status === "pending");
         if (pendingRef) {
@@ -4875,15 +4947,38 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         }
         setDone(true);
       } else if (role === "buyer_pro") {
-        const profile = {
-          role:"buyer_pro", name:form.name, avatar,
-          jobTitle:form.jobTitle, company:form.company,
-          ninea:form.ninea_buyer, rc:form.rc_buyer, address:form.address_buyer,
-          phone:form.phone
-        };
-        const newUser = await DataService.signUp(form.email, form.password, profile);
-        if (newUser.__emailConfirmPending) { setDone(true); setLoading(false); return; }
-        addToast(`Bienvenue, ${form.name} (${form.company}) !`, "success");
+        // [FIX] Route dédiée B2B avec validation NINEA côté serveur
+        let newUser;
+        if (NEXUS_CONFIG.apiUrl) {
+          const res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/b2b/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: form.name, email: form.email, password: form.password,
+              company: form.company, jobTitle: form.jobTitle,
+              ninea: form.ninea_buyer, rc: form.rc_buyer,
+              address: form.address_buyer, phone: form.phone
+            })
+          });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error || "Erreur inscription B2B");
+          // Stocker le token JWT
+          if (json.token) {
+            sessionStorage.setItem("nexus_jwt", json.token);
+            sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 604800) * 1000));
+          }
+          newUser = json.user;
+        } else {
+          const profile = {
+            role:"buyer_pro", name:form.name, avatar,
+            jobTitle:form.jobTitle, company:form.company,
+            ninea:form.ninea_buyer, rc:form.rc_buyer, address:form.address_buyer,
+            phone:form.phone
+          };
+          newUser = await DataService.signUp(form.email, form.password, profile);
+          if (newUser.__emailConfirmPending) { setDone(true); setLoading(false); return; }
+        }
+        addToast(`Bienvenue, ${form.name} (${form.company}) ! Votre NINEA est en cours de v\u00e9rification.`, "success");
         onLogin(newUser);
       } else {
         // buyer
@@ -8983,22 +9078,37 @@ const CouponInput = ({ onApply, onRemove, appliedCoupon }) => {
     if (!code.trim()) { setError("Entrez un code promo"); return; }
     setLoading(true); setError("");
     const upper = code.trim().toUpperCase();
-    let found = null;
     try {
+      // [FIX] Validation via backend API — discount calculé côté serveur (infalsifiable)
+      if (NEXUS_CONFIG.apiUrl) {
+        const res = await DataService.apiFetch("/api/coupons/validate", {
+          method: "POST",
+          body: JSON.stringify({ code: upper, cartTotal: 1 })
+        });
+        if (res && res.ok) {
+          const json = await res.json();
+          onApply({ code: json.code, discount: json.discount, description: json.description });
+          addToast(`Code "${json.code}" appliqué — ${json.discount}% de réduction !`, "success");
+          setCode(""); setLoading(false); return;
+        } else if (res) {
+          const err = await res.json().catch(() => ({}));
+          setError(err.error || "Code promo invalide ou expiré");
+          setLoading(false); return;
+        }
+      }
+      // Fallback Supabase/localStorage si backend non configuré
       const allCoupons = await DataService.getCoupons();
-      found = allCoupons.find(c => c.code === upper && c.active &&
+      const found = allCoupons.find(c => c.code === upper && c.active &&
         (!c.expiresAt || new Date(c.expiresAt) > new Date()) &&
         (!c.maxUses || (c.usedCount || 0) < c.maxUses));
-      if (found) DataService.updateCoupon(found.id, { usedCount: (found.usedCount || 0) + 1 }).catch(()=>{});
-    } catch(e) {}
-    if (!found) { const demo = DEMO_COUPONS[upper]; if (demo) found = { code: upper, ...demo }; }
-    if (found) {
-      onApply({ code: upper, discount: found.discount, description: found.description });
-      addToast(`Code "${upper}" appliqu\xE9 \u2014 ${found.discount}% de r\xE9duction !`, "success");
-      setCode("");
-    } else {
-      setError("Code promo invalide ou expir\xE9");
-    }
+      if (found) {
+        onApply({ code: upper, discount: found.discount, description: found.description });
+        addToast(`Code "${upper}" appliqué — ${found.discount}% de réduction !`, "success");
+        setCode("");
+      } else {
+        setError("Code promo invalide ou expiré");
+      }
+    } catch(e) { setError("Erreur de validation du code promo"); }
     setLoading(false);
   };
   if (appliedCoupon) {
