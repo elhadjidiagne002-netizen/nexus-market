@@ -1336,6 +1336,85 @@ const DataService = {
     if (status) orders = orders.filter((o) => o.status === status);
     return orders;
   },
+  // ── Vérification stock avant checkout ────────────────────────────────────
+  // Appelle GET /api/products/check-stock pour obtenir les stocks réels
+  // juste avant la validation. Retourne la liste des articles en rupture.
+  async checkStockAvailability(cartItems) {
+    const itemsWithId = cartItems.filter(i => i.id);
+    if (itemsWithId.length === 0) return { ok: true, outOfStock: [] };
+
+    // Backend API (source de vérité)
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const ids = itemsWithId.map(i => i.id).join(',');
+        const res = await this.apiFetch(`/api/products/check-stock?ids=${ids}`).catch(() => null);
+        if (res && res.ok) {
+          const stocks = await res.json(); // { [id]: { stock, active } }
+          const outOfStock = itemsWithId.filter(item => {
+            const s = stocks[item.id];
+            if (!s || !s.active) return true;                     // produit introuvable ou désactivé
+            return s.stock < (item.quantity || 1);                 // stock insuffisant
+          }).map(item => ({
+            id: item.id,
+            name: item.name,
+            requested: item.quantity || 1,
+            available: stocks[item.id]?.stock ?? 0,
+          }));
+          return { ok: outOfStock.length === 0, outOfStock, stocks };
+        }
+      } catch (e) {
+        console.warn('[checkStock] API indisponible, fallback localStorage:', e.message);
+      }
+    }
+
+    // Fallback localStorage (mode hors-ligne)
+    const allProducts = storage.getArray('products');
+    const outOfStock = itemsWithId.filter(item => {
+      const p = allProducts.find(p => p.id === item.id);
+      if (!p || p.active === false) return true;
+      return (p.stock || 0) < (item.quantity || 1);
+    }).map(item => {
+      const p = allProducts.find(p => p.id === item.id);
+      return { id: item.id, name: item.name, requested: item.quantity || 1, available: p?.stock ?? 0 };
+    });
+    return { ok: outOfStock.length === 0, outOfStock };
+  },
+
+  // ── Création commande via backend avec gestion du 409 stock ──────────────
+  async createOrder(orderPayload) {
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch('/api/orders', {
+        method: 'POST',
+        body: JSON.stringify(orderPayload),
+      }).catch(() => null);
+
+      if (res) {
+        const json = await res.json();
+        if (res.status === 409 && json.code === 'STOCK_INSUFFICIENT') {
+          // Erreur stock structurée — remonter au composant pour affichage précis
+          const err = new Error(json.detail || json.error || 'Stock insuffisant');
+          err.code = 'STOCK_INSUFFICIENT';
+          err.items = json.items || [];
+          throw err;
+        }
+        if (!res.ok) throw new Error(json.error || json.message || 'Erreur commande');
+        return json;
+      }
+      // Backend injoignable → fallback Supabase/localStorage
+    }
+
+    // Fallback : sauvegarder localement + décrémenter localStorage
+    const saved = await this.saveOrder(orderPayload);
+    // Décrémentation locale (meilleur effort)
+    const allProds = storage.getArray('products');
+    (orderPayload.products || []).forEach(item => {
+      const idx = allProds.findIndex(p => p.id === item.id);
+      if (idx !== -1) allProds[idx].stock = Math.max(0, (allProds[idx].stock || 0) - (item.quantity || 1));
+    });
+    storage.set('products', allProds);
+    return saved;
+  },
+
   async saveOrder(order) {
     if (this._sb) {
       const { data, error } = await this._sb.from("orders").insert(order).select().single();
@@ -4353,49 +4432,109 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   };
   const processPayment = (stripeResult = null) => {
     setLoading(true);
-    // [PERF] setTimeout wrapper supprimé — exécution immédiate
     (async () => {
+      // ── Étape 1 : Vérification stock temps-réel ───────────────────────────
+      const stockCheck = await DataService.checkStockAvailability(cart).catch(() => ({ ok: true, outOfStock: [] }));
+      if (!stockCheck.ok) {
+        setLoading(false);
+        const names = stockCheck.outOfStock.map(i =>
+          `${i.name} (${i.available} disponible${i.available > 1 ? 's' : ''})`
+        ).join(', ');
+        addToast(`\u26A0\uFE0F Stock insuffisant : ${names}. Veuillez mettre à jour votre panier.`, "error", 8000);
+        // Mettre à jour les stocks dans le panier pour guider l'utilisateur
+        if (stockCheck.stocks) {
+          const allProds = storage.getArray("products");
+          Object.entries(stockCheck.stocks).forEach(([id, s]) => {
+            const idx = allProds.findIndex(p => p.id === id);
+            if (idx !== -1) allProds[idx].stock = s.stock;
+          });
+          storage.set("products", allProds);
+        }
+        return;
+      }
+
+      // ── Étape 2 : Créer les commandes par vendeur ─────────────────────────
       const ordersByVendor = {};
       cart.forEach((item) => {
         if (!ordersByVendor[item.vendor]) {
           ordersByVendor[item.vendor] = { vendor: item.vendor, vendorName: item.vendorName, products: [] };
         }
-        ordersByVendor[item.vendor].products.push({ id: item.id, name: item.name, price: item.price, quantity: item.quantity, imageUrl: item.imageUrl });
+        ordersByVendor[item.vendor].products.push({
+          id: item.id, name: item.name, price: item.price,
+          quantity: item.quantity, imageUrl: item.imageUrl,
+          vendorName: item.vendorName,
+        });
       });
+
       const createdOrders = [];
       for (const vendorOrder of Object.values(ordersByVendor)) {
-        const total = vendorOrder.products.reduce((sum, p) => sum + p.price * p.quantity, 0);
+        const vendorTotal    = vendorOrder.products.reduce((s, p) => s + p.price * p.quantity, 0);
         const trackingNumber = "SN" + Math.floor(1e5 + Math.random() * 9e5);
-        const newOrder = {
-          id: "ORD-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5).toUpperCase(),
-          buyer: (currentUser2 == null ? void 0 : currentUser2.id) || "guest",
-          buyerName: customerInfo.name,
-          buyerEmail: customerInfo.email,
-          buyerAddress: `${customerInfo.address}, ${customerInfo.postalCode} ${shippingCity}`,
-          buyerPhone: customerInfo.phone,
-          vendor: vendorOrder.vendor,
-          vendorName: vendorOrder.vendorName,
-          products: vendorOrder.products,
-          total,
-          commission: total * 0.15,
-          status: "processing",
-          date: (/* @__PURE__ */ new Date()).toISOString(),
-          shipping: shippingEur > 0 ? "standard" : "gratuit",
-          shippingCity,
-          trackingNumber,
+        const orderPayload = {
+          // Champs backend (snake_case pour POST /api/orders)
+          vendorId:      vendorOrder.vendor,
+          products:      vendorOrder.products,
+          subtotal:      vendorTotal,
+          total:         vendorTotal + shippingEur,
+          discountAmount: discountEur + pointsDiscountEurReal,
           paymentMethod,
-          stripePaymentId: (stripeResult == null ? void 0 : stripeResult.paymentMethodId) || (paymentMethod === "card" ? "pi_sim_" + Date.now() : paymentMethod === "cod" ? "COD-" + Date.now() : "mobile_" + Date.now())
+          buyerAddress:  `${customerInfo.address}, ${customerInfo.postalCode} ${shippingCity}`,
+          buyerPhone:    customerInfo.phone,
+          shippingCity,
+          // Champs locaux (pour le fallback localStorage)
+          id:            "ORD-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5).toUpperCase(),
+          buyer:         (currentUser2 == null ? void 0 : currentUser2.id) || "guest",
+          buyerName:     customerInfo.name,
+          buyerEmail:    customerInfo.email,
+          vendor:        vendorOrder.vendor,
+          vendorName:    vendorOrder.vendorName,
+          commission:    vendorTotal * 0.15,
+          status:        "processing",
+          date:          new Date().toISOString(),
+          shipping:      shippingEur > 0 ? "standard" : "gratuit",
+          trackingNumber,
+          stripePaymentId: (stripeResult == null ? void 0 : stripeResult.paymentMethodId)
+            || (paymentMethod === "card"   ? "pi_sim_" + Date.now()
+            :   paymentMethod === "cod"    ? "COD-"    + Date.now()
+            :                               "mobile_"  + Date.now()),
         };
-        await DataService.saveOrder(newOrder);
-        createdOrders.push(newOrder);
-        DataService.addNotification(vendorOrder.vendor, { type: "order", title: "Nouvelle commande !", message: `${customerInfo.name} a command\xE9 ${vendorOrder.products.map((p) => p.name).join(", ")} \u2014 ${formatPrice(total)}` });
+
+        let savedOrder;
+        try {
+          savedOrder = await DataService.createOrder(orderPayload);
+        } catch (err) {
+          setLoading(false);
+          if (err.code === 'STOCK_INSUFFICIENT') {
+            const detail = err.items?.map(i => `${i.product_name} (dispo: ${i.available})`).join(', ')
+              || err.message;
+            addToast(`\u274C Stock insuffisant : ${detail}`, "error", 8000);
+          } else {
+            addToast(`\u274C Erreur commande : ${err.message}`, "error", 6000);
+          }
+          return;
+        }
+
+        createdOrders.push(savedOrder || orderPayload);
+        DataService.addNotification(vendorOrder.vendor, {
+          type: "order",
+          title: "Nouvelle commande !",
+          message: `${customerInfo.name} a command\xE9 ${vendorOrder.products.map(p => p.name).join(", ")} \u2014 ${formatPrice(vendorTotal)}`
+        });
       }
-      const allProducts = storage.getArray("products");
-      cart.forEach((item) => {
-        const idx = allProducts.findIndex((p) => p.id === item.id);
-        if (idx !== -1) allProducts[idx].stock = Math.max(0, allProducts[idx].stock - item.quantity);
-      });
-      storage.set("products", allProducts);
+
+      // Le stock est maintenant géré côté serveur (décrémenté atomiquement).
+      // On met à jour le cache localStorage pour refléter les nouvelles valeurs.
+      if (stockCheck.stocks) {
+        const allProds = storage.getArray("products");
+        Object.entries(stockCheck.stocks).forEach(([id, s]) => {
+          const idx = allProds.findIndex(p => p.id === id);
+          if (idx !== -1) {
+            const ordered = cart.find(i => i.id === id);
+            allProds[idx].stock = Math.max(0, s.stock - (ordered?.quantity || 0));
+          }
+        });
+        storage.set("products", allProds);
+      }
       if (currentUser2) storage.set(`cart_${currentUser2.id}`, []);
       else storage.set("guest_cart", []);
       // ── Déduire les points utilisés ─────────────────────────
@@ -8184,9 +8323,16 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
     const allReviews = storage.getArray("reviews");
     setReviews(allReviews);
   }, []);
-  const addToCart = (product) => {
-    if (product.stock <= 0) {
-      addToast("Produit en rupture de stock", "error");
+  const addToCart = (product, quantity = 1) => {
+    if (!product || product.stock <= 0) {
+      addToast("\u274C Ce produit est en rupture de stock", "error");
+      return;
+    }
+    // Vérifier que la quantité demandée ne dépasse pas le stock disponible
+    const alreadyInCart = cart.find(i => i.id === product.id);
+    const totalQty = (alreadyInCart?.quantity || 0) + quantity;
+    if (totalQty > product.stock) {
+      addToast(`\u26A0\uFE0F Stock limité — seulement ${product.stock} disponible${product.stock > 1 ? 's' : ''}${alreadyInCart ? ` (${alreadyInCart.quantity} déjà dans le panier)` : ''}`, "warning", 5000);
       return;
     }
     const existing = cart.find((i) => i.id === product.id);
