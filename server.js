@@ -471,11 +471,35 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       return res.json({ message: 'Demande envoyée — validation sous 48h', pending: true });
     }
 
+    // Gestion buyer_pro via route dédiée /api/b2b/register
+    if (role === 'buyer_pro') {
+      return res.status(400).json({ error: 'Utilisez /api/b2b/register pour les comptes Pro B2B' });
+    }
+
     const { data, error } = await supabase.from('profiles').insert({
       name, email, password_hash: hashedPw, role: 'buyer', avatar, phone: phone || null,
       status: 'active'
     }).select().single();
     if (error) throw error;
+
+    // Enregistrer le parrainage si un code est fourni (non-bloquant)
+    if (req.body.referralCode) {
+      const safeCode = req.body.referralCode.trim().toUpperCase();
+      const { data: profiles } = await supabase.from('profiles').select('id, name').eq('status', 'active');
+      const referrer = (profiles || []).find(u => {
+        const expected = `NEXUS-${(u.name||'').replace(/\s+/g,'').toUpperCase().slice(0,5)}-${(u.id||'').slice(-4)}`;
+        return expected === safeCode;
+      });
+      if (referrer && referrer.id !== data.id) {
+        await supabase.from('referrals').insert({
+          referrer_id: referrer.id, referred_id: data.id, code: safeCode, rewarded: false,
+        }).catch(() => {});
+        await pushNotification(referrer.id, {
+          type: 'system', title: '🎁 Nouveau filleul !',
+          message: `${name} vient de s'inscrire avec votre code. Récompense dès sa 1ère commande.`,
+        });
+      }
+    }
 
     const token = jwt.sign({ id: data.id, role: 'buyer', name, email }, process.env.JWT_SECRET, {
       expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') // 7 jours par défaut
@@ -914,6 +938,29 @@ app.post('/api/orders', verifyToken, async (req, res) => {
   const stockItems = cartToStockItems(products);
 
   try {
+    // ── Étape 0 : Validation côté serveur du coupon (si fourni) ──────────
+    // Le frontend ne peut pas falsifier le discount : on recalcule ici
+    let serverDiscount = 0;
+    if (couponCode) {
+      const safeCode = couponCode.trim().toUpperCase();
+      const { data: coupon } = await supabase
+        .from('coupons').select('*').eq('code', safeCode).eq('active', true).maybeSingle();
+      if (!coupon) {
+        return res.status(400).json({ error: `Code promo "${safeCode}" invalide ou inactif` });
+      }
+      if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
+        return res.status(410).json({ error: `Code promo "${safeCode}" expiré` });
+      }
+      if (coupon.max_uses !== null && coupon.used_count >= coupon.max_uses) {
+        return res.status(410).json({ error: `Code promo "${safeCode}" épuisé` });
+      }
+      // Discount calculé côté serveur — le client ne peut pas gonfler la remise
+      serverDiscount = Math.round(parseFloat(subtotal || total) * (coupon.discount / 100) * 100) / 100;
+      // Incrémenter used_count (non-bloquant)
+      supabase.from('coupons').update({ used_count: (coupon.used_count || 0) + 1 })
+        .eq('id', coupon.id).catch(() => {});
+    }
+
     // ── Étape 1 : Vérification ET décrémentation atomique du stock ────────
     // check_and_reserve_stock() :
     //   - Lock FOR UPDATE sur chaque ligne produit (empêche la race condition)
@@ -966,7 +1013,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       vendor_name:     products[0]?.vendorName || 'Vendeur',
       products,
       subtotal:        parseFloat(subtotal)      || parseFloat(total),
-      discount_amount: parseFloat(discountAmount) || 0,
+      discount_amount: couponCode ? serverDiscount : (parseFloat(discountAmount) || 0),
       total:           parseFloat(total),
       commission:      calculatedCommission,
       payment_method:  paymentMethod || 'mobile',
@@ -998,7 +1045,40 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       link: `/orders/${order.id}`,
     });
 
-    res.status(201).json(order);
+    // ── Étape 4 : Points de fidélité — 1 pt par 100 FCFA dépensé ─────────
+    const earnedPoints = Math.floor(parseFloat(total) * 655.957 / 100);
+    if (earnedPoints > 0) {
+      try {
+        const { data: loyaltyRow } = await supabase.from('loyalty_points')
+          .select('points, total_earned').eq('user_id', req.user.id).maybeSingle();
+        if (loyaltyRow) {
+          await supabase.from('loyalty_points').update({
+            points:       loyaltyRow.points + earnedPoints,
+            total_earned: (loyaltyRow.total_earned || 0) + earnedPoints,
+            updated_at:   new Date().toISOString(),
+          }).eq('user_id', req.user.id);
+        } else {
+          await supabase.from('loyalty_points').insert({
+            user_id: req.user.id, points: earnedPoints,
+            total_earned: earnedPoints, total_redeemed: 0,
+          });
+        }
+        await pushNotification(req.user.id, {
+          type: 'system',
+          title: `⭐ +${earnedPoints.toLocaleString('fr-FR')} points fidélité`,
+          message: `Vous gagnez ${earnedPoints} pts pour votre commande #${order.id.slice(-6)}.`,
+        });
+      } catch (loyaltyErr) {
+        Logger.warn('order', 'loyalty.error', loyaltyErr.message, { userId: req.user.id });
+      }
+    }
+
+    // ── Étape 5 : Récompense parrainage (1ère commande du filleul) ────────
+    rewardReferrer(req.user.id).catch(e =>
+      Logger.warn('order', 'referral.error', e.message, { userId: req.user.id })
+    );
+
+    res.status(201).json({ ...order, earnedPoints });
 
   } catch (e) {
     Logger.error('order', 'create.error', e.message, {
@@ -1675,6 +1755,589 @@ app.get('/api/admin/logs/summary', verifyToken, requireRole('admin'), async (req
   }
 });
 
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ─── COUPONS ─────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+// GET /api/coupons — liste tous les coupons (admin) ou coupons actifs (authentifié)
+app.get('/api/coupons', verifyToken, async (req, res) => {
+  try {
+    let query = supabase.from('coupons').select('*').order('created_at', { ascending: false });
+    if (req.user.role !== 'admin') {
+      // Les non-admins ne voient que les coupons actifs et non expirés
+      query = query.eq('active', true).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/coupons — créer un coupon (admin)
+app.post('/api/coupons', verifyToken, requireRole('admin'), async (req, res) => {
+  const { code, discount, description, maxUses, expiresAt } = req.body;
+  if (!code || !discount) return res.status(400).json({ error: 'Code et discount requis' });
+  const pct = parseInt(discount);
+  if (isNaN(pct) || pct < 1 || pct > 100) return res.status(400).json({ error: 'Discount invalide (1-100)' });
+  const safeCode = code.trim().toUpperCase().replace(/[^A-Z0-9-_]/g, '').slice(0, 20);
+  if (!safeCode) return res.status(400).json({ error: 'Code invalide' });
+  try {
+    const { data: existing } = await supabase.from('coupons').select('id').eq('code', safeCode).maybeSingle();
+    if (existing) return res.status(409).json({ error: `Le code ${safeCode} existe déjà` });
+    const { data, error } = await supabase.from('coupons').insert({
+      code: safeCode,
+      discount: pct,
+      description: description || null,
+      max_uses: maxUses ? parseInt(maxUses) : null,
+      used_count: 0,
+      expires_at: expiresAt || null,
+      active: true,
+    }).select().single();
+    if (error) throw error;
+    Logger.info('coupon', 'created', `Coupon ${safeCode} (${pct}%) créé`, { userId: req.user.id });
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/coupons/validate — valider et appliquer un coupon à un panier (utilisateur authentifié)
+// C'est LE point d'entrée sécurisé : le frontend ne peut pas falsifier le discount
+app.post('/api/coupons/validate', verifyToken, async (req, res) => {
+  const { code, cartTotal } = req.body;
+  if (!code) return res.status(400).json({ error: 'Code requis' });
+  if (!cartTotal || parseFloat(cartTotal) <= 0) return res.status(400).json({ error: 'Total du panier invalide' });
+  const safeCode = code.trim().toUpperCase();
+  try {
+    const { data: coupon, error } = await supabase
+      .from('coupons').select('*').eq('code', safeCode).eq('active', true).maybeSingle();
+    if (error) throw error;
+    if (!coupon) return res.status(404).json({ error: 'Code promo invalide ou inactif' });
+
+    // Vérification expiration
+    if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
+      return res.status(410).json({ error: 'Code promo expiré' });
+    }
+    // Vérification quota d'utilisation
+    if (coupon.max_uses !== null && coupon.used_count >= coupon.max_uses) {
+      return res.status(410).json({ error: 'Code promo épuisé (quota atteint)' });
+    }
+
+    // Calcul du montant remis (côté serveur — infalsifiable)
+    const total = parseFloat(cartTotal);
+    const discountAmount = Math.round(total * (coupon.discount / 100) * 100) / 100;
+
+    // Incrémenter used_count atomiquement
+    await supabase.from('coupons')
+      .update({ used_count: (coupon.used_count || 0) + 1 })
+      .eq('id', coupon.id);
+
+    Logger.info('coupon', 'applied', `Coupon ${safeCode} appliqué — ${coupon.discount}%`, {
+      userId: req.user.id, meta: { code: safeCode, discountAmount, cartTotal }
+    });
+    res.json({
+      valid: true,
+      code: coupon.code,
+      discount: coupon.discount,
+      description: coupon.description,
+      discountAmount,
+      finalTotal: Math.max(0, total - discountAmount),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/coupons/:id — activer/désactiver un coupon (admin)
+app.patch('/api/coupons/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  const { active, description, maxUses, expiresAt } = req.body;
+  const updates = {};
+  if (active !== undefined)     updates.active      = !!active;
+  if (description !== undefined) updates.description = description;
+  if (maxUses !== undefined)     updates.max_uses    = maxUses ? parseInt(maxUses) : null;
+  if (expiresAt !== undefined)   updates.expires_at  = expiresAt || null;
+  if (!Object.keys(updates).length) return res.status(400).json({ error: 'Aucune modification' });
+  try {
+    const { data, error } = await supabase.from('coupons').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/coupons/:id — supprimer un coupon (admin)
+app.delete('/api/coupons/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    await supabase.from('coupons').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ─── LOYALTY POINTS ──────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+// GET /api/loyalty — solde de points de l'utilisateur connecté
+app.get('/api/loyalty', verifyToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('loyalty_points').select('points, total_earned, total_redeemed')
+      .eq('user_id', req.user.id).maybeSingle();
+    if (error) throw error;
+    res.json({ points: data?.points || 0, totalEarned: data?.total_earned || 0, totalRedeemed: data?.total_redeemed || 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/loyalty/earn — créditer des points après commande (appelé par le backend lui-même, ou via ordres)
+// Protégé : seul le backend (service-role) ou un admin peut appeler cette route
+app.post('/api/loyalty/earn', verifyToken, async (req, res) => {
+  const { userId, points, reason } = req.body;
+  // Un acheteur ne peut créditer que ses propres points ; l'admin peut créditer n'importe qui
+  const targetId = req.user.role === 'admin' ? (userId || req.user.id) : req.user.id;
+  if (!points || parseInt(points) <= 0) return res.status(400).json({ error: 'Points invalides' });
+  const delta = parseInt(points);
+  try {
+    const { data: existing } = await supabase.from('loyalty_points').select('*').eq('user_id', targetId).maybeSingle();
+    let result;
+    if (existing) {
+      const { data, error } = await supabase.from('loyalty_points').update({
+        points: existing.points + delta,
+        total_earned: (existing.total_earned || 0) + delta,
+        updated_at: new Date().toISOString(),
+      }).eq('user_id', targetId).select().single();
+      if (error) throw error;
+      result = data;
+    } else {
+      const { data, error } = await supabase.from('loyalty_points').insert({
+        user_id: targetId, points: delta, total_earned: delta, total_redeemed: 0,
+      }).select().single();
+      if (error) throw error;
+      result = data;
+    }
+    // Notifier l'utilisateur
+    await pushNotification(targetId, {
+      type: 'system',
+      title: `⭐ +${delta.toLocaleString('fr-FR')} points de fidélité`,
+      message: reason || `Vous avez gagné ${delta} points.`,
+    });
+    Logger.info('loyalty', 'earned', `+${delta} pts pour user ${targetId}`, { userId: req.user.id, meta: { targetId, delta, reason } });
+    res.json({ points: result.points, totalEarned: result.total_earned });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/loyalty/redeem — utiliser des points (déduit du solde, renvoie le montant en FCFA)
+app.post('/api/loyalty/redeem', verifyToken, async (req, res) => {
+  const { points } = req.body;
+  const POINTS_PER_FCFA = 100; // 100 pts = 1 FCFA
+  if (!points || parseInt(points) <= 0) return res.status(400).json({ error: 'Points invalides' });
+  if (parseInt(points) % POINTS_PER_FCFA !== 0) return res.status(400).json({ error: `Les points doivent être un multiple de ${POINTS_PER_FCFA}` });
+  const toRedeem = parseInt(points);
+  try {
+    const { data: existing, error: fetchErr } = await supabase
+      .from('loyalty_points').select('*').eq('user_id', req.user.id).maybeSingle();
+    if (fetchErr) throw fetchErr;
+    const currentPoints = existing?.points || 0;
+    if (currentPoints < toRedeem) {
+      return res.status(400).json({ error: `Solde insuffisant (${currentPoints} pts disponibles)` });
+    }
+    const fcfaValue = toRedeem / POINTS_PER_FCFA;
+    const { data, error } = await supabase.from('loyalty_points').update({
+      points: currentPoints - toRedeem,
+      total_redeemed: (existing.total_redeemed || 0) + toRedeem,
+      updated_at: new Date().toISOString(),
+    }).eq('user_id', req.user.id).select().single();
+    if (error) throw error;
+    Logger.info('loyalty', 'redeemed', `-${toRedeem} pts pour user ${req.user.id} = ${fcfaValue} FCFA`, { userId: req.user.id });
+    res.json({ pointsRedeemed: toRedeem, fcfaValue, newBalance: data.points });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ─── REFERRALS (PARRAINAGE) ───────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+const REFERRAL_POINTS_REWARD = 500; // Points accordés au parrain lors de la 1ère commande du filleul
+
+// GET /api/referrals — liste les parrainages de l'utilisateur connecté
+app.get('/api/referrals', verifyToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('referrals').select('*').eq('referrer_id', req.user.id).order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/referrals — enregistrer un parrainage lors de l'inscription d'un filleul
+app.post('/api/referrals', verifyToken, async (req, res) => {
+  const { referralCode, referredEmail } = req.body;
+  if (!referralCode) return res.status(400).json({ error: 'Code parrain requis' });
+
+  // Format du code : NEXUS-XXXXX-YYYY (généré côté frontend depuis le nom + id du parrain)
+  const safeCode = referralCode.trim().toUpperCase();
+  try {
+    // Retrouver le parrain à partir du code
+    const { data: profiles } = await supabase.from('profiles').select('id, name, email').eq('status', 'active');
+    const referrer = (profiles || []).find(u => {
+      const expected = `NEXUS-${(u.name || '').replace(/\s+/g, '').toUpperCase().slice(0, 5)}-${(u.id || '').slice(-4)}`;
+      return expected === safeCode;
+    });
+    if (!referrer) return res.status(404).json({ error: 'Code parrainage invalide' });
+    if (referrer.id === req.user.id) return res.status(400).json({ error: 'Vous ne pouvez pas vous parrainer vous-même' });
+
+    // Vérifier que ce filleul n'a pas déjà été parrainé
+    const { data: existing } = await supabase.from('referrals')
+      .select('id').eq('referred_id', req.user.id).maybeSingle();
+    if (existing) return res.status(409).json({ error: 'Ce compte a déjà été parrainé' });
+
+    const { data, error } = await supabase.from('referrals').insert({
+      referrer_id: referrer.id,
+      referred_id: req.user.id,
+      code: safeCode,
+      rewarded: false,
+    }).select().single();
+    if (error) throw error;
+
+    // Notifier le parrain
+    await pushNotification(referrer.id, {
+      type: 'system',
+      title: '🎁 Nouveau filleul !',
+      message: `${req.user.name || referredEmail || 'Un ami'} vient de s'inscrire avec votre code. Récompense dès sa 1ère commande.`,
+    });
+    Logger.info('referral', 'registered', `Parrainage: ${referrer.id} → ${req.user.id}`, { userId: req.user.id, meta: { code: safeCode } });
+    res.status(201).json({ message: 'Parrainage enregistré', referrerId: referrer.id, referralId: data.id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/referrals/reward — récompenser le parrain après la 1ère commande du filleul
+// Appelé DEPUIS /api/orders lors du paiement (interne — ne pas exposer publiquement)
+const rewardReferrer = async (referredUserId) => {
+  try {
+    const { data: referral } = await supabase
+      .from('referrals').select('*').eq('referred_id', referredUserId).eq('rewarded', false).maybeSingle();
+    if (!referral) return; // Pas de parrainage ou déjà récompensé
+
+    // Créditer les points au parrain
+    const { data: existing } = await supabase.from('loyalty_points').select('*').eq('user_id', referral.referrer_id).maybeSingle();
+    if (existing) {
+      await supabase.from('loyalty_points').update({
+        points: existing.points + REFERRAL_POINTS_REWARD,
+        total_earned: (existing.total_earned || 0) + REFERRAL_POINTS_REWARD,
+        updated_at: new Date().toISOString(),
+      }).eq('user_id', referral.referrer_id);
+    } else {
+      await supabase.from('loyalty_points').insert({
+        user_id: referral.referrer_id, points: REFERRAL_POINTS_REWARD, total_earned: REFERRAL_POINTS_REWARD, total_redeemed: 0,
+      });
+    }
+    // Marquer comme récompensé
+    await supabase.from('referrals').update({ rewarded: true, rewarded_at: new Date().toISOString() }).eq('id', referral.id);
+    // Notifier le parrain
+    await pushNotification(referral.referrer_id, {
+      type: 'system',
+      title: '🎁 Récompense parrainage !',
+      message: `Votre filleul vient de passer sa 1ère commande ! Vous gagnez ${REFERRAL_POINTS_REWARD} points de fidélité.`,
+    });
+    Logger.info('referral', 'rewarded', `Parrain ${referral.referrer_id} récompensé (+${REFERRAL_POINTS_REWARD} pts)`, { meta: { referralId: referral.id } });
+  } catch (e) {
+    Logger.error('referral', 'reward.error', e.message, { meta: { referredUserId } });
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ─── PAYOUT REQUESTS (DEMANDES DE RETRAIT VENDEUR) ───────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+// GET /api/payouts/requests — liste les demandes (vendeur = ses propres, admin = toutes)
+app.get('/api/payouts/requests', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
+  try {
+    const { status, page = 1, limit = 20 } = req.query;
+    let query = supabase.from('payout_requests').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+    if (req.user.role === 'vendor') query = query.eq('vendor_id', req.user.id);
+    if (status) query = query.eq('status', status);
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    query = query.range(offset, offset + parseInt(limit) - 1);
+    const { data, error, count } = await query;
+    if (error) throw error;
+    res.json({ requests: data || [], total: count || 0, page: parseInt(page) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/payouts/requests — créer une demande de retrait (vendeur)
+app.post('/api/payouts/requests', verifyToken, requireRole('vendor'), async (req, res) => {
+  const { amount, method, provider, destination } = req.body;
+  if (!amount || parseFloat(amount) <= 0) return res.status(400).json({ error: 'Montant invalide' });
+  if (!method || !['mobile', 'bank'].includes(method)) return res.status(400).json({ error: 'Méthode invalide (mobile|bank)' });
+  if (!destination) return res.status(400).json({ error: 'Destination (numéro/IBAN) requise' });
+
+  const MIN_PAYOUT = 5000; // 5 000 FCFA minimum
+  const amountFcfa = parseFloat(amount);
+  if (amountFcfa < MIN_PAYOUT) return res.status(400).json({ error: `Montant minimum de retrait : ${MIN_PAYOUT.toLocaleString('fr-FR')} FCFA` });
+
+  try {
+    // Vérifier qu'il n'y a pas déjà une demande en attente
+    const { data: pending } = await supabase.from('payout_requests')
+      .select('id').eq('vendor_id', req.user.id).eq('status', 'pending').maybeSingle();
+    if (pending) return res.status(409).json({ error: 'Une demande de retrait est déjà en cours de traitement' });
+
+    // Calculer le solde disponible (commandes livrées - retraits déjà validés)
+    const { data: deliveredOrders } = await supabase.from('orders')
+      .select('total, commission').eq('vendor_id', req.user.id).eq('status', 'delivered');
+    const totalRevenue = (deliveredOrders || []).reduce((s, o) => s + (o.total || 0) - (o.commission || 0), 0);
+    const totalRevenueFcfa = Math.round(totalRevenue * 655.957);
+
+    const { data: approvedPayouts } = await supabase.from('payout_requests')
+      .select('amount').eq('vendor_id', req.user.id).eq('status', 'approved');
+    const totalPaidOut = (approvedPayouts || []).reduce((s, p) => s + (p.amount || 0), 0);
+
+    const availableBalance = totalRevenueFcfa - totalPaidOut;
+    if (amountFcfa > availableBalance) {
+      return res.status(400).json({
+        error: `Solde insuffisant. Disponible : ${availableBalance.toLocaleString('fr-FR')} FCFA`,
+        availableBalance,
+      });
+    }
+
+    const { data: vendorProfile } = await supabase.from('profiles').select('name').eq('id', req.user.id).maybeSingle();
+    const { data, error } = await supabase.from('payout_requests').insert({
+      vendor_id:   req.user.id,
+      vendor_name: vendorProfile?.name || req.user.name,
+      amount:      amountFcfa,
+      method,
+      provider:    provider || null,
+      destination,
+      status:      'pending',
+    }).select().single();
+    if (error) throw error;
+
+    // Notifier les admins
+    const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
+    for (const admin of (admins || [])) {
+      await pushNotification(admin.id, {
+        type: 'system',
+        title: '💰 Demande de retrait',
+        message: `${vendorProfile?.name || req.user.name} demande ${amountFcfa.toLocaleString('fr-FR')} FCFA via ${method === 'mobile' ? provider : 'virement'}`,
+        link: '/admin/payouts',
+      });
+    }
+    Logger.info('payout', 'request.created', `Retrait ${amountFcfa} FCFA — vendor ${req.user.id}`, { userId: req.user.id, meta: { amount: amountFcfa, method } });
+    res.status(201).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/payouts/requests/:id — approuver ou rejeter une demande (admin)
+app.patch('/api/payouts/requests/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  const { status, adminNote } = req.body;
+  if (!['approved', 'rejected', 'processing'].includes(status)) {
+    return res.status(400).json({ error: 'Statut invalide (approved|rejected|processing)' });
+  }
+  try {
+    const { data: existing } = await supabase.from('payout_requests').select('*').eq('id', req.params.id).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Demande introuvable' });
+    if (existing.status !== 'pending' && existing.status !== 'processing') {
+      return res.status(409).json({ error: `Impossible de modifier une demande en statut "${existing.status}"` });
+    }
+
+    const updates = {
+      status,
+      admin_note:   adminNote || null,
+      processed_at: new Date().toISOString(),
+      processed_by: req.user.id,
+    };
+    const { data, error } = await supabase.from('payout_requests').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+
+    // Notifier le vendeur
+    const statusLabels = { approved: 'approuvée', rejected: 'rejetée', processing: 'en cours de traitement' };
+    await pushNotification(existing.vendor_id, {
+      type: 'system',
+      title: status === 'approved' ? '✅ Retrait approuvé' : status === 'rejected' ? '❌ Retrait rejeté' : '⚙️ Retrait en traitement',
+      message: `Votre demande de ${existing.amount?.toLocaleString('fr-FR')} FCFA a été ${statusLabels[status]}.${adminNote ? ' Note : ' + adminNote : ''}`,
+      link: '/vendor/payouts',
+    });
+    Logger.info('payout', `request.${status}`, `Retrait ${req.params.id} ${status} par admin ${req.user.id}`, { userId: req.user.id, meta: { payoutId: req.params.id, amount: existing.amount } });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/payouts/balance — solde disponible pour retrait d'un vendeur
+app.get('/api/payouts/balance', verifyToken, requireRole('vendor'), async (req, res) => {
+  try {
+    const { data: deliveredOrders } = await supabase.from('orders')
+      .select('total, commission').eq('vendor_id', req.user.id).eq('status', 'delivered');
+    const totalRevenue = (deliveredOrders || []).reduce((s, o) => s + (o.total || 0) - (o.commission || 0), 0);
+    const totalRevenueFcfa = Math.round(totalRevenue * 655.957);
+
+    const { data: approvedPayouts } = await supabase.from('payout_requests')
+      .select('amount').eq('vendor_id', req.user.id).eq('status', 'approved');
+    const totalPaidOut = (approvedPayouts || []).reduce((s, p) => s + (p.amount || 0), 0);
+
+    const { data: pendingPayout } = await supabase.from('payout_requests')
+      .select('amount').eq('vendor_id', req.user.id).eq('status', 'pending').maybeSingle();
+
+    res.json({
+      totalRevenueFcfa,
+      totalPaidOut,
+      pendingPayout:    pendingPayout?.amount || 0,
+      availableBalance: Math.max(0, totalRevenueFcfa - totalPaidOut),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ─── BUYER PRO (B2B) ─────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+// GET /api/b2b/profile — profil B2B de l'acheteur pro connecté
+app.get('/api/b2b/profile', verifyToken, requireRole('buyer_pro', 'admin'), async (req, res) => {
+  try {
+    const targetId = req.user.role === 'admin' ? (req.query.userId || req.user.id) : req.user.id;
+    const { data, error } = await supabase.from('buyer_pro_profiles').select('*').eq('user_id', targetId).maybeSingle();
+    if (error) throw error;
+    res.json(data || null);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/b2b/register — inscription B2B complète avec validation NINEA
+app.post('/api/b2b/register', authLimiter, async (req, res) => {
+  const { name, email, password, company, jobTitle, ninea, rc, address, phone } = req.body;
+
+  // Validations de base
+  if (!name || !email || !password) return res.status(400).json({ error: 'Nom, email et mot de passe requis' });
+  if (!company)   return res.status(400).json({ error: 'Nom de la société requis' });
+  if (!jobTitle)  return res.status(400).json({ error: 'Poste/fonction requis' });
+  if (!ninea)     return res.status(400).json({ error: 'NINEA requis' });
+  if (password.length < 6) return res.status(400).json({ error: 'Mot de passe trop court' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Email invalide' });
+
+  // Validation format NINEA (format sénégalais : 9 chiffres optionnellement suivis de 3 lettres/chiffres)
+  const nineaClean = ninea.trim().replace(/\s/g, '').toUpperCase();
+  if (!/^\d{7}[A-Z0-9]{1,3}$/.test(nineaClean) && !/^\d{9}$/.test(nineaClean)) {
+    return res.status(400).json({ error: 'Format NINEA invalide (ex: 1234567A2B ou 123456789)' });
+  }
+
+  try {
+    // Vérifier unicité email et NINEA
+    const { data: existingEmail } = await supabase.from('profiles').select('id').eq('email', email.trim().toLowerCase()).maybeSingle();
+    if (existingEmail) return res.status(409).json({ error: 'Cet email est déjà utilisé' });
+
+    const { data: existingNinea } = await supabase.from('buyer_pro_profiles').select('id').eq('ninea', nineaClean).maybeSingle();
+    if (existingNinea) return res.status(409).json({ error: 'Ce NINEA est déjà enregistré' });
+
+    const hashedPw = await bcrypt.hash(password, 10);
+    const avatar   = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+
+    // Créer le profil principal
+    const { data: profile, error: profileErr } = await supabase.from('profiles').insert({
+      name, email: email.trim().toLowerCase(), password_hash: hashedPw,
+      role: 'buyer_pro', avatar, phone: phone || null, status: 'active',
+    }).select().single();
+    if (profileErr) throw profileErr;
+
+    // Créer le profil B2B enrichi
+    const { error: b2bErr } = await supabase.from('buyer_pro_profiles').insert({
+      user_id:   profile.id,
+      company,
+      job_title: jobTitle,
+      ninea:     nineaClean,
+      rc:        rc ? rc.trim().toUpperCase() : null,
+      address:   address || null,
+      ninea_verified: false, // Sera mis à true après vérification manuelle ou API
+    });
+    if (b2bErr) {
+      // Rollback le profil si le profil B2B échoue
+      await supabase.from('profiles').delete().eq('id', profile.id);
+      throw b2bErr;
+    }
+
+    // JWT
+    const token = jwt.sign(
+      { id: profile.id, role: 'buyer_pro', name, email: profile.email, company },
+      process.env.JWT_SECRET,
+      { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }
+    );
+
+    // Notifier les admins pour vérification NINEA
+    const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
+    for (const admin of (admins || [])) {
+      await pushNotification(admin.id, {
+        type: 'system',
+        title: '🏢 Nouveau buyer Pro B2B',
+        message: `${company} (${name}) — NINEA: ${nineaClean} — à vérifier`,
+        link: '/admin/b2b',
+      });
+    }
+
+    Logger.info('auth', 'register.b2b', `Inscription B2B: ${email} — ${company}`, { userId: profile.id, meta: { company, ninea: nineaClean } });
+    const { password_hash, ...safeUser } = profile;
+    res.status(201).json({ token, user: { ...safeUser, company, jobTitle }, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
+  } catch (e) {
+    Logger.error('auth', 'register.b2b.error', e.message, { meta: { email } });
+    res.status(500).json({ error: 'Erreur serveur lors de l'inscription' });
+  }
+});
+
+// PATCH /api/b2b/verify-ninea/:userId — marquer le NINEA comme vérifié (admin)
+app.patch('/api/b2b/verify-ninea/:userId', verifyToken, requireRole('admin'), async (req, res) => {
+  const { verified, note } = req.body;
+  try {
+    const { data, error } = await supabase.from('buyer_pro_profiles')
+      .update({ ninea_verified: !!verified, verification_note: note || null, verified_at: new Date().toISOString(), verified_by: req.user.id })
+      .eq('user_id', req.params.userId).select().single();
+    if (error) throw error;
+    await pushNotification(req.params.userId, {
+      type: 'system',
+      title: verified ? '✅ NINEA vérifié' : '❌ NINEA non vérifié',
+      message: verified
+        ? 'Votre NINEA a été vérifié. Vous bénéficiez maintenant des tarifs B2B.'
+        : `Votre NINEA n'a pas pu être vérifié.${note ? ' ' + note : ' Contactez support@nexus.sn.'}`,
+    });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/b2b — liste tous les buyers pro avec leur statut NINEA (admin)
+app.get('/api/admin/b2b', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('buyer_pro_profiles')
+      .select('*, profiles(name, email, status, created_at)')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── 404 & ERROR HANDLER ──────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` }));
 app.use((err, req, res, _next) => {
@@ -1710,7 +2373,7 @@ app.listen(PORT, () => {
   const hasEmail  = !!process.env.SMTP_USER;
   const hasWebhook= !!process.env.STRIPE_WEBHOOK_SECRET;
 
-  console.log(`\n🚀 NEXUS Market API v3.1.4 — port ${PORT} (${env})`);
+  console.log(`\n🚀 NEXUS Market API v3.2.0 — port ${PORT} (${env})`);
   console.log(`   Supabase : ${hasDb      ? '✅' : '⚠️  manquant'}`);
   console.log(`   Anon Key : ${process.env.SUPABASE_ANON_KEY ? '✅' : '⚠️  manquant'}`);
   console.log(`   Stripe   : ${hasStripe  ? '✅' : '⚠️  manquant'}`);
@@ -1721,8 +2384,83 @@ app.listen(PORT, () => {
 
   // Log de démarrage dans Supabase
   Logger.info('system', 'startup', `API démarrée sur le port ${PORT}`, {
-    meta: { env, hasDb, hasStripe, hasEmail, hasWebhook, version: 'v3.1.4' }
+    meta: { env, hasDb, hasStripe, hasEmail, hasWebhook, version: 'v3.2.0' }
   });
 });
 
 module.exports = app; // Pour Vercel serverless (si besoin)
+
+// ════════════════════════════════════════════════════════════════════════════════
+// SQL SUPABASE — Tables requises pour les nouvelles fonctionnalités (v3.2.0)
+// Exécuter dans l'éditeur SQL de Supabase avant déploiement :
+//
+// -- Coupons
+// CREATE TABLE IF NOT EXISTS coupons (
+//   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//   code text UNIQUE NOT NULL,
+//   discount integer NOT NULL CHECK (discount BETWEEN 1 AND 100),
+//   description text,
+//   max_uses integer,
+//   used_count integer DEFAULT 0,
+//   expires_at timestamptz,
+//   active boolean DEFAULT true,
+//   created_at timestamptz DEFAULT now()
+// );
+//
+// -- Points de fidélité
+// CREATE TABLE IF NOT EXISTS loyalty_points (
+//   user_id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+//   points integer DEFAULT 0,
+//   total_earned integer DEFAULT 0,
+//   total_redeemed integer DEFAULT 0,
+//   updated_at timestamptz DEFAULT now()
+// );
+//
+// -- Parrainage
+// CREATE TABLE IF NOT EXISTS referrals (
+//   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//   referrer_id uuid REFERENCES profiles(id) ON DELETE CASCADE,
+//   referred_id uuid REFERENCES profiles(id) ON DELETE CASCADE,
+//   code text NOT NULL,
+//   rewarded boolean DEFAULT false,
+//   rewarded_at timestamptz,
+//   created_at timestamptz DEFAULT now(),
+//   UNIQUE(referred_id)
+// );
+//
+// -- Demandes de retrait vendeur
+// CREATE TABLE IF NOT EXISTS payout_requests (
+//   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//   vendor_id uuid REFERENCES profiles(id) ON DELETE CASCADE,
+//   vendor_name text,
+//   amount numeric NOT NULL CHECK (amount > 0),
+//   method text NOT NULL CHECK (method IN ('mobile','bank')),
+//   provider text,
+//   destination text NOT NULL,
+//   status text DEFAULT 'pending' CHECK (status IN ('pending','processing','approved','rejected')),
+//   admin_note text,
+//   processed_at timestamptz,
+//   processed_by uuid REFERENCES profiles(id),
+//   created_at timestamptz DEFAULT now()
+// );
+//
+// -- Profils Buyer Pro (B2B)
+// CREATE TABLE IF NOT EXISTS buyer_pro_profiles (
+//   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//   user_id uuid UNIQUE REFERENCES profiles(id) ON DELETE CASCADE,
+//   company text NOT NULL,
+//   job_title text,
+//   ninea text UNIQUE NOT NULL,
+//   rc text,
+//   address text,
+//   ninea_verified boolean DEFAULT false,
+//   verification_note text,
+//   verified_at timestamptz,
+//   verified_by uuid REFERENCES profiles(id),
+//   created_at timestamptz DEFAULT now()
+// );
+//
+// -- Fonctions RPC (déjà présentes si stock v3.1.x installé, sinon à créer) :
+// -- check_and_reserve_stock(p_items jsonb) : réservation atomique
+// -- release_stock(p_items jsonb) : libération en cas de rollback
+// ════════════════════════════════════════════════════════════════════════════════
