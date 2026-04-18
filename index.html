@@ -1749,10 +1749,17 @@ const DataService = {
     if (!authUser) return null;
     const meta = authUser.user_metadata || {};
     const email = authUser.email || "";
-    const name  = meta.name   || email.split("@")[0] || "Utilisateur";
-    const role  = meta.role   || "buyer";
-    const avatar = meta.avatar || name.slice(0, 2).toUpperCase();
-    return { id: authUser.id, email, name, role, avatar, status: "active", created_at: authUser.created_at || new Date().toISOString() };
+    // GitHub OAuth expose full_name, user_name ou preferred_username dans user_metadata
+    const name = meta.full_name || meta.name || meta.user_name
+               || meta.preferred_username || email.split("@")[0] || "Utilisateur";
+    const role = meta.role || "buyer";
+    // GitHub expose avatar_url ; sinon on prend les initiales
+    const avatar = meta.avatar_url || meta.avatar || name.slice(0, 2).toUpperCase();
+    return {
+      id: authUser.id, email, name, role, avatar,
+      status: "active",
+      created_at: authUser.created_at || new Date().toISOString()
+    };
   },
   // ── Connexion GitHub OAuth via Supabase ─────────────────────────────────────
   // Lance le flow GitHub OAuth. Supabase gère le redirect et le callback automatiquement.
@@ -1896,8 +1903,17 @@ const DataService = {
       const { data } = this._sb.auth.onAuthStateChange(async (event, session) => {
         if (event === "SIGNED_IN" && session) {
           const uid = session.user.id;
-          const prof = await this._fetchProfile(uid);
-          callback(event, prof || this._buildProfileFromAuthUser(session.user));
+          let prof = await this._fetchProfile(uid);
+          if (!prof) {
+            // [FIX 406] Profil inexistant (GitHub OAuth, confirmation email, nouveau provider).
+            // Session active => RLS autorise l'écriture dans profiles.
+            const builtProf = this._buildProfileFromAuthUser(session.user);
+            const { error: upsErr } = await this._sb.from('profiles').upsert(builtProf);
+            if (upsErr) console.warn('[onAuthStateChange] upsert profiles:', upsErr.message);
+            else console.log('[Auth] ✅ Profil créé automatiquement:', uid.slice(0, 8));
+            prof = builtProf;
+          }
+          callback(event, prof);
         } else if (event === "SIGNED_OUT" || event === "USER_DELETED") {
           callback(event, null);
           if (!this._voluntarySignOut) {
@@ -10180,101 +10196,17 @@ const AppWithUserSync = ({ onUserChange }) => {
   return /* @__PURE__ */ React.createElement(App, { onUserChange });
 };
 ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(Root, null));
-/* SW_DISABLED — en attente du déploiement de /sw.js sur Vercel
+// ── Nettoyage Service Worker (cache navigateur) ─────────────────────────────
+// Les anciennes versions utilisaient un blob: URL non supporté dans Vercel.
+// Ce bloc désactive toute inscription SW résiduelle dans le navigateur.
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    // ── Service Worker inline via Blob URL ──────────────────────────
-    // Évite le besoin d'un fichier sw.js externe (compatible Vercel/Netlify/GitHub Pages)
-    const SW_VERSION = "nexus-v2";
-    const CACHE_URLS = ["/", "/index.html"];
-
-    const swCode = `
-const CACHE = "${SW_VERSION}";
-const PRECACHE = ${JSON.stringify(CACHE_URLS)};
-
-self.addEventListener("install", e => {
-  self.skipWaiting();
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(PRECACHE).catch(()=>{})));
-});
-
-self.addEventListener("activate", e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
-
-self.addEventListener("fetch", e => {
-  if (e.request.method !== "GET") return;
-  const url = new URL(e.request.url);
-  // Ne pas intercepter les requêtes API/EmailJS/Supabase
-  if (["api.anthropic.com","emailjs.com","supabase.co","analytics.google.com","googletagmanager.com"].some(d => url.hostname.includes(d))) return;
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      const net = fetch(e.request).then(res => {
-        if (res && res.status === 200 && url.origin === self.location.origin) {
-          const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
-        }
-        return res;
-      }).catch(() => cached);
-      return cached || net;
-    })
-  );
-});
-
-// Notifications push
-self.addEventListener("push", e => {
-  const data = e.data ? e.data.json() : {};
-  e.waitUntil(self.registration.showNotification(data.title || "NEXUS Market", {
-    body: data.body || "Vous avez une nouvelle notification.",
-    icon: "https://placehold.co/192x192/00853E/white?text=NX",
-    badge: "https://placehold.co/72x72/00853E/white?text=NX",
-    data: data.url || "/",
-    vibrate: [200, 100, 200],
-    tag: data.tag || "nexus-notif"
-  }));
-});
-
-self.addEventListener("notificationclick", e => {
-  e.notification.close();
-  e.waitUntil(clients.openWindow(e.notification.data || "/"));
-});
-    `;
-
-    try {
-      const blob = new Blob([swCode], { type: "application/javascript" });
-      const swUrl = URL.createObjectURL(blob);
-      navigator.serviceWorker.register(swUrl, { scope: "/" })
-        .then(reg => {
-          console.log("[SW] ✅ Service Worker inline enregistré — scope:", reg.scope);
-          window.__nexusSWReg = reg;
-
-          // Demander permission notifications si pas encore accordée
-          if ("Notification" in window && Notification.permission === "default") {
-            // Ne pas demander immédiatement — attendre une interaction utilisateur
-            window.__nexusRequestNotifPermission = async () => {
-              const perm = await Notification.requestPermission();
-              console.log("[SW] Permission notifications:", perm);
-              return perm;
-            };
-          }
-
-          // Écouter les messages du SW
-          navigator.serviceWorker.addEventListener("message", evt => {
-            if (evt.data && evt.data.type === "SW_ACTIVATED") {
-              console.log("[SW] Nouvelle version activée");
-            }
-          });
-        })
-        .catch(e => console.warn("[SW] Erreur enregistrement:", e));
-    } catch(e) {
-      console.warn("[SW] Blob URL non supporté:", e);
-    }
-  });
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(reg => {
+      reg.unregister();
+      console.log("[SW] Ancienne inscription supprimée:", reg.scope);
+    });
+  }).catch(() => {});
 }
-*/ // fin SW_DISABLED
 
 // ── API notifications push (accessible globalement) ───────────────
 window.nexusPush = {
