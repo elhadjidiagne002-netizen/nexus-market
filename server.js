@@ -453,33 +453,15 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
     if (role === 'vendor') {
       if (!shopName) return res.status(400).json({ error: 'Nom de boutique requis' });
-      const vendorEntry = {
+      const { data, error } = await supabase.from('pending_vendors').insert({
         name: shopName, owner_name: name, email,
         password_hash: hashedPw,
         category: shopCategory || 'Général',
         avatar, status: 'pending',
-        phone: phone || null,
-      };
-      const { data, error } = await supabase.from('pending_vendors').insert(vendorEntry).select().single();
+      }).select().single();
       if (error) {
         Logger.warn('auth', 'register.vendor.error', error.message, { meta: { email }, ip: req.ip });
-        if (error.code === '23505') return res.status(409).json({ error: 'Cet email est déjà en attente de validation' });
-        // Table absente → stocker dans profiles avec status pending (fallback migration)
-        if (error.code === '42P01') {
-          Logger.warn('auth', 'register.vendor.table_missing', 'Table pending_vendors absente — fallback profiles', { meta: { email } });
-          const { data: profileFb, error: pfErr } = await supabase.from('profiles').insert({
-            name: shopName, email, password_hash: hashedPw,
-            role: 'vendor', avatar, status: 'pending',
-            phone: phone || null,
-            bio: JSON.stringify({ shopName, shopCategory: shopCategory || 'Général', ownerName: name }),
-          }).select().single();
-          if (pfErr) throw pfErr;
-          const { data: admins2 } = await supabase.from('profiles').select('id').eq('role', 'admin');
-          for (const admin of (admins2 || [])) {
-            await pushNotification(admin.id, { type: 'vendor', title: '🏪 Nouvelle demande vendeur', message: `${shopName} (${name}) — en attente`, link: '/admin/vendors' });
-          }
-          return res.json({ message: 'Demande envoyée — validation sous 48h', pending: true });
-        }
+        if (error.code === '23505') return res.status(409).json({ error: 'Cet email est déjà en attente' });
         throw error;
       }
       const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
@@ -1201,6 +1183,22 @@ app.patch('/api/orders/:id/cancel', verifyToken, async (req, res) => {
             `Stock re-crédité pour commande #${order.id}`,
             { userId: req.user.id, meta: { orderId: order.id, stockItems } }
           );
+          // Déclencher les notifications d'alerte stock pour chaque produit re-crédité
+          for (const item of stockItems) {
+            supabase.rpc('notify_stock_alerts', { p_product_id: item.product_id })
+              .then(({ data: notified }) => {
+                if (notified?.length > 0) {
+                  for (const row of notified) {
+                    pushNotification(row.user_id, {
+                      type: 'system',
+                      title: '🔔 Produit disponible !',
+                      message: `"${row.product_name}" est de nouveau en stock — commandez vite !`,
+                      link: `/products/${item.product_id}`,
+                    }).catch(() => {});
+                  }
+                }
+              }).catch(() => {});
+          }
         }
       }
     }
@@ -2286,27 +2284,12 @@ app.post('/api/b2b/register', authLimiter, async (req, res) => {
       ninea:     nineaClean,
       rc:        rc ? rc.trim().toUpperCase() : null,
       address:   address || null,
-      ninea_verified: false,
+      ninea_verified: false, // Sera mis à true après vérification manuelle ou API
     });
     if (b2bErr) {
-      // Si la table buyer_pro_profiles n'existe pas encore, stocker dans le profil principal
-      // et continuer — la table sera créée via la migration SQL
-      if (b2bErr.code === '42P01') { // relation does not exist
-        Logger.warn('auth', 'register.b2b.table_missing',
-          'Table buyer_pro_profiles inexistante — stockage fallback dans profiles.bio',
-          { userId: profile.id }
-        );
-        // Stocker les infos B2B dans le champ bio en attendant la migration
-        await supabase.from('profiles').update({
-          bio: JSON.stringify({ company, jobTitle, ninea: nineaClean, rc: rc || null, address: address || null }),
-          company_name: company,
-        }).eq('id', profile.id).catch(() => {});
-        // Ne pas rollback — le compte est créé, l'admin peut compléter manuellement
-      } else {
-        // Autre erreur : rollback du profil principal
-        await supabase.from('profiles').delete().eq('id', profile.id).catch(() => {});
-        throw b2bErr;
-      }
+      // Rollback le profil si le profil B2B échoue
+      await supabase.from('profiles').delete().eq('id', profile.id);
+      throw b2bErr;
     }
 
     // JWT
@@ -2329,16 +2312,7 @@ app.post('/api/b2b/register', authLimiter, async (req, res) => {
 
     Logger.info('auth', 'register.b2b', `Inscription B2B: ${email} — ${company}`, { userId: profile.id, meta: { company, ninea: nineaClean } });
     const { password_hash, ...safeUser } = profile;
-    const responseUser = {
-      ...safeUser,
-      company,
-      jobTitle,
-      // Champs normalisés pour que normalizeUser() côté frontend les reconnaisse
-      shop_name:  company,
-      job_title:  jobTitle,
-      ninea:      nineaClean,
-    };
-    res.status(201).json({ token, user: responseUser, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
+    res.status(201).json({ token, user: { ...safeUser, company, jobTitle }, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
   } catch (e) {
     Logger.error('auth', 'register.b2b.error', e.message, { meta: { email } });
     res.status(500).json({ error: "Erreur lors de l'inscription. Veuillez réessayer." });
@@ -2375,6 +2349,268 @@ app.get('/api/admin/b2b', verifyToken, requireRole('admin'), async (req, res) =>
       .order('created_at', { ascending: false });
     if (error) throw error;
     res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ─── PANIER (carts) ──────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+// GET /api/cart — récupère le panier de l'utilisateur connecté
+app.get('/api/cart', verifyToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('carts').select('items, updated_at').eq('user_id', req.user.id).maybeSingle();
+    if (error) throw error;
+    res.json({ items: data?.items || [], updatedAt: data?.updated_at || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/cart — remplace entièrement le panier (upsert)
+app.put('/api/cart', verifyToken, async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'items doit être un tableau' });
+  // Nettoyer les champs inutiles avant stockage (réduire la taille JSON)
+  const clean = items.map(i => ({
+    id:         i.id,
+    name:       i.name,
+    price:      i.price,
+    quantity:   Math.max(1, parseInt(i.quantity) || 1),
+    imageUrl:   i.imageUrl || null,
+    vendor:     i.vendor     || i.vendor_id || null,
+    vendorName: i.vendorName || i.vendor_name || null,
+    category:   i.category   || null,
+  }));
+  try {
+    const { error } = await supabase.from('carts').upsert(
+      { user_id: req.user.id, items: clean },
+      { onConflict: 'user_id' }
+    );
+    if (error) throw error;
+    res.json({ ok: true, count: clean.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/cart — vide le panier
+app.delete('/api/cart', verifyToken, async (req, res) => {
+  try {
+    const { error } = await supabase.from('carts')
+      .upsert({ user_id: req.user.id, items: [] }, { onConflict: 'user_id' });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/cart/migrate — migration unique localStorage → Supabase
+// Appelé une seule fois par le frontend lors de la première connexion
+app.post('/api/cart/migrate', verifyToken, async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0)
+    return res.json({ ok: true, migrated: 0 });
+  try {
+    // Ne migre que si le panier Supabase est encore vide
+    const { data: existing } = await supabase
+      .from('carts').select('items').eq('user_id', req.user.id).maybeSingle();
+    if (existing?.items?.length > 0)
+      return res.json({ ok: true, migrated: 0, reason: 'cart_not_empty' });
+
+    const clean = items.slice(0, 50).map(i => ({  // max 50 articles
+      id: i.id, name: i.name, price: i.price,
+      quantity: Math.max(1, parseInt(i.quantity) || 1),
+      imageUrl: i.imageUrl || null,
+      vendor: i.vendor || null, vendorName: i.vendorName || null,
+      category: i.category || null,
+    }));
+    const { error } = await supabase.from('carts').upsert(
+      { user_id: req.user.id, items: clean }, { onConflict: 'user_id' }
+    );
+    if (error) throw error;
+    Logger.info('cart', 'migrated', `${clean.length} articles migrés depuis localStorage`, { userId: req.user.id });
+    res.json({ ok: true, migrated: clean.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ─── VENTES FLASH (flash_sales) ──────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+// GET /api/flash-sales — liste les ventes flash actives (public)
+app.get('/api/flash-sales', async (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+  try {
+    // Expirer les ventes passées en arrière-plan (non bloquant)
+    supabase.rpc('expire_flash_sales').catch(() => {});
+
+    const { data, error } = await supabase
+      .from('flash_sales')
+      .select('id, product_id, discount, starts_at, ends_at, active')
+      .eq('active', true)
+      .gt('ends_at', new Date().toISOString())
+      .order('ends_at', { ascending: true });
+    if (error) throw error;
+
+    // Normaliser snake_case → camelCase pour le frontend
+    const sales = (data || []).map(r => ({
+      id:        r.id,
+      productId: r.product_id,
+      discount:  r.discount,
+      startsAt:  r.starts_at,
+      endsAt:    r.ends_at,
+      active:    r.active,
+    }));
+    res.json(sales);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/flash-sales — créer une vente flash (admin seulement)
+app.post('/api/flash-sales', verifyToken, requireRole('admin'), async (req, res) => {
+  const { productId, discount, endsAt } = req.body;
+  if (!productId) return res.status(400).json({ error: 'productId requis' });
+  if (!discount || discount <= 0 || discount > 100)
+    return res.status(400).json({ error: 'discount doit être entre 1 et 100' });
+  if (!endsAt || new Date(endsAt) <= new Date())
+    return res.status(400).json({ error: 'endsAt doit être dans le futur' });
+  try {
+    // Désactiver toute vente flash existante sur ce produit
+    await supabase.from('flash_sales')
+      .update({ active: false })
+      .eq('product_id', productId)
+      .eq('active', true);
+
+    const { data, error } = await supabase.from('flash_sales').insert({
+      product_id: productId,
+      discount:   parseInt(discount),
+      ends_at:    new Date(endsAt).toISOString(),
+      active:     true,
+      created_by: req.user.id,
+    }).select().single();
+    if (error) throw error;
+
+    Logger.info('flash_sale', 'created', `Vente flash créée: ${productId} -${discount}%`, {
+      userId: req.user.id, meta: { productId, discount, endsAt }
+    });
+    res.status(201).json({
+      id: data.id, productId: data.product_id, discount: data.discount,
+      endsAt: data.ends_at, active: data.active,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/flash-sales/:id — supprimer une vente flash (admin)
+app.delete('/api/flash-sales/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const { error } = await supabase.from('flash_sales')
+      .update({ active: false }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ─── ALERTES STOCK (stock_alerts) ────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+// GET /api/stock-alerts — liste les alertes de l'utilisateur connecté
+app.get('/api/stock-alerts', verifyToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('stock_alerts')
+      .select('product_id, notified, created_at')
+      .eq('user_id', req.user.id)
+      .eq('notified', false);
+    if (error) throw error;
+    res.json((data || []).map(r => r.product_id));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/stock-alerts — activer une alerte (upsert)
+app.post('/api/stock-alerts', verifyToken, async (req, res) => {
+  const { productId } = req.body;
+  if (!productId) return res.status(400).json({ error: 'productId requis' });
+  try {
+    const { error } = await supabase.from('stock_alerts').upsert(
+      { user_id: req.user.id, product_id: productId, notified: false },
+      { onConflict: 'user_id,product_id', ignoreDuplicates: false }
+    );
+    if (error) throw error;
+    res.status(201).json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/stock-alerts/:productId — désactiver une alerte
+app.delete('/api/stock-alerts/:productId', verifyToken, async (req, res) => {
+  try {
+    const { error } = await supabase.from('stock_alerts')
+      .delete()
+      .eq('user_id', req.user.id)
+      .eq('product_id', req.params.productId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/stock-alerts/migrate — migration localStorage → Supabase
+app.post('/api/stock-alerts/migrate', verifyToken, async (req, res) => {
+  const { productIds } = req.body;
+  if (!Array.isArray(productIds) || productIds.length === 0)
+    return res.json({ ok: true, migrated: 0 });
+  try {
+    const rows = productIds.slice(0, 100).map(id => ({
+      user_id: req.user.id, product_id: id, notified: false
+    }));
+    const { error } = await supabase.from('stock_alerts')
+      .upsert(rows, { onConflict: 'user_id,product_id', ignoreDuplicates: true });
+    if (error) throw error;
+    Logger.info('stock_alert', 'migrated', `${rows.length} alertes migrées`, { userId: req.user.id });
+    res.json({ ok: true, migrated: rows.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/stock-alerts/notify/:productId — déclencher les notifications de restockage
+// Appelé après une annulation de commande ou une mise à jour de stock vendeur
+app.post('/api/stock-alerts/notify/:productId', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
+  try {
+    const { data: usersToNotify, error } = await supabase.rpc(
+      'notify_stock_alerts', { p_product_id: req.params.productId }
+    );
+    if (error) throw error;
+    // Envoyer les notifications in-app
+    for (const row of (usersToNotify || [])) {
+      await pushNotification(row.user_id, {
+        type:    'system',
+        title:   '🔔 Produit disponible !',
+        message: `"${row.product_name}" est de nouveau en stock — commandez vite !`,
+        link:    `/products/${req.params.productId}`,
+      });
+    }
+    res.json({ notified: (usersToNotify || []).length });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
