@@ -1138,13 +1138,21 @@ const normalizeUser = (u) => {
     id:        u.id,
     email:     u.email,
     name:      u.name,
-    role:      u.role      || 'buyer',
-    avatar:    u.avatar    || (u.name || u.email || '?').slice(0, 2).toUpperCase(),
-    status:    u.status    || 'active',
-    shopName:  u.shop_name || u.shopName  || null,
-    shopCat:   u.shop_category || u.shopCat || null,
-    phone:     u.phone     || null,
-    createdAt: u.created_at || u.createdAt || null,
+    role:      u.role        || 'buyer',
+    avatar:    u.avatar      || (u.name || u.email || '?').slice(0, 2).toUpperCase(),
+    status:    u.status      || 'active',
+    // Vendeur
+    shopName:  u.shop_name   || u.shopName    || null,
+    shopCat:   u.shop_category || u.shopCat   || null,
+    phone:     u.phone       || null,
+    createdAt: u.created_at  || u.createdAt   || null,
+    // Acheteur Pro B2B — champs supplémentaires
+    company:   u.company     || u.company_name || null,
+    jobTitle:  u.jobTitle    || u.job_title    || null,
+    ninea:     u.ninea       || null,
+    rc:        u.rc          || null,
+    address:   u.address     || null,
+    nineaVerified: u.ninea_verified || u.nineaVerified || false,
   };
 };
 
@@ -4766,14 +4774,20 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
       // BUG FIX: les messages d'erreur Supabase étaient affichés bruts en anglais.
       // On les traduit en français avec des messages explicites.
       let msg;
-      if (lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password") || lower.includes("email not confirmed") === false && lower.includes("email")) {
-        msg = "Email ou mot de passe incorrect.";
-      } else if (lower.includes("email not confirmed")) {
+      if (lower.includes("email not confirmed")) {
         msg = "Email non confirm\xE9. V\xE9rifiez votre bo\xEEte mail et cliquez sur le lien de confirmation.";
-      } else if (lower.includes("rate limit") || lower.includes("too many")) {
-        msg = "Trop de tentatives. Veuillez patienter quelques minutes.";
-      } else if (lower.includes("network") || lower.includes("fetch")) {
-        msg = "Probl\xE8me de connexion r\xE9seau. V\xE9rifiez votre connexion internet.";
+      } else if (lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password") || lower.includes("incorrect")) {
+        msg = "Email ou mot de passe incorrect.";
+      } else if (lower.includes("en attente") || lower.includes("pending") || lower.includes("validation")) {
+        msg = raw; // message serveur déjà en français
+      } else if (lower.includes("suspendu") || lower.includes("banni") || lower.includes("banned")) {
+        msg = raw;
+      } else if (lower.includes("rate limit") || lower.includes("too many") || lower.includes("trop de")) {
+        msg = "Trop de tentatives de connexion. Veuillez patienter 15 minutes.";
+      } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("abort") || lower.includes("connexion")) {
+        msg = "Probl\xE8me r\xE9seau. V\xE9rifiez votre connexion et r\xE9essayez.";
+      } else if (lower.includes("session_expired")) {
+        msg = "Votre session a expir\xE9. Veuillez vous reconnecter.";
       } else {
         msg = raw || "Email ou mot de passe incorrect";
       }
@@ -4912,18 +4926,42 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         // [FIX] Appel backend API — utilise la service-role key (bypass RLS)
         // Le backend insère dans pending_vendors ET notifie les admins automatiquement
         if (NEXUS_CONFIG.apiUrl) {
-          const _vendorRes = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/register`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: form.email, password: form.password,
-              name: form.name, role: "vendor",
-              shopName: form.shopName, shopCategory: form.shopCategory || "Général",
-              phone: form.phone || null
-            })
-          });
-          const _vendorJson = await _vendorRes.json();
-          if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
+          // Attendre le backend (cold start)
+          if (!window.__nexusBackendReady) {
+            await new Promise(resolve => {
+              const h = () => { window.removeEventListener('nexus:backend-ready', h); resolve(); };
+              window.addEventListener('nexus:backend-ready', h);
+              setTimeout(resolve, 35000);
+            });
+          }
+          const vCtrl = new AbortController();
+          const vTid  = setTimeout(() => vCtrl.abort(), 15000);
+          try {
+            const _vendorRes = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/register`, {
+              method:  "POST",
+              mode:    "cors",
+              signal:  vCtrl.signal,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email:        form.email,
+                password:     form.password,
+                name:         form.name,
+                role:         "vendor",
+                shopName:     form.shopName,
+                shopCategory: form.shopCategory || "Général",
+                phone:        form.phone || null,
+              })
+            });
+            clearTimeout(vTid);
+            const _vendorJson = await _vendorRes.json();
+            if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
+          } catch (vErr) {
+            clearTimeout(vTid);
+            if (vErr.name === 'AbortError' || vErr.name === 'TypeError') {
+              console.warn('[Vendor register] Backend injoignable, fallback Supabase');
+              // Continuer vers le fallback Supabase ci-dessous
+            } else { throw vErr; }
+          }
         } else if (DataService._sb) {
           // [FALLBACK] Supabase direct uniquement si pas de backend configuré
           await DataService._sb.from("pending_vendors").insert(pendingEntry).then(r=>r).catch(()=>{});
@@ -4947,38 +4985,72 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         }
         setDone(true);
       } else if (role === "buyer_pro") {
-        // [FIX] Route dédiée B2B avec validation NINEA côté serveur
+        // ── Inscription Acheteur Professionnel B2B ───────────────────────
         let newUser;
         if (NEXUS_CONFIG.apiUrl) {
-          const res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/b2b/register`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: form.name, email: form.email, password: form.password,
-              company: form.company, jobTitle: form.jobTitle,
-              ninea: form.ninea_buyer, rc: form.rc_buyer,
-              address: form.address_buyer, phone: form.phone
-            })
-          });
-          const json = await res.json();
-          if (!res.ok) throw new Error(json.error || "Erreur inscription B2B");
-          // Stocker le token JWT
-          if (json.token) {
-            sessionStorage.setItem("nexus_jwt", json.token);
-            sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 604800) * 1000));
+          // Attendre que le backend soit prêt (cold start Render)
+          if (!window.__nexusBackendReady) {
+            addToast("\u23F3 Connexion au serveur en cours\u2026", "info", 5000);
+            await new Promise(resolve => {
+              const h = () => { window.removeEventListener('nexus:backend-ready', h); resolve(); };
+              window.addEventListener('nexus:backend-ready', h);
+              setTimeout(resolve, 35000);
+            });
           }
-          newUser = json.user;
-        } else {
-          const profile = {
-            role:"buyer_pro", name:form.name, avatar,
-            jobTitle:form.jobTitle, company:form.company,
-            ninea:form.ninea_buyer, rc:form.rc_buyer, address:form.address_buyer,
-            phone:form.phone
-          };
-          newUser = await DataService.signUp(form.email, form.password, profile);
-          if (newUser.__emailConfirmPending) { setDone(true); setLoading(false); return; }
+          const ctrl = new AbortController();
+          const tid  = setTimeout(() => ctrl.abort(), 15000);
+          let res = null;
+          try {
+            res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/b2b/register`, {
+              method:  "POST",
+              mode:    "cors",
+              signal:  ctrl.signal,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name:     form.name,
+                email:    form.email,
+                password: form.password,
+                company:  form.company,
+                jobTitle: form.jobTitle,
+                ninea:    form.ninea_buyer,
+                rc:       form.rc_buyer    || null,
+                address:  form.address_buyer || null,
+                phone:    form.phone       || null,
+              })
+            });
+          } catch (fetchErr) {
+            clearTimeout(tid);
+            if (fetchErr.name === 'AbortError' || fetchErr.name === 'TypeError') {
+              console.warn('[B2B register] Backend injoignable, fallback local');
+              res = null;
+            } else { throw fetchErr; }
+          }
+          clearTimeout(tid);
+
+          if (res !== null) {
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error || "Erreur inscription B2B");
+            if (json.token) {
+              sessionStorage.setItem("nexus_jwt", json.token);
+              sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 604800) * 1000));
+              DataService._token = json.token;
+            }
+            newUser = normalizeUser(json.user);
+          }
         }
-        addToast(`Bienvenue, ${form.name} (${form.company}) ! Votre NINEA est en cours de v\u00e9rification.`, "success");
+        // Fallback local si backend injoignable
+        if (!newUser) {
+          const profile = {
+            role: "buyer_pro", name: form.name, avatar,
+            jobTitle: form.jobTitle, company: form.company,
+            shopName: form.company, ninea: form.ninea_buyer,
+            rc: form.rc_buyer, address: form.address_buyer, phone: form.phone,
+          };
+          const created = await DataService.signUp(form.email, form.password, profile);
+          if (created.__emailConfirmPending) { setDone(true); setLoading(false); return; }
+          newUser = normalizeUser(created);
+        }
+        addToast(`Bienvenue, ${form.name} (${form.company || ''}) ! Votre compte Pro B2B est actif.`, "success");
         onLogin(newUser);
       } else {
         // buyer
@@ -8624,7 +8696,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
     StripeCheckoutModal,
     {
       cart,
-      currentUser: null,
+      currentUser: currentUser2 || null,
       onSuccess: handleCheckoutSuccess,
       onCancel: () => setShowCheckout(false),
       addToast
@@ -8633,7 +8705,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
     MakeOfferModal,
     {
       product: offerProduct,
-      currentUser: null,
+      currentUser: currentUser2 || null,
       onClose: () => {
         setShowOfferModal(false);
         setOfferProduct(null);
@@ -8814,7 +8886,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))), cart.length > 0 && /* @__PURE__ */ React.createElement("li", { role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: "sidebar-item", onClick: () => setShowCart(true), "aria-label": `Panier avec ${cart.length} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), "Panier", /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0)))));
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem", flexDirection: "column", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.4rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.company && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.7rem", opacity: 0.9 } }, currentUser2.company), currentUser2.ninea && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.68rem", opacity: 0.8, display: "flex", alignItems: "center", gap: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: currentUser2.nineaVerified ? "fas fa-check-circle" : "fas fa-clock" }), "NINEA : ", currentUser2.ninea.slice(0,4), "\u2026", currentUser2.nineaVerified ? " \u2714 V\u00e9rifi\u00e9" : " En attente")), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
     SearchWithAutocomplete,
     {
       products,
