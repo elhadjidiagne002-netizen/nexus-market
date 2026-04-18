@@ -2616,6 +2616,212 @@ app.post('/api/stock-alerts/notify/:productId', verifyToken, requireRole('vendor
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// ROUTES API FACTURES (Invoices) — v1.0.0
+// ════════════════════════════════════════════════════════════════════════════
+
+const NEXUS_COMMISSION_RATE = 0.10; // 10 % du montant TTC
+const TVA_RATE              = 0.18; // 18 %
+
+function computeInvoiceAmounts(totalFcfa, type, shippingFcfa = 0) {
+  const productFcfa = totalFcfa - shippingFcfa;
+  const amountHT    = Math.round(productFcfa / (1 + TVA_RATE));
+  const tva         = Math.round(productFcfa - amountHT);
+  const amountTTC   = Math.round(totalFcfa);
+  const commission  = type === 'vendor' ? Math.round(productFcfa * NEXUS_COMMISSION_RATE) : 0;
+  const netVendor   = type === 'vendor' ? amountTTC - commission : 0;
+  return { amountHT, tva, amountTTC, commission, netVendor };
+}
+
+// POST /api/invoices — Sauvegarde une facture après génération PDF côté client
+app.post('/api/invoices', verifyToken, async (req, res) => {
+  const { type, orderId, totalFcfa, shippingFcfa = 0, metadata = {} } = req.body;
+
+  if (!['buyer', 'vendor'].includes(type))
+    return res.status(400).json({ error: 'type invalide (buyer | vendor)' });
+  if (!orderId)
+    return res.status(400).json({ error: 'orderId manquant' });
+  if (!totalFcfa || isNaN(Number(totalFcfa)))
+    return res.status(400).json({ error: 'totalFcfa invalide' });
+
+  try {
+    const amounts = computeInvoiceAmounts(Number(totalFcfa), type, Number(shippingFcfa));
+
+    // Vérifier que la commande existe et appartient à l'utilisateur
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .select('id, buyer_id, vendor_id, status')
+      .eq('id', orderId)
+      .single();
+
+    if (!orderErr && order) {
+      if (type === 'buyer'  && order.buyer_id  && order.buyer_id  !== req.user.id)
+        return res.status(403).json({ error: "Accès refusé : vous n'êtes pas l'acheteur de cette commande" });
+      if (type === 'vendor' && order.vendor_id && order.vendor_id !== req.user.id && req.user.role !== 'admin')
+        return res.status(403).json({ error: "Accès refusé : vous n'êtes pas le vendeur de cette commande" });
+    }
+
+    const { data, error } = await supabase.rpc('save_invoice', {
+      p_type:       type,
+      p_order_id:   orderId,
+      p_buyer_id:   type === 'buyer'  ? req.user.id : (order?.buyer_id  || null),
+      p_vendor_id:  type === 'vendor' ? req.user.id : (order?.vendor_id || null),
+      p_amount_ht:  amounts.amountHT,
+      p_tva:        amounts.tva,
+      p_amount_ttc: amounts.amountTTC,
+      p_commission: amounts.commission,
+      p_net_vendor: amounts.netVendor,
+      p_status:     'issued',
+      p_metadata:   {
+        ...metadata,
+        ...amounts,
+        generatedBy: req.user.id,
+        generatedAt: new Date().toISOString(),
+      }
+    });
+
+    if (error) {
+      if (error.code === '23505') {
+        Logger.warn('invoice', 'duplicate', `Facture déjà existante pour commande ${orderId}`, { userId: req.user.id });
+        return res.json({ ok: true, duplicate: true, message: 'Facture déjà enregistrée pour cette commande' });
+      }
+      throw error;
+    }
+
+    Logger.info('invoice', 'created', `Facture ${data.invoice_number} créée (${type})`, {
+      userId: req.user.id, meta: { invoiceId: data.id, orderId, amounts }
+    });
+
+    res.json({ ok: true, id: data.id, invoiceNumber: data.invoice_number, type, ...amounts });
+
+  } catch (e) {
+    Logger.error('invoice', 'create.error', e.message, { userId: req.user.id, meta: { orderId, type } });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/invoices — Liste des factures de l'utilisateur connecté
+app.get('/api/invoices', verifyToken, async (req, res) => {
+  const { type, limit = 20, offset = 0 } = req.query;
+  const lim = Math.min(parseInt(limit) || 20, 100);
+  const off = parseInt(offset) || 0;
+
+  try {
+    let query = supabase
+      .from('invoices')
+      .select('id, invoice_number, type, order_id, status, amount_ttc, commission, net_vendor, created_at, metadata')
+      .order('created_at', { ascending: false })
+      .range(off, off + lim - 1);
+
+    if (req.user.role === 'admin') {
+      if (type) query = query.eq('type', type);
+    } else if (req.user.role === 'vendor') {
+      query = query.eq('vendor_id', req.user.id);
+      if (type) query = query.eq('type', type);
+    } else {
+      query = query.eq('buyer_id', req.user.id).eq('type', 'buyer');
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    res.json({ ok: true, invoices: data || [] });
+
+  } catch (e) {
+    Logger.error('invoice', 'list.error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/invoices/stats/vendor — Stats revenus/commissions vendeur
+app.get('/api/invoices/stats/vendor', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
+  const vendorId = req.user.role === 'admin' && req.query.vendorId
+    ? req.query.vendorId
+    : req.user.id;
+
+  try {
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('amount_ttc, commission, net_vendor, created_at, status')
+      .eq('vendor_id', vendorId)
+      .eq('type', 'vendor')
+      .neq('status', 'cancelled');
+
+    if (error) throw error;
+
+    const now    = Date.now();
+    const d30    = now - 30 * 86400000;
+    const d7     = now - 7  * 86400000;
+    const all    = data || [];
+    const last30 = all.filter(i => new Date(i.created_at).getTime() > d30);
+    const last7  = all.filter(i => new Date(i.created_at).getTime() > d7);
+    const sum    = (arr, f) => arr.reduce((s, i) => s + (Number(i[f]) || 0), 0);
+
+    res.json({
+      ok: true,
+      stats: {
+        total:  { count: all.length,    revenu: sum(all,    'amount_ttc'), commission: sum(all,    'commission'), net: sum(all,    'net_vendor') },
+        last30: { count: last30.length, revenu: sum(last30, 'amount_ttc'), commission: sum(last30, 'commission'), net: sum(last30, 'net_vendor') },
+        last7:  { count: last7.length,  revenu: sum(last7,  'amount_ttc'), commission: sum(last7,  'commission'), net: sum(last7,  'net_vendor') },
+      }
+    });
+
+  } catch (e) {
+    Logger.error('invoice', 'stats.error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/invoices/:id — Détail d'une facture
+app.get('/api/invoices/:id', verifyToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
+    if (error || !data) return res.status(404).json({ error: 'Facture introuvable' });
+
+    const isAdmin  = req.user.role === 'admin';
+    const isBuyer  = data.buyer_id  === req.user.id;
+    const isVendor = data.vendor_id === req.user.id;
+    if (!isAdmin && !isBuyer && !isVendor)
+      return res.status(403).json({ error: 'Accès refusé' });
+
+    res.json({ ok: true, invoice: data });
+
+  } catch (e) {
+    Logger.error('invoice', 'get.error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/invoices/:id/status — Mise à jour statut (admin uniquement)
+app.patch('/api/invoices/:id/status', verifyToken, requireRole('admin'), async (req, res) => {
+  const { status } = req.body;
+  const validStatuses = ['draft', 'issued', 'paid', 'cancelled', 'refunded'];
+  if (!validStatuses.includes(status))
+    return res.status(400).json({ error: `Statut invalide. Valeurs : ${validStatuses.join(', ')}` });
+
+  try {
+    const { data, error } = await supabase
+      .from('invoices')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select('id, invoice_number, status')
+      .single();
+
+    if (error) throw error;
+    Logger.info('invoice', 'status_updated', `Facture ${data.invoice_number} → ${status}`, { userId: req.user.id });
+    res.json({ ok: true, invoice: data });
+
+  } catch (e) {
+    Logger.error('invoice', 'status_update.error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── 404 & ERROR HANDLER ──────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` }));
 app.use((err, req, res, _next) => {
