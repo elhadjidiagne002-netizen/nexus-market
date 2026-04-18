@@ -1759,9 +1759,13 @@ const DataService = {
     }
     if (NEXUS_CONFIG.apiUrl) {
       const token = sessionStorage.getItem("nexus_jwt");
-      if (token) await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/logout`, {
-        method: "POST", headers: { Authorization: `Bearer ${token}` }
-      }).catch(()=>{});
+      if (token) {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 4000); // 4s max
+        await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/logout`, {
+          method: "POST", headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal
+        }).catch(()=>{}).finally(() => clearTimeout(tid));
+      }
       sessionStorage.removeItem("nexus_jwt");
       sessionStorage.removeItem("nexus_jwt_exp");
     }
@@ -9914,12 +9918,14 @@ const App = ({ onUserChange }) => {
       setShowOnboarding(true);
     }
   };
-  const handleLogout = async () => {
-    await DataService.signOut().catch(() => {});
+  const handleLogout = () => {
+    // [FIX] Déconnecter l'UI IMMÉDIATEMENT — sans attendre l'API (cold start Render ~30s)
     setCurrentUser(null);
     window.__nexusCurrentUser = null;
     if (onUserChange) onUserChange(null);
     setSidebarOpen(false);
+    // Nettoyage session en arrière-plan (non bloquant)
+    DataService.signOut().catch(() => {});
     addToast("Vous avez été déconnecté", "info");
   };
   // ── Listen for session expiry (JWT 401 or Supabase token expired) ───────────
