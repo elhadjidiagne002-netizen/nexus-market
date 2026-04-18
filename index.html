@@ -5816,40 +5816,58 @@ const StripePaymentForm = ({ amount, onSuccess, onError, addToast }) => {
   };
   return /* @__PURE__ */ React.createElement("div", null, errors.general && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger mb-2" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.general), !IS_STRIPE_CONFIGURED && /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), "Mode test \u2014 ", /* @__PURE__ */ React.createElement("strong", null, "4242 4242 4242 4242"), ", date future, CVV 123"), /* @__PURE__ */ React.createElement("div", { className: "form-group mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Nom sur la carte *"), /* @__PURE__ */ React.createElement("input", { type: "text", className: `form-input ${errors.name ? "error" : ""}`, value: cardName, onChange: (e) => setCardName(e.target.value), placeholder: "FATOU DIOP", autoComplete: "cc-name" }), errors.name && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.name)), /* @__PURE__ */ React.createElement("div", { className: "form-group mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Num\xE9ro de carte *"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-credit-card" }), /* @__PURE__ */ React.createElement("input", { type: "text", className: `form-input ${errors.number ? "error" : ""}`, value: cardNumber, onChange: (e) => setCardNumber(formatCardNum(e.target.value)), placeholder: "4242 4242 4242 4242", maxLength: "19", inputMode: "numeric", autoComplete: "cc-number" })), errors.number && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.number)), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Expiration *"), /* @__PURE__ */ React.createElement("input", { type: "text", className: `form-input ${errors.expiry ? "error" : ""}`, value: cardExpiry, onChange: (e) => setCardExpiry(formatExp(e.target.value)), placeholder: "MM/AA", maxLength: "5", inputMode: "numeric", autoComplete: "cc-exp" }), errors.expiry && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.expiry)), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "CVV *"), /* @__PURE__ */ React.createElement("input", { type: "text", className: `form-input ${errors.cvc ? "error" : ""}`, value: cardCvc, onChange: (e) => setCardCvc(e.target.value.replace(/\D/g, "").slice(0, 4)), placeholder: "123", maxLength: "4", inputMode: "numeric", autoComplete: "cc-csc" }), errors.cvc && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.cvc))), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block btn-lg ${loading ? "btn-loading" : ""}`, onClick: handlePay, disabled: loading }, loading ? "Traitement Stripe..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-lock" }), " Payer ", formatPrice(amount))));
 };
-const generateInvoicePDF = (order) => {
-  const { jsPDF } = window.jspdf || {};
-  if (!jsPDF) { alert("jsPDF non chargé"); return; }
+// ════════════════════════════════════════════════════════════════════════════
+// NEXUS Market — Génération PDF Factures : Acheteur & Vendeur v1.0.0
+// ════════════════════════════════════════════════════════════════════════════
 
-  const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
-  const W = 210, H = 297, margin = 18;
-  const green = [0, 133, 62], greenL = [51, 168, 90], yellow = [253, 239, 66];
-  const EUR2 = 655.957;
+// ── CONSTANTES PDF ───────────────────────────────────────────────────────────
+const FCFA_RATE        = 655.957;
+const NEXUS_TVA        = 0.18;
+const NEXUS_COMMISSION = 0.10;
+const _C = {
+  green:  [0, 133, 62],
+  greenL: [51, 168, 90],
+  yellow: [253, 239, 66],
+  yellowD:[251, 191, 36],
+  orange: [234, 88, 12],
+  dark:   [30, 30, 30],
+  grey:   [80, 80, 80],
+  bg:     [249, 247, 240],
+  white:  [255, 255, 255],
+};
 
-  // ── FOND PAGE ──────────────────────────────────────────────────
-  doc.setFillColor(249, 247, 240);
-  doc.rect(0, 0, W, H, "F");
+// ── HELPER : montants HT / TVA / TTC / commission / net ─────────────────────
+function _computeAmounts(totalFcfa, shippingFcfa) {
+  shippingFcfa = shippingFcfa || 0;
+  const productFcfa = totalFcfa - shippingFcfa;
+  const amountHT    = Math.round(productFcfa / (1 + NEXUS_TVA));
+  const tva         = Math.round(productFcfa - amountHT);
+  const amountTTC   = Math.round(totalFcfa);
+  const commission  = Math.round(productFcfa * NEXUS_COMMISSION);
+  const netVendor   = amountTTC - commission;
+  return { productFcfa, amountHT, tva, amountTTC, commission, netVendor };
+}
 
-  // ── BARRE DÉCO LATÉRALE GAUCHE (fine) ─────────────────────────
-  doc.setFillColor(...green);
-  doc.rect(0, 0, 4, H, "F");
-
-  // ── HEADER DÉGRADÉ VERT ────────────────────────────────────────
-  doc.setFillColor(...green);
+// ── HELPER : en-tête commun NEXUS ────────────────────────────────────────────
+function _drawNexusHeader(doc, W, margin, docType, orderRef, dateStr, headerColor) {
+  const hc = headerColor || _C.green;
+  doc.setFillColor(..._C.bg);
+  doc.rect(0, 0, W, 297, "F");
+  doc.setFillColor(...hc);
+  doc.rect(0, 0, 4, 297, "F");
+  doc.setFillColor(...hc);
   doc.rect(0, 0, W, 46, "F");
-  // filet jaune sous le header
-  doc.setFillColor(...yellow);
+  doc.setFillColor(..._C.yellow);
   doc.rect(0, 46, W, 3, "F");
-
-  // Logo NX (carré jaune + texte vert)
-  doc.setFillColor(...yellow);
+  // Logo NX
+  doc.setFillColor(..._C.yellow);
   doc.roundedRect(margin, 8, 22, 22, 4, 4, "F");
-  doc.setTextColor(...green);
+  doc.setTextColor(...hc);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13);
   doc.text("NX", margin + 11, 23, { align: "center" });
-
-  // Nom société
-  doc.setTextColor(255, 255, 255);
+  // Société
+  doc.setTextColor(..._C.white);
   doc.setFontSize(18);
   doc.setFont("helvetica", "bold");
   doc.text("NEXUS Market Sénégal", margin + 28, 18);
@@ -5857,92 +5875,167 @@ const generateInvoicePDF = (order) => {
   doc.setFont("helvetica", "normal");
   doc.setTextColor(220, 255, 220);
   doc.text("Marketplace B2B/B2C · contact@nexus.sn · +221 33 123 45 67", margin + 28, 25);
-  doc.text("Immeuble Fahd, Avenue Cheikh Anta Diop, Dakar, Sénégal", margin + 28, 31);
-
-  // Type de document (droite)
-  doc.setTextColor(255, 255, 255);
+  doc.text("Immeuble Fahd, Avenue Cheikh Anta Diop, Dakar, Sénégal · NINEA : 007XXXXX 2T3", margin + 28, 31);
+  // Type document (droite)
+  doc.setTextColor(..._C.white);
   doc.setFontSize(20);
   doc.setFont("helvetica", "bold");
-  doc.text("FACTURE", W - margin, 20, { align: "right" });
+  doc.text(docType.toUpperCase(), W - margin, 20, { align: "right" });
   doc.setFontSize(9);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(220, 255, 220);
-  doc.text(`N° ${order.id}`, W - margin, 28, { align: "right" });
-  doc.text(`Émise le ${new Date(order.date).toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" })}`, W - margin, 34, { align: "right" });
-
-  // ── FILIGRANE ──────────────────────────────────────────────────
+  doc.text(`N\u00b0 ${orderRef}`, W - margin, 28, { align: "right" });
+  doc.text(`\u00c9mise le ${dateStr}`, W - margin, 34, { align: "right" });
+  // Filigrane
   doc.saveGraphicsState();
-  doc.setTextColor(0, 133, 62);
+  doc.setTextColor(...hc);
   doc.setFontSize(68);
   doc.setFont("helvetica", "bold");
   doc.setGState(doc.GState({ opacity: 0.04 }));
   doc.text("NEXUS", W / 2, 180, { align: "center", angle: 35 });
   doc.restoreGraphicsState();
+}
+
+// ── HELPER : pied de page ────────────────────────────────────────────────────
+function _drawNexusFooter(doc, W, H, footerColor, mention) {
+  const fc = footerColor || _C.green;
+  doc.setFillColor(..._C.yellow);
+  doc.rect(0, H - 18, W, 3, "F");
+  doc.setFillColor(...fc);
+  doc.rect(0, H - 15, W, 15, "F");
+  doc.setTextColor(..._C.white);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.text("NEXUS Market SARL  \u00b7  NINEA : 007XXXXX 2T3  \u00b7  RCCM : SN-DKR-2024-B-XXXXX", W / 2, H - 10, { align: "center" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.8);
+  doc.setTextColor(200, 255, 200);
+  doc.text(mention || "Document g\u00e9n\u00e9r\u00e9 automatiquement \u00b7 contact@nexus.sn \u00b7 nexus.sn \u00b7 Satisfait ou rembours\u00e9 30 jours", W / 2, H - 5, { align: "center" });
+}
+
+// ── HELPER : tampon rotatif (PAYÉ / VENDU) ───────────────────────────────────
+function _drawStamp(doc, W, y, text, color) {
+  doc.saveGraphicsState();
+  doc.setGState(doc.GState({ opacity: 0.15 }));
+  doc.setDrawColor(...(color || _C.green));
+  doc.setLineWidth(2.5);
+  doc.roundedRect(W - 68, y - 52, 50, 20, 4, 4, "S");
+  doc.setTextColor(...(color || _C.green));
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text(text, W - 43, y - 38, { align: "center", angle: -12 });
+  doc.restoreGraphicsState();
+}
+
+// ── HELPER : sauvegarde facture via API (non bloquant) ───────────────────────
+async function _saveInvoiceToSupabase(type, order, amounts) {
+  if (!NEXUS_CONFIG.apiUrl) return null;
+  const token = storage.get('nexus_token');
+  if (!token) return null;
+  try {
+    const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/invoices`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({
+        type, orderId: order.id,
+        totalFcfa:    amounts.amountTTC,
+        shippingFcfa: order.shipping !== "gratuit" ? 655 : 0,
+        metadata: {
+          buyerName:     order.buyerName,
+          vendorName:    order.vendorName,
+          products:      (order.products || []).map(p => ({ name: p.name, qty: p.quantity, price: p.price })),
+          paymentMethod: order.paymentMethod,
+          trackingNumber:order.trackingNumber,
+        }
+      }),
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch(e) {
+    console.warn("[NEXUS] saveInvoiceToSupabase:", e.message);
+    return null;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 1. FACTURE ACHETEUR — Reçu d'achat (vert)
+// ════════════════════════════════════════════════════════════════════════════
+const generateBuyerInvoicePDF = async (order) => {
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) { alert("jsPDF non chargé — veuillez recharger la page."); return; }
+
+  const doc    = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+  const W = 210, H = 297, margin = 18;
+  const shippingFcfa = order.shipping !== "gratuit" ? 655 : 0;
+  const totalFcfa    = Math.round((order.total || 0) * FCFA_RATE);
+  const amounts      = _computeAmounts(totalFcfa, shippingFcfa);
+  const dateStr      = new Date(order.date || Date.now()).toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" });
+
+  _drawNexusHeader(doc, W, margin, "FACTURE", order.id, dateStr, _C.green);
 
   let y = 62;
 
-  // ── SECTION ADRESSES ──────────────────────────────────────────
-  // Box acheteur
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(margin, y, 82, 38, 3, 3, "F");
-  doc.setDrawColor(...green);
+  // ── Bloc acheteur ────────────────────────────────────────────────────────
+  doc.setFillColor(..._C.white);
+  doc.roundedRect(margin, y, 82, 42, 3, 3, "F");
+  doc.setDrawColor(..._C.green);
   doc.setLineWidth(0.6);
-  doc.roundedRect(margin, y, 82, 38, 3, 3, "S");
-  // label vert en haut
-  doc.setFillColor(...green);
-  doc.roundedRect(margin, y, 30, 7, 2, 2, "F");
-  doc.setTextColor(255, 255, 255);
+  doc.roundedRect(margin, y, 82, 42, 3, 3, "S");
+  doc.setFillColor(..._C.green);
+  doc.roundedRect(margin, y, 36, 7, 2, 2, "F");
+  doc.setTextColor(..._C.white);
   doc.setFontSize(6.5);
   doc.setFont("helvetica", "bold");
-  doc.text("FACTURÉ À", margin + 2, y + 5);
-  // contenu
-  doc.setTextColor(30, 30, 30);
+  doc.text("FACTUR\u00c9 \u00c0", margin + 2, y + 5);
+  doc.setTextColor(..._C.dark);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.text(order.buyerName || "Client", margin + 3, y + 14);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.text(order.buyerEmail || "", margin + 3, y + 20);
-  doc.text(order.buyerAddress || "", margin + 3, y + 26, { maxWidth: 76 });
-  if (order.buyerPhone) doc.text(order.buyerPhone, margin + 3, y + 32);
+  const addrLines = doc.splitTextToSize(order.buyerAddress || "Adresse non pr\u00e9cis\u00e9e", 76);
+  doc.text(addrLines, margin + 3, y + 26);
+  if (order.buyerPhone) doc.text(order.buyerPhone, margin + 3, y + 36);
 
-  // Box vendeur
+  // ── Bloc vendeur ─────────────────────────────────────────────────────────
   const bx = margin + 88;
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(bx, y, 82, 38, 3, 3, "F");
-  doc.setDrawColor(...greenL);
+  doc.setFillColor(..._C.white);
+  doc.roundedRect(bx, y, 82, 42, 3, 3, "F");
+  doc.setDrawColor(..._C.greenL);
   doc.setLineWidth(0.6);
-  doc.roundedRect(bx, y, 82, 38, 3, 3, "S");
-  doc.setFillColor(...greenL);
-  doc.roundedRect(bx, y, 28, 7, 2, 2, "F");
-  doc.setTextColor(255, 255, 255);
+  doc.roundedRect(bx, y, 82, 42, 3, 3, "S");
+  doc.setFillColor(..._C.greenL);
+  doc.roundedRect(bx, y, 30, 7, 2, 2, "F");
+  doc.setTextColor(..._C.white);
   doc.setFontSize(6.5);
   doc.setFont("helvetica", "bold");
   doc.text("VENDU PAR", bx + 2, y + 5);
-  doc.setTextColor(30, 30, 30);
+  doc.setTextColor(..._C.dark);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.text(order.vendorName || "", bx + 3, y + 14);
+  doc.text(order.vendorName || "Vendeur NEXUS", bx + 3, y + 14);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
-  doc.text("Vendeur certifié NEXUS Market", bx + 3, y + 20);
+  doc.text("Vendeur certifi\u00e9 NEXUS Market", bx + 3, y + 20);
+  if (order.vendorShop)  doc.text(`Boutique : ${order.vendorShop}`, bx + 3, y + 26);
+  if (order.vendorEmail) doc.text(order.vendorEmail, bx + 3, y + 32);
 
-  y += 46;
+  y += 50;
 
-  // ── TABLEAU ARTICLES ──────────────────────────────────────────
-  // En-tête tableau
-  doc.setFillColor(...green);
+  // ── En-tête tableau ──────────────────────────────────────────────────────
+  doc.setFillColor(..._C.green);
   doc.roundedRect(margin, y, W - margin * 2, 9, 2, 2, "F");
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(..._C.white);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
-  doc.text("DÉSIGNATION", margin + 3, y + 6);
-  doc.text("QTÉ", 135, y + 6, { align: "center" });
-  doc.text("P.U. FCFA", 157, y + 6, { align: "right" });
-  doc.text("TOTAL FCFA", W - margin - 2, y + 6, { align: "right" });
+  doc.text("D\u00c9SIGNATION", margin + 3, y + 6);
+  doc.text("QT\u00c9", 128, y + 6, { align: "center" });
+  doc.text("P.U. HT", 152, y + 6, { align: "right" });
+  doc.text("TOTAL TTC", W - margin - 2, y + 6, { align: "right" });
   y += 12;
 
-  // Lignes produits
+  // ── Lignes produits ───────────────────────────────────────────────────────
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   (order.products || []).forEach((p, i) => {
@@ -5950,116 +6043,382 @@ const generateInvoicePDF = (order) => {
       doc.setFillColor(245, 250, 246);
       doc.rect(margin, y - 5, W - margin * 2, 9, "F");
     }
-    doc.setTextColor(30, 30, 30);
-    const name = (p.name || "").length > 42 ? p.name.substring(0, 39) + "…" : (p.name || "");
+    const name     = (p.name || "").length > 45 ? p.name.substring(0, 42) + "\u2026" : (p.name || "");
+    const priceHT  = Math.round((p.price * FCFA_RATE) / (1 + NEXUS_TVA));
+    const priceTTC = Math.round(p.price * (p.quantity || 1) * FCFA_RATE);
+    doc.setTextColor(..._C.dark);
     doc.text(name, margin + 3, y);
-    doc.text(String(p.quantity || 1), 135, y, { align: "center" });
-    doc.setTextColor(...green);
-    doc.text(Math.round(p.price * EUR2).toLocaleString("fr-FR"), 157, y, { align: "right" });
+    doc.text(String(p.quantity || 1), 128, y, { align: "center" });
+    doc.setTextColor(..._C.green);
+    doc.text(priceHT.toLocaleString("fr-FR") + " F", 152, y, { align: "right" });
     doc.setFont("helvetica", "bold");
-    doc.text(Math.round(p.price * (p.quantity || 1) * EUR2).toLocaleString("fr-FR"), W - margin - 2, y, { align: "right" });
+    doc.text(priceTTC.toLocaleString("fr-FR") + " F", W - margin - 2, y, { align: "right" });
     doc.setFont("helvetica", "normal");
-    doc.setTextColor(30, 30, 30);
+    doc.setTextColor(..._C.dark);
     y += 9;
   });
 
   // Filet bas tableau
-  doc.setDrawColor(...green);
+  doc.setDrawColor(..._C.green);
   doc.setLineWidth(0.5);
   doc.line(margin, y + 2, W - margin, y + 2);
   y += 8;
 
-  // ── TOTAUX ────────────────────────────────────────────────────
-  const subtotalFcfa = Math.round(order.total * EUR2);
-  const shippingFcfa = order.shipping !== "gratuit" ? 655 : 0;
-  const tvaFcfa      = Math.round((subtotalFcfa - shippingFcfa) * 0.18);
-  const grandFcfa    = subtotalFcfa + shippingFcfa;
-
-  const totLines = [
-    ["Sous-total HT",  Math.round(subtotalFcfa - shippingFcfa).toLocaleString("fr-FR") + " FCFA"],
-    ["TVA (18%)",      tvaFcfa.toLocaleString("fr-FR") + " FCFA"],
-    ["Livraison",      shippingFcfa > 0 ? shippingFcfa.toLocaleString("fr-FR") + " FCFA" : "Gratuite"],
-  ];
-
-  totLines.forEach(([lbl, val]) => {
+  // ── Totaux ────────────────────────────────────────────────────────────────
+  [
+    ["Sous-total HT", amounts.amountHT.toLocaleString("fr-FR") + " FCFA"],
+    ["TVA (18 %)",    amounts.tva.toLocaleString("fr-FR") + " FCFA"],
+    ["Livraison",     shippingFcfa > 0 ? shippingFcfa.toLocaleString("fr-FR") + " FCFA" : "Gratuite"],
+  ].forEach(([lbl, val]) => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.setTextColor(80, 80, 80);
-    doc.text(lbl, 140, y);
+    doc.setTextColor(..._C.grey);
+    doc.text(lbl, 135, y);
     doc.text(val, W - margin - 2, y, { align: "right" });
     y += 7;
   });
-
-  // Case TOTAL TTC
   y += 2;
-  doc.setFillColor(...green);
+  doc.setFillColor(..._C.green);
   doc.roundedRect(128, y - 6, W - margin - 128, 11, 3, 3, "F");
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(..._C.white);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10.5);
   doc.text("TOTAL TTC", 132, y + 1);
   doc.setFontSize(12);
-  doc.text(grandFcfa.toLocaleString("fr-FR") + " FCFA", W - margin - 2, y + 1, { align: "right" });
+  doc.text(amounts.amountTTC.toLocaleString("fr-FR") + " FCFA", W - margin - 2, y + 1, { align: "right" });
   y += 18;
 
-  // ── INFOS PAIEMENT & SUIVI ────────────────────────────────────
+  // ── Infos paiement & suivi ────────────────────────────────────────────────
   doc.setFillColor(240, 253, 244);
-  doc.roundedRect(margin, y, 82, 20, 3, 3, "F");
-  doc.setDrawColor(...green);
+  doc.roundedRect(margin, y, 82, 22, 3, 3, "F");
+  doc.setDrawColor(..._C.green);
   doc.setLineWidth(0.4);
-  doc.roundedRect(margin, y, 82, 20, 3, 3, "S");
-  doc.setTextColor(...green);
+  doc.roundedRect(margin, y, 82, 22, 3, 3, "S");
+  doc.setTextColor(..._C.green);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  doc.text("N° DE SUIVI", margin + 3, y + 6);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
+  doc.setFontSize(7);
+  doc.text("N\u00b0 DE SUIVI", margin + 3, y + 6);
+  doc.setFontSize(10.5);
   doc.text(order.trackingNumber || "EN COURS", margin + 3, y + 14);
 
-  const payLabel = { cod:"Paiement à la livraison", card:"Carte bancaire", mobile:"Mobile Money" }[order.paymentMethod] || order.paymentMethod || "—";
+  const payLabel = { cod:"Paiement \u00e0 la livraison", card:"Carte bancaire", mobile:"Mobile Money (Orange / Wave)", stripe:"Carte Stripe" }[order.paymentMethod] || order.paymentMethod || "\u2014";
   doc.setFillColor(255, 248, 225);
-  doc.roundedRect(bx, y, 82, 20, 3, 3, "F");
-  doc.setDrawColor(251, 191, 36);
-  doc.roundedRect(bx, y, 82, 20, 3, 3, "S");
+  doc.roundedRect(bx, y, 82, 22, 3, 3, "F");
+  doc.setDrawColor(..._C.yellowD);
+  doc.roundedRect(bx, y, 82, 22, 3, 3, "S");
   doc.setTextColor(120, 80, 0);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.text("MOYEN DE PAIEMENT", bx + 3, y + 6);
-  doc.setFont("helvetica", "bold");
   doc.setFontSize(9.5);
   doc.text(payLabel, bx + 3, y + 14);
 
-  // ── TAMPÓN PAYÉ (si non COD) ──────────────────────────────────
   if (order.paymentMethod && order.paymentMethod !== "cod") {
-    doc.saveGraphicsState();
-    doc.setGState(doc.GState({ opacity: 0.18 }));
-    doc.setDrawColor(...green);
-    doc.setLineWidth(2.5);
-    doc.roundedRect(W - 68, y - 52, 50, 20, 4, 4, "S");
-    doc.setTextColor(...green);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("PAYÉ", W - 43, y - 38, { align: "center", angle: -12 });
-    doc.restoreGraphicsState();
+    _drawStamp(doc, W, y, "PAY\u00c9", _C.green);
   }
+  y += 28;
 
-  // ── PIED DE PAGE ──────────────────────────────────────────────
-  // Barre jaune + verte en bas
-  doc.setFillColor(...yellow);
-  doc.rect(0, H - 18, W, 3, "F");
-  doc.setFillColor(...green);
-  doc.rect(0, H - 15, W, 15, "F");
-  doc.setTextColor(255, 255, 255);
+  // ── CGV ──────────────────────────────────────────────────────────────────
+  doc.setFillColor(235, 245, 255);
+  doc.roundedRect(margin, y, W - margin * 2, 28, 3, 3, "F");
+  doc.setTextColor(60, 80, 120);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
-  doc.text("NEXUS Market SARL  ·  NINEA : à compléter  ·  RCCM : à compléter", W / 2, H - 10, { align: "center" });
+  doc.text("CONDITIONS G\u00c9N\u00c9RALES DE VENTE", margin + 4, y + 6);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  [
+    "\u2022 Droit de r\u00e9tractation : 30 jours \u00e0 compter de la r\u00e9ception (produit non ouvert, en \u00e9tat d'origine).",
+    "\u2022 Garantie l\u00e9gale : 2 ans pour les vices cach\u00e9s. Contactez contact@nexus.sn ou le vendeur.",
+    "\u2022 Litige : NEXUS Market agit comme m\u00e9diateur neutre. Voir nexus.sn/cgv pour les d\u00e9tails complets.",
+    "\u2022 Ce document fait foi de paiement pour les articles list\u00e9s ci-dessus. Conservez-le pr\u00e9cieusement.",
+    "\u2022 En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn \u00b7 +221 33 123 45 67.",
+  ].forEach((line, i) => doc.text(line, margin + 4, y + 12 + i * 4.2));
+
+  _drawNexusFooter(doc, W, H, _C.green, "NEXUS Market \u2014 Votre re\u00e7u officiel \u00b7 contact@nexus.sn \u00b7 nexus.sn \u00b7 Satisfait ou rembours\u00e9 30 jours");
+
+  doc.save(`Facture-Acheteur-NEXUS-${order.id}.pdf`);
+  _saveInvoiceToSupabase('buyer', order, amounts).then(r => {
+    if (r && r.invoiceNumber) console.info(`[NEXUS] Facture acheteur enregistr\u00e9e : ${r.invoiceNumber}`);
+  });
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// 2. RELEVÉ DE VENTE VENDEUR — avec commissions NEXUS & net à percevoir (orange)
+// ════════════════════════════════════════════════════════════════════════════
+const generateVendorInvoicePDF = async (order) => {
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) { alert("jsPDF non charg\u00e9 \u2014 veuillez recharger la page."); return; }
+
+  const doc    = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+  const W = 210, H = 297, margin = 18;
+  const shippingFcfa = order.shipping !== "gratuit" ? 655 : 0;
+  const totalFcfa    = Math.round((order.total || 0) * FCFA_RATE);
+  const amounts      = _computeAmounts(totalFcfa, shippingFcfa);
+  const dateStr      = new Date(order.date || Date.now()).toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" });
+
+  // ── En-tête orange (distingué visuellement) ───────────────────────────────
+  doc.setFillColor(..._C.bg);
+  doc.rect(0, 0, W, H, "F");
+  doc.setFillColor(..._C.orange);
+  doc.rect(0, 0, 4, H, "F");
+  doc.setFillColor(..._C.orange);
+  doc.rect(0, 0, W, 46, "F");
+  doc.setFillColor(..._C.yellow);
+  doc.rect(0, 46, W, 3, "F");
+  doc.setFillColor(..._C.yellow);
+  doc.roundedRect(margin, 8, 22, 22, 4, 4, "F");
+  doc.setTextColor(..._C.orange);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text("NX", margin + 11, 23, { align: "center" });
+  doc.setTextColor(..._C.white);
+  doc.setFontSize(17);
+  doc.setFont("helvetica", "bold");
+  doc.text("NEXUS Market \u2014 Espace Vendeur", margin + 28, 18);
+  doc.setFontSize(8.5);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(255, 230, 200);
+  doc.text("Relev\u00e9 de vente \u00b7 vendeurs@nexus.sn \u00b7 +221 33 123 45 67", margin + 28, 25);
+  doc.text("Immeuble Fahd, Avenue Cheikh Anta Diop, Dakar, S\u00e9n\u00e9gal \u00b7 NINEA : 007XXXXX 2T3", margin + 28, 31);
+  doc.setTextColor(..._C.white);
+  doc.setFontSize(18);
+  doc.setFont("helvetica", "bold");
+  doc.text("RELEV\u00c9 DE VENTE", W - margin, 20, { align: "right" });
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(255, 230, 200);
+  doc.text(`Commande N\u00b0 ${order.id}`, W - margin, 28, { align: "right" });
+  doc.text(`G\u00e9n\u00e9r\u00e9 le ${dateStr}`, W - margin, 34, { align: "right" });
+  doc.saveGraphicsState();
+  doc.setTextColor(..._C.orange);
+  doc.setFontSize(68);
+  doc.setFont("helvetica", "bold");
+  doc.setGState(doc.GState({ opacity: 0.04 }));
+  doc.text("VENDEUR", W / 2, 180, { align: "center", angle: 35 });
+  doc.restoreGraphicsState();
+
+  let y = 62;
+  const bx = margin + 88;
+
+  // ── Bloc vendeur ─────────────────────────────────────────────────────────
+  doc.setFillColor(..._C.white);
+  doc.roundedRect(margin, y, 82, 42, 3, 3, "F");
+  doc.setDrawColor(..._C.orange);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(margin, y, 82, 42, 3, 3, "S");
+  doc.setFillColor(..._C.orange);
+  doc.roundedRect(margin, y, 38, 7, 2, 2, "F");
+  doc.setTextColor(..._C.white);
+  doc.setFontSize(6.5);
+  doc.setFont("helvetica", "bold");
+  doc.text("VOTRE BOUTIQUE", margin + 2, y + 5);
+  doc.setTextColor(..._C.dark);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text(order.vendorName || "Vendeur", margin + 3, y + 14);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  if (order.vendorShop)  doc.text(`Boutique : ${order.vendorShop}`, margin + 3, y + 20);
+  if (order.vendorEmail) doc.text(order.vendorEmail, margin + 3, y + 26);
+  if (order.vendorPhone) doc.text(order.vendorPhone, margin + 3, y + 32);
+  doc.setTextColor(..._C.greenL);
+  doc.setFontSize(7.5);
+  doc.text("\u2705 Vendeur certifi\u00e9 NEXUS Market", margin + 3, y + 38);
+
+  // ── Bloc acheteur ─────────────────────────────────────────────────────────
+  doc.setFillColor(..._C.white);
+  doc.roundedRect(bx, y, 82, 42, 3, 3, "F");
+  doc.setDrawColor(..._C.green);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(bx, y, 82, 42, 3, 3, "S");
+  doc.setFillColor(..._C.green);
+  doc.roundedRect(bx, y, 32, 7, 2, 2, "F");
+  doc.setTextColor(..._C.white);
+  doc.setFontSize(6.5);
+  doc.setFont("helvetica", "bold");
+  doc.text("ACHETEUR", bx + 2, y + 5);
+  doc.setTextColor(..._C.dark);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text(order.buyerName || "Client", bx + 3, y + 14);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.text(order.buyerEmail || "", bx + 3, y + 20);
+  const al2 = doc.splitTextToSize(order.buyerAddress || "Adresse non pr\u00e9cis\u00e9e", 76);
+  doc.text(al2, bx + 3, y + 26);
+
+  y += 50;
+
+  // ── Tableau articles ──────────────────────────────────────────────────────
+  doc.setFillColor(..._C.orange);
+  doc.roundedRect(margin, y, W - margin * 2, 9, 2, 2, "F");
+  doc.setTextColor(..._C.white);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("ARTICLE VENDU", margin + 3, y + 6);
+  doc.text("QT\u00c9", 118, y + 6, { align: "center" });
+  doc.text("P.U. HT", 145, y + 6, { align: "right" });
+  doc.text("TVA 18%", 163, y + 6, { align: "right" });
+  doc.text("TOTAL TTC", W - margin - 2, y + 6, { align: "right" });
+  y += 12;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  (order.products || []).forEach((p, i) => {
+    if (i % 2 === 0) {
+      doc.setFillColor(255, 247, 237);
+      doc.rect(margin, y - 5, W - margin * 2, 9, "F");
+    }
+    const name    = (p.name || "").length > 38 ? p.name.substring(0, 35) + "\u2026" : (p.name || "");
+    const priceHT = Math.round((p.price * FCFA_RATE) / (1 + NEXUS_TVA));
+    const priceTVA= Math.round(p.price * FCFA_RATE - priceHT);
+    const priceTTC= Math.round(p.price * (p.quantity || 1) * FCFA_RATE);
+    doc.setTextColor(..._C.dark);
+    doc.text(name, margin + 3, y);
+    doc.text(String(p.quantity || 1), 118, y, { align: "center" });
+    doc.setTextColor(..._C.grey);
+    doc.text(priceHT.toLocaleString("fr-FR") + " F", 145, y, { align: "right" });
+    doc.text(priceTVA.toLocaleString("fr-FR") + " F", 163, y, { align: "right" });
+    doc.setTextColor(..._C.orange);
+    doc.setFont("helvetica", "bold");
+    doc.text(priceTTC.toLocaleString("fr-FR") + " F", W - margin - 2, y, { align: "right" });
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(..._C.dark);
+    y += 9;
+  });
+
+  doc.setDrawColor(..._C.orange);
+  doc.setLineWidth(0.5);
+  doc.line(margin, y + 2, W - margin, y + 2);
+  y += 8;
+
+  // ── Ventilation financière ─────────────────────────────────────────────────
+  doc.setFillColor(255, 247, 237);
+  doc.roundedRect(margin, y, W - margin * 2, 7, 2, 2, "F");
+  doc.setTextColor(..._C.orange);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("D\u00c9TAIL FINANCIER DE VOTRE VENTE", margin + 4, y + 5);
+  y += 11;
+
+  [
+    { lbl: "Chiffre d'affaires TTC",       val: amounts.amountTTC.toLocaleString("fr-FR") + " FCFA", color: _C.dark },
+    { lbl: "dont TVA collect\u00e9e (18 %)",     val: amounts.tva.toLocaleString("fr-FR") + " FCFA",      color: _C.grey },
+    { lbl: "Chiffre d'affaires HT",        val: amounts.amountHT.toLocaleString("fr-FR") + " FCFA",  color: _C.dark },
+    { lbl: "Commission NEXUS (10 % TTC)",  val: "- " + amounts.commission.toLocaleString("fr-FR") + " FCFA", color: [220, 50, 50] },
+    { lbl: "Livraison prise en charge",    val: shippingFcfa > 0 ? shippingFcfa.toLocaleString("fr-FR") + " FCFA" : "Offerte", color: _C.grey },
+  ].forEach(({ lbl, val, color }) => {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...color);
+    doc.text(lbl, margin + 6, y);
+    doc.text(val, W - margin - 2, y, { align: "right" });
+    y += 6.5;
+  });
+
+  doc.setDrawColor(..._C.orange);
+  doc.setLineWidth(0.8);
+  doc.line(margin + 4, y, W - margin - 4, y);
+  y += 5;
+
+  // NET À PERCEVOIR
+  doc.setFillColor(..._C.orange);
+  doc.roundedRect(margin, y - 6, W - margin * 2, 13, 3, 3, "F");
+  doc.setTextColor(..._C.white);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("NET \u00c0 PERCEVOIR", margin + 4, y + 2);
+  doc.setFontSize(13);
+  doc.text(amounts.netVendor.toLocaleString("fr-FR") + " FCFA", W - margin - 2, y + 2, { align: "right" });
+  y += 18;
+
+  // ── Statut & paiement ─────────────────────────────────────────────────────
+  doc.setFillColor(240, 253, 244);
+  doc.roundedRect(margin, y, 82, 28, 3, 3, "F");
+  doc.setDrawColor(..._C.green);
+  doc.setLineWidth(0.4);
+  doc.roundedRect(margin, y, 82, 28, 3, 3, "S");
+  doc.setTextColor(..._C.green);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.text("STATUT DE LA COMMANDE", margin + 3, y + 6);
+  const statusLabel = { processing:"En traitement", in_transit:"En livraison", delivered:"Livr\u00e9e \u2705", cancelled:"Annul\u00e9e \u274c" }[order.status] || order.status || "\u2014";
+  doc.setFontSize(10);
+  doc.text(statusLabel, margin + 3, y + 14);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(..._C.grey);
+  doc.text("Virement sous 5 jours ouvr\u00e9s apr\u00e8s", margin + 3, y + 20);
+  doc.text("confirmation de livraison.", margin + 3, y + 25);
+
+  const payLblV = { cod:"Paiement \u00e0 la livraison", card:"Carte bancaire", mobile:"Mobile Money (Orange / Wave)", stripe:"Stripe" }[order.paymentMethod] || order.paymentMethod || "\u2014";
+  doc.setFillColor(255, 248, 225);
+  doc.roundedRect(bx, y, 82, 28, 3, 3, "F");
+  doc.setDrawColor(..._C.yellowD);
+  doc.roundedRect(bx, y, 82, 28, 3, 3, "S");
+  doc.setTextColor(120, 80, 0);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.text("MODE DE PAIEMENT CLIENT", bx + 3, y + 6);
+  doc.setFontSize(9.5);
+  doc.text(payLblV, bx + 3, y + 14);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(..._C.grey);
+  doc.text(`Suivi : ${order.trackingNumber || "En cours"}`, bx + 3, y + 22);
+
+  _drawStamp(doc, W, y, "VENDU", _C.orange);
+  y += 34;
+
+  // ── Note comptable ────────────────────────────────────────────────────────
+  doc.setFillColor(235, 245, 255);
+  doc.roundedRect(margin, y, W - margin * 2, 24, 3, 3, "F");
+  doc.setTextColor(60, 80, 120);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.text("NOTE COMPTABLE & FISCALE", margin + 4, y + 6);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  [
+    "\u2022 Ce relev\u00e9 constitue votre justificatif comptable. Conservez-le pour votre d\u00e9claration de revenus.",
+    "\u2022 La TVA collect\u00e9e (18 %) est \u00e0 reverser \u00e0 la Direction G\u00e9n\u00e9rale des Imp\u00f4ts et des Domaines (DGID) du S\u00e9n\u00e9gal.",
+    "\u2022 La commission NEXUS est d\u00e9ductible de votre CA imposable. R\u00e9f\u00e9rence : art. L 55 CGI SN.",
+    `\u2022 CA HT \u00e0 d\u00e9clarer pour cette transaction : ${amounts.amountHT.toLocaleString("fr-FR")} FCFA.`,
+  ].forEach((l, i) => doc.text(l, margin + 4, y + 12 + i * 4));
+
+  // ── Pied de page orange ───────────────────────────────────────────────────
+  doc.setFillColor(..._C.yellow);
+  doc.rect(0, H - 18, W, 3, "F");
+  doc.setFillColor(..._C.orange);
+  doc.rect(0, H - 15, W, 15, "F");
+  doc.setTextColor(..._C.white);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.text("NEXUS Market SARL  \u00b7  NINEA : 007XXXXX 2T3  \u00b7  RCCM : SN-DKR-2024-B-XXXXX", W / 2, H - 10, { align: "center" });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(6.8);
-  doc.setTextColor(200, 255, 200);
-  doc.text("Document généré automatiquement  ·  contact@nexus.sn  ·  nexus.sn  ·  Satisfait ou remboursé 30 jours", W / 2, H - 5, { align: "center" });
+  doc.setTextColor(255, 220, 180);
+  doc.text("Espace Vendeur \u00b7 vendeurs@nexus.sn \u00b7 nexus.sn/vendeurs \u00b7 Support : +221 33 123 45 67", W / 2, H - 5, { align: "center" });
 
-  doc.save(`Facture-NEXUS-${order.id}.pdf`);
+  doc.save(`Releve-Vente-NEXUS-${order.id}.pdf`);
+  _saveInvoiceToSupabase('vendor', order, amounts).then(r => {
+    if (r && r.invoiceNumber) console.info(`[NEXUS] Relev\u00e9 vendeur enregistr\u00e9 : ${r.invoiceNumber}`);
+  });
 };
+
+// ── Alias générique — détecte le rôle automatiquement ───────────────────────
+const generateInvoicePDF = async (order) => {
+  const role = (window.__nexusCurrentUser && window.__nexusCurrentUser.role) || storage.get('nexus_user_role') || 'buyer';
+  return (role === 'vendor' || role === 'admin')
+    ? generateVendorInvoicePDF(order)
+    : generateBuyerInvoicePDF(order);
+};
+
+// Exposition globale (accessible depuis AdminDashboard et les événements)
+window.__nexusGenerateBuyerInvoice  = generateBuyerInvoicePDF;
+window.__nexusGenerateVendorInvoice = generateVendorInvoicePDF;
+
 const NotificationContext = createContext({ notifications: [], unread: 0, addNotif: () => {
 }, markRead: () => {
 }, markAllRead: () => {
@@ -8325,7 +8684,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"));
   })))))), view === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h2", { className: "section-title" }, "Mes Produits (", products.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowBulkImport(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Import CSV"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true), "aria-expanded": showAddProduct }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit"))), products.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit"), /* @__PURE__ */ React.createElement("p", null, "Commencez \xE0 vendre en ajoutant votre premier produit"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.id, className: "product-card", role: "article", "aria-label": p.name }, /* @__PURE__ */ React.createElement(ProductImg, { product: p, height: 180 }), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product: p }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), " ", /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? p.stock + " stock" : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", onClick: () => setEditProduct(p) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-edit" }), " Modifier / Supprimer")))))), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Offres re\xE7ues (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Les offres de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Acheteur"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Acheteur" }, offer.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, offer.status === "pending" ? /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleOffer(offer.id, true) }, "Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleOffer(offer.id, false) }, "Refuser")) : /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : "danger"}` }, offer.status)))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Toutes mes commandes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Produits"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, orders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE).map((o) => {
     var _a, _b;
-    return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Produits" }, (o.products || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: "0.82rem" } }, p.name, " \xD7", p.quantity))), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("select", { className: "form-select", style: { padding: "0.3rem", fontSize: "0.8rem", width: "auto" }, value: o.status, onChange: (e) => updateOrderStatus(o.id, e.target.value), "aria-label": `Statut commande ${o.id}` }, /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => generateInvoicePDF(o), title: "T\xE9l\xE9charger la facture" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" })))));
+    return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Produits" }, (o.products || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: "0.82rem" } }, p.name, " \xD7", p.quantity))), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("select", { className: "form-select", style: { padding: "0.3rem", fontSize: "0.8rem", width: "auto" }, value: o.status, onChange: (e) => updateOrderStatus(o.id, e.target.value), "aria-label": `Statut commande ${o.id}` }, /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => generateBuyerInvoicePDF(o), title: "Facture client PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Client"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-sm", style: { background: "#ea580c", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => generateVendorInvoicePDF(o), title: "Mon relevé de vente PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-chart-line" }), " Relevé"))));
   })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "messages" && React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "qa" && (() => {
     const allQA = storage.get("product_qa") || {};
     const myProductIds = products.map((p) => p.id);
@@ -9543,6 +9902,7 @@ const App = ({ onUserChange }) => {
   const handleLogin = (user) => {
     var _a;
     setCurrentUser(user);
+    window.__nexusCurrentUser = user;
     if (onUserChange) onUserChange(user);
     setShowAuth(false);
     setLoginTarget(null);
@@ -9557,6 +9917,7 @@ const App = ({ onUserChange }) => {
   const handleLogout = async () => {
     await DataService.signOut().catch(() => {});
     setCurrentUser(null);
+    window.__nexusCurrentUser = null;
     if (onUserChange) onUserChange(null);
     setSidebarOpen(false);
     addToast("Vous avez été déconnecté", "info");
