@@ -125,8 +125,21 @@ const requestLogger = (req, res, next) => {
   next();
 };
 
-// ─── EMAIL SMTP ───────────────────────────────────────────────────────────────
-const mailer = nodemailer.createTransport({
+// ─── EMAIL — Resend (principal, gratuit) + SMTP (fallback) ──────────────────
+//
+// Resend : https://resend.com — 3 000 emails/mois GRATUITS, 1 seule clé API.
+// Inscription en 2 min, pas de configuration complexe.
+//
+// Variables .env :
+//   RESEND_API_KEY  — clé Resend (ex: re_xxxxxxxxxxxxxxxx) — PRINCIPALE
+//   RESEND_FROM     — ex: "NEXUS Market <contact@nexus.sn>"
+//   SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM — FALLBACK
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _isResendConfigured = () => !!process.env.RESEND_API_KEY;
+
+// Transporteur SMTP classique (fallback si Resend pas configuré)
+const _smtpTransport = nodemailer.createTransport({
   host   : process.env.SMTP_HOST || 'smtp.gmail.com',
   port   : parseInt(process.env.SMTP_PORT || '587'),
   secure : false,
@@ -134,18 +147,49 @@ const mailer = nodemailer.createTransport({
   tls    : { rejectUnauthorized: false },
 });
 
+// sendEmail — chaîne : Resend → SMTP → log uniquement
 const sendEmail = async ({ to, subject, html, text }) => {
-  try {
-    await mailer.sendMail({
-      from: process.env.SMTP_FROM || 'NEXUS Market <no-reply@nexus.sn>',
-      to, subject, html, text
-    });
-    Logger.info('email', 'sent', `Email envoyé à ${to}`);
-    return true;
-  } catch (e) {
-    Logger.error('email', 'send.error', e.message, { meta: { to, subject } });
-    return false;
+  const from = process.env.RESEND_FROM
+    || process.env.SMTP_FROM
+    || 'NEXUS Market <onboarding@resend.dev>';
+
+  // 1. Tentative via Resend (API HTTP, 3000 emails/mois gratuits)
+  if (_isResendConfigured()) {
+    try {
+      const resp = await fetch('https://api.resend.com/emails', {
+        method:  'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+          'Content-Type':  'application/json',
+        },
+        body: JSON.stringify({ from, to, subject, html: html || `<p>${text || subject}</p>` }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const result = await resp.json();
+      if (resp.ok && result.id) {
+        Logger.info('email', 'sent.resend', `Email envoyé via Resend à ${to} (id: ${result.id})`);
+        return true;
+      }
+      Logger.warn('email', 'resend.fail', `Resend erreur ${resp.status}: ${JSON.stringify(result)}`, { meta: { to } });
+    } catch (e) {
+      Logger.warn('email', 'resend.fail', `Resend exception, bascule SMTP : ${e.message}`, { meta: { to } });
+    }
   }
+
+  // 2. Fallback SMTP
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      await _smtpTransport.sendMail({ from, to, subject, html, text });
+      Logger.info('email', 'sent.smtp', `Email envoyé via SMTP à ${to}`);
+      return true;
+    } catch (e) {
+      Logger.error('email', 'smtp.fail', `SMTP échoué : ${e.message}`, { meta: { to, subject } });
+    }
+  }
+
+  // 3. Aucun transporteur configuré
+  Logger.warn('email', 'not_sent', `Email non envoyé (configurez RESEND_API_KEY) à ${to} : "${subject}"`);
+  return false;
 };
 
 // ─── TEMPLATES EMAIL ──────────────────────────────────────────────────────────
@@ -437,6 +481,66 @@ const pushNotification = async (userId, { type, title, message, link }) => {
   }
 };
 
+// ─── SOCIAL AUTH ROUTE ───────────────────────────────────────────────────────
+// GitHub OAuth est géré entièrement par Supabase côté client.
+// Cette route expose juste la config pour le frontend.
+app.get('/api/auth/social/config', (req, res) => {
+  res.json({
+    github:  true,   // activé via Supabase Dashboard → Auth → Providers → GitHub
+    google:  false,  // désactivé (configuration complexe — utiliser GitHub à la place)
+    resend:  _isResendConfigured(),
+    smtp:    !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+  });
+});
+
+// ─── EMAIL API ROUTES ─────────────────────────────────────────────────────────
+
+// POST /api/email/send — Envoi backend (fallback quand EmailJS échoue côté client)
+app.post('/api/email/send', verifyToken, async (req, res) => {
+  const { to, subject, html, text, templateId, variables } = req.body;
+  if (!to || !subject)
+    return res.status(400).json({ error: 'Champs requis : to, subject' });
+
+  const allowedRoles = ['admin', 'vendor'];
+  if (!allowedRoles.includes(req.user.role) && to !== req.user.email)
+    return res.status(403).json({ error: "Vous ne pouvez envoyer un email qu'à votre propre adresse" });
+
+  let finalHtml = html;
+  if (!finalHtml && templateId && emailTemplates[templateId] && variables) {
+    finalHtml = emailTemplates[templateId](variables).html;
+  }
+
+  try {
+    const sent = await sendEmail({ to, subject, html: finalHtml, text });
+    Logger.info('email', 'api.send', `Email via API à ${to} par ${req.user.email}`, { userId: req.user.id });
+    res.json({ ok: sent, provider: _isResendConfigured() ? 'resend' : 'smtp' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/email/test — Test d'envoi (admin uniquement)
+app.post('/api/email/test', verifyToken, requireRole('admin'), async (req, res) => {
+  const target = req.body.to || req.user.email;
+  const provider = _isResendConfigured() ? 'Resend' : (process.env.SMTP_USER ? 'SMTP' : 'Aucun');
+  const sent = await sendEmail({
+    to:      target,
+    subject: '✅ Test email NEXUS Market',
+    html:    `<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:30px">
+               <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center">
+                 <h2 style="color:white;margin:0">NEXUS Market — Test Email</h2>
+               </div>
+               <div style="background:#f9f9f9;padding:20px;border-radius:0 0 8px 8px">
+                 <p>Bonjour <strong>${req.user.name || req.user.email}</strong>,</p>
+                 <p>✅ La configuration email fonctionne. Fournisseur actif : <strong>${provider}</strong>.</p>
+                 <p style="color:#6b7280;font-size:0.88rem">Envoyé le ${new Date().toLocaleString('fr-FR')} via NEXUS Market</p>
+               </div>
+             </div>`,
+  });
+  res.json({ ok: sent, to: target, provider });
+});
+
+// ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
 // ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { name, email, password, role, shopName, shopCategory, phone } = req.body;
