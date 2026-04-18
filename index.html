@@ -1066,6 +1066,13 @@ const NEXUS_CONFIG = {
   imgbb: { apiKey: "" },  // Clé imgBB (gratuit — https://api.imgbb.com) pour hébergement images sans Supabase
   analytics: {
     ga4Id: ""  // Google Analytics 4 Measurement ID — ex: "G-XXXXXXXXXX" (gratuit sur analytics.google.com)
+  },
+  google: {
+    // Client ID OAuth 2.0 (Google Cloud Console → Identifiants → ID client OAuth)
+    // Nécessaire pour : Connexion avec Google + Gmail OAuth2 (envoi emails)
+    // IMPORTANT : seul le Client ID public est mis ici. Le Client Secret et le
+    // Refresh Token restent EXCLUSIVEMENT dans les variables d'environnement du backend (.env).
+    clientId: "",  // ex: "123456789-abc.apps.googleusercontent.com"
   }
 };
 // ── Restaurer la config persistée (survit aux rechargements de page) ──────────
@@ -1081,6 +1088,7 @@ try {
     if (_sc.emailjsOrderTpl)  NEXUS_CONFIG.emailjs.orderTemplateId   = _sc.emailjsOrderTpl;
     if (_sc.emailjsResetTpl)  NEXUS_CONFIG.emailjs.resetTemplateId   = _sc.emailjsResetTpl;
     if (_sc.apiUrl)           NEXUS_CONFIG.apiUrl                    = _sc.apiUrl;
+    if (_sc.googleClientId)   NEXUS_CONFIG.google.clientId           = _sc.googleClientId;
     // BUG FIX: on ne restaure PAS confirmUrl depuis localStorage — l'ancien domaine
     // (nexus-market-md360.vercel.app) y était mémorisé et cassait la confirmation email.
     // confirmUrl est maintenant un getter dynamique basé sur window.location.pathname.
@@ -1745,6 +1753,25 @@ const DataService = {
     const role  = meta.role   || "buyer";
     const avatar = meta.avatar || name.slice(0, 2).toUpperCase();
     return { id: authUser.id, email, name, role, avatar, status: "active", created_at: authUser.created_at || new Date().toISOString() };
+  },
+  // ── Connexion Google OAuth via Supabase ─────────────────────────────────────
+  // Lance le flow Google OAuth. Supabase gère le redirect et le callback automatiquement.
+  // Après authentification, onAuthStateChange reçoit SIGNED_IN et appelle handleLogin().
+  async signInWithGoogle() {
+    if (!this._sb) throw new Error("Supabase requis pour la connexion Google");
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { data, error } = await this._sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+        queryParams: {
+          access_type: 'offline',   // obtenir un refresh_token
+          prompt:      'select_account', // toujours afficher le sélecteur de compte
+        },
+      },
+    });
+    if (error) throw error;
+    return data; // contient l'URL de redirection Google (géré auto par Supabase)
   },
   async signOut() {
     this._voluntarySignOut = true;
@@ -2473,6 +2500,28 @@ const EmailService = {
       }
     }
     console.log("[EmailService] Simulation \u2014 email à", to, ":", subject);
+    // Fallback backend : tente d'envoyer via Gmail OAuth2 du serveur si disponible
+    if (NEXUS_CONFIG.apiUrl && storage.get('nexus_token')) {
+      try {
+        const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/email/send`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${storage.get('nexus_token')}`
+          },
+          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>`, text })
+        });
+        if (resp.ok) {
+          const r = await resp.json();
+          if (r.ok) {
+            console.log("[EmailService] \u2705 Email envoyé via Gmail backend à", to);
+            return true;
+          }
+        }
+      } catch(e) {
+        console.warn("[EmailService] Fallback Gmail backend échoué:", e.message);
+      }
+    }
     return true;
   },
   sendOrderConfirmation(order, items) {
@@ -4880,6 +4929,61 @@ const AuthModal = ({ onLogin, onCancel, targetRole, onShowCGU, onShowPrivacy, in
     )
   );
 };
+
+// ── Bouton "Continuer avec Google" (composant partagé) ─────────────────────
+const GoogleSignInButton = ({ onLogin, label, disabled: extDisabled }) => {
+  const { addToast } = useToast();
+  const [loading, setLoading] = React.useState(false);
+  const isAvailable = isSupabaseConfigured();
+
+  const handleGoogleLogin = async () => {
+    if (!isAvailable) {
+      addToast("\u26a0\ufe0f Supabase requis pour la connexion Google. Configurez-le dans les param\xe8tres.", "error", 6000);
+      return;
+    }
+    setLoading(true);
+    try {
+      await DataService.signInWithGoogle();
+      // La redirection est automatique — Supabase redirige vers Google puis revient ici.
+      // onAuthStateChange(SIGNED_IN) appellera onLogin() une fois de retour.
+    } catch(e) {
+      console.error("[Google OAuth]", e);
+      addToast("Erreur connexion Google : " + (e.message || "Veuillez r\xe9essayer"), "error");
+      setLoading(false);
+    }
+  };
+
+  return React.createElement("button", {
+    type: "button",
+    onClick: handleGoogleLogin,
+    disabled: loading || extDisabled,
+    style: {
+      display: "flex", alignItems: "center", justifyContent: "center",
+      gap: "0.6rem", width: "100%", padding: "0.7rem 1rem",
+      border: "1.5px solid #dadce0", borderRadius: "8px",
+      background: loading ? "#f1f3f4" : "white", cursor: loading ? "not-allowed" : "pointer",
+      fontSize: "0.92rem", fontWeight: 600, color: "#3c4043",
+      transition: "background 0.15s, border-color 0.15s",
+      opacity: loading ? 0.7 : 1,
+    },
+    onMouseEnter: e => { if (!loading) e.currentTarget.style.background = "#f8f9fa"; },
+    onMouseLeave: e => { if (!loading) e.currentTarget.style.background = "white"; },
+    "aria-busy": loading,
+    title: isAvailable ? "Se connecter avec Google" : "Supabase requis",
+  },
+    loading
+      ? React.createElement("div", { className: "spinner", style: { width: "20px", height: "20px", borderWidth: "2px" } })
+      : React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 48 48", "aria-hidden": "true" },
+          React.createElement("path", { fill: "#EA4335", d: "M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" }),
+          React.createElement("path", { fill: "#4285F4", d: "M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" }),
+          React.createElement("path", { fill: "#FBBC05", d: "M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" }),
+          React.createElement("path", { fill: "#34A853", d: "M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" }),
+          React.createElement("path", { fill: "none", d: "M0 0h48v48H0z" })
+        ),
+    React.createElement("span", null, loading ? "Redirection vers Google..." : (label || "Continuer avec Google"))
+  );
+};
+
 const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
   const { addToast } = useToast();
   const [email, setEmail] = useState("");
@@ -4936,7 +5040,8 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
   return /* @__PURE__ */ React.createElement(React.Fragment, null, error && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger", role: "alert" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle", "aria-hidden": "true" }), error), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "login-email" }, "Email"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-envelope", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { id: "login-email", type: "email", className: "form-input", value: email, onChange: (e) => setEmail(e.target.value), placeholder: "votre@email.sn", onKeyDown: (e) => e.key === "Enter" && handleLogin(), autoComplete: "email", autoFocus: true }))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "login-pw" }, "Mot de passe"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-lock", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { id: "login-pw", type: showPw ? "text" : "password", className: "form-input", value: password, onChange: (e) => setPassword(e.target.value), placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022", onKeyDown: (e) => e.key === "Enter" && handleLogin(), autoComplete: "current-password" }), /* @__PURE__ */ React.createElement("button", { type: "button", className: "input-action", onClick: () => setShowPw(!showPw), "aria-label": showPw ? "Masquer" : "Afficher" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-eye${showPw ? "-slash" : ""}`, "aria-hidden": "true" })))), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "btn-link", style: { background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontSize: "0.88rem", fontWeight: 600 }, onClick: onForgot }, "Mot de passe oubli\xE9 ?")), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block btn-lg ${loading ? "btn-loading" : ""}`, onClick: handleLogin, disabled: loading, "aria-busy": loading }, loading ? "Connexion..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-sign-in-alt", "aria-hidden": "true" }), " Se connecter")), (targetRole === "admin" || targetRole === "vendor") && /* @__PURE__ */ React.createElement("div", { className: "mt-2", style: { fontSize: "0.82rem", padding: "0.9rem", background: "var(--bg-light)", borderRadius: "8px", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("strong", null, "Compte d\xE9mo:"), "\xA0", targetRole === "admin" ? "admin@nexus.sn / admin123" : "vendeur@nexus.sn / vendor123"),
     !targetRole && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginTop: "1.25rem", fontSize: "0.88rem", color: "var(--text-secondary)" } },
       "Pas encore de compte ? ",
-      /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSwitchToRegister, style: { background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontWeight: 700, fontSize: "inherit", padding: 0 } }, "S\u2019inscrire gratuitement \u2192")
+      /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSwitchToRegister, style: { background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontWeight: 700, fontSize: "inherit", padding: 0 } }, "S’inscrire gratuitement →")
+    ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.25rem 0 1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" } }, "ou"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } })), /* @__PURE__ */ React.createElement(GoogleSignInButton, { onLogin: onLogin })
     ));
 };
 const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, preselectedRole = null }) => {
@@ -5206,9 +5311,13 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           React.createElement("i",{className:"fas fa-chevron-right",style:{color:"var(--text-secondary)",fontSize:"0.85rem"}})
         ))
       ),
-      React.createElement("div",{style:{textAlign:"center",marginTop:"1.5rem",fontSize:"0.85rem",color:"var(--text-secondary)"}},
-        "D\xe9j\xe0 un compte ? ",
-        React.createElement("button",{onClick:onSwitchToLogin,style:{background:"none",border:"none",cursor:"pointer",color:"var(--primary)",fontWeight:600}},"Se connecter")
+      React.createElement(React.Fragment,null,
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",margin:"1.25rem 0 1rem"}},React.createElement("div",{style:{flex:1,height:"1px",background:"var(--border)"}}),React.createElement("span",{style:{fontSize:"0.8rem",color:"var(--text-secondary)",whiteSpace:"nowrap"}},"ou"),React.createElement("div",{style:{flex:1,height:"1px",background:"var(--border)"}})),
+        React.createElement(GoogleSignInButton,{onLogin:onLogin}),
+        React.createElement("div",{style:{textAlign:"center",marginTop:"1rem",fontSize:"0.85rem",color:"var(--text-secondary)"}},
+          "D\xe9j\xe0 un compte ? ",
+          React.createElement("button",{onClick:onSwitchToLogin,style:{background:"none",border:"none",cursor:"pointer",color:"var(--primary)",fontWeight:600}},"Se connecter")
+        )
       )
     );
   }
@@ -9704,6 +9813,7 @@ const SetupWizard = ({ onComplete }) => {
     emailjsServiceId: "",
     emailjsOrderTpl: "",
     emailjsResetTpl: "",
+    googleClientId: NEXUS_CONFIG.google.clientId || "",
     siteName: "NEXUS Market S\xE9n\xE9gal",
     contactEmail: "contact@nexus.sn"
   });
@@ -9739,6 +9849,7 @@ const SetupWizard = ({ onComplete }) => {
     if (config.emailjsServiceId) NEXUS_CONFIG.emailjs.serviceId = config.emailjsServiceId;
     if (config.emailjsOrderTpl) NEXUS_CONFIG.emailjs.orderTemplateId = config.emailjsOrderTpl;
     if (config.emailjsResetTpl) NEXUS_CONFIG.emailjs.resetTemplateId = config.emailjsResetTpl;
+    if (config.googleClientId)  NEXUS_CONFIG.google.clientId         = config.googleClientId;
     // ── Persister la config complète pour survie au rechargement ────────────
     localStorage.setItem("nexus_saved_config", JSON.stringify({
       supabaseUrl: config.supabaseUrl,
@@ -9748,9 +9859,8 @@ const SetupWizard = ({ onComplete }) => {
       emailjsServiceId: config.emailjsServiceId,
       emailjsOrderTpl: config.emailjsOrderTpl,
       emailjsResetTpl: config.emailjsResetTpl,
-      apiUrl: config.apiUrl || ""
-      // BUG FIX: confirmUrl retiré — c'est maintenant un getter dynamique
-      // (window.location.pathname). Le persister en localStorage mémorisait l'ancien domaine.
+      apiUrl: config.apiUrl || "",
+      googleClientId: config.googleClientId || ""
     }));
     storage.set("nexus_setup_done", true);
     // FIX Gemini #3 — On nullifie le client existant puis on appelle initSupabase() normalement
@@ -9773,7 +9883,7 @@ const SetupWizard = ({ onComplete }) => {
   return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #F9F7F0 0%, #EFE9D8 100%)", padding: "2rem" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "100%", maxWidth: "620px" } }, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginBottom: "2rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "3rem", marginBottom: "0.5rem" } }, "\u{1F680}"), /* @__PURE__ */ React.createElement("h1", { style: { fontFamily: "Montserrat, sans-serif", fontSize: "1.8rem", fontWeight: 800, color: "var(--primary)", marginBottom: "0.3rem" } }, "Configuration NEXUS Market"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)" } }, "Connectez vos services pour activer toutes les fonctionnalit\xE9s")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginBottom: "2rem" } }, steps.map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { flex: 1, textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "4px", borderRadius: "2px", background: step > i + 1 ? "var(--primary)" : step === i + 1 ? "var(--primary)" : "var(--border)", marginBottom: "0.4rem", transition: "background 0.3s", opacity: step >= i + 1 ? 1 : 0.4 } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: step >= i + 1 ? "var(--primary)" : "var(--text-secondary)", fontWeight: step === i + 1 ? 700 : 400 } }, s.label)))), /* @__PURE__ */ React.createElement("div", { style: { background: "white", borderRadius: "20px", padding: "2rem", boxShadow: "0 8px 40px rgba(0,0,0,0.1)", border: "1px solid var(--border)" } }, step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "44px", height: "44px", borderRadius: "12px", background: "rgba(0,133,62,0.1)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-database", style: { color: "var(--primary)", fontSize: "1.2rem" } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: { fontWeight: 700, marginBottom: "0.1rem" } }, "Base de donn\xE9es Supabase"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", margin: 0 } }, "Gratuit jusqu\\'\xE0 500 Mo \u2014 ", /* @__PURE__ */ React.createElement("a", { href: "https://supabase.com", target: "_blank", style: { color: "var(--primary)" } }, "supabase.com")))), /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Cr\xE9ez un projet Supabase, puis copiez l\\'URL et la cl\xE9 ", /* @__PURE__ */ React.createElement("code", null, "anon public"), " depuis Settings \u2192 API.")), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "URL du projet"), /* @__PURE__ */ React.createElement("input", { type: "url", className: "form-input", value: config.supabaseUrl, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { supabaseUrl: e.target.value })), placeholder: "https://xxxxxxxxxxxx.supabase.co" })), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Cl\xE9 publique (anon)"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.supabaseKey, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { supabaseKey: e.target.value })), placeholder: "eyJhbGciOiJIUzI1NiIsInR5...", style: { fontFamily: "monospace", fontSize: "0.82rem" } })), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, config.supabaseUrl && config.supabaseKey && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: testSupabase, disabled: testing.supabase === "loading" }, testing.supabase === "loading" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }), " Test...") : testing.supabase === "ok" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check text-success" }), " Connect\xE9 !") : testing.supabase === "error" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times text-danger" }), " \xC9chec") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plug" }), " Tester")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => setStep(2) }, "Passer (mode localStorage) ", /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" })), config.supabaseUrl && config.supabaseKey && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setStep(2) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" }), " Suivant"))), step === 2 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "44px", height: "44px", borderRadius: "12px", background: "rgba(99,91,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-credit-card", style: { color: "#635BFF", fontSize: "1.2rem" } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: { fontWeight: 700, marginBottom: "0.1rem" } }, "Stripe (Paiements carte)"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", margin: 0 } }, "Laissez vide pour rester en mode test \u2014 ", /* @__PURE__ */ React.createElement("a", { href: "https://dashboard.stripe.com/apikeys", target: "_blank", style: { color: "#635BFF" } }, "dashboard.stripe.com")))), /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("strong", null, "Important :"), " Pour les paiements r\xE9els, vous devrez aussi cr\xE9er un backend qui cr\xE9e les ", /* @__PURE__ */ React.createElement("code", null, "PaymentIntent"), ". La cl\xE9 publique seule ne suffit pas pour d\xE9biter les cartes.")), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Cl\xE9 publiable Stripe"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.stripeKey, onChange: (e) => {
     setConfig(__spreadProps(__spreadValues({}, config), { stripeKey: e.target.value }));
     setTesting((t) => __spreadProps(__spreadValues({}, t), { stripe: null }));
-  }, placeholder: "pk_live_... ou pk_test_...", style: { fontFamily: "monospace", fontSize: "0.82rem" } })), config.stripeKey && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary mb-2", onClick: testStripe }, testing.stripe === "ok" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check text-success" }), " Cl\xE9 valide") : testing.stripe === "error" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times text-danger" }), " Cl\xE9 invalide") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" }), " Valider la cl\xE9")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(1) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => setStep(3) }, "Passer (mode simulation) ", /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setStep(3) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" }), " Suivant"))), step === 3 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "44px", height: "44px", borderRadius: "12px", background: "rgba(0,133,62,0.1)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope", style: { color: "var(--primary)", fontSize: "1.2rem" } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: { fontWeight: 700, marginBottom: "0.1rem" } }, "EmailJS (Emails transactionnels)"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", margin: 0 } }, "200 emails/mois gratuits \u2014 ", /* @__PURE__ */ React.createElement("a", { href: "https://www.emailjs.com", target: "_blank", style: { color: "var(--primary)" } }, "emailjs.com")))), /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Cr\xE9ez un compte EmailJS, un service email (Gmail/SMTP), puis 2 templates (commande + reset). Copiez les IDs ci-dessous.")), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Public Key (User ID)"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.emailjsPublicKey, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { emailjsPublicKey: e.target.value })), placeholder: "user_xxxxxxxxxx", style: { fontFamily: "monospace", fontSize: "0.82rem" } })), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Service ID"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.emailjsServiceId, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { emailjsServiceId: e.target.value })), placeholder: "service_xxxxxxx", style: { fontFamily: "monospace", fontSize: "0.82rem" } }))), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Template ID \u2014 Commandes"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.emailjsOrderTpl, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { emailjsOrderTpl: e.target.value })), placeholder: "template_xxxxxxx", style: { fontFamily: "monospace", fontSize: "0.82rem" } })), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Template ID \u2014 Reset mdp"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.emailjsResetTpl, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { emailjsResetTpl: e.target.value })), placeholder: "template_xxxxxxx", style: { fontFamily: "monospace", fontSize: "0.82rem" } }))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(2) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => setStep(4) }, "Passer (mode simulation) ", /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setStep(4) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" }), " Suivant"))), step === 4 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "1rem 0" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "3.5rem", marginBottom: "1rem" } }, "\u2705"), /* @__PURE__ */ React.createElement("h2", { style: { fontWeight: 700, marginBottom: "0.5rem" } }, "Configuration termin\xE9e !"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "2rem" } }, "Services activ\xE9s :"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.6rem", textAlign: "left", marginBottom: "2rem" } }, [
+  }, placeholder: "pk_live_... ou pk_test_...", style: { fontFamily: "monospace", fontSize: "0.82rem" } })), config.stripeKey && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary mb-2", onClick: testStripe }, testing.stripe === "ok" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check text-success" }), " Cl\xE9 valide") : testing.stripe === "error" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times text-danger" }), " Cl\xE9 invalide") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" }), " Valider la cl\xE9")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(1) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => setStep(3) }, "Passer (mode simulation) ", /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setStep(3) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" }), " Suivant"))), step === 3 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "44px", height: "44px", borderRadius: "12px", background: "rgba(0,133,62,0.1)", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope", style: { color: "var(--primary)", fontSize: "1.2rem" } })), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h2", { style: { fontWeight: 700, marginBottom: "0.1rem" } }, "EmailJS (Emails transactionnels)"), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", margin: 0 } }, "200 emails/mois gratuits \u2014 ", /* @__PURE__ */ React.createElement("a", { href: "https://www.emailjs.com", target: "_blank", style: { color: "var(--primary)" } }, "emailjs.com")))), /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Cr\xE9ez un compte EmailJS, un service email (Gmail/SMTP), puis 2 templates (commande + reset). Copiez les IDs ci-dessous.")), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Public Key (User ID)"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.emailjsPublicKey, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { emailjsPublicKey: e.target.value })), placeholder: "user_xxxxxxxxxx", style: { fontFamily: "monospace", fontSize: "0.82rem" } })), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Service ID"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.emailjsServiceId, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { emailjsServiceId: e.target.value })), placeholder: "service_xxxxxxx", style: { fontFamily: "monospace", fontSize: "0.82rem" } }))), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Template ID \u2014 Commandes"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.emailjsOrderTpl, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { emailjsOrderTpl: e.target.value })), placeholder: "template_xxxxxxx", style: { fontFamily: "monospace", fontSize: "0.82rem" } })), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Template ID \u2014 Reset mdp"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.emailjsResetTpl, onChange: (e) => setConfig(__spreadProps(__spreadValues({}, config), { emailjsResetTpl: e.target.value })), placeholder: "template_xxxxxxx", style: { fontFamily: "monospace", fontSize: "0.82rem" } }))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1.5rem", padding: "1rem", background: "#e8f0fe", border: "1.5px solid #4285F4", borderRadius: "10px" } },/* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.75rem" } },/* @__PURE__ */ React.createElement("span", { style: { fontSize: "1.3rem" } }, "\U0001f310"),/* @__PURE__ */ React.createElement("div", null,/* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.95rem" } }, "Google OAuth 2.0"),/* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", margin: 0 } }, "Connexion Google + Gmail comme compl\xe9ment EmailJS"))),/* @__PURE__ */ React.createElement("div", { className: "alert alert-info", style: { fontSize: "0.8rem", marginBottom: "0.75rem" } },"Google Cloud Console \u2192 Identifiants \u2192 ID client OAuth 2.0. Client Secret + Refresh Token \u2192 variables .env du backend."),/* @__PURE__ */ React.createElement("div", { className: "form-group" },/* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Google Client ID (public) \u2014 optionnel"),/* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: config.googleClientId, onChange: (e) => setConfig(Object.assign({}, config, { googleClientId: e.target.value })), placeholder: "123456789-abc.apps.googleusercontent.com", style: { fontFamily: "monospace", fontSize: "0.8rem" } }))),/* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(2) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => setStep(4) }, "Passer (mode simulation) ", /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setStep(4) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" }), " Suivant"))), step === 4 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "1rem 0" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "3.5rem", marginBottom: "1rem" } }, "\u2705"), /* @__PURE__ */ React.createElement("h2", { style: { fontWeight: 700, marginBottom: "0.5rem" } }, "Configuration termin\xE9e !"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "2rem" } }, "Services activ\xE9s :"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.6rem", textAlign: "left", marginBottom: "2rem" } }, [
     { label: "Base de donn\xE9es", active: !!(config.supabaseUrl && config.supabaseKey), mode: "Supabase", fallback: "localStorage" },
     { label: "Paiements Stripe", active: !!((_a = config.stripeKey) == null ? void 0 : _a.startsWith("pk_")), mode: "Live", fallback: "Simulation" },
     { label: "Paiements Mobile Money", active: true, mode: "Orange / Wave / Free", fallback: null },
