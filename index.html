@@ -1138,21 +1138,13 @@ const normalizeUser = (u) => {
     id:        u.id,
     email:     u.email,
     name:      u.name,
-    role:      u.role        || 'buyer',
-    avatar:    u.avatar      || (u.name || u.email || '?').slice(0, 2).toUpperCase(),
-    status:    u.status      || 'active',
-    // Vendeur
-    shopName:  u.shop_name   || u.shopName    || null,
-    shopCat:   u.shop_category || u.shopCat   || null,
-    phone:     u.phone       || null,
-    createdAt: u.created_at  || u.createdAt   || null,
-    // Acheteur Pro B2B — champs supplémentaires
-    company:   u.company     || u.company_name || null,
-    jobTitle:  u.jobTitle    || u.job_title    || null,
-    ninea:     u.ninea       || null,
-    rc:        u.rc          || null,
-    address:   u.address     || null,
-    nineaVerified: u.ninea_verified || u.nineaVerified || false,
+    role:      u.role      || 'buyer',
+    avatar:    u.avatar    || (u.name || u.email || '?').slice(0, 2).toUpperCase(),
+    status:    u.status    || 'active',
+    shopName:  u.shop_name || u.shopName  || null,
+    shopCat:   u.shop_category || u.shopCat || null,
+    phone:     u.phone     || null,
+    createdAt: u.created_at || u.createdAt || null,
   };
 };
 
@@ -1421,6 +1413,73 @@ const DataService = {
     });
     storage.set('products', allProds);
     return saved;
+  },
+
+  // ── PANIER SUPABASE — API-first ───────────────────────────────────────────
+  async getCart(userId) {
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch('/api/cart').catch(() => null);
+      if (res && res.ok) {
+        const { items } = await res.json();
+        storage.set(`cart_${userId}`, items || []);
+        return items || [];
+      }
+    }
+    if (this._sb) {
+      const { data } = await this._sb.from('carts').select('items').eq('user_id', userId).maybeSingle();
+      if (data && data.items) {
+        storage.set(`cart_${userId}`, data.items);
+        return data.items;
+      }
+    }
+    return storage.get(`cart_${userId}`) || [];
+  },
+  async saveCart(userId, items) {
+    storage.set(`cart_${userId}`, items);
+    if (NEXUS_CONFIG.apiUrl) {
+      this.apiFetch('/api/cart', { method: 'PUT', body: JSON.stringify({ items }) })
+        .catch(e => console.warn('[saveCart]', e.message));
+      return;
+    }
+    if (this._sb) {
+      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' })
+        .catch(e => console.warn('[saveCart Supabase]', e.message));
+    }
+  },
+  async clearCart(userId) {
+    storage.set(`cart_${userId}`, []);
+    if (NEXUS_CONFIG.apiUrl) {
+      this.apiFetch('/api/cart', { method: 'DELETE' }).catch(() => {});
+      return;
+    }
+    if (this._sb) {
+      this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' }).catch(() => {});
+    }
+  },
+  async migrateLocalCart(userId) {
+    const local = storage.get(`cart_${userId}`) || [];
+    if (local.length === 0) return;
+    const migKey = `cart_migrated_${userId}`;
+    if (storage.get(migKey)) return;
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch('/api/cart/migrate', {
+        method: 'POST', body: JSON.stringify({ items: local })
+      }).catch(() => null);
+      if (res && res.ok) { storage.set(migKey, true); }
+    }
+  },
+  async migrateLocalStockAlerts(userId) {
+    const local = storage.getArray('stock_alerts').filter(a => a.userId === userId);
+    if (local.length === 0) return;
+    const migKey = `alerts_migrated_${userId}`;
+    if (storage.get(migKey)) return;
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch('/api/stock-alerts/migrate', {
+        method: 'POST',
+        body: JSON.stringify({ productIds: local.map(a => a.productId) })
+      }).catch(() => null);
+      if (res && res.ok) { storage.set(migKey, true); }
+    }
   },
 
   async saveOrder(order) {
@@ -2135,48 +2194,118 @@ const DataService = {
   },
 
   // ── STOCK ALERTS ──────────────────────────────────────────────────
+  // ── ALERTES STOCK — API-first ─────────────────────────────────────────
   async getStockAlerts(userId) {
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch('/api/stock-alerts').catch(() => null);
+      if (res && res.ok) {
+        const ids = await res.json();
+        storage.set('stock_alerts', ids.map(id => ({ userId, productId: id })));
+        return ids;
+      }
+    }
     if (this._sb) {
-      const { data, error } = await this._sb.from("stock_alerts").select("product_id").eq("user_id", userId);
-      if (!error && data) return data.map(r => r.product_id);
+      const { data, error } = await this._sb.from("stock_alerts")
+        .select("product_id").eq("user_id", userId).eq("notified", false);
+      if (!error && data) {
+        const ids = data.map(r => r.product_id);
+        storage.set('stock_alerts', ids.map(id => ({ userId, productId: id })));
+        return ids;
+      }
     }
     return storage.getArray("stock_alerts").filter(a => a.userId === userId).map(a => a.productId);
   },
   async addStockAlert(userId, productId) {
-    if (this._sb) await this._sb.from("stock_alerts").upsert({ user_id: userId, product_id: productId }).then(r=>r).catch(()=>{});
     const all = storage.getArray("stock_alerts");
     if (!all.find(a => a.userId === userId && a.productId === productId)) {
       all.push({ userId, productId }); storage.set("stock_alerts", all);
     }
+    if (NEXUS_CONFIG.apiUrl) {
+      await this.apiFetch('/api/stock-alerts', {
+        method: 'POST', body: JSON.stringify({ productId })
+      }).catch(e => console.warn('[addStockAlert]', e.message));
+      return;
+    }
+    if (this._sb) {
+      await this._sb.from("stock_alerts")
+        .upsert({ user_id: userId, product_id: productId, notified: false }).catch(() => {});
+    }
   },
   async removeStockAlert(userId, productId) {
-    if (this._sb) await this._sb.from("stock_alerts").delete().eq("user_id", userId).eq("product_id", productId).then(r=>r).catch(()=>{});
-    storage.set("stock_alerts", storage.getArray("stock_alerts").filter(a => !(a.userId === userId && a.productId === productId)));
+    storage.set("stock_alerts",
+      storage.getArray("stock_alerts").filter(a => !(a.userId === userId && a.productId === productId))
+    );
+    if (NEXUS_CONFIG.apiUrl) {
+      await this.apiFetch(`/api/stock-alerts/${productId}`, { method: 'DELETE' })
+        .catch(e => console.warn('[removeStockAlert]', e.message));
+      return;
+    }
+    if (this._sb) {
+      await this._sb.from("stock_alerts")
+        .delete().eq("user_id", userId).eq("product_id", productId).catch(() => {});
+    }
   },
 
   // ── FLASH SALES ───────────────────────────────────────────────────
+  // ── VENTES FLASH — API-first ──────────────────────────────────────────
   async getFlashSales() {
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch('/api/flash-sales').catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json();
+        const active = data.filter(s => new Date(s.endsAt) > new Date());
+        storage.set("flash_sales", active);
+        return active;
+      }
+    }
     if (this._sb) {
       const { data, error } = await this._sb.from("flash_sales")
         .select("*").eq("active", true).gt("ends_at", new Date().toISOString());
       if (!error && data) {
-        const mapped = data.map(r => ({ id: r.id, productId: r.product_id, discount: r.discount, endsAt: r.ends_at, active: r.active }));
-        storage.set("flash_sales", mapped); return mapped;
+        const mapped = data.map(r => ({
+          id: r.id, productId: r.product_id, discount: r.discount,
+          endsAt: r.ends_at, active: r.active
+        }));
+        storage.set("flash_sales", mapped);
+        return mapped;
       }
     }
     return storage.getArray("flash_sales").filter(s => new Date(s.endsAt) > new Date());
   },
   async saveFlashSale(sale) {
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch('/api/flash-sales', {
+        method: 'POST',
+        body: JSON.stringify({ productId: sale.productId, discount: sale.discount, endsAt: sale.endsAt })
+      }).catch(() => null);
+      if (res && res.ok) {
+        const saved = await res.json();
+        const all = storage.getArray("flash_sales").filter(s => s.productId !== sale.productId);
+        all.push(saved);
+        storage.set("flash_sales", all);
+        return saved;
+      }
+    }
     if (this._sb) {
       await this._sb.from("flash_sales").upsert({
         id: sale.id, product_id: sale.productId, discount: sale.discount,
         ends_at: sale.endsAt, active: sale.active !== false
-      }).catch(()=>{});
+      }).catch(() => {});
     }
     const all = storage.getArray("flash_sales");
     const idx = all.findIndex(s => s.id === sale.id);
     if (idx >= 0) all[idx] = sale; else all.push(sale);
     storage.set("flash_sales", all);
+  },
+  async deleteFlashSale(id) {
+    storage.set("flash_sales", storage.getArray("flash_sales").filter(s => s.id !== id));
+    if (NEXUS_CONFIG.apiUrl) {
+      await this.apiFetch(`/api/flash-sales/${id}`, { method: 'DELETE' }).catch(() => {});
+      return;
+    }
+    if (this._sb) {
+      await this._sb.from("flash_sales").update({ active: false }).eq("id", id).catch(() => {});
+    }
   },
 
   // ── COUPONS ───────────────────────────────────────────────────────
@@ -2586,9 +2715,13 @@ const useRecentlyViewed = () => {
   return { addViewed, getViewed };
 };
 const FlashSaleBanner = ({ products, onAddToCart, onLoginClick }) => {
-  const sales = useMemo(() => {
-    const flash = storage.getArray("flash_sales");
-    return flash.filter((s) => new Date(s.endsAt) > /* @__PURE__ */ new Date());
+  const [sales, setSales] = useState(() =>
+    storage.getArray("flash_sales").filter(s => new Date(s.endsAt) > new Date())
+  );
+  useEffect(() => {
+    DataService.getFlashSales().then(data => {
+      if (data && data.length > 0) setSales(data);
+    }).catch(() => {});
   }, []);
   const [timeLeft, setTimeLeft] = useState({});
   useEffect(() => {
@@ -2876,9 +3009,15 @@ const OnboardingTour = ({ role, onComplete }) => {
 const StockAlertButton = ({ product, currentUser: currentUser2, addToast }) => {
   const [alertSet, setAlertSet] = useState(() => {
     const alerts = storage.getArray("stock_alerts");
-    return alerts.some((a) => a.productId === product.id && a.userId === (currentUser2 == null ? void 0 : currentUser2.id));
+    return alerts.some(a => a.productId === product.id && a.userId === (currentUser2 == null ? void 0 : currentUser2.id));
   });
-  const toggleAlert = (e) => {
+  useEffect(() => {
+    if (!currentUser2) return;
+    DataService.getStockAlerts(currentUser2.id)
+      .then(ids => setAlertSet(ids.includes(product.id)))
+      .catch(() => {});
+  }, [currentUser2 == null ? void 0 : currentUser2.id, product.id]);
+  const toggleAlert = async (e) => {
     e.stopPropagation();
     if (!currentUser2) {
       addToast("Connectez-vous pour activer les alertes stock", "info");
@@ -4774,20 +4913,14 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
       // BUG FIX: les messages d'erreur Supabase étaient affichés bruts en anglais.
       // On les traduit en français avec des messages explicites.
       let msg;
-      if (lower.includes("email not confirmed")) {
-        msg = "Email non confirm\xE9. V\xE9rifiez votre bo\xEEte mail et cliquez sur le lien de confirmation.";
-      } else if (lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password") || lower.includes("incorrect")) {
+      if (lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password") || lower.includes("email not confirmed") === false && lower.includes("email")) {
         msg = "Email ou mot de passe incorrect.";
-      } else if (lower.includes("en attente") || lower.includes("pending") || lower.includes("validation")) {
-        msg = raw; // message serveur déjà en français
-      } else if (lower.includes("suspendu") || lower.includes("banni") || lower.includes("banned")) {
-        msg = raw;
-      } else if (lower.includes("rate limit") || lower.includes("too many") || lower.includes("trop de")) {
-        msg = "Trop de tentatives de connexion. Veuillez patienter 15 minutes.";
-      } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("abort") || lower.includes("connexion")) {
-        msg = "Probl\xE8me r\xE9seau. V\xE9rifiez votre connexion et r\xE9essayez.";
-      } else if (lower.includes("session_expired")) {
-        msg = "Votre session a expir\xE9. Veuillez vous reconnecter.";
+      } else if (lower.includes("email not confirmed")) {
+        msg = "Email non confirm\xE9. V\xE9rifiez votre bo\xEEte mail et cliquez sur le lien de confirmation.";
+      } else if (lower.includes("rate limit") || lower.includes("too many")) {
+        msg = "Trop de tentatives. Veuillez patienter quelques minutes.";
+      } else if (lower.includes("network") || lower.includes("fetch")) {
+        msg = "Probl\xE8me de connexion r\xE9seau. V\xE9rifiez votre connexion internet.";
       } else {
         msg = raw || "Email ou mot de passe incorrect";
       }
@@ -4926,42 +5059,18 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         // [FIX] Appel backend API — utilise la service-role key (bypass RLS)
         // Le backend insère dans pending_vendors ET notifie les admins automatiquement
         if (NEXUS_CONFIG.apiUrl) {
-          // Attendre le backend (cold start)
-          if (!window.__nexusBackendReady) {
-            await new Promise(resolve => {
-              const h = () => { window.removeEventListener('nexus:backend-ready', h); resolve(); };
-              window.addEventListener('nexus:backend-ready', h);
-              setTimeout(resolve, 35000);
-            });
-          }
-          const vCtrl = new AbortController();
-          const vTid  = setTimeout(() => vCtrl.abort(), 15000);
-          try {
-            const _vendorRes = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/register`, {
-              method:  "POST",
-              mode:    "cors",
-              signal:  vCtrl.signal,
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                email:        form.email,
-                password:     form.password,
-                name:         form.name,
-                role:         "vendor",
-                shopName:     form.shopName,
-                shopCategory: form.shopCategory || "Général",
-                phone:        form.phone || null,
-              })
-            });
-            clearTimeout(vTid);
-            const _vendorJson = await _vendorRes.json();
-            if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
-          } catch (vErr) {
-            clearTimeout(vTid);
-            if (vErr.name === 'AbortError' || vErr.name === 'TypeError') {
-              console.warn('[Vendor register] Backend injoignable, fallback Supabase');
-              // Continuer vers le fallback Supabase ci-dessous
-            } else { throw vErr; }
-          }
+          const _vendorRes = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: form.email, password: form.password,
+              name: form.name, role: "vendor",
+              shopName: form.shopName, shopCategory: form.shopCategory || "Général",
+              phone: form.phone || null
+            })
+          });
+          const _vendorJson = await _vendorRes.json();
+          if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
         } else if (DataService._sb) {
           // [FALLBACK] Supabase direct uniquement si pas de backend configuré
           await DataService._sb.from("pending_vendors").insert(pendingEntry).then(r=>r).catch(()=>{});
@@ -4985,72 +5094,38 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         }
         setDone(true);
       } else if (role === "buyer_pro") {
-        // ── Inscription Acheteur Professionnel B2B ───────────────────────
+        // [FIX] Route dédiée B2B avec validation NINEA côté serveur
         let newUser;
         if (NEXUS_CONFIG.apiUrl) {
-          // Attendre que le backend soit prêt (cold start Render)
-          if (!window.__nexusBackendReady) {
-            addToast("\u23F3 Connexion au serveur en cours\u2026", "info", 5000);
-            await new Promise(resolve => {
-              const h = () => { window.removeEventListener('nexus:backend-ready', h); resolve(); };
-              window.addEventListener('nexus:backend-ready', h);
-              setTimeout(resolve, 35000);
-            });
+          const res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/b2b/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: form.name, email: form.email, password: form.password,
+              company: form.company, jobTitle: form.jobTitle,
+              ninea: form.ninea_buyer, rc: form.rc_buyer,
+              address: form.address_buyer, phone: form.phone
+            })
+          });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error || "Erreur inscription B2B");
+          // Stocker le token JWT
+          if (json.token) {
+            sessionStorage.setItem("nexus_jwt", json.token);
+            sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 604800) * 1000));
           }
-          const ctrl = new AbortController();
-          const tid  = setTimeout(() => ctrl.abort(), 15000);
-          let res = null;
-          try {
-            res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/b2b/register`, {
-              method:  "POST",
-              mode:    "cors",
-              signal:  ctrl.signal,
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                name:     form.name,
-                email:    form.email,
-                password: form.password,
-                company:  form.company,
-                jobTitle: form.jobTitle,
-                ninea:    form.ninea_buyer,
-                rc:       form.rc_buyer    || null,
-                address:  form.address_buyer || null,
-                phone:    form.phone       || null,
-              })
-            });
-          } catch (fetchErr) {
-            clearTimeout(tid);
-            if (fetchErr.name === 'AbortError' || fetchErr.name === 'TypeError') {
-              console.warn('[B2B register] Backend injoignable, fallback local');
-              res = null;
-            } else { throw fetchErr; }
-          }
-          clearTimeout(tid);
-
-          if (res !== null) {
-            const json = await res.json();
-            if (!res.ok) throw new Error(json.error || "Erreur inscription B2B");
-            if (json.token) {
-              sessionStorage.setItem("nexus_jwt", json.token);
-              sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 604800) * 1000));
-              DataService._token = json.token;
-            }
-            newUser = normalizeUser(json.user);
-          }
-        }
-        // Fallback local si backend injoignable
-        if (!newUser) {
+          newUser = json.user;
+        } else {
           const profile = {
-            role: "buyer_pro", name: form.name, avatar,
-            jobTitle: form.jobTitle, company: form.company,
-            shopName: form.company, ninea: form.ninea_buyer,
-            rc: form.rc_buyer, address: form.address_buyer, phone: form.phone,
+            role:"buyer_pro", name:form.name, avatar,
+            jobTitle:form.jobTitle, company:form.company,
+            ninea:form.ninea_buyer, rc:form.rc_buyer, address:form.address_buyer,
+            phone:form.phone
           };
-          const created = await DataService.signUp(form.email, form.password, profile);
-          if (created.__emailConfirmPending) { setDone(true); setLoading(false); return; }
-          newUser = normalizeUser(created);
+          newUser = await DataService.signUp(form.email, form.password, profile);
+          if (newUser.__emailConfirmPending) { setDone(true); setLoading(false); return; }
         }
-        addToast(`Bienvenue, ${form.name} (${form.company || ''}) ! Votre compte Pro B2B est actif.`, "success");
+        addToast(`Bienvenue, ${form.name} (${form.company}) ! Votre NINEA est en cours de v\u00e9rification.`, "success");
         onLogin(newUser);
       } else {
         // buyer
@@ -6973,12 +7048,12 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       if (!fs.productId || !fs.discount) return;
       const endsAt = new Date(Date.now() + fs.hours * 36e5).toISOString();
       const sale = { id: "fs_" + Date.now(), productId: fs.productId, discount: parseInt(fs.discount), endsAt, active: true };
-      DataService.saveFlashSale(sale).catch(()=>{});
+      DataService.saveFlashSale({ ...sale, _new: true }).catch(() => {});
       addToast("Vente flash cr\xE9\xE9e !", "success");
       loadData();
     };
     const removeFlash = (id) => {
-      if (DataService._sb) DataService._sb.from("flash_sales").delete().eq("id", id).then(r=>r).catch(()=>{});
+      DataService.deleteFlashSale(id).catch(() => {});
       storage.set("flash_sales", flashSales.filter((s) => s.id !== id));
       loadData();
       addToast("Vente flash supprim\xE9e", "info");
@@ -8696,7 +8771,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
     StripeCheckoutModal,
     {
       cart,
-      currentUser: currentUser2 || null,
+      currentUser: null,
       onSuccess: handleCheckoutSuccess,
       onCancel: () => setShowCheckout(false),
       addToast
@@ -8705,7 +8780,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
     MakeOfferModal,
     {
       product: offerProduct,
-      currentUser: currentUser2 || null,
+      currentUser: null,
       onClose: () => {
         setShowOfferModal(false);
         setOfferProduct(null);
@@ -8765,7 +8840,9 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       ]);
       const allReviews = storage.getArray("reviews");
       const allOffers = storage.getArray("offers");
-      const savedCart = storage.get(`cart_${currentUser2.id}`) || [];
+      const savedCart = await DataService.getCart(currentUser2.id).catch(() => storage.get(`cart_${currentUser2.id}`) || []);
+      DataService.migrateLocalCart(currentUser2.id).catch(() => {});
+      DataService.migrateLocalStockAlerts(currentUser2.id).catch(() => {});
       const wishlists = storage.get("wishlists") || {};
       const userWish = wishlists[currentUser2.id] || [];
       setProducts(allProducts || []);
@@ -8804,7 +8881,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       newCart = [...cart, __spreadProps(__spreadValues({}, product), { quantity: 1 })];
     }
     setCart(newCart);
-    storage.set(`cart_${currentUser2.id}`, newCart);
+    DataService.saveCart(currentUser2.id, newCart);
     addToast(`${product.name} ajout\xE9 !`, "success");
   };
   const updateQty = (id, qty) => {
@@ -8819,19 +8896,19 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     }
     const newCart = cart.map((i) => i.id === id ? __spreadProps(__spreadValues({}, i), { quantity: qty }) : i);
     setCart(newCart);
-    storage.set(`cart_${currentUser2.id}`, newCart);
+    DataService.saveCart(currentUser2.id, newCart);
   };
   const removeFromCart = (id) => {
     const newCart = cart.filter((i) => i.id !== id);
     setCart(newCart);
-    storage.set(`cart_${currentUser2.id}`, newCart);
+    DataService.saveCart(currentUser2.id, newCart);
   };
   const handleCheckoutSuccess = (orderTotal) => {
     setShowCheckout(false);
     const cartTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
     addLoyaltyPoints(currentUser2.id, cartTotal);
     setCart([]);
-    storage.set(`cart_${currentUser2.id}`, []);
+    DataService.clearCart(currentUser2.id);
     loadData();
     setView("orders");
   };
@@ -8886,7 +8963,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))), cart.length > 0 && /* @__PURE__ */ React.createElement("li", { role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: "sidebar-item", onClick: () => setShowCart(true), "aria-label": `Panier avec ${cart.length} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), "Panier", /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0)))));
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem", flexDirection: "column", alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.4rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.company && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.7rem", opacity: 0.9 } }, currentUser2.company), currentUser2.ninea && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.68rem", opacity: 0.8, display: "flex", alignItems: "center", gap: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: currentUser2.nineaVerified ? "fas fa-check-circle" : "fas fa-clock" }), "NINEA : ", currentUser2.ninea.slice(0,4), "\u2026", currentUser2.nineaVerified ? " \u2714 V\u00e9rifi\u00e9" : " En attente")), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
     SearchWithAutocomplete,
     {
       products,
