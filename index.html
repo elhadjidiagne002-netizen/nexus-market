@@ -1451,8 +1451,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' })
-        .catch(e => console.warn('[saveCart Supabase]', e.message));
+      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' }).then(() => {});
     }
   },
   async clearCart(userId) {
@@ -1462,7 +1461,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' }).catch(() => {});
+      this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' }).then(() => {});
     }
   },
   async migrateLocalCart(userId) {
@@ -1556,7 +1555,7 @@ const DataService = {
       return n;
     }
     if (this._sb) {
-      await this._sb.from("notifications").insert(n).then(r=>r).catch(() => {});
+      await this._sb.from("notifications").insert(n);
       return n;
     }
     const all = storage.get("notifications") || {};
@@ -1983,7 +1982,7 @@ const DataService = {
     return msg;
   },
   async markMessageRead(msgId) {
-    if (this._sb) await this._sb.from("messages").update({ read: true }).eq("id", msgId).then(r=>r).catch(()=>{});
+    if (this._sb) await this._sb.from("messages").update({ read: true }).eq("id", msgId);
     const all = storage.getArray("messages");
     const idx = all.findIndex(m => m.id === msgId);
     if (idx >= 0) { all[idx].read = true; storage.set("messages", all); }
@@ -2028,7 +2027,7 @@ const DataService = {
     if (this._sb) {
       const sbUpdates = {};
       if (updates.status) sbUpdates.status = updates.status;
-      await this._sb.from("offers").update(sbUpdates).eq("id", id).then(r=>r).catch(()=>{});
+      await this._sb.from("offers").update(sbUpdates).eq("id", id);
     }
     const all = storage.getArray("offers");
     const idx = all.findIndex(o => o.id === id);
@@ -2071,7 +2070,7 @@ const DataService = {
     if (this._sb) {
       const sbUp = { status: updates.status, resolution: updates.resolution, admin_note: updates.adminNote };
       Object.keys(sbUp).forEach(k => sbUp[k] === undefined && delete sbUp[k]);
-      await this._sb.from("disputes").update(sbUp).eq("id", id).then(r=>r).catch(()=>{});
+      await this._sb.from("disputes").update(sbUp).eq("id", id);
     }
     const all = storage.getArray("disputes");
     const idx = all.findIndex(d => d.id === id);
@@ -2133,7 +2132,7 @@ const DataService = {
       const row = { vendor_id: payoutReq.vendorId, vendor_name: payoutReq.vendorName,
         amount: payoutReq.amount, method: payoutReq.method, provider: payoutReq.provider,
         destination: payoutReq.destination, status: "pending" };
-      await this._sb.from("payout_requests").insert(row).then(r=>r).catch(()=>{});
+      await this._sb.from("payout_requests").insert(row);
     }
     const all = storage.getArray("payout_requests");
     all.push(payoutReq); storage.set("payout_requests", all);
@@ -2146,7 +2145,7 @@ const DataService = {
       }).catch(() => null);
       if (res && res.ok) return res.json().catch(() => null);
     }
-    if (this._sb) await this._sb.from("payout_requests").update({ status: updates.status }).eq("id", id).then(r=>r).catch(()=>{});
+    if (this._sb) await this._sb.from("payout_requests").update({ status: updates.status }).eq("id", id);
     const all = storage.getArray("payout_requests");
     const idx = all.findIndex(r => r.id === id);
     if (idx >= 0) { all[idx] = { ...all[idx], ...updates }; storage.set("payout_requests", all); }
@@ -2184,8 +2183,7 @@ const DataService = {
     storage.set("loyalty_points", pts);
     if (this._sb && !NEXUS_CONFIG.apiUrl) {
       await this._sb.from("loyalty_points")
-        .upsert({ user_id: userId, points: pts[userId] }, { onConflict: "user_id" })
-        .catch(()=>{});
+        .upsert({ user_id: userId, points: pts[userId] }, { onConflict: "user_id" });
     }
     return pts[userId];
   },
@@ -2211,9 +2209,9 @@ const DataService = {
     storage.set("wishlists", ws);
     if (this._sb) {
       if (exists) {
-        await this._sb.from("wishlists").delete().eq("user_id", userId).eq("product_id", productId).then(r=>r).catch(()=>{});
+        await this._sb.from("wishlists").delete().eq("user_id", userId).eq("product_id", productId);
       } else {
-        await this._sb.from("wishlists").insert({ user_id: userId, product_id: productId }).then(r=>r).catch(()=>{});
+        await this._sb.from("wishlists").insert({ user_id: userId, product_id: productId });
       }
     }
     return ws[userId];
@@ -2254,7 +2252,7 @@ const DataService = {
     }
     if (this._sb) {
       await this._sb.from("stock_alerts")
-        .upsert({ user_id: userId, product_id: productId, notified: false }).catch(() => {});
+        .upsert({ user_id: userId, product_id: productId, notified: false });
     }
   },
   async removeStockAlert(userId, productId) {
@@ -2268,7 +2266,7 @@ const DataService = {
     }
     if (this._sb) {
       await this._sb.from("stock_alerts")
-        .delete().eq("user_id", userId).eq("product_id", productId).catch(() => {});
+        .delete().eq("user_id", userId).eq("product_id", productId);
     }
   },
 
@@ -2316,7 +2314,7 @@ const DataService = {
       await this._sb.from("flash_sales").upsert({
         id: sale.id, product_id: sale.productId, discount: sale.discount,
         ends_at: sale.endsAt, active: sale.active !== false
-      }).catch(() => {});
+      });
     }
     const all = storage.getArray("flash_sales");
     const idx = all.findIndex(s => s.id === sale.id);
@@ -2330,7 +2328,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      await this._sb.from("flash_sales").update({ active: false }).eq("id", id).catch(() => {});
+      await this._sb.from("flash_sales").update({ active: false }).eq("id", id);
     }
   },
 
@@ -2355,7 +2353,7 @@ const DataService = {
         description: coupon.description, max_uses: coupon.maxUses || null,
         used_count: coupon.usedCount || 0, expires_at: coupon.expiresAt || null,
         active: coupon.active !== false
-      }).catch(()=>{});
+      });
     }
     const all = storage.get("nexus_coupons") || [];
     const idx = all.findIndex(c => c.id === coupon.id);
@@ -2367,7 +2365,7 @@ const DataService = {
       const sbUp = {};
       if (updates.active !== undefined) sbUp.active = updates.active;
       if (updates.usedCount !== undefined) sbUp.used_count = updates.usedCount;
-      if (Object.keys(sbUp).length) await this._sb.from("coupons").update(sbUp).eq("id", id).then(r=>r).catch(()=>{});
+      if (Object.keys(sbUp).length) await this._sb.from("coupons").update(sbUp).eq("id", id);
     }
     const all = storage.get("nexus_coupons") || [];
     const idx = all.findIndex(c => c.id === id);
@@ -2395,7 +2393,7 @@ const DataService = {
         id: qa.id, product_id: qa.productId, user_id: qa.userId, user_name: qa.userName,
         vendor_id: qa.vendorId || null, question: qa.question, answer: qa.answer || null,
         date: qa.date || new Date().toISOString()
-      }).catch(()=>{});
+      });
     }
     const all = storage.get("product_qa") || {};
     if (!all[qa.productId]) all[qa.productId] = [];
@@ -2431,7 +2429,7 @@ const DataService = {
       await this._sb.from("referrals").upsert({
         referrer_id: ref.referrerId, referred_id: ref.referredId || null,
         code: ref.code, rewarded: ref.rewarded || false
-      }).catch(()=>{});
+      });
     }
     const all = storage.get("referrals") || [];
     all.push(ref); storage.set("referrals", all);
@@ -4820,7 +4818,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           DataService.addLoyaltyPoints(currentUser2.id, 50).catch(()=>{});
           // mark rewarded in Supabase
           if (DataService._sb) {
-            DataService._sb.from("referrals").update({ rewarded: true }).eq("code", pendingRef.code || "").then(r=>r).catch(()=>{});
+            DataService._sb.from("referrals").update({ rewarded: true }).eq("code", pendingRef.code || "").then(() => {});
           }
           const updRefs = refs.map(r => r.newUserId === currentUser2.id ? {...r, status:"completed", rewardDate: new Date().toISOString()} : r);
           storage.set("referrals", updRefs);
@@ -5175,7 +5173,8 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
         } else if (DataService._sb) {
           // [FALLBACK] Supabase direct uniquement si pas de backend configuré
-          await DataService._sb.from("pending_vendors").insert(pendingEntry).then(r=>r).catch(()=>{});
+          const { error: pendingErr } = await DataService._sb.from("pending_vendors").insert(pendingEntry);
+          if (pendingErr) console.warn("Erreur d\'insertion vendeur:", pendingErr.message);
           // Email admin via EmailJS (mode hors-ligne uniquement)
           const adminUsers = Object.values(storage.get("users") || {}).filter(u => u.role === "admin");
           adminUsers.forEach(adminUser => {
@@ -6743,7 +6742,7 @@ const ProductEditModal = ({ product, onSave, onDelete, onClose, addToast }) => {
     if (idx !== -1) {
       products[idx] = { ...products[idx], ...payload };
       storage.set("products", products);
-      if (DataService._sb) DataService._sb.from("products").update(payload).eq("id", product.id).then(r=>r).catch(()=>{});
+      if (DataService._sb) DataService._sb.from("products").update(payload).eq("id", product.id).then(() => {});
     }
     setLoading(false);
     addToast("Produit mis \xE0 jour !", "success");
@@ -7216,12 +7215,13 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         });
       } catch(e) { console.warn("[approveVendor]", e); }
     } else if (DataService._sb) {
-      await DataService._sb.from("profiles").upsert({
+      const { error: profileErr } = await DataService._sb.from("profiles").upsert({
         id: vendor.id, email: vendor.email, name: vendor.name, role: "vendor", status: "approved",
         commission_rate: 15, shop_name: vendor.name, shop_category: vendor.category,
         phone: vendor.phone, ninea: vendor.ninea, address: vendor.address, avatar: vendor.avatar
-      }).catch(e => console.warn(e));
-      await DataService._sb.from("pending_vendors").delete().eq("id", vendorId).then(r=>r).catch(()=>{});
+      });
+      if (profileErr) console.warn("[approveVendor] profiles upsert:", profileErr.message);
+      await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
     }
     const users = storage.get("users") || {};
     users[vendorId] = Object.assign({}, vendor, { role: "vendor", status: "approved", commission: 15, rating: 0, totalSales: 0 });
@@ -7253,7 +7253,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
         variables: { vendor_name: vendor.name, message: "Après examen de votre dossier, votre boutique ne peut pas être activée pour le moment. Vous pouvez soumettre une nouvelle demande." }
       });
-      if (DataService._sb) await DataService._sb.from("pending_vendors").delete().eq("id", vendorId).then(r=>r).catch(()=>{});
+      if (DataService._sb) await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
     }
     storage.set("pendingVendors", pending.filter((v) => v.id !== vendorId));
     loadData();
@@ -8681,7 +8681,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     const all = storage.getArray("products");
     all.push(localProduct);
     storage.set("products", all);
-    if (DataService._sb) DataService._sb.from("products").insert(localProduct).catch(() => {});
+    if (DataService._sb) DataService._sb.from("products").insert(localProduct).then(() => {});
     setShowAddProduct(false);
     setNewProduct({ name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true });
     loadData();
