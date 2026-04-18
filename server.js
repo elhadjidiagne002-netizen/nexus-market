@@ -453,15 +453,33 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 
     if (role === 'vendor') {
       if (!shopName) return res.status(400).json({ error: 'Nom de boutique requis' });
-      const { data, error } = await supabase.from('pending_vendors').insert({
+      const vendorEntry = {
         name: shopName, owner_name: name, email,
         password_hash: hashedPw,
         category: shopCategory || 'Général',
         avatar, status: 'pending',
-      }).select().single();
+        phone: phone || null,
+      };
+      const { data, error } = await supabase.from('pending_vendors').insert(vendorEntry).select().single();
       if (error) {
         Logger.warn('auth', 'register.vendor.error', error.message, { meta: { email }, ip: req.ip });
-        if (error.code === '23505') return res.status(409).json({ error: 'Cet email est déjà en attente' });
+        if (error.code === '23505') return res.status(409).json({ error: 'Cet email est déjà en attente de validation' });
+        // Table absente → stocker dans profiles avec status pending (fallback migration)
+        if (error.code === '42P01') {
+          Logger.warn('auth', 'register.vendor.table_missing', 'Table pending_vendors absente — fallback profiles', { meta: { email } });
+          const { data: profileFb, error: pfErr } = await supabase.from('profiles').insert({
+            name: shopName, email, password_hash: hashedPw,
+            role: 'vendor', avatar, status: 'pending',
+            phone: phone || null,
+            bio: JSON.stringify({ shopName, shopCategory: shopCategory || 'Général', ownerName: name }),
+          }).select().single();
+          if (pfErr) throw pfErr;
+          const { data: admins2 } = await supabase.from('profiles').select('id').eq('role', 'admin');
+          for (const admin of (admins2 || [])) {
+            await pushNotification(admin.id, { type: 'vendor', title: '🏪 Nouvelle demande vendeur', message: `${shopName} (${name}) — en attente`, link: '/admin/vendors' });
+          }
+          return res.json({ message: 'Demande envoyée — validation sous 48h', pending: true });
+        }
         throw error;
       }
       const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
@@ -2268,12 +2286,27 @@ app.post('/api/b2b/register', authLimiter, async (req, res) => {
       ninea:     nineaClean,
       rc:        rc ? rc.trim().toUpperCase() : null,
       address:   address || null,
-      ninea_verified: false, // Sera mis à true après vérification manuelle ou API
+      ninea_verified: false,
     });
     if (b2bErr) {
-      // Rollback le profil si le profil B2B échoue
-      await supabase.from('profiles').delete().eq('id', profile.id);
-      throw b2bErr;
+      // Si la table buyer_pro_profiles n'existe pas encore, stocker dans le profil principal
+      // et continuer — la table sera créée via la migration SQL
+      if (b2bErr.code === '42P01') { // relation does not exist
+        Logger.warn('auth', 'register.b2b.table_missing',
+          'Table buyer_pro_profiles inexistante — stockage fallback dans profiles.bio',
+          { userId: profile.id }
+        );
+        // Stocker les infos B2B dans le champ bio en attendant la migration
+        await supabase.from('profiles').update({
+          bio: JSON.stringify({ company, jobTitle, ninea: nineaClean, rc: rc || null, address: address || null }),
+          company_name: company,
+        }).eq('id', profile.id).catch(() => {});
+        // Ne pas rollback — le compte est créé, l'admin peut compléter manuellement
+      } else {
+        // Autre erreur : rollback du profil principal
+        await supabase.from('profiles').delete().eq('id', profile.id).catch(() => {});
+        throw b2bErr;
+      }
     }
 
     // JWT
@@ -2296,10 +2329,19 @@ app.post('/api/b2b/register', authLimiter, async (req, res) => {
 
     Logger.info('auth', 'register.b2b', `Inscription B2B: ${email} — ${company}`, { userId: profile.id, meta: { company, ninea: nineaClean } });
     const { password_hash, ...safeUser } = profile;
-    res.status(201).json({ token, user: { ...safeUser, company, jobTitle }, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
+    const responseUser = {
+      ...safeUser,
+      company,
+      jobTitle,
+      // Champs normalisés pour que normalizeUser() côté frontend les reconnaisse
+      shop_name:  company,
+      job_title:  jobTitle,
+      ninea:      nineaClean,
+    };
+    res.status(201).json({ token, user: responseUser, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
   } catch (e) {
     Logger.error('auth', 'register.b2b.error', e.message, { meta: { email } });
-    res.status(500).json({ error: 'Erreur serveur lors de l'inscription' });
+    res.status(500).json({ error: "Erreur lors de l'inscription. Veuillez réessayer." });
   }
 });
 
