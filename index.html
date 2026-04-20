@@ -1451,7 +1451,8 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' }).then(() => {});
+      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' })
+        .catch(e => console.warn('[saveCart Supabase]', e.message));
     }
   },
   async clearCart(userId) {
@@ -1461,7 +1462,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' }).then(() => {});
+      this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' }).catch(() => {});
     }
   },
   async migrateLocalCart(userId) {
@@ -1555,7 +1556,7 @@ const DataService = {
       return n;
     }
     if (this._sb) {
-      await this._sb.from("notifications").insert(n);
+      await this._sb.from("notifications").insert(n).then(r=>r).catch(() => {});
       return n;
     }
     const all = storage.get("notifications") || {};
@@ -1749,17 +1750,10 @@ const DataService = {
     if (!authUser) return null;
     const meta = authUser.user_metadata || {};
     const email = authUser.email || "";
-    // GitHub OAuth expose full_name, user_name ou preferred_username dans user_metadata
-    const name = meta.full_name || meta.name || meta.user_name
-               || meta.preferred_username || email.split("@")[0] || "Utilisateur";
-    const role = meta.role || "buyer";
-    // GitHub expose avatar_url ; sinon on prend les initiales
-    const avatar = meta.avatar_url || meta.avatar || name.slice(0, 2).toUpperCase();
-    return {
-      id: authUser.id, email, name, role, avatar,
-      status: "active",
-      created_at: authUser.created_at || new Date().toISOString()
-    };
+    const name  = meta.name   || email.split("@")[0] || "Utilisateur";
+    const role  = meta.role   || "buyer";
+    const avatar = meta.avatar || name.slice(0, 2).toUpperCase();
+    return { id: authUser.id, email, name, role, avatar, status: "active", created_at: authUser.created_at || new Date().toISOString() };
   },
   // ── Connexion GitHub OAuth via Supabase ─────────────────────────────────────
   // Lance le flow GitHub OAuth. Supabase gère le redirect et le callback automatiquement.
@@ -1903,17 +1897,8 @@ const DataService = {
       const { data } = this._sb.auth.onAuthStateChange(async (event, session) => {
         if (event === "SIGNED_IN" && session) {
           const uid = session.user.id;
-          let prof = await this._fetchProfile(uid);
-          if (!prof) {
-            // [FIX 406] Profil inexistant (GitHub OAuth, confirmation email, nouveau provider).
-            // Session active => RLS autorise l'écriture dans profiles.
-            const builtProf = this._buildProfileFromAuthUser(session.user);
-            const { error: upsErr } = await this._sb.from('profiles').upsert(builtProf);
-            if (upsErr) console.warn('[onAuthStateChange] upsert profiles:', upsErr.message);
-            else console.log('[Auth] ✅ Profil créé automatiquement:', uid.slice(0, 8));
-            prof = builtProf;
-          }
-          callback(event, prof);
+          const prof = await this._fetchProfile(uid);
+          callback(event, prof || this._buildProfileFromAuthUser(session.user));
         } else if (event === "SIGNED_OUT" || event === "USER_DELETED") {
           callback(event, null);
           if (!this._voluntarySignOut) {
@@ -1998,7 +1983,7 @@ const DataService = {
     return msg;
   },
   async markMessageRead(msgId) {
-    if (this._sb) await this._sb.from("messages").update({ read: true }).eq("id", msgId);
+    if (this._sb) { const { error: e } = await this._sb.from("messages").update({ read: true }).eq("id", msgId); if (e) console.warn("[markMessageRead]", e.message); }
     const all = storage.getArray("messages");
     const idx = all.findIndex(m => m.id === msgId);
     if (idx >= 0) { all[idx].read = true; storage.set("messages", all); }
@@ -2043,7 +2028,7 @@ const DataService = {
     if (this._sb) {
       const sbUpdates = {};
       if (updates.status) sbUpdates.status = updates.status;
-      await this._sb.from("offers").update(sbUpdates).eq("id", id);
+      const { error: eOffer } = await this._sb.from("offers").update(sbUpdates).eq("id", id); if (eOffer) console.warn("[saveOffer]", eOffer.message);
     }
     const all = storage.getArray("offers");
     const idx = all.findIndex(o => o.id === id);
@@ -2086,7 +2071,7 @@ const DataService = {
     if (this._sb) {
       const sbUp = { status: updates.status, resolution: updates.resolution, admin_note: updates.adminNote };
       Object.keys(sbUp).forEach(k => sbUp[k] === undefined && delete sbUp[k]);
-      await this._sb.from("disputes").update(sbUp).eq("id", id);
+      const { error: eDisp } = await this._sb.from("disputes").update(sbUp).eq("id", id); if (eDisp) console.warn("[saveDispute]", eDisp.message);
     }
     const all = storage.getArray("disputes");
     const idx = all.findIndex(d => d.id === id);
@@ -2148,7 +2133,7 @@ const DataService = {
       const row = { vendor_id: payoutReq.vendorId, vendor_name: payoutReq.vendorName,
         amount: payoutReq.amount, method: payoutReq.method, provider: payoutReq.provider,
         destination: payoutReq.destination, status: "pending" };
-      await this._sb.from("payout_requests").insert(row);
+      const { error: ePay } = await this._sb.from("payout_requests").insert(row); if (ePay) console.warn("[savePayout]", ePay.message);
     }
     const all = storage.getArray("payout_requests");
     all.push(payoutReq); storage.set("payout_requests", all);
@@ -2161,7 +2146,7 @@ const DataService = {
       }).catch(() => null);
       if (res && res.ok) return res.json().catch(() => null);
     }
-    if (this._sb) await this._sb.from("payout_requests").update({ status: updates.status }).eq("id", id);
+    if (this._sb) { const { error: ePayU } = await this._sb.from("payout_requests").update({ status: updates.status }).eq("id", id); if (ePayU) console.warn("[updatePayout]", ePayU.message); }
     const all = storage.getArray("payout_requests");
     const idx = all.findIndex(r => r.id === id);
     if (idx >= 0) { all[idx] = { ...all[idx], ...updates }; storage.set("payout_requests", all); }
@@ -2199,7 +2184,8 @@ const DataService = {
     storage.set("loyalty_points", pts);
     if (this._sb && !NEXUS_CONFIG.apiUrl) {
       await this._sb.from("loyalty_points")
-        .upsert({ user_id: userId, points: pts[userId] }, { onConflict: "user_id" });
+        .upsert({ user_id: userId, points: pts[userId] }, { onConflict: "user_id" })
+        .catch(()=>{});
     }
     return pts[userId];
   },
@@ -2225,9 +2211,9 @@ const DataService = {
     storage.set("wishlists", ws);
     if (this._sb) {
       if (exists) {
-        await this._sb.from("wishlists").delete().eq("user_id", userId).eq("product_id", productId);
+        const { error: eWd } = await this._sb.from("wishlists").delete().eq("user_id", userId).eq("product_id", productId); if (eWd) console.warn("[toggleWishlist delete]", eWd.message);
       } else {
-        await this._sb.from("wishlists").insert({ user_id: userId, product_id: productId });
+        const { error: eWi } = await this._sb.from("wishlists").insert({ user_id: userId, product_id: productId }); if (eWi) console.warn("[toggleWishlist insert]", eWi.message);
       }
     }
     return ws[userId];
@@ -2268,7 +2254,7 @@ const DataService = {
     }
     if (this._sb) {
       await this._sb.from("stock_alerts")
-        .upsert({ user_id: userId, product_id: productId, notified: false });
+        .upsert({ user_id: userId, product_id: productId, notified: false }).catch(() => {});
     }
   },
   async removeStockAlert(userId, productId) {
@@ -2282,7 +2268,7 @@ const DataService = {
     }
     if (this._sb) {
       await this._sb.from("stock_alerts")
-        .delete().eq("user_id", userId).eq("product_id", productId);
+        .delete().eq("user_id", userId).eq("product_id", productId).catch(() => {});
     }
   },
 
@@ -2330,7 +2316,7 @@ const DataService = {
       await this._sb.from("flash_sales").upsert({
         id: sale.id, product_id: sale.productId, discount: sale.discount,
         ends_at: sale.endsAt, active: sale.active !== false
-      });
+      }).catch(() => {});
     }
     const all = storage.getArray("flash_sales");
     const idx = all.findIndex(s => s.id === sale.id);
@@ -2344,7 +2330,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      await this._sb.from("flash_sales").update({ active: false }).eq("id", id);
+      await this._sb.from("flash_sales").update({ active: false }).eq("id", id).catch(() => {});
     }
   },
 
@@ -2369,7 +2355,7 @@ const DataService = {
         description: coupon.description, max_uses: coupon.maxUses || null,
         used_count: coupon.usedCount || 0, expires_at: coupon.expiresAt || null,
         active: coupon.active !== false
-      });
+      }).catch(()=>{});
     }
     const all = storage.get("nexus_coupons") || [];
     const idx = all.findIndex(c => c.id === coupon.id);
@@ -2381,7 +2367,7 @@ const DataService = {
       const sbUp = {};
       if (updates.active !== undefined) sbUp.active = updates.active;
       if (updates.usedCount !== undefined) sbUp.used_count = updates.usedCount;
-      if (Object.keys(sbUp).length) await this._sb.from("coupons").update(sbUp).eq("id", id);
+      if (Object.keys(sbUp).length) { const { error: eCoup } = await this._sb.from("coupons").update(sbUp).eq("id", id); if (eCoup) console.warn("[saveCoupon]", eCoup.message); }
     }
     const all = storage.get("nexus_coupons") || [];
     const idx = all.findIndex(c => c.id === id);
@@ -2409,7 +2395,7 @@ const DataService = {
         id: qa.id, product_id: qa.productId, user_id: qa.userId, user_name: qa.userName,
         vendor_id: qa.vendorId || null, question: qa.question, answer: qa.answer || null,
         date: qa.date || new Date().toISOString()
-      });
+      }).catch(()=>{});
     }
     const all = storage.get("product_qa") || {};
     if (!all[qa.productId]) all[qa.productId] = [];
@@ -2445,7 +2431,7 @@ const DataService = {
       await this._sb.from("referrals").upsert({
         referrer_id: ref.referrerId, referred_id: ref.referredId || null,
         code: ref.code, rewarded: ref.rewarded || false
-      });
+      }).catch(()=>{});
     }
     const all = storage.get("referrals") || [];
     all.push(ref); storage.set("referrals", all);
@@ -4834,7 +4820,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           DataService.addLoyaltyPoints(currentUser2.id, 50).catch(()=>{});
           // mark rewarded in Supabase
           if (DataService._sb) {
-            DataService._sb.from("referrals").update({ rewarded: true }).eq("code", pendingRef.code || "").then(() => {});
+            const { error: eRef } = await DataService._sb.from("referrals").update({ rewarded: true }).eq("code", pendingRef.code || ""); if (eRef) console.warn("[referral reward]", eRef.message);
           }
           const updRefs = refs.map(r => r.newUserId === currentUser2.id ? {...r, status:"completed", rewardDate: new Date().toISOString()} : r);
           storage.set("referrals", updRefs);
@@ -5190,7 +5176,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         } else if (DataService._sb) {
           // [FALLBACK] Supabase direct uniquement si pas de backend configuré
           const { error: pendingErr } = await DataService._sb.from("pending_vendors").insert(pendingEntry);
-          if (pendingErr) console.warn("Erreur d\'insertion vendeur:", pendingErr.message);
+          if (pendingErr) console.warn("Erreur d'inscription:", pendingErr.message);
           // Email admin via EmailJS (mode hors-ligne uniquement)
           const adminUsers = Object.values(storage.get("users") || {}).filter(u => u.role === "admin");
           adminUsers.forEach(adminUser => {
@@ -6758,7 +6744,7 @@ const ProductEditModal = ({ product, onSave, onDelete, onClose, addToast }) => {
     if (idx !== -1) {
       products[idx] = { ...products[idx], ...payload };
       storage.set("products", products);
-      if (DataService._sb) DataService._sb.from("products").update(payload).eq("id", product.id).then(() => {});
+      if (DataService._sb) { const { error: eProd } = await DataService._sb.from("products").update(payload).eq("id", product.id); if (eProd) console.warn("[editProduct local sync]", eProd.message); }
     }
     setLoading(false);
     addToast("Produit mis \xE0 jour !", "success");
@@ -7231,13 +7217,13 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         });
       } catch(e) { console.warn("[approveVendor]", e); }
     } else if (DataService._sb) {
-      const { error: profileErr } = await DataService._sb.from("profiles").upsert({
+      await DataService._sb.from("profiles").upsert({
         id: vendor.id, email: vendor.email, name: vendor.name, role: "vendor", status: "approved",
         commission_rate: 15, shop_name: vendor.name, shop_category: vendor.category,
         phone: vendor.phone, ninea: vendor.ninea, address: vendor.address, avatar: vendor.avatar
-      });
-      if (profileErr) console.warn("[approveVendor] profiles upsert:", profileErr.message);
-      await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
+      }).catch(e => console.warn(e));
+      const { error: ePvA } = await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
+      if (ePvA) console.warn("[approveVendor delete]", ePvA.message);
     }
     const users = storage.get("users") || {};
     users[vendorId] = Object.assign({}, vendor, { role: "vendor", status: "approved", commission: 15, rating: 0, totalSales: 0 });
@@ -7269,7 +7255,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
         variables: { vendor_name: vendor.name, message: "Après examen de votre dossier, votre boutique ne peut pas être activée pour le moment. Vous pouvez soumettre une nouvelle demande." }
       });
-      if (DataService._sb) await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
+      if (DataService._sb) { const { error: ePvR } = await DataService._sb.from("pending_vendors").delete().eq("id", vendorId); if (ePvR) console.warn("[rejectVendor delete]", ePvR.message); }
     }
     storage.set("pendingVendors", pending.filter((v) => v.id !== vendorId));
     loadData();
@@ -8697,7 +8683,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     const all = storage.getArray("products");
     all.push(localProduct);
     storage.set("products", all);
-    if (DataService._sb) DataService._sb.from("products").insert(localProduct).then(() => {});
+    if (DataService._sb) DataService._sb.from("products").insert(localProduct).catch(() => {});
     setShowAddProduct(false);
     setNewProduct({ name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true });
     loadData();
@@ -10196,17 +10182,101 @@ const AppWithUserSync = ({ onUserChange }) => {
   return /* @__PURE__ */ React.createElement(App, { onUserChange });
 };
 ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(Root, null));
-// ── Nettoyage Service Worker (cache navigateur) ─────────────────────────────
-// Les anciennes versions utilisaient un blob: URL non supporté dans Vercel.
-// Ce bloc désactive toute inscription SW résiduelle dans le navigateur.
+/* SW_DISABLED — en attente du déploiement de /sw.js sur Vercel
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations().then(regs => {
-    regs.forEach(reg => {
-      reg.unregister();
-      console.log("[SW] Ancienne inscription supprimée:", reg.scope);
-    });
-  }).catch(() => {});
+  window.addEventListener("load", () => {
+    // ── Service Worker inline via Blob URL ──────────────────────────
+    // Évite le besoin d'un fichier sw.js externe (compatible Vercel/Netlify/GitHub Pages)
+    const SW_VERSION = "nexus-v2";
+    const CACHE_URLS = ["/", "/index.html"];
+
+    const swCode = `
+const CACHE = "${SW_VERSION}";
+const PRECACHE = ${JSON.stringify(CACHE_URLS)};
+
+self.addEventListener("install", e => {
+  self.skipWaiting();
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(PRECACHE).catch(()=>{})));
+});
+
+self.addEventListener("activate", e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", e => {
+  if (e.request.method !== "GET") return;
+  const url = new URL(e.request.url);
+  // Ne pas intercepter les requêtes API/EmailJS/Supabase
+  if (["api.anthropic.com","emailjs.com","supabase.co","analytics.google.com","googletagmanager.com"].some(d => url.hostname.includes(d))) return;
+  e.respondWith(
+    caches.match(e.request).then(cached => {
+      const net = fetch(e.request).then(res => {
+        if (res && res.status === 200 && url.origin === self.location.origin) {
+          const clone = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, clone));
+        }
+        return res;
+      }).catch(() => cached);
+      return cached || net;
+    })
+  );
+});
+
+// Notifications push
+self.addEventListener("push", e => {
+  const data = e.data ? e.data.json() : {};
+  e.waitUntil(self.registration.showNotification(data.title || "NEXUS Market", {
+    body: data.body || "Vous avez une nouvelle notification.",
+    icon: "https://placehold.co/192x192/00853E/white?text=NX",
+    badge: "https://placehold.co/72x72/00853E/white?text=NX",
+    data: data.url || "/",
+    vibrate: [200, 100, 200],
+    tag: data.tag || "nexus-notif"
+  }));
+});
+
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  e.waitUntil(clients.openWindow(e.notification.data || "/"));
+});
+    `;
+
+    try {
+      const blob = new Blob([swCode], { type: "application/javascript" });
+      const swUrl = URL.createObjectURL(blob);
+      navigator.serviceWorker.register(swUrl, { scope: "/" })
+        .then(reg => {
+          console.log("[SW] ✅ Service Worker inline enregistré — scope:", reg.scope);
+          window.__nexusSWReg = reg;
+
+          // Demander permission notifications si pas encore accordée
+          if ("Notification" in window && Notification.permission === "default") {
+            // Ne pas demander immédiatement — attendre une interaction utilisateur
+            window.__nexusRequestNotifPermission = async () => {
+              const perm = await Notification.requestPermission();
+              console.log("[SW] Permission notifications:", perm);
+              return perm;
+            };
+          }
+
+          // Écouter les messages du SW
+          navigator.serviceWorker.addEventListener("message", evt => {
+            if (evt.data && evt.data.type === "SW_ACTIVATED") {
+              console.log("[SW] Nouvelle version activée");
+            }
+          });
+        })
+        .catch(e => console.warn("[SW] Erreur enregistrement:", e));
+    } catch(e) {
+      console.warn("[SW] Blob URL non supporté:", e);
+    }
+  });
 }
+*/ // fin SW_DISABLED
 
 // ── API notifications push (accessible globalement) ───────────────
 window.nexusPush = {
