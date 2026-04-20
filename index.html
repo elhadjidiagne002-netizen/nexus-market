@@ -5161,16 +5161,34 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         // [FIX] Appel backend API — utilise la service-role key (bypass RLS)
         // Le backend insère dans pending_vendors ET notifie les admins automatiquement
         if (NEXUS_CONFIG.apiUrl) {
-          const _vendorRes = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/register`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: form.email, password: form.password,
-              name: form.name, role: "vendor",
-              shopName: form.shopName, shopCategory: form.shopCategory || "Général",
-              phone: form.phone || null
-            })
-          });
+          // Timeout 20s pour gérer le cold start de Render.com (free tier)
+          const ctrl = new AbortController();
+          const tid  = setTimeout(() => ctrl.abort(), 20000);
+          let _vendorRes;
+          try {
+            _vendorRes = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/register`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: ctrl.signal,
+              body: JSON.stringify({
+                email: form.email, password: form.password,
+                name: form.name, role: "vendor",
+                shopName: form.shopName, shopCategory: form.shopCategory || "Général",
+                phone: form.phone || null
+              })
+            });
+          } catch(fetchErr) {
+            clearTimeout(tid);
+            // Backend injoignable → fallback Supabase direct
+            console.warn("[Register] Backend injoignable, fallback Supabase:", fetchErr.message);
+            if (DataService._sb) {
+              const { error: pendingErr } = await DataService._sb.from("pending_vendors").insert(pendingEntry);
+              if (pendingErr) throw new Error(pendingErr.message);
+            }
+            setDone(true);
+            return;
+          }
+          clearTimeout(tid);
           const _vendorJson = await _vendorRes.json();
           if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
         } else if (DataService._sb) {
