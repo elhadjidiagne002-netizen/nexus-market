@@ -1897,19 +1897,54 @@ const DataService = {
       const { data } = this._sb.auth.onAuthStateChange(async (event, session) => {
         if (event === "SIGNED_IN" && session) {
           const uid = session.user.id;
-          const prof = await this._fetchProfile(uid);
-          callback(event, prof || this._buildProfileFromAuthUser(session.user));
+          let prof = await this._fetchProfile(uid);
+
+          // Nouveau compte OAuth (GitHub, Google…) : profil absent → créer en base
+          if (!prof) {
+            const authUser = session.user;
+            const meta  = authUser.user_metadata || {};
+            const email = (authUser.email || meta.email || '').toLowerCase();
+            const name  = meta.full_name || meta.name || meta.user_name || email.split('@')[0];
+            const ghId  = meta.provider_id || meta.sub || null;
+            const ghLogin = meta.user_name || meta.preferred_username || null;
+            const ghAvatar = meta.avatar_url || null;
+            const avatar  = name.slice(0, 2).toUpperCase();
+
+            const newProfileRow = {
+              id:            uid,
+              email,
+              name,
+              role:          'buyer',
+              avatar,
+              status:        'active',
+              password_hash: null,
+              github_id:     authUser.app_metadata?.provider === 'github' ? ghId : null,
+              github_login:  authUser.app_metadata?.provider === 'github' ? ghLogin : null,
+              github_avatar: authUser.app_metadata?.provider === 'github' ? ghAvatar : null,
+            };
+
+            const { data: created } = await this._sb
+              .from('profiles')
+              .upsert(newProfileRow, { onConflict: 'id' })
+              .select()
+              .single();
+
+            prof = created || { ...newProfileRow, isNew: true };
+
+            // Marquer comme nouveau pour déclencher GitHubRoleModal côté App
+            if (authUser.app_metadata?.provider === 'github') {
+              prof.isNewGithubUser = true;
+            }
+          }
+
+          callback(event, prof);
         } else if (event === "SIGNED_OUT" || event === "USER_DELETED") {
           callback(event, null);
           if (!this._voluntarySignOut) {
-            // Déconnexion forcée (token expiré côté Supabase, ou session révoquée)
             window.dispatchEvent(new CustomEvent("nexus:session-expired"));
           }
-          // [FIX] Reset ici, APRÈS la vérification — c'est le bon endroit car
-          // l'event est asynchrone et arrive après le signOut() de l'appelant.
           this._voluntarySignOut = false;
         } else if (event === "TOKEN_REFRESHED" && !session) {
-          // Token refresh failed = session really expired
           window.dispatchEvent(new CustomEvent("nexus:session-expired"));
         }
       });
@@ -5013,55 +5048,202 @@ const AuthModal = ({ onLogin, onCancel, targetRole, onShowCGU, onShowPrivacy, in
   );
 };
 
-// ── Bouton "Continuer avec GitHub" (composant partagé) ────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+// GITHUB OAUTH — Composants Frontend complets
+// ══════════════════════════════════════════════════════════════════════════
+
+// Modal choix de rôle au 1er login GitHub
+const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
+  const [role, setRole] = React.useState('buyer');
+  const [loading, setLoading] = React.useState(false);
+
+  const handleChoose = async () => {
+    setLoading(true);
+    try {
+      // Tenter la mise à jour via backend
+      if (NEXUS_CONFIG.apiUrl && token) {
+        const res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/github/role`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ role }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          DataService.saveSession(data.token || token, data.expiresIn || expiresIn);
+          onDone({ ...user, ...data.user, role: data.user.role });
+          return;
+        }
+      }
+      // Fallback localStorage
+      const updatedUser = { ...user, role, status: role === 'vendor' ? 'pending' : 'active' };
+      const users = storage.get('users') || {};
+      users[updatedUser.id] = updatedUser;
+      storage.set('users', users);
+      if (token) DataService.saveSession(token, expiresIn);
+      onDone(updatedUser);
+    } catch (e) {
+      addToast("Erreur lors du choix du rôle. Vous serez connecté comme acheteur.", "error");
+      onDone({ ...user, role: 'buyer' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const options = [
+    {
+      value: 'buyer',
+      icon: 'shopping-bag',
+      title: 'Acheteur',
+      desc: 'Je veux acheter des produits sur NEXUS Market.',
+      color: 'var(--primary)',
+    },
+    {
+      value: 'vendor',
+      icon: 'store',
+      title: 'Vendeur',
+      desc: 'Je veux vendre mes produits (validation admin requise).',
+      color: '#7C3AED',
+    },
+  ];
+
+  return React.createElement('div', { className: 'modal-overlay' },
+    React.createElement('div', { className: 'modal', style: { maxWidth: '460px', textAlign: 'center' } },
+      React.createElement('div', { style: { fontSize: '3.5rem', marginBottom: '0.75rem' } }, '🐙'),
+      React.createElement('h2', { className: 'modal-title', style: { justifyContent: 'center', marginBottom: '0.4rem' } },
+        'Bienvenue sur NEXUS !'
+      ),
+      React.createElement('p', { style: { color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' } },
+        'Bonjour ', React.createElement('strong', null, user.name), ' ! Votre compte GitHub est connecté.',
+        React.createElement('br', null), 'Comment souhaitez-vous utiliser NEXUS Market ?'
+      ),
+      React.createElement('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.5rem' } },
+        options.map(opt => React.createElement('div', {
+          key: opt.value,
+          onClick: () => setRole(opt.value),
+          style: {
+            border: `2px solid ${role === opt.value ? opt.color : 'var(--border)'}`,
+            borderRadius: '14px', padding: '1.25rem 1rem', cursor: 'pointer',
+            background: role === opt.value ? `${opt.color}0D` : 'white',
+            transition: 'all 0.2s',
+            boxShadow: role === opt.value ? `0 0 0 3px ${opt.color}22` : 'none',
+          },
+        },
+          React.createElement('div', { style: {
+            width: '48px', height: '48px', borderRadius: '50%',
+            background: role === opt.value ? opt.color : 'var(--bg-dark)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 0.75rem', color: role === opt.value ? 'white' : 'var(--text-secondary)',
+            fontSize: '1.2rem', transition: 'all 0.2s',
+          }},
+            React.createElement('i', { className: `fas fa-${opt.icon}` })
+          ),
+          React.createElement('div', { style: { fontWeight: 700, marginBottom: '0.3rem', color: role === opt.value ? opt.color : 'var(--text-primary)' } }, opt.title),
+          React.createElement('div', { style: { fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: '1.4' } }, opt.desc)
+        ))
+      ),
+      role === 'vendor' && React.createElement('div', { className: 'alert alert-warning', style: { fontSize: '0.82rem', textAlign: 'left', marginBottom: '1rem' } },
+        React.createElement('i', { className: 'fas fa-info-circle' }),
+        React.createElement('span', null, ' Votre compte sera en attente de validation par l\'admin NEXUS. Vous recevrez un email dès approbation (48h max).')
+      ),
+      React.createElement('button', {
+        className: `btn btn-primary btn-block btn-lg${loading ? ' btn-loading' : ''}`,
+        onClick: handleChoose,
+        disabled: loading,
+      },
+        loading ? 'Enregistrement...' : React.createElement(React.Fragment, null,
+          React.createElement('i', { className: 'fas fa-check-circle' }),
+          ' Continuer comme ', role === 'buyer' ? 'Acheteur' : 'Vendeur'
+        )
+      ),
+      React.createElement('p', { style: { fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.75rem' } },
+        'Vous pourrez modifier cela dans les paramètres de votre profil.'
+      )
+    )
+  );
+};
+
+// Bouton "Continuer avec GitHub" (composant partagé)
 const GitHubSignInButton = ({ label }) => {
   const { addToast } = useToast();
   const [loading, setLoading] = React.useState(false);
 
   const handleGitHubLogin = async () => {
-    if (!isSupabaseConfigured()) {
-      addToast("\u26a0\ufe0f Supabase requis pour la connexion GitHub. Configurez-le dans les param\xe8tres.", "error", 6000);
-      return;
-    }
     setLoading(true);
-    try {
-      await DataService.signInWithGitHub();
-      // Redirection automatique vers GitHub puis retour. onAuthStateChange(SIGNED_IN) prend le relais.
-    } catch(e) {
-      addToast("Erreur connexion GitHub : " + (e.message || "Veuillez r\xe9essayer"), "error");
-      setLoading(false);
+
+    // ── Track A : Supabase OAuth (prioritaire si configuré) ───────────────
+    if (isSupabaseConfigured() && DataService._sb) {
+      try {
+        const { error } = await DataService._sb.auth.signInWithOAuth({
+          provider: 'github',
+          options: {
+            redirectTo: window.location.origin + window.location.pathname,
+            scopes: 'user:email read:user',
+          },
+        });
+        if (error) throw error;
+        // La page va se recharger vers GitHub → onAuthStateChange prend le relais au retour
+        return;
+      } catch (e) {
+        console.warn('[GitHub OAuth] Supabase failed, trying backend:', e.message);
+        // Ne pas setLoading(false) — tenter le track B
+      }
     }
+
+    // ── Track B : Backend custom OAuth (sans Supabase) ────────────────────
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        // Vérifier que la route existe
+        const check = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/github`, {
+          method: 'HEAD',
+          signal: AbortSignal.timeout(3000),
+        }).catch(() => null);
+
+        // Redirection directe vers le backend → GitHub → retour frontend
+        window.location.href = `${NEXUS_CONFIG.apiUrl}/api/auth/github`;
+        return;
+      } catch(e) {
+        addToast('Erreur connexion au serveur. Réessayez.', 'error');
+        setLoading(false);
+        return;
+      }
+    }
+
+    // ── Aucune option disponible ──────────────────────────────────────────
+    addToast(
+      '⚠️ Connexion GitHub non configurée. Activez Supabase ou renseignez l\'URL de l\'API dans les paramètres.',
+      'error', 7000
+    );
+    setLoading(false);
   };
 
-  return React.createElement("button", {
-    type: "button",
+  return React.createElement('button', {
+    type: 'button',
     onClick: handleGitHubLogin,
     disabled: loading,
     style: {
-      display: "flex", alignItems: "center", justifyContent: "center",
-      gap: "0.6rem", width: "100%", padding: "0.7rem 1rem",
-      border: "1.5px solid #d0d7de", borderRadius: "8px",
-      background: loading ? "#f6f8fa" : "#24292f",
-      cursor: loading ? "not-allowed" : "pointer",
-      fontSize: "0.92rem", fontWeight: 600, color: "white",
-      transition: "background 0.15s",
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      gap: '0.6rem', width: '100%', padding: '0.7rem 1rem',
+      border: '1.5px solid #d0d7de', borderRadius: '8px',
+      background: loading ? '#f6f8fa' : '#24292f',
+      cursor: loading ? 'not-allowed' : 'pointer',
+      fontSize: '0.92rem', fontWeight: 600, color: 'white',
+      transition: 'background 0.15s',
       opacity: loading ? 0.7 : 1,
     },
-    onMouseEnter: e => { if (!loading) e.currentTarget.style.background = "#32383e"; },
-    onMouseLeave: e => { if (!loading) e.currentTarget.style.background = loading ? "#f6f8fa" : "#24292f"; },
-    "aria-busy": loading,
+    onMouseEnter: e => { if (!loading) e.currentTarget.style.background = '#32383e'; },
+    onMouseLeave: e => { if (!loading) e.currentTarget.style.background = loading ? '#f6f8fa' : '#24292f'; },
+    'aria-busy': loading,
   },
     loading
-      ? React.createElement("div", { className: "spinner", style: { width: "20px", height: "20px", borderWidth: "2px", borderTopColor: "white" } })
-      : React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 98 96", "aria-hidden": "true" },
-          React.createElement("path", {
-            fill: "white",
-            fillRule: "evenodd",
-            clipRule: "evenodd",
-            d: "M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z"
+      ? React.createElement('div', { className: 'spinner', style: { width: '20px', height: '20px', borderWidth: '2px', borderTopColor: 'white' } })
+      : React.createElement('svg', { width: '20', height: '20', viewBox: '0 0 98 96', 'aria-hidden': 'true' },
+          React.createElement('path', {
+            fill: 'white', fillRule: 'evenodd', clipRule: 'evenodd',
+            d: 'M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z'
           })
         ),
-    React.createElement("span", null, loading ? "Redirection vers GitHub..." : (label || "Continuer avec GitHub"))
+    React.createElement('span', null, loading ? 'Redirection vers GitHub...' : (label || 'Continuer avec GitHub'))
   );
 };
 
@@ -10274,6 +10456,60 @@ const App = ({ onUserChange }) => {
     var _a;
     initializeData();
 
+    // ── GitHub OAuth Callback — lecture des query params au retour du backend ──
+    // Le backend redirige vers : /?nexus_github_token=JWT&nexus_github_user=JSON&nexus_github_new=true
+    const _handleGithubCallback = () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const ghToken  = params.get('nexus_github_token');
+        const ghUser   = params.get('nexus_github_user');
+        const ghNew    = params.get('nexus_github_new') === 'true';
+        const ghError  = params.get('nexus_github_error');
+        const ghExpiry = parseInt(params.get('nexus_expires_in') || '604800', 10);
+
+        // Nettoyer l'URL (éviter les rechargements en boucle)
+        if (ghToken || ghError) {
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
+
+        if (ghError) {
+          // Afficher l'erreur venue du backend
+          setTimeout(() => addToast('❌ ' + decodeURIComponent(ghError), 'error', 7000), 500);
+          return false;
+        }
+
+        if (ghToken && ghUser) {
+          const user = JSON.parse(decodeURIComponent(ghUser));
+          // Sauvegarder le JWT backend
+          DataService.saveSession(ghToken, ghExpiry);
+
+          if (ghNew) {
+            // Nouvel utilisateur → montrer le modal de choix de rôle
+            user.isNewGithubUser = true;
+            setGithubPendingUser(user);
+            setGithubPendingToken(ghToken);
+            setGithubPendingExp(ghExpiry);
+            setShowGithubRoleModal(true);
+          } else {
+            // Utilisateur existant → connexion directe
+            handleLogin(user);
+            setTimeout(() => addToast(`👋 Bienvenue, ${user.name} !`, 'success'), 300);
+          }
+          return true;
+        }
+      } catch(e) {
+        console.warn('[GitHub callback] Erreur parsing:', e.message);
+      }
+      return false;
+    };
+
+    const githubHandled = _handleGithubCallback();
+    if (githubHandled) {
+      setIsLoading(false);
+      return () => {};
+    }
+
     // ── Restaurer session Supabase si configuré ──────────────────────────────
     const restoreSupabaseSession = async () => {
       if (isSupabaseConfigured() && DataService._sb) {
@@ -10375,8 +10611,35 @@ const App = ({ onUserChange }) => {
   };
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingRole, setOnboardingRole] = useState(null);
+  // ── État GitHub OAuth ──────────────────────────────────────────────────────
+  const [githubPendingUser, setGithubPendingUser]   = useState(null); // user à afficher dans RoleModal
+  const [githubPendingToken, setGithubPendingToken] = useState(null);
+  const [githubPendingExp, setGithubPendingExp]     = useState(0);
+  const [showGithubRoleModal, setShowGithubRoleModal] = useState(false);
+
   const handleLogin = (user) => {
     var _a;
+    // Transfert du panier invité vers le compte connecté
+    const guestCart = storage.get('guest_cart') || [];
+    if (guestCart.length > 0 && user.id) {
+      const userCart = storage.get(`cart_${user.id}`) || [];
+      const merged = [...userCart];
+      guestCart.forEach(gi => {
+        if (!merged.find(i => i.id === gi.id)) merged.push(gi);
+      });
+      storage.set(`cart_${user.id}`, merged);
+      storage.set('guest_cart', []);
+    }
+
+    // Détecter 1er login GitHub → montrer GitHubRoleModal
+    if (user.isNewGithubUser && !user._roleChosen) {
+      setGithubPendingUser(user);
+      setGithubPendingToken(sessionStorage.getItem('nexus_jwt') || null);
+      setGithubPendingExp(parseInt(sessionStorage.getItem('nexus_jwt_exp') || '0'));
+      setShowGithubRoleModal(true);
+      return; // Attendre le choix de rôle avant de connecter
+    }
+
     setCurrentUser(user);
     window.__nexusCurrentUser = user;
     if (onUserChange) onUserChange(user);
@@ -10483,7 +10746,26 @@ const App = ({ onUserChange }) => {
         }
       }
     }
-  ), /* @__PURE__ */ React.createElement(CookieBanner, null)));
+  ),
+  /* ── GitHub OAuth : Modal choix de rôle (1er login) ── */
+  showGithubRoleModal && githubPendingUser && React.createElement(GitHubRoleModal, {
+    user:      githubPendingUser,
+    token:     githubPendingToken,
+    expiresIn: githubPendingExp,
+    addToast,
+    onDone: (finalUser) => {
+      setShowGithubRoleModal(false);
+      setGithubPendingUser(null);
+      setGithubPendingToken(null);
+      // Connecter l'utilisateur avec son rôle définitif
+      handleLogin({ ...finalUser, _roleChosen: true });
+      const msg = finalUser.role === 'vendor'
+        ? '🏪 Demande vendeur envoyée ! Vous serez notifié par email dès validation (48h max).'
+        : `👋 Bienvenue sur NEXUS Market, ${finalUser.name} !`;
+      setTimeout(() => addToast(msg, 'success', 6000), 400);
+    },
+  }),
+  /* @__PURE__ */ React.createElement(CookieBanner, null)));
 };
 const Root = () => {
   const [rootUser, setRootUser] = useState(null);
