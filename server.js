@@ -824,27 +824,16 @@ app.get('/api/products/check-stock', async (req, res) => {
   try {
     const { ids } = req.query; // ids=uuid1,uuid2,uuid3
     if (!ids) return res.status(400).json({ error: 'ids requis' });
-    const allIds = ids.split(',').filter(Boolean).slice(0, 50); // max 50 produits
-
-    // [FIX 1] Les IDs démo (prod1, prod2, …) ne sont pas dans Supabase.
-    // On les intercepte et on leur attribue stock=999/active=true pour ne pas
-    // faire planter la requête RPC en 500.
-    const DEMO_ID_RE = /^prod\d+$/i;
-    const demoIds    = allIds.filter(id => DEMO_ID_RE.test(id));
-    const realIds    = allIds.filter(id => !DEMO_ID_RE.test(id));
-
+    const productIds = ids.split(',').filter(Boolean).slice(0, 50); // max 50 produits
+    const { data, error } = await supabase.rpc('get_product_stocks', {
+      p_ids: productIds,
+    });
+    if (error) throw error;
+    // Retourne un objet { [id]: { stock, active } }
     const result = {};
-
-    // IDs démo → stock fictif immédiat, sans appel Supabase
-    for (const id of demoIds) result[id] = { stock: 999, active: true };
-
-    // IDs réels → appel RPC seulement si nécessaire
-    if (realIds.length > 0) {
-      const { data, error } = await supabase.rpc('get_product_stocks', { p_ids: realIds });
-      if (error) throw error;
-      for (const row of (data || [])) result[row.id] = { stock: row.stock, active: row.active };
+    for (const row of (data || [])) {
+      result[row.id] = { stock: row.stock, active: row.active };
     }
-
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1024,6 +1013,135 @@ const cartToStockItems = (products) =>
   products
     .filter(p => p.id)
     .map(p => ({ product_id: p.id, quantity: Math.max(1, parseInt(p.quantity) || 1) }));
+
+// ── POST /api/orders/split — Commandes multi-vendeur ─────────────────────────
+// Reçoit un panier mixte et crée automatiquement une sous-commande par vendeur.
+// Chaque sous-commande est créée via la même logique que POST /api/orders
+// (vérification stock atomique, notifications, commission 15 %).
+// Body : { cart: [...], customerInfo: {...}, shippingCity, paymentMethod, discountAmount? }
+// Réponse : { ok: true, orders: [...] }
+// ─────────────────────────────────────────────────────────────────────────────
+app.post('/api/orders/split', verifyToken, async (req, res) => {
+  const { cart, customerInfo, shippingCity, paymentMethod, discountAmount = 0 } = req.body;
+
+  if (!Array.isArray(cart) || cart.length === 0)
+    return res.status(400).json({ error: 'Panier vide ou invalide' });
+  if (!customerInfo?.name || !customerInfo?.email)
+    return res.status(400).json({ error: 'Informations client manquantes (name, email)' });
+
+  // Grouper les articles par vendeur
+  const groupsByVendor = {};
+  for (const item of cart) {
+    if (!item.vendor_id && !item.vendor)
+      return res.status(400).json({ error: `Article "${item.name}" sans vendeur (vendor_id requis)` });
+    const vid = item.vendor_id || item.vendor;
+    if (!groupsByVendor[vid]) {
+      groupsByVendor[vid] = { vendorId: vid, vendorName: item.vendorName || '', items: [] };
+    }
+    groupsByVendor[vid].items.push(item);
+  }
+
+  const vendorGroups = Object.values(groupsByVendor);
+  Logger.info('order', 'split.start', `Panier mixte: ${cart.length} articles, ${vendorGroups.length} vendeur(s)`, {
+    userId: req.user.id, meta: { vendorCount: vendorGroups.length }
+  });
+
+  // Vérification stock globale (tous vendeurs confondus) en une seule RPC
+  const stockItems = cart.map(p => ({
+    product_id: p.id || p.product_id,
+    quantity: Math.max(1, parseInt(p.quantity) || 1)
+  }));
+  try {
+    const { data: stockData, error: stockErr } = await supabase.rpc('check_and_reserve_stock', {
+      p_items: JSON.stringify(stockItems)
+    });
+    if (stockErr || !stockData?.ok) {
+      const outOfStock = stockData?.out_of_stock || [];
+      Logger.warn('order', 'split.stock_fail', `Stock insuffisant pour panier mixte`, { userId: req.user.id, meta: { outOfStock } });
+      return res.status(409).json({
+        code: 'STOCK_INSUFFICIENT',
+        error: 'Stock insuffisant',
+        items: outOfStock,
+      });
+    }
+  } catch (_) {
+    // RPC non disponible : continuer sans vérification atomique (fallback)
+    Logger.warn('order', 'split.rpc_skip', 'RPC check_and_reserve_stock indisponible — fallback sans vérif stock');
+  }
+
+  const createdOrders = [];
+  const shippingCost  = shippingCity === 'Dakar' ? 0 : 1500; // FCFA simplifié
+  const COMMISSION    = 0.15;
+  const totalCartValue = cart.reduce((s, i) => s + (i.price || 0) * (i.quantity || 1), 0);
+
+  for (const group of vendorGroups) {
+    const groupTotal = group.items.reduce((s, i) => s + (i.price || 0) * (i.quantity || 1), 0);
+    // Répartition proportionnelle de la remise
+    const groupDiscount = totalCartValue > 0
+      ? discountAmount * (groupTotal / totalCartValue)
+      : 0;
+    const trackingNumber = 'SN' + Math.floor(1e5 + Math.random() * 9e5);
+
+    const orderRow = {
+      buyer_id:       req.user.id,
+      buyer_name:     customerInfo.name,
+      buyer_email:    customerInfo.email,
+      buyer_address:  customerInfo.address || '',
+      buyer_phone:    customerInfo.phone   || '',
+      vendor_id:      group.vendorId,
+      vendor_name:    group.vendorName,
+      products:       group.items.map(p => ({
+        id: p.id || p.product_id, name: p.name,
+        price: p.price, quantity: p.quantity || 1,
+        imageUrl: p.imageUrl || p.image_url || null,
+      })),
+      subtotal:        groupTotal,
+      total:           groupTotal - groupDiscount + shippingCost,
+      discount_amount: groupDiscount,
+      commission:      groupTotal * COMMISSION,
+      payment_method:  paymentMethod || 'cod',
+      shipping_city:   shippingCity  || 'Dakar',
+      shipping:        shippingCost > 0 ? 'standard' : 'gratuit',
+      tracking_number: trackingNumber,
+      status:          'processing',
+    };
+
+    const { data: savedOrder, error: orderErr } = await supabase
+      .from('orders')
+      .insert(orderRow)
+      .select('*')
+      .single();
+
+    if (orderErr) {
+      Logger.error('order', 'split.insert_fail', orderErr.message, { userId: req.user.id, meta: { vendorId: group.vendorId } });
+      // Rollback stock pour les commandes déjà créées
+      if (createdOrders.length > 0) {
+        const rollbackItems = createdOrders.flatMap(o => (o.products || []).map(p => ({
+          product_id: p.id, quantity: p.quantity
+        })));
+        await supabase.rpc('release_stock', { p_items: JSON.stringify(rollbackItems) }).catch(() => {});
+      }
+      return res.status(500).json({ error: `Erreur création commande vendeur ${group.vendorName}: ${orderErr.message}` });
+    }
+
+    createdOrders.push(savedOrder);
+
+    // Notification vendeur
+    await supabase.from('notifications').insert({
+      user_id: group.vendorId,
+      type: 'order',
+      title: 'Nouvelle commande !',
+      message: `${customerInfo.name} a commandé ${group.items.map(p => p.name).join(', ')}`,
+      read: false,
+    }).catch(() => {});
+  }
+
+  Logger.info('order', 'split.done', `${createdOrders.length} sous-commande(s) créées pour panier mixte`, {
+    userId: req.user.id, meta: { orderIds: createdOrders.map(o => o.id) }
+  });
+
+  res.status(201).json({ ok: true, orders: createdOrders });
+});
 
 // ── POST /api/orders ─────────────────────────────────────────────────────────
 // Flux complet :
@@ -2947,7 +3065,7 @@ function drawVendorCommissions(doc, y, amounts, accentHex) {
 // ── Notes légales ─────────────────────────────────────────────────────────────
 function drawLegalNotes(doc, y, type) {
   const notes = type === 'buyer' ? [
-    '• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d\'origine).',
+    '• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d'origine).',
     '• Garantie légale de conformité : 2 ans pour les vices cachés. Contactez contact@nexus.sn.',
     '• Ce document fait foi de paiement. Conservez-le précieusement.',
     '• En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn · +221 33 123 45 67.',
@@ -3619,7 +3737,35 @@ app.listen(PORT, () => {
   });
 });
 
-module.exports = app; // Pour Vercel serverless (si besoin)
+// ════════════════════════════════════════════════════════════════════════════════
+// [NOUVEAU v3.3.0] — SQL SUPABASE pour les nouvelles fonctionnalités
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// ── Commandes multi-vendeur (split automatique) ──────────────────────────────
+// La table `orders` existante est utilisée sans modification de schéma.
+// Chaque sous-commande issue du split a son propre enregistrement (1 row = 1 vendeur).
+// La colonne `vendor_id` identifie le vendeur concerné.
+// Nouveau endpoint : POST /api/orders/split (voir ci-dessus)
+//
+// ── Onboarding vendeur ───────────────────────────────────────────────────────
+// Aucune table supplémentaire requise.
+// L'état de l'onboarding est détecté côté frontend :
+//   • shopImage / avatar    → booléen sur le profil (table profiles)
+//   • products.length > 0  → table products (existante)
+//   • payout_configured    → localStorage flag (temporaire) OU colonne ci-dessous :
+//
+// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_method text;
+// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_destination text;
+// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS onboarding_complete boolean DEFAULT false;
+//
+// Pour marquer l'onboarding complet côté backend (optionnel) :
+//   PATCH /api/profiles/me  { onboarding_complete: true }
+//
+// ── Index recommandé pour la route split ────────────────────────────────────
+// CREATE INDEX IF NOT EXISTS idx_orders_vendor_id ON orders(vendor_id);
+// CREATE INDEX IF NOT EXISTS idx_orders_buyer_id  ON orders(buyer_id);
+//
+// ════════════════════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════════════════════
 // SQL SUPABASE — Tables requises pour les nouvelles fonctionnalités (v3.2.0)
@@ -3695,3 +3841,5 @@ module.exports = app; // Pour Vercel serverless (si besoin)
 // -- check_and_reserve_stock(p_items jsonb) : réservation atomique
 // -- release_stock(p_items jsonb) : libération en cas de rollback
 // ════════════════════════════════════════════════════════════════════════════════
+
+module.exports = app; // Pour Vercel serverless (si besoin)
