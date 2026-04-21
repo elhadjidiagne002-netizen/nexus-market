@@ -39,6 +39,7 @@ const rateLimit    = require('express-rate-limit');
 const jwt          = require('jsonwebtoken');
 const bcrypt       = require('bcryptjs');
 const nodemailer   = require('nodemailer');
+const cookieParser = require('cookie-parser');
 const stripe       = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createClient } = require('@supabase/supabase-js');
 const multer       = require('multer');
@@ -376,6 +377,7 @@ app.options('*', (req, res) => {
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
 
 app.use(express.json({ limit: '2mb' }));
+app.use(cookieParser()); // Requis pour le state anti-CSRF du GitHub OAuth
 app.use(requestLogger); // Log HTTP → Supabase
 
 // [FIX] Rate limits — keyGenerator utilise l'IP réelle (après fix CF-Connecting-IP ci-dessus)
@@ -668,6 +670,286 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   } catch (e) {
     Logger.error('auth', 'login.error', e.message, { meta: { email }, ip: req.ip });
     res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GITHUB OAUTH — Flow complet sans Supabase (custom backend)
+//
+// Variables .env requises :
+//   GITHUB_CLIENT_ID      — depuis github.com/settings/developers
+//   GITHUB_CLIENT_SECRET  — depuis github.com/settings/developers
+//   FRONTEND_URL          — ex: https://nexus.sn (pour le redirect final)
+//
+// GitHub OAuth App settings :
+//   Homepage URL     : ${FRONTEND_URL}
+//   Callback URL     : ${API_URL}/api/auth/github/callback
+//
+// Flow :
+//   1. GET /api/auth/github           → redirect vers GitHub authorize
+//   2. GitHub redirect → GET /api/auth/github/callback?code=xxx
+//   3. Exchange code → access_token  (API GitHub)
+//   4. Fetch user info + emails       (API GitHub)
+//   5. Upsert profile dans Supabase
+//   6. Issue JWT NEXUS
+//   7. Redirect vers FRONTEND_URL?nexus_github_token=JWT&nexus_github_user=JSON
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Helpers GitHub API
+async function _githubFetch(url, accessToken) {
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'NEXUS-Market/3.3',
+    },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`GitHub API ${res.status}: ${url}`);
+  return res.json();
+}
+
+async function _githubExchangeCode(code) {
+  const res = await fetch('https://github.com/login/oauth/access_token', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id:     process.env.GITHUB_CLIENT_ID,
+      client_secret: process.env.GITHUB_CLIENT_SECRET,
+      code,
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(`GitHub token error: ${data.error_description || data.error}`);
+  if (!data.access_token) throw new Error('GitHub access_token manquant');
+  return data.access_token;
+}
+
+// GET /api/auth/github — Point d'entrée : redirect vers GitHub
+app.get('/api/auth/github', (req, res) => {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  if (!clientId) {
+    return res.status(503).json({ error: 'GitHub OAuth non configuré (GITHUB_CLIENT_ID manquant)' });
+  }
+  // Stocker le state dans un cookie signé pour prévenir le CSRF
+  const state = require('crypto').randomBytes(16).toString('hex');
+  const callbackUrl = `${process.env.FRONTEND_URL || ''}/api/auth/github/callback`;
+  const scope = 'user:email read:user';
+  const ghUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(
+    (process.env.API_URL || (req.protocol + '://' + req.get('host'))) + '/api/auth/github/callback'
+  )}&scope=${encodeURIComponent(scope)}&state=${state}`;
+
+  // Cookie state anti-CSRF (httpOnly, SameSite=Lax, 10 min)
+  res.cookie('gh_oauth_state', state, {
+    httpOnly: true, secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax', maxAge: 10 * 60 * 1000,
+  });
+  Logger.info('auth', 'github.init', `Redirect OAuth GitHub depuis ${req.ip}`);
+  res.redirect(ghUrl);
+});
+
+// GET /api/auth/github/callback — Retour de GitHub après autorisation
+app.get('/api/auth/github/callback', async (req, res) => {
+  const { code, state, error: ghError, error_description } = req.query;
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+  // Erreur GitHub (accès refusé par l'utilisateur)
+  if (ghError) {
+    Logger.warn('auth', 'github.denied', `GitHub OAuth refusé: ${ghError}`, { ip: req.ip });
+    return res.redirect(`${frontendUrl}?nexus_github_error=${encodeURIComponent(error_description || ghError)}`);
+  }
+
+  // Vérification CSRF state
+  const storedState = req.cookies?.gh_oauth_state;
+  if (!state || state !== storedState) {
+    Logger.warn('auth', 'github.csrf', 'State CSRF invalide', { ip: req.ip });
+    return res.redirect(`${frontendUrl}?nexus_github_error=${encodeURIComponent('Erreur de sécurité (state invalide). Réessayez.')}`);
+  }
+  res.clearCookie('gh_oauth_state');
+
+  if (!code) {
+    return res.redirect(`${frontendUrl}?nexus_github_error=${encodeURIComponent('Code OAuth manquant')}`);
+  }
+
+  try {
+    // 1. Échanger code contre access_token
+    const accessToken = await _githubExchangeCode(code);
+
+    // 2. Récupérer profil GitHub
+    const [ghUser, ghEmails] = await Promise.all([
+      _githubFetch('https://api.github.com/user', accessToken),
+      _githubFetch('https://api.github.com/user/emails', accessToken).catch(() => []),
+    ]);
+
+    // Trouver l'email principal vérifié
+    const primaryEmail = (
+      ghEmails.find(e => e.primary && e.verified)?.email ||
+      ghEmails.find(e => e.verified)?.email ||
+      ghUser.email ||
+      `github_${ghUser.id}@users.noreply.github.com`
+    ).toLowerCase();
+
+    const ghId    = String(ghUser.id);
+    const ghName  = ghUser.name || ghUser.login || primaryEmail.split('@')[0];
+    const ghAvatar = ghUser.avatar_url || null;
+    const ghLogin  = ghUser.login;
+
+    Logger.info('auth', 'github.user_fetched', `GitHub user: ${ghLogin} (${primaryEmail})`, { ip: req.ip });
+
+    // 3. Upsert profil dans Supabase
+    // Chercher d'abord par github_id, sinon par email
+    let profile = null;
+    let isNewUser = false;
+
+    const { data: byGhId } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('github_id', ghId)
+      .single();
+
+    if (byGhId) {
+      profile = byGhId;
+    } else {
+      const { data: byEmail } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('email', primaryEmail)
+        .single();
+
+      if (byEmail) {
+        // Compte existant email → lier le compte GitHub
+        const { data: updated } = await supabase
+          .from('profiles')
+          .update({
+            github_id: ghId,
+            github_login: ghLogin,
+            github_avatar: ghAvatar,
+            last_login: new Date().toISOString(),
+          })
+          .eq('id', byEmail.id)
+          .select('*')
+          .single();
+        profile = updated || byEmail;
+      } else {
+        // Nouvel utilisateur GitHub → créer le profil
+        isNewUser = true;
+        const avatar = ghName.slice(0, 2).toUpperCase();
+        const { data: created, error: createErr } = await supabase
+          .from('profiles')
+          .insert({
+            email:         primaryEmail,
+            name:          ghName,
+            role:          'buyer',           // rôle par défaut — modifiable au 1er login
+            avatar,
+            status:        'active',
+            github_id:     ghId,
+            github_login:  ghLogin,
+            github_avatar: ghAvatar,
+            password_hash: null,              // pas de mot de passe → OAuth uniquement
+          })
+          .select('*')
+          .single();
+
+        if (createErr) throw createErr;
+        profile = created;
+
+        // Notification admin pour nouveau compte GitHub
+        await supabase.from('notifications').insert({
+          user_id: 'admin',
+          type: 'system',
+          title: '🐙 Nouveau membre via GitHub',
+          message: `${ghName} (${primaryEmail}) vient de créer un compte via GitHub OAuth.`,
+          read: false,
+        }).catch(() => {});
+      }
+    }
+
+    // Vérifications sécurité
+    if (profile.status === 'banned') {
+      return res.redirect(`${frontendUrl}?nexus_github_error=${encodeURIComponent('Compte suspendu — contactez support@nexus.sn')}`);
+    }
+
+    // MAJ last_login si pas déjà fait
+    if (!isNewUser) {
+      await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).catch(() => {});
+    }
+
+    // 4. Émettre JWT NEXUS
+    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800');
+    const token = jwt.sign(
+      { id: profile.id, role: profile.role, name: profile.name, email: profile.email, github: true },
+      process.env.JWT_SECRET,
+      { expiresIn }
+    );
+
+    Logger.info('auth', 'github.login_ok', `GitHub login OK: ${primaryEmail} (${profile.role})${isNewUser ? ' [NOUVEAU]' : ''}`, {
+      userId: profile.id, userEmail: primaryEmail, userRole: profile.role,
+    });
+
+    // 5. Redirect vers le frontend avec token + données utilisateur
+    const { password_hash, ...safeProfile } = profile;
+    const userParam  = encodeURIComponent(JSON.stringify(safeProfile));
+    const redirectUrl = `${frontendUrl}?nexus_github_token=${token}&nexus_github_user=${userParam}&nexus_github_new=${isNewUser}&nexus_expires_in=${expiresIn}`;
+    return res.redirect(redirectUrl);
+
+  } catch (e) {
+    Logger.error('auth', 'github.callback_error', e.message, { ip: req.ip, meta: { stack: e.stack?.slice(0, 300) } });
+    return res.redirect(`${frontendUrl}?nexus_github_error=${encodeURIComponent('Erreur authentification GitHub. Réessayez.')}`);
+  }
+});
+
+// PATCH /api/auth/github/role — Choisir son rôle après 1er login GitHub
+// (acheteur classique → 'buyer' | vouloir vendre → 'vendor_pending')
+app.patch('/api/auth/github/role', verifyToken, async (req, res) => {
+  const { role } = req.body;
+  const allowedRoles = ['buyer', 'vendor'];
+  if (!allowedRoles.includes(role)) {
+    return res.status(400).json({ error: `Rôle invalide. Valeurs autorisées : ${allowedRoles.join(', ')}` });
+  }
+
+  try {
+    const newStatus = role === 'vendor' ? 'pending' : 'active';
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ role, status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', req.user.id)
+      .select('id, name, email, role, status, avatar, github_id, github_login, github_avatar')
+      .single();
+
+    if (error) throw error;
+
+    // Si le vendeur choisit "vendre" → créer une entrée pending_vendors
+    if (role === 'vendor') {
+      await supabase.from('pending_vendors').upsert({
+        id: data.id, name: data.name, email: data.email,
+        status: 'pending', source: 'github_oauth',
+        created_at: new Date().toISOString(),
+      }, { onConflict: 'id' }).catch(() => {});
+
+      await supabase.from('notifications').insert({
+        user_id: 'admin',
+        type: 'system',
+        title: '🏪 Demande vendeur (GitHub)',
+        message: `${data.name} (${data.email}) souhaite devenir vendeur. Compte créé via GitHub OAuth.`,
+        read: false,
+      }).catch(() => {});
+    }
+
+    // Émettre un nouveau JWT avec le bon rôle
+    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800');
+    const newToken = jwt.sign(
+      { id: data.id, role: data.role, name: data.name, email: data.email, github: true },
+      process.env.JWT_SECRET,
+      { expiresIn }
+    );
+
+    Logger.info('auth', 'github.role_set', `Rôle GitHub user défini: ${data.role}`, { userId: data.id });
+    res.json({ ok: true, token: newToken, user: data, expiresIn });
+
+  } catch (e) {
+    Logger.error('auth', 'github.role_error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -3746,6 +4028,26 @@ app.listen(PORT, () => {
 // Chaque sous-commande issue du split a son propre enregistrement (1 row = 1 vendeur).
 // La colonne `vendor_id` identifie le vendeur concerné.
 // Nouveau endpoint : POST /api/orders/split (voir ci-dessus)
+//
+// ── GitHub OAuth — colonnes requises dans la table profiles ─────────────
+// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS github_id text UNIQUE;
+// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS github_login text;
+// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS github_avatar text;
+// CREATE INDEX IF NOT EXISTS idx_profiles_github_id ON profiles(github_id);
+//
+// ── Dépendance npm à ajouter ─────────────────────────────────────────────
+// npm install cookie-parser
+// (ajouter dans package.json dependencies)
+//
+// ── Variables .env à ajouter ─────────────────────────────────────────────
+// GITHUB_CLIENT_ID=xxxxxxxxxxxxxxxxxxxx
+// GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// API_URL=https://votre-api.onrender.com   (URL publique de CE serveur)
+//
+// ── GitHub OAuth App settings (github.com/settings/developers) ───────────
+// Application name  : NEXUS Market
+// Homepage URL      : ${FRONTEND_URL}
+// Callback URL      : ${API_URL}/api/auth/github/callback
 //
 // ── Onboarding vendeur ───────────────────────────────────────────────────────
 // Aucune table supplémentaire requise.
