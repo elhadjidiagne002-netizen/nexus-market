@@ -3065,7 +3065,7 @@ function drawVendorCommissions(doc, y, amounts, accentHex) {
 // ── Notes légales ─────────────────────────────────────────────────────────────
 function drawLegalNotes(doc, y, type) {
   const notes = type === 'buyer' ? [
-    '• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d'origine).',
+    "• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d'origine).",
     '• Garantie légale de conformité : 2 ans pour les vices cachés. Contactez contact@nexus.sn.',
     '• Ce document fait foi de paiement. Conservez-le précieusement.',
     '• En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn · +221 33 123 45 67.',
