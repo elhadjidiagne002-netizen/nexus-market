@@ -1245,31 +1245,15 @@ const DataService = {
   _token: null, // JWT backend (feature 7)
   init() {
     this._sb = isSupabaseConfigured() ? initSupabase() : null;
-    // [FIX 10] Restaurer le JWT depuis sessionStorage, avec fallback localStorage.
-    // sessionStorage est vidé à chaque rechargement — sans ce fallback _token reste null
-    // et tous les appels apiFetch() sont envoyés sans Authorization header → 401.
-    let storedJwt = sessionStorage.getItem("nexus_jwt");
-    let storedExp = sessionStorage.getItem("nexus_jwt_exp");
-    if (!storedJwt || !storedExp) {
-      // Fallback localStorage (rechargement de page / nouvel onglet)
-      storedJwt = localStorage.getItem("nexus_jwt");
-      storedExp = localStorage.getItem("nexus_jwt_exp");
-      if (storedJwt && storedExp && Date.now() < Number(storedExp)) {
-        // Réhydrater sessionStorage pour les appels dans cet onglet
-        sessionStorage.setItem("nexus_jwt",     storedJwt);
-        sessionStorage.setItem("nexus_jwt_exp", storedExp);
-      } else {
-        storedJwt = null; // expiré ou absent
-      }
-    }
+    // Restaurer le JWT depuis sessionStorage
+    const storedJwt = sessionStorage.getItem("nexus_jwt");
+    const storedExp = sessionStorage.getItem("nexus_jwt_exp");
     if (storedJwt && storedExp && Date.now() < Number(storedExp)) {
       this._token = storedJwt;
     } else if (storedJwt) {
-      // Token expiré — nettoyer les deux storages
+      // Token expiré — nettoyer
       sessionStorage.removeItem("nexus_jwt");
       sessionStorage.removeItem("nexus_jwt_exp");
-      localStorage.removeItem("nexus_jwt");
-      localStorage.removeItem("nexus_jwt_exp");
     }
   },
   async getProducts({ page = 1, limit = 50, category = null, search = null } = {}) {
@@ -1342,20 +1326,16 @@ const DataService = {
       }
     }
 
-    // [FIX 6] Ne tenter le fallback Supabase direct que si une session active existe.
-    // Sans session, Supabase retourne 400 "no relation named orders" ou un 401 RLS.
+    // CORRECTION : On bloque TOTALEMENT la requête si on n'a ni buyer ni vendor
     if (this._sb && (buyer || vendor)) {
-      let sbSession = null;
-      try { ({ data: { session: sbSession } } = await this._sb.auth.getSession()); } catch (_) {}
-      if (sbSession) {
-        let q = this._sb.from("orders").select("*", { count: "exact" });
-        if (buyer)  q = q.eq("buyer_id",  buyer);
-        if (vendor) q = q.eq("vendor_id", vendor);
-        if (status) q = q.eq("status", status);
-        q = q.order("created_at", { ascending: false }).range((page-1)*limit, page*limit-1);
-        const { data, error } = await q;
-        if (!error) return data;
-      }
+      let q = this._sb.from("orders").select("*", { count: "exact" });
+      if (buyer) q = q.eq("buyer_id", buyer);
+      if (vendor) q = q.eq("vendor_id", vendor);
+      if (status) q = q.eq("status", status);
+
+      q = q.order("created_at", { ascending: false }).range((page-1)*limit, page*limit-1);
+      const { data, error } = await q;
+      if (!error) return data;
     }
 
     // Fallback localStorage (exécuté si pas de _sb OU si pas de buyer/vendor)
@@ -1427,30 +1407,7 @@ const DataService = {
           throw err;
         }
         if (!res.ok) throw new Error(json.error || json.message || 'Erreur commande');
-
-        // [FIX] Le backend retourne les champs en snake_case (buyer_email, tracking_number…)
-        // mais sendOrderConfirmation attend du camelCase. On normalise ici en fusionnant :
-        //   1. orderPayload (camelCase, inclut trackingNumber que le backend ne stocke pas)
-        //   2. json (valeurs authoritative du serveur : id réel, total validé, buyer_email…)
-        //   3. Mapping explicite snake_case → camelCase pour garantir les deux formes
-        const normalized = {
-          ...orderPayload,                                              // base camelCase + trackingNumber
-          ...json,                                                      // valeurs serveur (id, total, status…)
-          // Mapping snake_case → camelCase (les deux formes disponibles)
-          id:             json.id              || orderPayload.id,
-          buyerName:      json.buyer_name      || orderPayload.buyerName,
-          buyerEmail:     json.buyer_email     || orderPayload.buyerEmail,
-          buyerAddress:   json.buyer_address   || orderPayload.buyerAddress,
-          vendorName:     json.vendor_name     || orderPayload.vendorName,
-          shippingCity:   json.shipping_city   || orderPayload.shippingCity,
-          // tracking_number n'est PAS stocké par le backend à la création → conserver celui du payload
-          trackingNumber: json.tracking_number || orderPayload.trackingNumber,
-          date:           json.created_at      || orderPayload.date,
-          total:          json.total           != null ? json.total : orderPayload.total,
-          products:       json.products        || orderPayload.products,
-          earnedPoints:   json.earnedPoints    || 0,
-        };
-        return normalized;
+        return json;
       }
       // Backend injoignable → fallback Supabase/localStorage
     }
@@ -1583,15 +1540,10 @@ const DataService = {
       if (res && res.ok) { const json = await res.json(); return json; }
     }
     if (this._sb) {
-      // [FIX 7] Ne passer par Supabase direct que si une session active existe (évite le 400/401 RLS)
-      let sbSession = null;
-      try { ({ data: { session: sbSession } } = await this._sb.auth.getSession()); } catch (_) {}
-      if (sbSession) {
-        const { data, error } = await this._sb.from("notifications")
-          .select("*").eq("user_id", userId)
-          .order("created_at", { ascending: false }).limit(30);
-        if (!error && data) return data;
-      }
+      const { data, error } = await this._sb.from("notifications")
+        .select("*").eq("user_id", userId)
+        .order("created_at", { ascending: false }).limit(30);
+      if (!error && data) return data;
     }
     const all = storage.get("notifications") || {};
     return (all[userId] || []).slice(0, 30);
@@ -1663,16 +1615,6 @@ const DataService = {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || json.message || "Erreur inscription");
       if (json.emailConfirmPending) return { __emailConfirmPending: true, email };
-      // [FIX 8] Si le backend retourne un token (buyer inscrit sans confirmation email),
-      // le sauvegarder immédiatement pour éviter un 401 sur la première action post-inscription.
-      if (json.token) {
-        const expTs = String(Date.now() + (json.expiresIn || 604800) * 1000);
-        sessionStorage.setItem("nexus_jwt",     json.token);
-        sessionStorage.setItem("nexus_jwt_exp", expTs);
-        localStorage.setItem("nexus_jwt",       json.token);
-        localStorage.setItem("nexus_jwt_exp",   expTs);
-        this._token = json.token;
-      }
       return json.user || json;
     }
     if (this._sb) {
@@ -1752,14 +1694,8 @@ const DataService = {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || json.message || "Email ou mot de passe incorrect");
         if (json.token) {
-          // [FIX 2a] Sauvegarder dans sessionStorage ET localStorage.
-          // sessionStorage est vidé à chaque rechargement → tous les appels API
-          // devenaient 401. localStorage persiste entre les onglets et reloads.
-          const expTs = String(Date.now() + (json.expiresIn || 28800) * 1000);
-          sessionStorage.setItem("nexus_jwt",     json.token);
-          sessionStorage.setItem("nexus_jwt_exp", expTs);
-          localStorage.setItem("nexus_jwt",       json.token);
-          localStorage.setItem("nexus_jwt_exp",   expTs);
+          sessionStorage.setItem("nexus_jwt", json.token);
+          sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 28800) * 1000));
           this._token = json.token;
         }
         // [FIX 3] Tentative de connexion Supabase pour les appels directs (notifications, etc.)
@@ -1844,7 +1780,7 @@ const DataService = {
       setTimeout(() => { this._voluntarySignOut = false; }, 500);
     }
     if (NEXUS_CONFIG.apiUrl) {
-      const token = this._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
+      const token = sessionStorage.getItem("nexus_jwt");
       if (token) {
         const ctrl = new AbortController();
         const tid = setTimeout(() => ctrl.abort(), 4000); // 4s max
@@ -1852,28 +1788,19 @@ const DataService = {
           method: "POST", headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal
         }).catch(()=>{}).finally(() => clearTimeout(tid));
       }
-      // [FIX 5] Nettoyer sessionStorage ET localStorage pour éviter la réhydratation après déco
       sessionStorage.removeItem("nexus_jwt");
       sessionStorage.removeItem("nexus_jwt_exp");
-      localStorage.removeItem("nexus_jwt");
-      localStorage.removeItem("nexus_jwt_exp");
-      this._token = null;
     }
   },
   // ── Session expiry check ─────────────────────────────────────────────────
   isSessionExpired() {
-    // [FIX] Vérifier sessionStorage en priorité, puis localStorage en fallback
-    const exp = sessionStorage.getItem("nexus_jwt_exp") || localStorage.getItem("nexus_jwt_exp");
+    const exp = sessionStorage.getItem("nexus_jwt_exp");
     if (!exp) return false;
     return Date.now() > parseInt(exp, 10);
   },
   saveSession(token, expiresInSeconds) {
-    // [FIX] Double-sauvegarde sessionStorage + localStorage
-    const expTs = String(Date.now() + expiresInSeconds * 1000);
-    sessionStorage.setItem("nexus_jwt",     token);
-    sessionStorage.setItem("nexus_jwt_exp", expTs);
-    localStorage.setItem("nexus_jwt",       token);
-    localStorage.setItem("nexus_jwt_exp",   expTs);
+    sessionStorage.setItem("nexus_jwt", token);
+    sessionStorage.setItem("nexus_jwt_exp", Date.now() + expiresInSeconds * 1000);
   },
   // Wrapper fetch → auto-logout on 401 + PERF FIX: timeout 4s pour éviter les cold starts Render
   async apiFetch(path, options = {}) {
@@ -1882,20 +1809,8 @@ const DataService = {
       window.dispatchEvent(new CustomEvent("nexus:session-expired"));
       throw new Error("SESSION_EXPIRED");
     }
-    // [FIX 4] Récupérer le JWT depuis sessionStorage, avec fallback localStorage.
-    // sessionStorage est vidé à chaque rechargement → 401 en cascade sans ce fallback.
+    // [FIX 1] Utiliser le JWT backend si disponible, sinon le token Supabase en fallback
     let token = sessionStorage.getItem("nexus_jwt");
-    if (!token) {
-      const lsToken = localStorage.getItem("nexus_jwt");
-      const lsExp   = localStorage.getItem("nexus_jwt_exp");
-      if (lsToken && lsExp && Date.now() < Number(lsExp)) {
-        token = lsToken;
-        // Réhydrater sessionStorage pour éviter de relire localStorage à chaque appel
-        sessionStorage.setItem("nexus_jwt",     lsToken);
-        sessionStorage.setItem("nexus_jwt_exp", lsExp);
-        this._token = lsToken;
-      }
-    }
     if (!token && this._sb) {
       try {
         // PERF FIX: cache Supabase token 30s pour éviter getSession() sur chaque appel
@@ -1956,22 +1871,10 @@ const DataService = {
     }
   },
   async restoreSession() {
-    // [FIX 3] Récupérer le JWT depuis sessionStorage OU localStorage.
-    // sessionStorage est réinitialisé à chaque rechargement de page ; localStorage persiste.
+    // [FIX] Essayer d'abord le backend /api/auth/me (token JWT valide)
     if (NEXUS_CONFIG.apiUrl) {
-      let jwt = sessionStorage.getItem("nexus_jwt");
-      let exp = sessionStorage.getItem("nexus_jwt_exp");
-      // Fallback localStorage si sessionStorage vide (rechargement de page)
-      if (!jwt || !exp) {
-        jwt = localStorage.getItem("nexus_jwt");
-        exp = localStorage.getItem("nexus_jwt_exp");
-        if (jwt && exp && Date.now() < Number(exp)) {
-          // Réhydrater sessionStorage pour les appels suivants dans cet onglet
-          sessionStorage.setItem("nexus_jwt",     jwt);
-          sessionStorage.setItem("nexus_jwt_exp", exp);
-          this._token = jwt;
-        }
-      }
+      const jwt = sessionStorage.getItem("nexus_jwt");
+      const exp = sessionStorage.getItem("nexus_jwt_exp");
       if (jwt && exp && Date.now() < Number(exp)) {
         const res = await this.apiFetch("/api/auth/me").catch(() => null);
         if (res && res.ok) {
@@ -2592,47 +2495,36 @@ const EmailService = {
       }
     }
     console.log("[EmailService] Simulation \u2014 email à", to, ":", subject);
-    // Fallback backend : tente d'envoyer via le serveur si disponible
-    const _fbToken = DataService?._token
-      || sessionStorage.getItem('nexus_jwt')
-      || localStorage.getItem('nexus_jwt');
-    if (NEXUS_CONFIG.apiUrl && _fbToken) {
+    // Fallback backend : tente d'envoyer via Gmail OAuth2 du serveur si disponible
+    if (NEXUS_CONFIG.apiUrl && storage.get('nexus_token')) {
       try {
         const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/email/send`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${_fbToken}`
+            "Authorization": `Bearer ${storage.get('nexus_token')}`
           },
-          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>` })
+          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>`, text })
         });
         if (resp.ok) {
           const r = await resp.json();
           if (r.ok) {
-            console.log("[EmailService] \u2705 Email envoyé via backend à", to);
+            console.log("[EmailService] \u2705 Email envoyé via Gmail backend à", to);
             return true;
           }
         }
       } catch(e) {
-        console.warn("[EmailService] Fallback backend échoué:", e.message);
+        console.warn("[EmailService] Fallback Resend backend échoué:", e.message);
       }
     }
     return true;
   },
   sendOrderConfirmation(order, items) {
-    // [FIX] Normalisation défensive : accepter snake_case (réponse backend) ET camelCase (payload local)
-    // Priorité : camelCase || snake_case || valeur par défaut
-    const buyerEmail    = order.buyerEmail    || order.buyer_email    || '';
-    const buyerName     = order.buyerName     || order.buyer_name     || '—';
-    const buyerAddress  = order.buyerAddress  || order.buyer_address  || '—';
-    const vendorName    = order.vendorName    || order.vendor_name    || '—';
-    const trackingNum   = order.trackingNumber|| order.tracking_number|| '—';
-    const shippingCity  = order.shippingCity  || order.shipping_city  || '';
-    const orderDate     = order.date          || order.created_at     || new Date().toISOString();
-
     const safeItems = items || order.products || [];
 
-    // item_list — texte avec <br> (pour templates texte)
+    // [FIX] item_list — était joint par '\n' (invisible en HTML email).
+    // Remplacé par des lignes séparées par '<br>' pour les templates texte,
+    // et un tableau HTML complet (item_list_html) pour les templates riches.
     const itemList = safeItems
       .map((i) => `${i.name} ×${i.quantity || 1} — ${formatPrice((i.price || 0) * (i.quantity || 1))}`)
       .join('<br>');
@@ -2657,65 +2549,40 @@ const EmailService = {
         `</tr></tfoot>` +
       `</table>`;
 
-    // product_name / product_price — résumé de tous les articles
+    // [FIX] product_name / product_price listaient seulement le 1er article.
+    // Désormais ils contiennent le résumé complet (tous les articles) pour
+    // les templates qui n'utilisent pas encore {{item_list_html}}.
     const allNames  = safeItems.map((i) => `${i.name} ×${i.quantity || 1}`).join(', ');
     const firstItem = safeItems[0] || {};
     const firstItemName  = safeItems.length === 1
       ? (firstItem.name || order.productName || '—')
-      : (allNames || '—');
+      : allNames;
     const firstItemPrice = safeItems.length === 1 && firstItem.price != null
       ? formatPrice(firstItem.price * (firstItem.quantity || 1))
       : formatPrice(order.total || 0);
 
-    const orderDateFr = (() => {
-      try { return new Date(orderDate).toLocaleDateString('fr-FR'); }
-      catch (_) { return new Date().toLocaleDateString('fr-FR'); }
-    })();
-
     return this.send({
-      to: buyerEmail,
+      to: order.buyerEmail,
       subject: `✅ Confirmation commande ${order.id} — NEXUS Market`,
       templateId: "order_confirmation",
       ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
       variables: {
-        to_name:          buyerName,
-        buyer_name:       buyerName,
+        to_name:          order.buyerName   || '—',
+        buyer_name:       order.buyerName   || '—',
         order_id:         order.id          || '—',
-        order_date:       orderDateFr,
-        tracking:         trackingNum,
-        product_name:     firstItemName,
+        order_date:       order.date ? new Date(order.date).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
+        tracking:         order.trackingNumber || '—',
+        product_name:     firstItemName,          // résumé de tous les articles
         product_price:    firstItemPrice,
-        item_list:        itemList,
-        item_list_html:   itemListHtml,
+        item_list:        itemList,               // texte avec <br> entre chaque ligne
+        item_list_html:   itemListHtml,           // tableau HTML complet — à utiliser dans le template EmailJS via {{{item_list_html}}}
         item_count:       String(safeItems.reduce((s, i) => s + (i.quantity || 1), 0)),
         total:            formatPrice(order.total || 0),
         currency:         'FCFA',
-        address:          buyerAddress,
-        shipping_city:    shippingCity,
-        vendor_name:      vendorName,
+        address:          order.buyerAddress  || '—',
+        shipping_city:    order.shippingCity  || '—',
+        vendor_name:      order.vendorName    || '—',
         site_url:         window.location.origin,
-        // html_body — utilisé par le fallback backend /api/email/send
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-            <div style="background:#00853E;padding:20px;text-align:center">
-              <h1 style="color:white;margin:0">NEXUS Market Sénégal</h1>
-            </div>
-            <div style="padding:30px;background:#f9f9f9">
-              <h2 style="color:#1F2937">Bonjour ${buyerName},</h2>
-              <p>Votre commande <strong>#${order.id || '—'}</strong> a été confirmée le ${orderDateFr} !</p>
-              ${itemListHtml}
-              <div style="background:#e8f5e9;border-radius:8px;padding:15px;margin:15px 0">
-                <p style="margin:0"><strong>📦 Numéro de suivi :</strong> ${trackingNum}</p>
-                <p style="margin:8px 0 0"><strong>🏠 Livraison :</strong> ${buyerAddress}${shippingCity ? ', ' + shippingCity : ''}</p>
-              </div>
-              <p>Vendeur : <strong>${vendorName}</strong></p>
-              <p style="color:#666;font-size:14px">Pour toute question : <a href="mailto:sav@nexus.sn">sav@nexus.sn</a></p>
-            </div>
-            <div style="background:#333;color:white;padding:15px;text-align:center;font-size:12px">
-              NEXUS Market SARL — Dakar, Sénégal
-            </div>
-          </div>
-        `,
       }
     });
   },
@@ -2751,36 +2618,6 @@ const EmailService = {
         order_id: offer.id || '—',
         total: formatPrice(offer.offeredPrice),
         vendor_name: offer.vendorName || '—',
-        // [FIX] html_body — fallback backend /api/email/send
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:30px">
-            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center">
-              <h2 style="color:white;margin:0">NEXUS Market</h2>
-            </div>
-            <div style="background:#f9f9f9;padding:24px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937">Bonjour ${offer.vendorName || 'Vendeur'},</h3>
-              <p><strong>${offer.buyerName}</strong> a soumis une offre pour <strong>${offer.productName}</strong>.</p>
-              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:16px 0;background:white;border-radius:8px;overflow:hidden">
-                <tr style="background:#f3f4f6">
-                  <td style="padding:10px 14px;font-size:13px;color:#374151;font-weight:600">Produit</td>
-                  <td style="padding:10px 14px;font-size:13px;color:#374151;font-weight:600;text-align:right">Prix</td>
-                </tr>
-                <tr>
-                  <td style="padding:10px 14px;font-size:14px">${offer.productName}</td>
-                  <td style="padding:10px 14px;font-size:14px;text-align:right;text-decoration:line-through;color:#9ca3af">${formatPrice(offer.originalPrice || offer.offeredPrice)}</td>
-                </tr>
-                <tr style="background:#ecfdf5">
-                  <td style="padding:10px 14px;font-size:14px;font-weight:700;color:#00853E">💰 Prix proposé</td>
-                  <td style="padding:10px 14px;font-size:16px;font-weight:700;color:#00853E;text-align:right">${formatPrice(offer.offeredPrice)}</td>
-                </tr>
-              </table>
-              ${offer.message ? `<div style="background:#fffbeb;border-left:4px solid #FDEF42;padding:12px 16px;margin:16px 0;border-radius:4px"><p style="margin:0;font-style:italic;color:#374151">"${offer.message}"</p></div>` : ''}
-              <p style="text-align:center;margin-top:24px">
-                <a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Accepter ou refuser l'offre</a>
-              </p>
-            </div>
-          </div>
-        `,
       }
     });
   },
@@ -2805,33 +2642,6 @@ const EmailService = {
         order_id: offer.id || '—',
         total: formatPrice(offer.offeredPrice),
         vendor_name: offer.vendorName || '—',
-        // [FIX] html_body — fallback backend /api/email/send
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:30px">
-            <div style="background:${accepted ? '#00853E' : '#E11B22'};padding:20px;border-radius:8px 8px 0 0;text-align:center">
-              <h2 style="color:white;margin:0">NEXUS Market — Offre ${accepted ? 'acceptée ✅' : 'refusée ❌'}</h2>
-            </div>
-            <div style="background:#f9f9f9;padding:24px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937">Bonjour ${offer.buyerName || 'Client'},</h3>
-              <p>${accepted
-                ? `🎉 Bonne nouvelle ! Le vendeur a <strong style="color:#00853E">accepté</strong> votre offre.`
-                : `Le vendeur n'a pas pu <strong style="color:#E11B22">accepter</strong> votre offre. Vous pouvez soumettre une nouvelle proposition.`
-              }</p>
-              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:16px 0;background:white;border-radius:8px;overflow:hidden">
-                <tr style="background:#f3f4f6">
-                  <td style="padding:10px 14px;font-size:13px;color:#374151;font-weight:600">Produit</td>
-                  <td style="padding:10px 14px;font-size:13px;color:#374151;font-weight:600;text-align:right">Votre offre</td>
-                </tr>
-                <tr>
-                  <td style="padding:10px 14px;font-size:14px">${offer.productName}</td>
-                  <td style="padding:10px 14px;font-size:16px;font-weight:700;color:${accepted ? '#00853E' : '#E11B22'};text-align:right">${formatPrice(offer.offeredPrice)}</td>
-                </tr>
-              </table>
-              ${accepted ? `<p style="text-align:center;margin-top:24px"><a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Finaliser ma commande</a></p>` : ''}
-              <p style="color:#666;font-size:13px">Vendeur : ${offer.vendorName || '—'}</p>
-            </div>
-          </div>
-        `,
       }
     });
   },
@@ -3361,6 +3171,8 @@ const PayoutRequestModal = ({ currentUser: currentUser2, onClose, addToast }) =>
     };
     DataService.savePayout(req).catch(()=>{});
     DataService.addNotification("admin", { type: "system", title: "\u{1F4B0} Demande de retrait", message: `${currentUser2.name} demande ${formatPrice(netPayout)} via ${method === "mobile" ? provider : "virement bancaire"}` });
+    // Marquer le paiement comme configuré (pour l'onboarding checklist)
+    storage.set(`payout_configured_${currentUser2.id}`, true);
     setLoading(false);
     addToast("Demande de retrait envoy\xE9e ! Traitement sous 3 jours ouvr\xE9s.", "success");
     onClose();
@@ -4820,6 +4632,18 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   const [cardData, setCardData] = useState({ number: "", expiry: "", cvc: "", name: "" });
   const [cardErrors, setCardErrors] = useState({});
   const [errors, setErrors] = useState({});
+  const [createdOrders, setCreatedOrders] = useState([]);
+  // Calcul des groupes vendeur du panier (pour affichage split)
+  const vendorGroups = React.useMemo(() => {
+    const groups = {};
+    cart.forEach(item => {
+      const key = item.vendor || "unknown";
+      if (!groups[key]) groups[key] = { vendorId: key, vendorName: item.vendorName || "Vendeur", items: [] };
+      groups[key].items.push(item);
+    });
+    return Object.values(groups);
+  }, [cart]);
+  const isMultiVendor = vendorGroups.length > 1;
   const [compareList2, setCompareList2] = useState([]);
   const [showCompare, setShowCompare] = useState(false);
   const [showDisputeOrder, setShowDisputeOrder2] = useState(null);
@@ -4905,6 +4729,44 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       }
 
       // ── Étape 2 : Créer les commandes par vendeur ─────────────────────────
+      // Si backend disponible ET panier multi-vendeur → route split dédiée
+      if (NEXUS_CONFIG.apiUrl && isMultiVendor) {
+        try {
+          const splitRes = await DataService.apiFetch('/api/orders/split', {
+            method: 'POST',
+            body: JSON.stringify({
+              cart: cart.map(i => ({ ...i, vendor_id: i.vendor })),
+              customerInfo,
+              shippingCity,
+              paymentMethod,
+              discountAmount: discountEur + pointsDiscountEurReal,
+            })
+          });
+          if (splitRes && splitRes.ok) {
+            const splitData = await splitRes.json();
+            if (splitData.ok && Array.isArray(splitData.orders)) {
+              // Succès backend multi-vendeur
+              if (currentUser2) storage.set(`cart_${currentUser2.id}`, []);
+              else storage.set('guest_cart', []);
+              setLoading(false);
+              setCreatedOrders(splitData.orders);
+              setStep(3);
+              return;
+            }
+          }
+          if (splitRes) {
+            const errData = await splitRes.json().catch(() => ({}));
+            if (errData.code === 'STOCK_INSUFFICIENT') {
+              setLoading(false);
+              addToast(`\u274C Stock insuffisant : ${(errData.items || []).map(i => i.product_name || i.name).join(', ')}`, 'error', 8000);
+              return;
+            }
+          }
+        } catch(e) {
+          console.warn('[split] Fallback local:', e.message);
+        }
+      }
+
       const ordersByVendor = {};
       cart.forEach((item) => {
         if (!ordersByVendor[item.vendor]) {
@@ -5023,11 +4885,33 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         if (currentUser2) DataService.addNotification(currentUser2.id, { type: "order", title: "Commande confirm\xE9e !", message: `Votre commande ${createdOrders[0].id} a \xE9t\xE9 enregistr\xE9e. Suivi : ${createdOrders[0].trackingNumber}` });
       }
       setLoading(false);
+      setCreatedOrders(createdOrders);
       setStep(3);
     })();
   };
   if (step === 3) {
-    return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay" }, /* @__PURE__ */ React.createElement("div", { className: "modal", style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "4rem", marginBottom: "1rem" } }, "\u{1F389}"), /* @__PURE__ */ React.createElement("h2", { className: "modal-title", style: { justifyContent: "center", marginBottom: "1rem" } }, "Commande confirm\xE9e !"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.5rem" } }, paymentMethod === "cod" ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Votre commande a \xE9t\xE9 confirm\xE9e. Vous r\xE9glerez ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)), " en esp\xE8ces \xE0 la livraison.", /* @__PURE__ */ React.createElement("br", null), "Un email de confirmation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, customerInfo.email), ".") : /* @__PURE__ */ React.createElement(React.Fragment, null, "Votre paiement de ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)), " a \xE9t\xE9 trait\xE9 avec succ\xE8s.", /* @__PURE__ */ React.createElement("br", null), "Un email de confirmation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, customerInfo.email), ".")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "12px", padding: "1rem", marginBottom: "1.5rem", fontSize: "0.9rem", textAlign: "left" } }, cart.map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("span", null, item.name, " \xD7", item.quantity), /* @__PURE__ */ React.createElement("strong", null, formatPrice(item.price * item.quantity)))), /* @__PURE__ */ React.createElement("div", { className: "flex-between", style: { borderTop: "1px solid var(--border)", marginTop: "0.5rem", paddingTop: "0.5rem", color: "var(--primary)", fontWeight: 700 } }, /* @__PURE__ */ React.createElement("span", null, "Total pay\xE9"), /* @__PURE__ */ React.createElement("span", null, formatPrice(grandTotalEur)))), /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(0,133,62,0.08)", border: "2px solid var(--primary)", borderRadius: "12px", padding: "1rem", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "0.3rem" } }, "Num\xE9ro de suivi"), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "monospace", fontSize: "1.4rem", fontWeight: 700, color: "var(--primary)", letterSpacing: "0.1rem" } }, storage.get("orders") ? ((_a = storage.getArray("orders").slice(-1)[0]) == null ? void 0 : _a.trackingNumber) || "SN---" : "SN---"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-truck" }), " Livraison pr\xE9vue : ", shippingCity, " \u2014 2 \xE0 5 jours ouvr\xE9s")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block btn-lg", onClick: () => onSuccess() }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), " Voir mes commandes")));
+    return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay" }, /* @__PURE__ */ React.createElement("div", { className: "modal", style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "4rem", marginBottom: "1rem" } }, "\u{1F389}"), /* @__PURE__ */ React.createElement("h2", { className: "modal-title", style: { justifyContent: "center", marginBottom: "1rem" } }, "Commande confirm\xE9e !"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.5rem" } }, paymentMethod === "cod" ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Votre commande a \xE9t\xE9 confirm\xE9e. Vous r\xE9glerez ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)), " en esp\xE8ces \xE0 la livraison.", /* @__PURE__ */ React.createElement("br", null), "Un email de confirmation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, customerInfo.email), ".") : /* @__PURE__ */ React.createElement(React.Fragment, null, "Votre paiement de ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)), " a \xE9t\xE9 trait\xE9 avec succ\xE8s.", /* @__PURE__ */ React.createElement("br", null), "Un email de confirmation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, customerInfo.email), ".")),
+      /* ── Résumé multi-vendeur ──────────────────────────────────────── */
+      createdOrders.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(0,133,62,0.06)", border: "1.5px solid var(--primary)", borderRadius: "12px", padding: "1rem", marginBottom: "1rem", textAlign: "left" } },
+        /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: "var(--primary)", marginBottom: "0.75rem", fontSize: "0.92rem", display: "flex", alignItems: "center", gap: "0.4rem" } },
+          /* @__PURE__ */ React.createElement("i", { className: "fas fa-layer-group" }), " ", createdOrders.length, " commandes cr\xE9\xE9es (1 par vendeur)"
+        ),
+        createdOrders.map((ord, idx) => /* @__PURE__ */ React.createElement("div", { key: ord.id, style: { background: "white", borderRadius: "8px", padding: "0.65rem 0.85rem", marginBottom: idx < createdOrders.length - 1 ? "0.5rem" : 0, fontSize: "0.82rem", border: "1px solid var(--border)" } },
+          /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" } },
+            /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700, color: "var(--primary)" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store" }), " ", ord.vendorName),
+            /* @__PURE__ */ React.createElement("strong", null, formatPrice(ord.total))
+          ),
+          /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", color: "var(--text-secondary)", fontSize: "0.75rem" } },
+            /* @__PURE__ */ React.createElement("code", null, ord.id),
+            /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-tag" }), " ", ord.trackingNumber)
+          )
+        ))
+      ),
+      /* ── Résumé mono-vendeur ou détail produits ───────────────────── */
+      /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "12px", padding: "1rem", marginBottom: "1.5rem", fontSize: "0.9rem", textAlign: "left" } }, cart.map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("span", null, item.name, " \xD7", item.quantity), /* @__PURE__ */ React.createElement("strong", null, formatPrice(item.price * item.quantity)))), /* @__PURE__ */ React.createElement("div", { className: "flex-between", style: { borderTop: "1px solid var(--border)", marginTop: "0.5rem", paddingTop: "0.5rem", color: "var(--primary)", fontWeight: 700 } }, /* @__PURE__ */ React.createElement("span", null, "Total pay\xE9"), /* @__PURE__ */ React.createElement("span", null, formatPrice(grandTotalEur)))), /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(0,133,62,0.08)", border: "2px solid var(--primary)", borderRadius: "12px", padding: "1rem", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "0.3rem" } }, createdOrders.length > 1 ? "Numéros de suivi" : "Num\xE9ro de suivi"), createdOrders.length > 1
+        ? createdOrders.map(ord => /* @__PURE__ */ React.createElement("div", { key: ord.id, style: { fontFamily: "monospace", fontSize: "1rem", fontWeight: 700, color: "var(--primary)", letterSpacing: "0.05rem", marginBottom: "0.15rem" } }, ord.trackingNumber, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.7rem", color: "var(--text-secondary)", fontFamily: "Inter,sans-serif", marginLeft: "0.5rem" } }, ord.vendorName)))
+        : /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "monospace", fontSize: "1.4rem", fontWeight: 700, color: "var(--primary)", letterSpacing: "0.1rem" } }, storage.get("orders") ? ((_a = storage.getArray("orders").slice(-1)[0]) == null ? void 0 : _a.trackingNumber) || "SN---" : "SN---"),
+      /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-truck" }), " Livraison pr\xE9vue : ", shippingCity, " \u2014 2 \xE0 5 jours ouvr\xE9s")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block btn-lg", onClick: () => onSuccess() }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), " Voir mes commandes")));
   }
   return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onCancel }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "checkout-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "checkout-title" }, step === 1 ? "\u{1F4E6} Livraison" : "\u{1F4B3} Paiement"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onCancel, "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "checkout-steps", "aria-label": "\xC9tapes de commande" }, /* @__PURE__ */ React.createElement("div", { className: `checkout-step ${step >= 1 ? "done" : ""} ${step === 1 ? "active" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "checkout-step-num" }, step > 1 ? /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }) : "1"), "Livraison"), /* @__PURE__ */ React.createElement("div", { className: "checkout-step-line" }), /* @__PURE__ */ React.createElement("div", { className: `checkout-step ${step === 2 ? "active" : ""} ${step > 2 ? "done" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "checkout-step-num" }, "2"), "Paiement")), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 300px", gap: "2rem" } }, /* @__PURE__ */ React.createElement("div", null, step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-name" }, "Nom complet ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("input", { id: "checkout-name", type: "text", className: `form-input ${errors.name ? "error" : ""}`, value: customerInfo.name, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { name: e.target.value })), placeholder: "Fatou Diop", autoComplete: "name" }), errors.name && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.name)), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-email" }, "Email ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("input", { id: "checkout-email", type: "email", className: `form-input ${errors.email ? "error" : ""}`, value: customerInfo.email, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { email: e.target.value })), placeholder: "fatou@email.sn", autoComplete: "email" }), errors.email && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.email))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-address" }, "Adresse ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("input", { id: "checkout-address", type: "text", className: `form-input ${errors.address ? "error" : ""}`, value: customerInfo.address, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { address: e.target.value })), placeholder: "12 Rue de la Paix", autoComplete: "street-address" }), errors.address && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.address)), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-city" }, "Ville ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("select", { id: "checkout-city", className: `form-select ${errors.city ? "error" : ""}`, value: shippingCity, onChange: (e) => setShippingCity(e.target.value) }, SENEGAL_CITIES.map((city) => /* @__PURE__ */ React.createElement("option", { key: city, value: city }, city))), errors.city && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.city)), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-postal" }, "Code postal"), /* @__PURE__ */ React.createElement("input", { id: "checkout-postal", type: "text", className: `form-input ${errors.postalCode ? "error" : ""}`, value: customerInfo.postalCode, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { postalCode: e.target.value })), placeholder: "BP 12345", autoComplete: "postal-code" }), errors.postalCode && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.postalCode))), /* @__PURE__ */ React.createElement(
     PhoneInput,
@@ -5066,7 +4950,21 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       "aria-busy": loading
     },
     loading ? "Traitement..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-lock", "aria-hidden": "true" }), " Payer ", formatPrice(grandTotalEur))
-  ))), paymentMethod === "card" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(1), style: { marginTop: "0.5rem", width: "100%" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left" }), " Retour \xE0 la livraison"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "14px", padding: "1.25rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" } }, "R\xE9capitulatif"), cart.map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, style: { display: "flex", gap: "0.75rem", marginBottom: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "48px", height: "48px", borderRadius: "8px", overflow: "hidden", flexShrink: 0, background: "var(--border)" } }, /* @__PURE__ */ React.createElement("img", { src: getProductImage(item), alt: item.name, style: { width: "100%", height: "100%", objectFit: "cover" }, onError: (e) => e.target.style.display = "none" })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, item.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, "\xD7", item.quantity)), /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.88rem", color: "var(--primary)" } }, formatPrice(item.price * item.quantity)))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid var(--border)", paddingTop: "0.75rem", marginTop: "0.75rem" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("span", null, "Sous-total"), /* @__PURE__ */ React.createElement("span", null, formatPrice(cartTotalEur))), discountEur > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "var(--success)", fontWeight: 600 } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-tag" }), ' Code "', appliedCoupon.code, '" (-', appliedCoupon.discount, "%)"), /* @__PURE__ */ React.createElement("span", null, "-", formatPrice(discountEur))), availablePoints >= POINTS_REDEEM && /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(255,215,0,0.12)", border: "1.5px solid rgba(255,215,0,0.5)", borderRadius: "10px", padding: "0.75rem", marginBottom: "0.75rem" } },
+  ))), paymentMethod === "card" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(1), style: { marginTop: "0.5rem", width: "100%" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left" }), " Retour \xE0 la livraison"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "14px", padding: "1.25rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" } }, "R\xE9capitulatif"),
+      /* ── Bannière multi-vendeur ── */
+      isMultiVendor && /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(253,239,66,0.18)", border: "1.5px solid rgba(253,239,66,0.7)", borderRadius: "10px", padding: "0.65rem 0.85rem", marginBottom: "0.85rem", fontSize: "0.78rem", display: "flex", gap: "0.5rem", alignItems: "flex-start" } },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-layer-group", style: { color: "var(--primary)", marginTop: "0.1rem", flexShrink: 0 } }),
+        /* @__PURE__ */ React.createElement("span", null,
+          /* @__PURE__ */ React.createElement("strong", null, vendorGroups.length, " vendeurs"), " dans votre panier — ", vendorGroups.length, " commandes seront cr\xE9\xE9es automatiquement lors du paiement.",
+          /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.35rem", display: "flex", flexDirection: "column", gap: "0.2rem" } },
+            vendorGroups.map(vg => /* @__PURE__ */ React.createElement("div", { key: vg.vendorId, style: { display: "flex", justifyContent: "space-between" } },
+              /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store", style: { fontSize: "0.7rem" } }), " ", vg.vendorName),
+              /* @__PURE__ */ React.createElement("strong", null, formatPrice(vg.items.reduce((s,i) => s+i.price*i.quantity, 0)))
+            ))
+          )
+        )
+      ),
+      cart.map((item) => /* @__PURE__ */ React.createElement("div", { key: item.id, style: { display: "flex", gap: "0.75rem", marginBottom: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "48px", height: "48px", borderRadius: "8px", overflow: "hidden", flexShrink: 0, background: "var(--border)" } }, /* @__PURE__ */ React.createElement("img", { src: getProductImage(item), alt: item.name, style: { width: "100%", height: "100%", objectFit: "cover" }, onError: (e) => e.target.style.display = "none" })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, item.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, "\xD7", item.quantity)), /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.88rem", color: "var(--primary)" } }, formatPrice(item.price * item.quantity)))), /* @__PURE__ */ React.createElement("div", { style: { borderTop: "2px solid var(--border)", paddingTop: "0.75rem", marginTop: "0.75rem" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("span", null, "Sous-total"), /* @__PURE__ */ React.createElement("span", null, formatPrice(cartTotalEur))), discountEur > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "var(--success)", fontWeight: 600 } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-tag" }), ' Code "', appliedCoupon.code, '" (-', appliedCoupon.discount, "%)"), /* @__PURE__ */ React.createElement("span", null, "-", formatPrice(discountEur))), availablePoints >= POINTS_REDEEM && /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(255,215,0,0.12)", border: "1.5px solid rgba(255,215,0,0.5)", borderRadius: "10px", padding: "0.75rem", marginBottom: "0.75rem" } },
   /* @__PURE__ */ React.createElement("div", { className: "flex-between", style: { marginBottom: "0.4rem" } },
     /* @__PURE__ */ React.createElement("label", { style: { fontWeight: 600, fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.4rem" } },
       /* @__PURE__ */ React.createElement("i", { className: "fas fa-star", style: { color: "#FFD700" } }),
@@ -5381,15 +5279,6 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           clearTimeout(tid);
           const _vendorJson = await _vendorRes.json();
           if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
-          // [FIX 9] Sauvegarder le token si le backend en retourne un (cohérence avec login/buyer/B2B)
-          if (_vendorJson.token) {
-            const expTs = String(Date.now() + (_vendorJson.expiresIn || 604800) * 1000);
-            sessionStorage.setItem("nexus_jwt",     _vendorJson.token);
-            sessionStorage.setItem("nexus_jwt_exp", expTs);
-            localStorage.setItem("nexus_jwt",       _vendorJson.token);
-            localStorage.setItem("nexus_jwt_exp",   expTs);
-            DataService._token = _vendorJson.token;
-          }
         } else if (DataService._sb) {
           // [FALLBACK] Supabase direct uniquement si pas de backend configuré
           const { error: pendingErr } = await DataService._sb.from("pending_vendors").insert(pendingEntry);
@@ -5429,13 +5318,10 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           });
           const json = await res.json();
           if (!res.ok) throw new Error(json.error || "Erreur inscription B2B");
-          // [FIX 2b] Même double-sauvegarde qu'au login (sessionStorage + localStorage)
+          // Stocker le token JWT
           if (json.token) {
-            const expTs = String(Date.now() + (json.expiresIn || 604800) * 1000);
-            sessionStorage.setItem("nexus_jwt",     json.token);
-            sessionStorage.setItem("nexus_jwt_exp", expTs);
-            localStorage.setItem("nexus_jwt",       json.token);
-            localStorage.setItem("nexus_jwt_exp",   expTs);
+            sessionStorage.setItem("nexus_jwt", json.token);
+            sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 604800) * 1000));
           }
           newUser = json.user;
         } else {
@@ -7517,7 +7403,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     // Backend
     if (NEXUS_CONFIG.apiUrl) {
       try {
-        const token = DataService._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
+        const token = sessionStorage.getItem("nexus_jwt");
         await fetch(`${NEXUS_CONFIG.apiUrl}/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }
         });
@@ -8873,6 +8759,159 @@ const VendorChatInline = ({ currentUser: currentUser2, addToast }) => {
   );
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPOSANT : Onboarding guidé vendeur post-approbation
+// Affiché sur le dashboard vide après validation admin, jusqu'à complétion.
+// ═══════════════════════════════════════════════════════════════════════════
+const VendorOnboardingChecklist = ({ currentUser, products, onNavigate, addToast }) => {
+  const storageKey = `onboarding_dismissed_${currentUser.id}`;
+  const [dismissed, setDismissed] = React.useState(() => !!storage.get(storageKey));
+
+  // Calcul de l'état de chaque étape
+  const hasShopPhoto = !!(currentUser.shopImage || currentUser.avatar || currentUser.shopPhoto);
+  const hasProduct   = products.length > 0;
+  const hasPayout    = !!(currentUser.payoutMethod || storage.get(`payout_configured_${currentUser.id}`));
+  const allDone = hasShopPhoto && hasProduct && hasPayout;
+
+  if (dismissed && !allDone) return null; // hidden only if explicitly closed AND not done
+  if (allDone && dismissed) return null;  // all done + dismissed → hidden
+
+  const steps = [
+    {
+      id: "photo",
+      icon: "camera",
+      label: "Photo de boutique",
+      desc: "Ajoutez une photo ou logo pour rassurer vos clients.",
+      done: hasShopPhoto,
+      cta: "Configurer",
+      onClick: () => onNavigate("profile"),
+    },
+    {
+      id: "product",
+      icon: "box",
+      label: "Premier produit",
+      desc: "Publiez votre premier produit pour commencer à vendre.",
+      done: hasProduct,
+      cta: "Ajouter un produit",
+      onClick: () => onNavigate("products"),
+    },
+    {
+      id: "payout",
+      icon: "money-bill-wave",
+      label: "Configuration paiement",
+      desc: "Renseignez votre compte Orange Money, Wave ou bancaire pour recevoir vos revenus.",
+      done: hasPayout,
+      cta: "Configurer",
+      onClick: () => onNavigate("payout"),
+    },
+  ];
+
+  const completedCount = steps.filter(s => s.done).length;
+  const progressPct = Math.round((completedCount / steps.length) * 100);
+
+  const handleDismiss = () => {
+    storage.set(storageKey, true);
+    setDismissed(true);
+  };
+
+  return /* @__PURE__ */ React.createElement("div", {
+    style: {
+      background: "linear-gradient(135deg, rgba(0,133,62,0.04) 0%, rgba(253,239,66,0.08) 100%)",
+      border: "2px solid rgba(0,133,62,0.18)",
+      borderRadius: "18px",
+      padding: "1.5rem",
+      marginBottom: "2rem",
+      position: "relative",
+    }
+  },
+    // Bouton fermer
+    !allDone && /* @__PURE__ */ React.createElement("button", {
+      onClick: handleDismiss,
+      style: { position: "absolute", top: "1rem", right: "1rem", background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: "1.1rem" },
+      title: "Masquer (vous pourrez y revenir depuis votre profil)"
+    }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" })),
+
+    // En-tête
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1.25rem", flexWrap: "wrap" } },
+      /* @__PURE__ */ React.createElement("div", { style: {
+        width: "48px", height: "48px", borderRadius: "50%",
+        background: "linear-gradient(135deg, var(--primary), var(--primary-light))",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: "white", fontSize: "1.3rem", flexShrink: 0
+      }}, /* @__PURE__ */ React.createElement("i", { className: "fas fa-rocket" })),
+      /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } },
+        /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 800, fontSize: "1.15rem", color: "var(--primary)", fontFamily: "'Montserrat', sans-serif" } },
+          allDone ? "🎉 Boutique prête !" : "Configurez votre boutique"
+        ),
+        /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.15rem" } },
+          allDone
+            ? "Toutes les étapes sont complétées — vous êtes prêt à vendre !"
+            : `${completedCount} / ${steps.length} étapes complétées · Quelques minutes suffisent`
+        )
+      ),
+      /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", flexShrink: 0 } },
+        /* @__PURE__ */ React.createElement("div", { style: { fontSize: "1.6rem", fontWeight: 800, color: progressPct === 100 ? "var(--success)" : "var(--primary)" } }, progressPct, "%"),
+        /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.7rem", color: "var(--text-secondary)" } }, "complété")
+      )
+    ),
+
+    // Barre de progression
+    /* @__PURE__ */ React.createElement("div", { style: { background: "var(--border)", borderRadius: "99px", height: "8px", marginBottom: "1.5rem", overflow: "hidden" } },
+      /* @__PURE__ */ React.createElement("div", { style: {
+        height: "100%",
+        width: progressPct + "%",
+        background: progressPct === 100
+          ? "linear-gradient(90deg, var(--success), #33A85A)"
+          : "linear-gradient(90deg, var(--primary), var(--accent))",
+        borderRadius: "99px",
+        transition: "width 0.5s ease"
+      }})
+    ),
+
+    // Liste des étapes
+    /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.85rem" } },
+      steps.map(step => /* @__PURE__ */ React.createElement("div", {
+        key: step.id,
+        style: {
+          background: step.done ? "rgba(0,133,62,0.06)" : "white",
+          border: `1.5px solid ${step.done ? "var(--success)" : "var(--border)"}`,
+          borderRadius: "12px",
+          padding: "1rem",
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.4rem",
+          transition: "all 0.2s",
+        }
+      },
+        /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.65rem" } },
+          /* @__PURE__ */ React.createElement("div", { style: {
+            width: "34px", height: "34px", borderRadius: "50%", flexShrink: 0,
+            background: step.done ? "var(--success)" : "var(--bg-dark)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            color: step.done ? "white" : "var(--text-secondary)", fontSize: "0.9rem"
+          }},
+            /* @__PURE__ */ React.createElement("i", { className: `fas fa-${step.done ? "check" : step.icon}` })
+          ),
+          /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700, fontSize: "0.88rem", color: step.done ? "var(--success)" : "var(--text-primary)" } }, step.label)
+        ),
+        /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: "1.45", marginLeft: "3rem" } }, step.desc),
+        !step.done && /* @__PURE__ */ React.createElement("button", {
+          className: "btn btn-primary btn-sm",
+          style: { alignSelf: "flex-start", marginLeft: "3rem", fontSize: "0.78rem" },
+          onClick: step.onClick
+        }, step.cta, " ", /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" }))
+      ))
+    ),
+
+    // Bouton "Tout est bon" si complet
+    allDone && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginTop: "1.25rem" } },
+      /* @__PURE__ */ React.createElement("button", { className: "btn btn-success", onClick: handleDismiss },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" }), " Masquer et commencer à vendre"
+      )
+    )
+  );
+};
+
 const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar }) => {
   const [view, setView] = useState("overview");
   const [products, setProducts] = useState([]);
@@ -9097,7 +9136,18 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))));
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu vendeur" }, /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "overview" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "stats-grid" }, [
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu vendeur" }, /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "overview" && /* @__PURE__ */ React.createElement(React.Fragment, null,
+    /* ── Onboarding checklist (visible si vendeur nouveau ou incomplet) ── */
+    /* @__PURE__ */ React.createElement(VendorOnboardingChecklist, {
+      currentUser: currentUser2,
+      products,
+      onNavigate: (dest) => {
+        if (dest === "payout") { setShowPayoutModal(true); }
+        else { setView(dest); }
+      },
+      addToast
+    }),
+    /* @__PURE__ */ React.createElement("div", { className: "stats-grid" }, [
     { icon: "euro-sign", label: "Ventes Totales", value: formatPrice(stats.totalSales), trend: "+18.2%" },
     { icon: "shopping-cart", label: "Commandes", value: stats.totalOrders, trend: "+12" },
     { icon: "box", label: "Produits Actifs", value: stats.totalProducts },
