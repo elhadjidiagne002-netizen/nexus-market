@@ -1054,14 +1054,22 @@ const NEXUS_CONFIG = {
   },
   emailjs: {
     publicKey: "WSBntSTWdh5d9usZC",
-    // User ID EmailJS
     serviceId: "service_84yfkgf",
-    // Service ID EmailJS
-    orderTemplateId: "template_t075pts",
-    resetTemplateId: "template_rmydvxg",
-    offerTemplateId: "template_offer_nx",        // Template offres/négociations — crée-le sur EmailJS avec: {{to_email}}, {{buyer_name}}, {{product_name}}, {{offer_price}}, {{message}}
-    msgTemplateId: "template_msg_nx",             // Template messages inter-utilisateurs — champs: {{to_email}}, {{from_name}}, {{subject}}, {{message_body}}
-    vendorAdminTemplateId: "template_vendor_nx"   // Template notifications admin vendeur — champs: {{to_email}}, {{vendor_name}}, {{shop_name}}, {{action}}, {{admin_message}}
+    // ── Stratégie 1 template universel ──────────────────────────────────────
+    // Plan gratuit EmailJS = templates limités. Solution : 1 seul template dont
+    // le corps est {{{html_body}}} et le sujet {{subject}}.
+    // Paramétrage sur emailjs.com :
+    //   To email  : {{to_email}}
+    //   Subject   : {{subject}}
+    //   Body HTML : {{{html_body}}}   <- triple accolades = HTML non échappé
+    //   Reply-to  : {{reply_to}}
+    universalTemplateId: "template_t075pts",
+    // Alias rétrocompatibles — tous pointent vers l'universel
+    get orderTemplateId()       { return this.universalTemplateId; },
+    get resetTemplateId()       { return this.universalTemplateId; },
+    get offerTemplateId()       { return this.universalTemplateId; },
+    get msgTemplateId()         { return this.universalTemplateId; },
+    get vendorAdminTemplateId() { return this.universalTemplateId; },
   },
   imgbb: { apiKey: "" },  // Clé imgBB (gratuit — https://api.imgbb.com) pour hébergement images sans Supabase
   analytics: {
@@ -1242,18 +1250,27 @@ const initSupabase = () => {
 };
 const DataService = {
   _sb: null,
-  _token: null, // JWT backend (feature 7)
+  _token: null,
   init() {
     this._sb = isSupabaseConfigured() ? initSupabase() : null;
-    // Restaurer le JWT depuis sessionStorage
-    const storedJwt = sessionStorage.getItem("nexus_jwt");
-    const storedExp = sessionStorage.getItem("nexus_jwt_exp");
+    // [FIX] Restaurer le JWT depuis sessionStorage, avec fallback localStorage.
+    // sessionStorage est vidé à chaque rechargement — sans ce fallback _token
+    // reste null et tous les appels apiFetch() sont envoyés sans Authorization → 401.
+    let storedJwt = sessionStorage.getItem("nexus_jwt");
+    let storedExp = sessionStorage.getItem("nexus_jwt_exp");
+    if (!storedJwt || !storedExp) {
+      storedJwt = localStorage.getItem("nexus_jwt");
+      storedExp = localStorage.getItem("nexus_jwt_exp");
+      if (storedJwt && storedExp && Date.now() < Number(storedExp)) {
+        sessionStorage.setItem("nexus_jwt",     storedJwt);
+        sessionStorage.setItem("nexus_jwt_exp", storedExp);
+      } else { storedJwt = null; }
+    }
     if (storedJwt && storedExp && Date.now() < Number(storedExp)) {
       this._token = storedJwt;
     } else if (storedJwt) {
-      // Token expiré — nettoyer
-      sessionStorage.removeItem("nexus_jwt");
-      sessionStorage.removeItem("nexus_jwt_exp");
+      sessionStorage.removeItem("nexus_jwt");  sessionStorage.removeItem("nexus_jwt_exp");
+      localStorage.removeItem("nexus_jwt");    localStorage.removeItem("nexus_jwt_exp");
     }
   },
   async getProducts({ page = 1, limit = 50, category = null, search = null } = {}) {
@@ -1326,16 +1343,19 @@ const DataService = {
       }
     }
 
-    // CORRECTION : On bloque TOTALEMENT la requête si on n'a ni buyer ni vendor
+    // [FIX] Ne tenter le fallback Supabase que si une session active existe (évite le 400)
     if (this._sb && (buyer || vendor)) {
-      let q = this._sb.from("orders").select("*", { count: "exact" });
-      if (buyer) q = q.eq("buyer_id", buyer);
-      if (vendor) q = q.eq("vendor_id", vendor);
-      if (status) q = q.eq("status", status);
-
-      q = q.order("created_at", { ascending: false }).range((page-1)*limit, page*limit-1);
-      const { data, error } = await q;
-      if (!error) return data;
+      let sbSession = null;
+      try { ({ data: { session: sbSession } } = await this._sb.auth.getSession()); } catch (_) {}
+      if (sbSession) {
+        let q = this._sb.from("orders").select("*", { count: "exact" });
+        if (buyer)  q = q.eq("buyer_id",  buyer);
+        if (vendor) q = q.eq("vendor_id", vendor);
+        if (status) q = q.eq("status", status);
+        q = q.order("created_at", { ascending: false }).range((page-1)*limit, page*limit-1);
+        const { data, error } = await q;
+        if (!error) return data;
+      }
     }
 
     // Fallback localStorage (exécuté si pas de _sb OU si pas de buyer/vendor)
@@ -1407,7 +1427,23 @@ const DataService = {
           throw err;
         }
         if (!res.ok) throw new Error(json.error || json.message || 'Erreur commande');
-        return json;
+        // [FIX] Le backend retourne snake_case (buyer_email, tracking_number…)
+        // mais sendOrderConfirmation attend camelCase. Fusion des deux formes.
+        return {
+          ...orderPayload,
+          ...json,
+          id:             json.id              || orderPayload.id,
+          buyerName:      json.buyer_name      || orderPayload.buyerName,
+          buyerEmail:     json.buyer_email     || orderPayload.buyerEmail,
+          buyerAddress:   json.buyer_address   || orderPayload.buyerAddress,
+          vendorName:     json.vendor_name     || orderPayload.vendorName,
+          shippingCity:   json.shipping_city   || orderPayload.shippingCity,
+          trackingNumber: json.tracking_number || orderPayload.trackingNumber,
+          date:           json.created_at      || orderPayload.date,
+          total:          json.total           != null ? json.total : orderPayload.total,
+          products:       json.products        || orderPayload.products,
+          earnedPoints:   json.earnedPoints    || 0,
+        };
       }
       // Backend injoignable → fallback Supabase/localStorage
     }
@@ -1540,10 +1576,15 @@ const DataService = {
       if (res && res.ok) { const json = await res.json(); return json; }
     }
     if (this._sb) {
-      const { data, error } = await this._sb.from("notifications")
-        .select("*").eq("user_id", userId)
-        .order("created_at", { ascending: false }).limit(30);
-      if (!error && data) return data;
+      // [FIX] Ne passer par Supabase direct que si session active (évite le 400/401)
+      let sbSession = null;
+      try { ({ data: { session: sbSession } } = await this._sb.auth.getSession()); } catch (_) {}
+      if (sbSession) {
+        const { data, error } = await this._sb.from("notifications")
+          .select("*").eq("user_id", userId)
+          .order("created_at", { ascending: false }).limit(30);
+        if (!error && data) return data;
+      }
     }
     const all = storage.get("notifications") || {};
     return (all[userId] || []).slice(0, 30);
@@ -1615,6 +1656,13 @@ const DataService = {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || json.message || "Erreur inscription");
       if (json.emailConfirmPending) return { __emailConfirmPending: true, email };
+      // [FIX] Sauvegarder le token si retourné (évite 401 sur 1ère action post-inscription)
+      if (json.token) {
+        const expTs = String(Date.now() + (json.expiresIn || 604800) * 1000);
+        sessionStorage.setItem("nexus_jwt", json.token); sessionStorage.setItem("nexus_jwt_exp", expTs);
+        localStorage.setItem("nexus_jwt",   json.token); localStorage.setItem("nexus_jwt_exp",   expTs);
+        this._token = json.token;
+      }
       return json.user || json;
     }
     if (this._sb) {
@@ -1694,8 +1742,10 @@ const DataService = {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || json.message || "Email ou mot de passe incorrect");
         if (json.token) {
-          sessionStorage.setItem("nexus_jwt", json.token);
-          sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 28800) * 1000));
+          // [FIX] Double-save : sessionStorage (onglet) + localStorage (rechargements)
+          const expTs = String(Date.now() + (json.expiresIn || 28800) * 1000);
+          sessionStorage.setItem("nexus_jwt", json.token); sessionStorage.setItem("nexus_jwt_exp", expTs);
+          localStorage.setItem("nexus_jwt",   json.token); localStorage.setItem("nexus_jwt_exp",   expTs);
           this._token = json.token;
         }
         // [FIX 3] Tentative de connexion Supabase pour les appels directs (notifications, etc.)
@@ -1780,27 +1830,32 @@ const DataService = {
       setTimeout(() => { this._voluntarySignOut = false; }, 500);
     }
     if (NEXUS_CONFIG.apiUrl) {
-      const token = sessionStorage.getItem("nexus_jwt");
+      const token = this._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
       if (token) {
         const ctrl = new AbortController();
-        const tid = setTimeout(() => ctrl.abort(), 4000); // 4s max
+        const tid = setTimeout(() => ctrl.abort(), 4000);
         await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/logout`, {
           method: "POST", headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal
         }).catch(()=>{}).finally(() => clearTimeout(tid));
       }
-      sessionStorage.removeItem("nexus_jwt");
-      sessionStorage.removeItem("nexus_jwt_exp");
+      // [FIX] Nettoyer sessionStorage ET localStorage
+      sessionStorage.removeItem("nexus_jwt"); sessionStorage.removeItem("nexus_jwt_exp");
+      localStorage.removeItem("nexus_jwt");   localStorage.removeItem("nexus_jwt_exp");
+      this._token = null;
     }
   },
   // ── Session expiry check ─────────────────────────────────────────────────
   isSessionExpired() {
-    const exp = sessionStorage.getItem("nexus_jwt_exp");
+    // [FIX] Vérifier sessionStorage en priorité, puis localStorage en fallback
+    const exp = sessionStorage.getItem("nexus_jwt_exp") || localStorage.getItem("nexus_jwt_exp");
     if (!exp) return false;
     return Date.now() > parseInt(exp, 10);
   },
   saveSession(token, expiresInSeconds) {
-    sessionStorage.setItem("nexus_jwt", token);
-    sessionStorage.setItem("nexus_jwt_exp", Date.now() + expiresInSeconds * 1000);
+    // [FIX] Double-save sessionStorage + localStorage
+    const expTs = String(Date.now() + expiresInSeconds * 1000);
+    sessionStorage.setItem("nexus_jwt", token); sessionStorage.setItem("nexus_jwt_exp", expTs);
+    localStorage.setItem("nexus_jwt",   token); localStorage.setItem("nexus_jwt_exp",   expTs);
   },
   // Wrapper fetch → auto-logout on 401 + PERF FIX: timeout 4s pour éviter les cold starts Render
   async apiFetch(path, options = {}) {
@@ -1809,8 +1864,19 @@ const DataService = {
       window.dispatchEvent(new CustomEvent("nexus:session-expired"));
       throw new Error("SESSION_EXPIRED");
     }
-    // [FIX 1] Utiliser le JWT backend si disponible, sinon le token Supabase en fallback
+    // [FIX] Récupérer JWT depuis sessionStorage, avec fallback localStorage.
+    // sessionStorage est vidé à chaque rechargement → 401 en cascade sans ce fallback.
     let token = sessionStorage.getItem("nexus_jwt");
+    if (!token) {
+      const lsToken = localStorage.getItem("nexus_jwt");
+      const lsExp   = localStorage.getItem("nexus_jwt_exp");
+      if (lsToken && lsExp && Date.now() < Number(lsExp)) {
+        token = lsToken;
+        sessionStorage.setItem("nexus_jwt", lsToken);
+        sessionStorage.setItem("nexus_jwt_exp", lsExp);
+        this._token = lsToken;
+      }
+    }
     if (!token && this._sb) {
       try {
         // PERF FIX: cache Supabase token 30s pour éviter getSession() sur chaque appel
@@ -1871,10 +1937,20 @@ const DataService = {
     }
   },
   async restoreSession() {
-    // [FIX] Essayer d'abord le backend /api/auth/me (token JWT valide)
+    // [FIX] Récupérer JWT depuis sessionStorage OU localStorage.
+    // sessionStorage est réinitialisé à chaque rechargement ; localStorage persiste.
     if (NEXUS_CONFIG.apiUrl) {
-      const jwt = sessionStorage.getItem("nexus_jwt");
-      const exp = sessionStorage.getItem("nexus_jwt_exp");
+      let jwt = sessionStorage.getItem("nexus_jwt");
+      let exp = sessionStorage.getItem("nexus_jwt_exp");
+      if (!jwt || !exp) {
+        jwt = localStorage.getItem("nexus_jwt");
+        exp = localStorage.getItem("nexus_jwt_exp");
+        if (jwt && exp && Date.now() < Number(exp)) {
+          sessionStorage.setItem("nexus_jwt", jwt);
+          sessionStorage.setItem("nexus_jwt_exp", exp);
+          this._token = jwt;
+        }
+      }
       if (jwt && exp && Date.now() < Number(exp)) {
         const res = await this.apiFetch("/api/auth/me").catch(() => null);
         if (res && res.ok) {
@@ -2501,70 +2577,71 @@ const EmailService = {
     const stored = storage.getArray("email_logs");
     stored.unshift(entry);
     storage.set("email_logs", stored.slice(0, 100));
-    // BUG FIX: utiliser isEmailjsConfigured() dynamique + vérifier _initialized
-    if (isEmailjsConfigured() && this._initialized && ejsTemplateId) {
+
+    // [FIX] Stratégie template universel — 1 seul template EmailJS suffit.
+    // ejsTemplateId est ignoré : on utilise toujours universalTemplateId.
+    // Le HTML complet est dans html_body (triple accolades dans le template).
+    const universalTpl = NEXUS_CONFIG.emailjs.universalTemplateId;
+
+    if (isEmailjsConfigured() && this._initialized && universalTpl) {
       try {
-        // BUG FIX: to_email doit être passé clairement ; subject ne doit pas écraser
-        // une variable éponyme dans le template — on sépare les deux
         const templateParams = {
-          to_email: to,
-          reply_to: to,
-          subject: subject,
-          ...variables
+          to_email:  to,
+          reply_to:  to,
+          subject:   subject,
+          html_body: variables?.html_body || (() => {
+            const rows = Object.entries(variables || {})
+              .filter(([k]) => !['html_body','site_url','reply_to'].includes(k))
+              .map(([k, v]) => `<tr><td style="padding:6px 12px;color:#6b7280;font-size:13px">${k}</td><td style="padding:6px 12px;font-size:13px">${v}</td></tr>`)
+              .join('');
+            return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+              <div style="background:#00853E;padding:20px;text-align:center"><h2 style="color:white;margin:0">NEXUS Market Sénégal</h2></div>
+              <div style="padding:24px;background:#f9f9f9"><p style="font-weight:600;font-size:16px">${subject}</p>
+              <table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;margin-top:16px">${rows}</table></div>
+              <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div></div>`;
+          })(),
+          ...variables,
         };
-        await window.emailjs.send(
-          NEXUS_CONFIG.emailjs.serviceId,
-          ejsTemplateId,
-          templateParams
-        );
+        await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId, universalTpl, templateParams);
         console.log("[EmailJS] \u2705 Email envoyé à", to);
         return true;
       } catch (e) {
-        // BUG FIX: afficher un message clair selon le code d'erreur EmailJS
         const status = e && (e.status || (e.text && JSON.parse(e.text || '{}').status));
         if (status === 422 || (e && e.text && e.text.includes('422'))) {
-          console.error("[EmailJS] Erreur 422 — Vérifiez : (1) Service ID correct dans EmailJS dashboard, (2) Template ID correct, (3) Le champ \"To Email\" du template contient {{to_email}}, (4) Le service email (Gmail, SMTP…) est bien connecté.");
-        } else {
-          console.warn("[EmailJS] Erreur envoi:", e);
-        }
+          console.error("[EmailJS] Erreur 422 — Vérifiez : (1) Service ID correct, (2) Template ID correct, (3) \"To Email\" = {{to_email}}, (4) Body HTML = {{{html_body}}} (triple accolades), (5) Service email connecté.");
+        } else { console.warn("[EmailJS] Erreur envoi:", e); }
       }
     }
     console.log("[EmailService] Simulation \u2014 email à", to, ":", subject);
-    // Fallback backend : tente d'envoyer via Gmail OAuth2 du serveur si disponible
-    if (NEXUS_CONFIG.apiUrl && storage.get('nexus_token')) {
+    // Fallback backend
+    const _fbToken = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
+    if (NEXUS_CONFIG.apiUrl && _fbToken) {
       try {
         const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/email/send`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${storage.get('nexus_token')}`
-          },
-          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>`, text })
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_fbToken}` },
+          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>` })
         });
-        if (resp.ok) {
-          const r = await resp.json();
-          if (r.ok) {
-            console.log("[EmailService] \u2705 Email envoyé via Gmail backend à", to);
-            return true;
-          }
-        }
-      } catch(e) {
-        console.warn("[EmailService] Fallback Resend backend échoué:", e.message);
-      }
+        if (resp.ok) { const r = await resp.json(); if (r.ok) { console.log("[EmailService] \u2705 Email envoyé via backend à", to); return true; } }
+      } catch(e) { console.warn("[EmailService] Fallback backend échoué:", e.message); }
     }
     return true;
   },
   sendOrderConfirmation(order, items) {
-    const safeItems = items || order.products || [];
+    // [FIX] Normalisation défensive camelCase || snake_case (réponse backend)
+    const buyerEmail   = order.buyerEmail    || order.buyer_email    || '';
+    const buyerName    = order.buyerName     || order.buyer_name     || '—';
+    const buyerAddress = order.buyerAddress  || order.buyer_address  || '—';
+    const vendorName   = order.vendorName    || order.vendor_name    || '—';
+    const trackingNum  = order.trackingNumber|| order.tracking_number|| '—';
+    const shippingCity = order.shippingCity  || order.shipping_city  || '';
+    const orderDate    = order.date          || order.created_at     || new Date().toISOString();
+    const safeItems    = items || order.products || [];
 
-    // [FIX] item_list — était joint par '\n' (invisible en HTML email).
-    // Remplacé par des lignes séparées par '<br>' pour les templates texte,
-    // et un tableau HTML complet (item_list_html) pour les templates riches.
-    const itemList = safeItems
-      .map((i) => `${i.name} ×${i.quantity || 1} — ${formatPrice((i.price || 0) * (i.quantity || 1))}`)
-      .join('<br>');
+    const itemList = safeItems.map((i) =>
+      `${i.name} ×${i.quantity || 1} — ${formatPrice((i.price || 0) * (i.quantity || 1))}`
+    ).join('<br>');
 
-    // Tableau HTML compatible tous clients email (pas de flex/grid)
     const itemRows = safeItems.map((i) =>
       `<tr style="border-bottom:1px solid #e5e7eb">` +
         `<td style="padding:8px 4px;font-size:14px">${i.name} <span style="color:#6b7280">×${i.quantity || 1}</span></td>` +
@@ -2576,178 +2653,263 @@ const EmailService = {
         `<thead><tr style="background:#f3f4f6">` +
           `<th style="padding:8px 4px;text-align:left;font-size:13px;color:#374151">Article</th>` +
           `<th style="padding:8px 4px;text-align:right;font-size:13px;color:#374151">Montant</th>` +
-        `</tr></thead>` +
-        `<tbody>${itemRows}</tbody>` +
+        `</tr></thead><tbody>${itemRows}</tbody>` +
         `<tfoot><tr>` +
           `<td style="padding:10px 4px;font-weight:700;font-size:15px;color:#00853E">Total</td>` +
           `<td style="padding:10px 4px;text-align:right;font-weight:700;font-size:15px;color:#00853E">${formatPrice(order.total || 0)}</td>` +
-        `</tr></tfoot>` +
-      `</table>`;
+        `</tr></tfoot></table>`;
 
-    // [FIX] product_name / product_price listaient seulement le 1er article.
-    // Désormais ils contiennent le résumé complet (tous les articles) pour
-    // les templates qui n'utilisent pas encore {{item_list_html}}.
-    const allNames  = safeItems.map((i) => `${i.name} ×${i.quantity || 1}`).join(', ');
+    const allNames = safeItems.map((i) => `${i.name} ×${i.quantity || 1}`).join(', ');
     const firstItem = safeItems[0] || {};
-    const firstItemName  = safeItems.length === 1
-      ? (firstItem.name || order.productName || '—')
-      : allNames;
+    const firstItemName  = safeItems.length === 1 ? (firstItem.name || '—') : (allNames || '—');
     const firstItemPrice = safeItems.length === 1 && firstItem.price != null
       ? formatPrice(firstItem.price * (firstItem.quantity || 1))
       : formatPrice(order.total || 0);
+    const orderDateFr = (() => { try { return new Date(orderDate).toLocaleDateString('fr-FR'); } catch(_) { return new Date().toLocaleDateString('fr-FR'); } })();
 
     return this.send({
-      to: order.buyerEmail,
+      to: buyerEmail,
       subject: `✅ Confirmation commande ${order.id} — NEXUS Market`,
       templateId: "order_confirmation",
       ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
       variables: {
-        to_name:          order.buyerName   || '—',
-        buyer_name:       order.buyerName   || '—',
-        order_id:         order.id          || '—',
-        order_date:       order.date ? new Date(order.date).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-        tracking:         order.trackingNumber || '—',
-        product_name:     firstItemName,          // résumé de tous les articles
-        product_price:    firstItemPrice,
-        item_list:        itemList,               // texte avec <br> entre chaque ligne
-        item_list_html:   itemListHtml,           // tableau HTML complet — à utiliser dans le template EmailJS via {{{item_list_html}}}
-        item_count:       String(safeItems.reduce((s, i) => s + (i.quantity || 1), 0)),
-        total:            formatPrice(order.total || 0),
-        currency:         'FCFA',
-        address:          order.buyerAddress  || '—',
-        shipping_city:    order.shippingCity  || '—',
-        vendor_name:      order.vendorName    || '—',
-        site_url:         window.location.origin,
+        to_name: buyerName, buyer_name: buyerName,
+        order_id: order.id || '—', order_date: orderDateFr,
+        tracking: trackingNum, product_name: firstItemName, product_price: firstItemPrice,
+        item_list: itemList, item_list_html: itemListHtml,
+        item_count: String(safeItems.reduce((s, i) => s + (i.quantity || 1), 0)),
+        total: formatPrice(order.total || 0), currency: 'FCFA',
+        address: buyerAddress, shipping_city: shippingCity,
+        vendor_name: vendorName, site_url: window.location.origin,
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+            <div style="background:#00853E;padding:20px;text-align:center">
+              <h1 style="color:white;margin:0">NEXUS Market Sénégal</h1>
+            </div>
+            <div style="padding:30px;background:#f9f9f9">
+              <h2 style="color:#1F2937">Bonjour ${buyerName},</h2>
+              <p>Votre commande <strong>#${order.id || '—'}</strong> a été confirmée le ${orderDateFr} !</p>
+              ${itemListHtml}
+              <div style="background:#e8f5e9;border-radius:8px;padding:15px;margin:15px 0">
+                <p style="margin:0"><strong>📦 Numéro de suivi :</strong> ${trackingNum}</p>
+                <p style="margin:8px 0 0"><strong>🏠 Livraison :</strong> ${buyerAddress}${shippingCity ? ', ' + shippingCity : ''}</p>
+              </div>
+              <p>Vendeur : <strong>${vendorName}</strong></p>
+              <p style="color:#666;font-size:14px">Pour toute question : <a href="mailto:sav@nexus.sn">sav@nexus.sn</a></p>
+            </div>
+            <div style="background:#333;color:white;padding:15px;text-align:center;font-size:12px">
+              NEXUS Market SARL — Dakar, Sénégal
+            </div>
+          </div>`,
       }
     });
   },
-  sendPasswordReset(email, code) {
+    sendPasswordReset(email, code) {
     return this.send({
       to: email,
       subject: "\u{1F511} R\xE9initialisation mot de passe \u2014 NEXUS Market",
       templateId: "password_reset",
       ejsTemplateId: NEXUS_CONFIG.emailjs.resetTemplateId,
-      variables: { reset_code: code, expires_in: "10 minutes" }
+      variables: {
+        reset_code: code, expires_in: "10 minutes",
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
+            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center">
+              <h2 style="color:white;margin:0">NEXUS Market — Sécurité</h2>
+            </div>
+            <div style="background:#f9f9f9;padding:30px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937;margin-top:0">Réinitialisation de mot de passe</h3>
+              <p>Voici votre code (valable <strong>10 minutes</strong>) :</p>
+              <div style="font-size:38px;font-weight:900;letter-spacing:10px;text-align:center;padding:24px;background:white;border:2px dashed #00853E;border-radius:12px;color:#00853E;margin:20px 0">${code}</div>
+              <p style="color:#6b7280;font-size:13px">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>
+            </div>
+            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
+          </div>`
+      }
     });
   },
-  sendOfferNotification(vendorEmail, offer) {
-    // Utilise le template dédié offres (template_offer_nx) avec variables complètes
-    const offerTpl = NEXUS_CONFIG.emailjs.offerTemplateId;
-    const fallback = NEXUS_CONFIG.emailjs.orderTemplateId;
+    sendOfferNotification(vendorEmail, offer) {
     return this.send({
       to: vendorEmail,
-      subject: `💬 Nouvelle offre sur ${offer.productName} — NEXUS Market`,
+      subject: `\u{1F4AC} Nouvelle offre sur ${offer.productName} — NEXUS Market`,
       templateId: "new_offer",
-      ejsTemplateId: offerTpl || fallback,
+      ejsTemplateId: NEXUS_CONFIG.emailjs.offerTemplateId,
       variables: {
-        to_name: offer.vendorName || 'Vendeur',
-        buyer_name: offer.buyerName,
+        to_name: offer.vendorName || 'Vendeur', buyer_name: offer.buyerName,
         product_name: offer.productName,
         offer_price: formatPrice(offer.offeredPrice),
         original_price: formatPrice(offer.originalPrice || offer.offeredPrice),
         message: offer.message || 'Aucun message joint.',
-        offer_id: offer.id || '—',
-        site_url: window.location.origin,
-        action_label: 'Voir l\'offre',
-        // Champ générique si template orderTemplateId est utilisé en fallback
-        order_id: offer.id || '—',
-        total: formatPrice(offer.offeredPrice),
-        vendor_name: offer.vendorName || '—',
+        offer_id: offer.id || '—', site_url: window.location.origin,
+        order_id: offer.id || '—', total: formatPrice(offer.offeredPrice), vendor_name: offer.vendorName || '—',
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
+            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center">
+              <h2 style="color:white;margin:0">NEXUS Market</h2>
+            </div>
+            <div style="background:#f9f9f9;padding:24px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937">Bonjour ${offer.vendorName || 'Vendeur'},</h3>
+              <p><strong>${offer.buyerName}</strong> a soumis une offre pour <strong>${offer.productName}</strong>.</p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:16px 0;background:white;border-radius:8px;overflow:hidden">
+                <tr style="background:#f3f4f6">
+                  <td style="padding:10px 14px;font-size:13px;font-weight:600">Produit</td>
+                  <td style="padding:10px 14px;font-size:13px;font-weight:600;text-align:right">Prix</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 14px;font-size:14px">${offer.productName}</td>
+                  <td style="padding:10px 14px;font-size:14px;text-align:right;text-decoration:line-through;color:#9ca3af">${formatPrice(offer.originalPrice || offer.offeredPrice)}</td>
+                </tr>
+                <tr style="background:#ecfdf5">
+                  <td style="padding:10px 14px;font-size:14px;font-weight:700;color:#00853E">💰 Prix proposé</td>
+                  <td style="padding:10px 14px;font-size:16px;font-weight:700;color:#00853E;text-align:right">${formatPrice(offer.offeredPrice)}</td>
+                </tr>
+              </table>
+              ${offer.message ? `<div style="background:#fffbeb;border-left:4px solid #FDEF42;padding:12px 16px;margin:16px 0;border-radius:4px"><p style="margin:0;font-style:italic">"${offer.message}"</p></div>` : ''}
+              <p style="text-align:center;margin-top:24px">
+                <a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Accepter ou refuser</a>
+              </p>
+            </div>
+            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
+          </div>`
       }
     });
   },
-  sendOfferResponse(buyerEmail, offer, accepted) {
-    const offerTpl = NEXUS_CONFIG.emailjs.offerTemplateId;
-    const fallback = NEXUS_CONFIG.emailjs.orderTemplateId;
+    sendOfferResponse(buyerEmail, offer, accepted) {
     return this.send({
       to: buyerEmail,
       subject: `${accepted ? '✅ Offre acceptée' : '❌ Offre refusée'} — ${offer.productName}`,
       templateId: accepted ? "offer_accepted" : "offer_rejected",
-      ejsTemplateId: offerTpl || fallback,
+      ejsTemplateId: NEXUS_CONFIG.emailjs.offerTemplateId,
       variables: {
-        to_name: offer.buyerName || 'Client',
-        buyer_name: offer.buyerName,
-        product_name: offer.productName,
-        offer_price: formatPrice(offer.offeredPrice),
+        to_name: offer.buyerName || 'Client', buyer_name: offer.buyerName,
+        product_name: offer.productName, offer_price: formatPrice(offer.offeredPrice),
         status: accepted ? 'acceptée 🎉' : 'refusée',
-        message: accepted
-          ? `Félicitations ! Le vendeur a accepté votre offre de ${formatPrice(offer.offeredPrice)}.`
-          : `Le vendeur n'a pas pu accepter votre offre. Vous pouvez faire une nouvelle proposition.`,
-        site_url: window.location.origin,
-        order_id: offer.id || '—',
-        total: formatPrice(offer.offeredPrice),
-        vendor_name: offer.vendorName || '—',
+        message: accepted ? `Félicitations ! Le vendeur a accepté votre offre de ${formatPrice(offer.offeredPrice)}.`
+                          : `Le vendeur n'a pas pu accepter votre offre. Vous pouvez faire une nouvelle proposition.`,
+        site_url: window.location.origin, order_id: offer.id || '—',
+        total: formatPrice(offer.offeredPrice), vendor_name: offer.vendorName || '—',
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
+            <div style="background:${accepted ? '#00853E' : '#E11B22'};padding:20px;border-radius:8px 8px 0 0;text-align:center">
+              <h2 style="color:white;margin:0">NEXUS Market — Offre ${accepted ? 'acceptée ✅' : 'refusée ❌'}</h2>
+            </div>
+            <div style="background:#f9f9f9;padding:24px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937">Bonjour ${offer.buyerName || 'Client'},</h3>
+              <p>${accepted ? '🎉 Bonne nouvelle ! Le vendeur a <strong style="color:#00853E">accepté</strong> votre offre.' : 'Le vendeur n&#39;a pas pu <strong style="color:#E11B22">accepter</strong> votre offre.'}</p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:16px 0;background:white;border-radius:8px;overflow:hidden">
+                <tr style="background:#f3f4f6"><td style="padding:10px 14px;font-size:13px;font-weight:600">Produit</td><td style="padding:10px 14px;font-size:13px;font-weight:600;text-align:right">Votre offre</td></tr>
+                <tr><td style="padding:10px 14px;font-size:14px">${offer.productName}</td>
+                    <td style="padding:10px 14px;font-size:16px;font-weight:700;color:${accepted ? '#00853E' : '#E11B22'};text-align:right">${formatPrice(offer.offeredPrice)}</td></tr>
+              </table>
+              ${accepted ? `<p style="text-align:center;margin-top:24px"><a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Finaliser ma commande</a></p>` : ''}
+              <p style="color:#6b7280;font-size:13px">Vendeur : ${offer.vendorName || '—'}</p>
+            </div>
+            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
+          </div>`
       }
     });
   },
-  sendVendorApproval(vendorEmail, vendorName, shopName, approved, adminNote) {
-    const vendorTpl = NEXUS_CONFIG.emailjs.vendorAdminTemplateId;
-    const fallback = NEXUS_CONFIG.emailjs.orderTemplateId;
+    sendVendorApproval(vendorEmail, vendorName, shopName, approved, adminNote) {
+    const statusColor = approved ? '#00853E' : '#E11B22';
+    const noteText = adminNote || (approved ? 'Votre boutique est désormais active. Vous pouvez publier vos produits.' : 'Votre dossier est en cours de traitement.');
     return this.send({
       to: vendorEmail,
       subject: approved ? `🎉 Boutique approuvée — NEXUS Market` : `ℹ️ Dossier vendeur — NEXUS Market`,
       templateId: "vendor_approved",
-      ejsTemplateId: vendorTpl || fallback,
+      ejsTemplateId: NEXUS_CONFIG.emailjs.vendorAdminTemplateId,
       variables: {
-        to_name: vendorName,
-        vendor_name: vendorName,
-        shop_name: shopName || vendorName,
-        action: approved ? 'approuvée ✅' : 'examinée',
-        admin_message: adminNote || (approved
-          ? 'Votre boutique est désormais active. Vous pouvez publier vos produits.'
-          : 'Votre dossier est en cours de traitement.'),
-        site_url: window.location.origin,
-        // fallback order template
-        order_id: '—', total: '—', buyer_name: vendorName,
+        to_name: vendorName, vendor_name: vendorName, shop_name: shopName || vendorName,
+        action: approved ? 'approuvée ✅' : 'examinée', admin_message: noteText,
+        site_url: window.location.origin, order_id: '—', total: '—', buyer_name: vendorName,
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
+            <div style="background:${statusColor};padding:20px;border-radius:8px 8px 0 0;text-align:center"><h2 style="color:white;margin:0">NEXUS Market — Votre boutique</h2></div>
+            <div style="background:#f9f9f9;padding:28px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937;margin-top:0">Bonjour ${vendorName},</h3>
+              <p>Votre boutique <strong>${shopName || vendorName}</strong> a été <strong style="color:${statusColor}">${approved ? 'approuvée ✅' : 'examinée'}</strong>.</p>
+              <div style="background:white;border-left:4px solid ${statusColor};padding:14px 18px;border-radius:4px;margin:16px 0"><p style="margin:0">${noteText}</p></div>
+              ${approved ? `<p style="text-align:center;margin-top:24px"><a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Accéder à ma boutique</a></p>` : ''}
+              <p style="color:#6b7280;font-size:13px">Questions ? <a href="mailto:vendor@nexus.sn">vendor@nexus.sn</a></p>
+            </div>
+            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
+          </div>`
       }
     });
   },
   sendVendorRejection(vendorEmail, vendorName, reason) {
-    const vendorTpl = NEXUS_CONFIG.emailjs.vendorAdminTemplateId;
-    const fallback = NEXUS_CONFIG.emailjs.orderTemplateId;
+    const reasonText = reason || "Votre dossier ne remplit pas encore nos critères.";
     return this.send({
       to: vendorEmail,
       subject: `ℹ️ Dossier vendeur refusé — NEXUS Market`,
       templateId: "vendor_rejected",
-      ejsTemplateId: vendorTpl || fallback,
+      ejsTemplateId: NEXUS_CONFIG.emailjs.vendorAdminTemplateId,
       variables: {
-        to_name: vendorName,
-        vendor_name: vendorName,
-        shop_name: vendorName,
-        action: 'refusée ❌',
-        admin_message: reason || 'Votre dossier ne remplit pas encore nos critères. Contactez-nous pour plus d\'informations.',
-        site_url: window.location.origin,
-        order_id: '—', total: '—', buyer_name: vendorName,
+        to_name: vendorName, vendor_name: vendorName, shop_name: vendorName,
+        action: 'refusée ❌', admin_message: reasonText,
+        site_url: window.location.origin, order_id: '—', total: '—', buyer_name: vendorName,
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
+            <div style="background:#E11B22;padding:20px;border-radius:8px 8px 0 0;text-align:center"><h2 style="color:white;margin:0">NEXUS Market — Dossier vendeur</h2></div>
+            <div style="background:#f9f9f9;padding:28px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937;margin-top:0">Bonjour ${vendorName},</h3>
+              <p>Votre demande a été <strong style="color:#E11B22">refusée</strong>.</p>
+              <div style="background:white;border-left:4px solid #E11B22;padding:14px 18px;border-radius:4px;margin:16px 0"><p style="margin:0">${reasonText}</p></div>
+              <p style="color:#6b7280;font-size:13px">Support : <a href="mailto:support@nexus.sn">support@nexus.sn</a></p>
+            </div>
+            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
+          </div>`
       }
     });
   },
   sendMessage(recipientEmail, recipientName, senderName, messageText, subject) {
-    const msgTpl = NEXUS_CONFIG.emailjs.msgTemplateId;
-    const fallback = NEXUS_CONFIG.emailjs.orderTemplateId;
+    const subj = subject || `💬 Message de ${senderName} — NEXUS Market`;
     return this.send({
-      to: recipientEmail,
-      subject: subject || `💬 Message de ${senderName} — NEXUS Market`,
-      templateId: "new_message",
-      ejsTemplateId: msgTpl || fallback,
+      to: recipientEmail, subject: subj, templateId: "new_message",
+      ejsTemplateId: NEXUS_CONFIG.emailjs.msgTemplateId,
       variables: {
-        to_name: recipientName || 'Utilisateur',
-        from_name: senderName,
-        sender_name: senderName,
-        message_body: messageText,
-        message_text: messageText,
-        site_url: window.location.origin,
-        // fallback order template
+        to_name: recipientName || 'Utilisateur', from_name: senderName, sender_name: senderName,
+        message_body: messageText, message_text: messageText, site_url: window.location.origin,
         order_id: '—', total: '—', buyer_name: recipientName || '—', vendor_name: senderName,
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
+            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center"><h2 style="color:white;margin:0">NEXUS Market — Message</h2></div>
+            <div style="background:#f9f9f9;padding:28px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937;margin-top:0">Bonjour ${recipientName || 'Utilisateur'},</h3>
+              <p>Nouveau message de <strong>${senderName}</strong> :</p>
+              <div style="background:white;border-left:4px solid #00853E;padding:16px 18px;border-radius:4px;margin:16px 0;font-style:italic">"${(messageText || '').slice(0, 500)}${(messageText || '').length > 500 ? '…' : ''}"</div>
+              <p style="text-align:center;margin-top:24px"><a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Répondre sur NEXUS Market</a></p>
+            </div>
+            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
+          </div>`
       }
     });
   },
   sendReturnConfirmation(order, reason) {
+    const buyerName = order.buyerName || order.buyer_name || '—';
+    const orderId   = order.id || '—';
     return this.send({
-      to: order.buyerEmail,
-      subject: `\u{1F4E6} Demande de retour re\xE7ue \u2014 Commande ${order.id}`,
+      to: order.buyerEmail || order.buyer_email,
+      subject: `\u{1F4E6} Demande de retour re\xE7ue \u2014 Commande ${orderId}`,
       templateId: "return_request",
       ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
-      variables: { order_id: order.id, buyer_name: order.buyerName, reason, message: "Votre demande de retour a \xE9t\xE9 re\xE7ue et est en cours de traitement sous 48h." }
+      variables: {
+        order_id: orderId, buyer_name: buyerName, reason,
+        message: "Votre demande de retour a \xE9t\xE9 re\xE7ue et est en cours de traitement sous 48h.",
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
+            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center"><h2 style="color:white;margin:0">NEXUS Market — Retour produit</h2></div>
+            <div style="background:#f9f9f9;padding:28px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937;margin-top:0">Bonjour ${buyerName},</h3>
+              <p>Votre demande de retour pour la commande <strong>#${orderId}</strong> a été reçue.</p>
+              <div style="background:white;border-left:4px solid #00853E;padding:14px 18px;border-radius:4px;margin:16px 0">
+                <p style="margin:0;font-weight:600">Motif : ${reason || 'Non précisé'}</p>
+                <p style="margin:8px 0 0;color:#6b7280;font-size:13px">Traitement sous 48h ouvrées.</p>
+              </div>
+              <p style="color:#6b7280;font-size:13px">Questions ? <a href="mailto:sav@nexus.sn">sav@nexus.sn</a></p>
+            </div>
+            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
+          </div>`
+      }
     });
   }
 };
@@ -5500,10 +5662,11 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           });
           const json = await res.json();
           if (!res.ok) throw new Error(json.error || "Erreur inscription B2B");
-          // Stocker le token JWT
+          // [FIX] Double-save sessionStorage + localStorage
           if (json.token) {
-            sessionStorage.setItem("nexus_jwt", json.token);
-            sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 604800) * 1000));
+            const expTs = String(Date.now() + (json.expiresIn || 604800) * 1000);
+            sessionStorage.setItem("nexus_jwt", json.token); sessionStorage.setItem("nexus_jwt_exp", expTs);
+            localStorage.setItem("nexus_jwt",   json.token); localStorage.setItem("nexus_jwt_exp",   expTs);
           }
           newUser = json.user;
         } else {
@@ -7585,7 +7748,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     // Backend
     if (NEXUS_CONFIG.apiUrl) {
       try {
-        const token = sessionStorage.getItem("nexus_jwt");
+        const token = DataService._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
         await fetch(`${NEXUS_CONFIG.apiUrl}/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }
         });
