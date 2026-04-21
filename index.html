@@ -1427,7 +1427,30 @@ const DataService = {
           throw err;
         }
         if (!res.ok) throw new Error(json.error || json.message || 'Erreur commande');
-        return json;
+
+        // [FIX] Le backend retourne les champs en snake_case (buyer_email, tracking_number…)
+        // mais sendOrderConfirmation attend du camelCase. On normalise ici en fusionnant :
+        //   1. orderPayload (camelCase, inclut trackingNumber que le backend ne stocke pas)
+        //   2. json (valeurs authoritative du serveur : id réel, total validé, buyer_email…)
+        //   3. Mapping explicite snake_case → camelCase pour garantir les deux formes
+        const normalized = {
+          ...orderPayload,                                              // base camelCase + trackingNumber
+          ...json,                                                      // valeurs serveur (id, total, status…)
+          // Mapping snake_case → camelCase (les deux formes disponibles)
+          id:             json.id              || orderPayload.id,
+          buyerName:      json.buyer_name      || orderPayload.buyerName,
+          buyerEmail:     json.buyer_email     || orderPayload.buyerEmail,
+          buyerAddress:   json.buyer_address   || orderPayload.buyerAddress,
+          vendorName:     json.vendor_name     || orderPayload.vendorName,
+          shippingCity:   json.shipping_city   || orderPayload.shippingCity,
+          // tracking_number n'est PAS stocké par le backend à la création → conserver celui du payload
+          trackingNumber: json.tracking_number || orderPayload.trackingNumber,
+          date:           json.created_at      || orderPayload.date,
+          total:          json.total           != null ? json.total : orderPayload.total,
+          products:       json.products        || orderPayload.products,
+          earnedPoints:   json.earnedPoints    || 0,
+        };
+        return normalized;
       }
       // Backend injoignable → fallback Supabase/localStorage
     }
@@ -2569,36 +2592,47 @@ const EmailService = {
       }
     }
     console.log("[EmailService] Simulation \u2014 email à", to, ":", subject);
-    // Fallback backend : tente d'envoyer via Gmail OAuth2 du serveur si disponible
-    if (NEXUS_CONFIG.apiUrl && storage.get('nexus_token')) {
+    // Fallback backend : tente d'envoyer via le serveur si disponible
+    const _fbToken = DataService?._token
+      || sessionStorage.getItem('nexus_jwt')
+      || localStorage.getItem('nexus_jwt');
+    if (NEXUS_CONFIG.apiUrl && _fbToken) {
       try {
         const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/email/send`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${storage.get('nexus_token')}`
+            "Authorization": `Bearer ${_fbToken}`
           },
           body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>` })
         });
         if (resp.ok) {
           const r = await resp.json();
           if (r.ok) {
-            console.log("[EmailService] \u2705 Email envoyé via Gmail backend à", to);
+            console.log("[EmailService] \u2705 Email envoyé via backend à", to);
             return true;
           }
         }
       } catch(e) {
-        console.warn("[EmailService] Fallback Resend backend échoué:", e.message);
+        console.warn("[EmailService] Fallback backend échoué:", e.message);
       }
     }
     return true;
   },
   sendOrderConfirmation(order, items) {
+    // [FIX] Normalisation défensive : accepter snake_case (réponse backend) ET camelCase (payload local)
+    // Priorité : camelCase || snake_case || valeur par défaut
+    const buyerEmail    = order.buyerEmail    || order.buyer_email    || '';
+    const buyerName     = order.buyerName     || order.buyer_name     || '—';
+    const buyerAddress  = order.buyerAddress  || order.buyer_address  || '—';
+    const vendorName    = order.vendorName    || order.vendor_name    || '—';
+    const trackingNum   = order.trackingNumber|| order.tracking_number|| '—';
+    const shippingCity  = order.shippingCity  || order.shipping_city  || '';
+    const orderDate     = order.date          || order.created_at     || new Date().toISOString();
+
     const safeItems = items || order.products || [];
 
-    // [FIX] item_list — était joint par '\n' (invisible en HTML email).
-    // Remplacé par des lignes séparées par '<br>' pour les templates texte,
-    // et un tableau HTML complet (item_list_html) pour les templates riches.
+    // item_list — texte avec <br> (pour templates texte)
     const itemList = safeItems
       .map((i) => `${i.name} ×${i.quantity || 1} — ${formatPrice((i.price || 0) * (i.quantity || 1))}`)
       .join('<br>');
@@ -2623,56 +2657,58 @@ const EmailService = {
         `</tr></tfoot>` +
       `</table>`;
 
-    // [FIX] product_name / product_price listaient seulement le 1er article.
-    // Désormais ils contiennent le résumé complet (tous les articles) pour
-    // les templates qui n'utilisent pas encore {{item_list_html}}.
+    // product_name / product_price — résumé de tous les articles
     const allNames  = safeItems.map((i) => `${i.name} ×${i.quantity || 1}`).join(', ');
     const firstItem = safeItems[0] || {};
     const firstItemName  = safeItems.length === 1
       ? (firstItem.name || order.productName || '—')
-      : allNames;
+      : (allNames || '—');
     const firstItemPrice = safeItems.length === 1 && firstItem.price != null
       ? formatPrice(firstItem.price * (firstItem.quantity || 1))
       : formatPrice(order.total || 0);
 
+    const orderDateFr = (() => {
+      try { return new Date(orderDate).toLocaleDateString('fr-FR'); }
+      catch (_) { return new Date().toLocaleDateString('fr-FR'); }
+    })();
+
     return this.send({
-      to: order.buyerEmail,
+      to: buyerEmail,
       subject: `✅ Confirmation commande ${order.id} — NEXUS Market`,
       templateId: "order_confirmation",
       ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
       variables: {
-        to_name:          order.buyerName   || '—',
-        buyer_name:       order.buyerName   || '—',
+        to_name:          buyerName,
+        buyer_name:       buyerName,
         order_id:         order.id          || '—',
-        order_date:       order.date ? new Date(order.date).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR'),
-        tracking:         order.trackingNumber || '—',
-        product_name:     firstItemName,          // résumé de tous les articles
+        order_date:       orderDateFr,
+        tracking:         trackingNum,
+        product_name:     firstItemName,
         product_price:    firstItemPrice,
-        item_list:        itemList,               // texte avec <br> entre chaque ligne
-        item_list_html:   itemListHtml,           // tableau HTML complet — à utiliser dans le template EmailJS via {{{item_list_html}}}
+        item_list:        itemList,
+        item_list_html:   itemListHtml,
         item_count:       String(safeItems.reduce((s, i) => s + (i.quantity || 1), 0)),
         total:            formatPrice(order.total || 0),
         currency:         'FCFA',
-        address:          order.buyerAddress  || '—',
-        shipping_city:    order.shippingCity  || '—',
-        vendor_name:      order.vendorName    || '—',
+        address:          buyerAddress,
+        shipping_city:    shippingCity,
+        vendor_name:      vendorName,
         site_url:         window.location.origin,
-        // [FIX] html_body — utilisé par le fallback backend /api/email/send
-        // quand EmailJS n'est pas configuré ou échoue.
+        // html_body — utilisé par le fallback backend /api/email/send
         html_body: `
           <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
             <div style="background:#00853E;padding:20px;text-align:center">
               <h1 style="color:white;margin:0">NEXUS Market Sénégal</h1>
             </div>
             <div style="padding:30px;background:#f9f9f9">
-              <h2 style="color:#1F2937">Bonjour ${order.buyerName || '—'},</h2>
-              <p>Votre commande <strong>#${order.id || '—'}</strong> a été confirmée le ${order.date ? new Date(order.date).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')} !</p>
+              <h2 style="color:#1F2937">Bonjour ${buyerName},</h2>
+              <p>Votre commande <strong>#${order.id || '—'}</strong> a été confirmée le ${orderDateFr} !</p>
               ${itemListHtml}
               <div style="background:#e8f5e9;border-radius:8px;padding:15px;margin:15px 0">
-                <p style="margin:0"><strong>📦 Numéro de suivi :</strong> ${order.trackingNumber || 'En cours de génération'}</p>
-                <p style="margin:8px 0 0"><strong>🏠 Livraison :</strong> ${order.buyerAddress || 'Non précisée'}${order.shippingCity ? ', ' + order.shippingCity : ''}</p>
+                <p style="margin:0"><strong>📦 Numéro de suivi :</strong> ${trackingNum}</p>
+                <p style="margin:8px 0 0"><strong>🏠 Livraison :</strong> ${buyerAddress}${shippingCity ? ', ' + shippingCity : ''}</p>
               </div>
-              <p>Vendeur : <strong>${order.vendorName || '—'}</strong></p>
+              <p>Vendeur : <strong>${vendorName}</strong></p>
               <p style="color:#666;font-size:14px">Pour toute question : <a href="mailto:sav@nexus.sn">sav@nexus.sn</a></p>
             </div>
             <div style="background:#333;color:white;padding:15px;text-align:center;font-size:12px">
