@@ -39,11 +39,27 @@ const rateLimit    = require('express-rate-limit');
 const jwt          = require('jsonwebtoken');
 const bcrypt       = require('bcryptjs');
 const nodemailer   = require('nodemailer');
-const cookieParser = require('cookie-parser');
 const stripe       = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createClient } = require('@supabase/supabase-js');
 const multer       = require('multer');
 const PDFDocument  = require('pdfkit');
+
+// ── Parser de cookies inline (évite la dépendance cookie-parser) ─────────────
+// Utilisé uniquement pour le state anti-CSRF du GitHub OAuth.
+const cookieParser = (req, res, next) => {
+  req.cookies = {};
+  const raw = req.headers.cookie;
+  if (raw) {
+    raw.split(';').forEach(pair => {
+      const idx = pair.indexOf('=');
+      if (idx < 0) return;
+      const key = pair.slice(0, idx).trim();
+      const val = pair.slice(idx + 1).trim();
+      try { req.cookies[key] = decodeURIComponent(val); } catch { req.cookies[key] = val; }
+    });
+  }
+  next();
+};
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 const app  = express();
