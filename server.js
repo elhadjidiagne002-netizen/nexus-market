@@ -42,6 +42,7 @@ const nodemailer   = require('nodemailer');
 const stripe       = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createClient } = require('@supabase/supabase-js');
 const multer       = require('multer');
+const PDFDocument  = require('pdfkit');
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 const app  = express();
@@ -2736,6 +2737,637 @@ function computeInvoiceAmounts(totalFcfa, type, shippingFcfa = 0) {
   const netVendor   = type === 'vendor' ? amountTTC - commission : 0;
   return { amountHT, tva, amountTTC, commission, netVendor };
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// PDF GENERATION — PDFKit (server-side, aucune dépendance navigateur)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Couleurs NEXUS ──────────────────────────────────────────────────────────
+const PDF_COLORS = {
+  green:   '#00853E',
+  greenL:  '#2ecc71',
+  orange:  '#EA580C',
+  dark:    '#1a1a2e',
+  grey:    '#6b7280',
+  greyL:   '#f3f4f6',
+  white:   '#ffffff',
+  yellow:  '#FEF3C7',
+  yellowD: '#92400E',
+  blue:    '#1e40af',
+};
+
+// ── Helper hex → rgb ─────────────────────────────────────────────────────────
+function hexRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return [r, g, b];
+}
+
+// ── Formater prix FCFA ────────────────────────────────────────────────────────
+function fmtFCFA(n) {
+  return Math.round(n).toLocaleString('fr-FR') + ' FCFA';
+}
+
+// ── Dessiner l'en-tête NEXUS ─────────────────────────────────────────────────
+function drawPdfHeader(doc, type, invoiceNumber, dateStr, accentHex) {
+  const [r,g,b] = hexRgb(accentHex);
+  // Barre supérieure colorée
+  doc.rect(0, 0, 595.28, 90).fill(accentHex);
+
+  // Logo NEXUS (texte)
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(28)
+     .text('NEXUS', 40, 22, { continued: true })
+     .font('Helvetica').fontSize(28).fillColor('rgba(255,255,255,0.75)')
+     .text(' Market');
+
+  doc.font('Helvetica').fontSize(9).fillColor('rgba(255,255,255,0.85)')
+     .text('Marketplace B2B/B2C · Sénégal', 40, 58);
+
+  // Type document (droite)
+  const typeLabel = type === 'buyer' ? 'FACTURE CLIENT' :
+                    type === 'vendor' ? 'RELEVÉ DE VENTE' :
+                    type === 'statement' ? 'RELEVÉ MENSUEL' : 'DOCUMENT';
+  doc.font('Helvetica-Bold').fontSize(20).fillColor('#ffffff')
+     .text(typeLabel, 0, 22, { align: 'right', width: 555 });
+
+  // Numéro de facture
+  doc.font('Helvetica').fontSize(10).fillColor('rgba(255,255,255,0.9)')
+     .text(`N° ${invoiceNumber}`, 0, 50, { align: 'right', width: 555 });
+  doc.font('Helvetica').fontSize(9).fillColor('rgba(255,255,255,0.75)')
+     .text(dateStr, 0, 64, { align: 'right', width: 555 });
+
+  doc.fillColor('#000000');
+}
+
+// ── Dessiner le pied de page ────────────────────────────────────────────────
+function drawPdfFooter(doc, accentHex) {
+  const pageH = 841.89;
+  doc.rect(0, pageH - 40, 595.28, 40).fill(accentHex);
+  doc.font('Helvetica').fontSize(8).fillColor('rgba(255,255,255,0.85)')
+     .text(
+       'NEXUS Market Sénégal  ·  contact@nexus.sn  ·  nexus.sn  ·  +221 33 123 45 67',
+       0, pageH - 24, { align: 'center', width: 595.28 }
+     );
+}
+
+// ── Bloc d'adresse (parties) ─────────────────────────────────────────────────
+function drawPartyBlock(doc, x, y, w, title, name, lines, accentHex) {
+  const [r,g,b] = hexRgb(accentHex);
+  doc.rect(x, y, w, 8).fill(accentHex);
+  doc.font('Helvetica-Bold').fontSize(7).fillColor('#ffffff')
+     .text(title, x + 6, y + 2, { width: w - 12 });
+
+  doc.rect(x, y + 8, w, 62).fill('#f9fafb');
+  doc.rect(x, y, w, 70).stroke('#e5e7eb');
+  doc.fillColor('#000000');
+
+  doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111827')
+     .text(name || '—', x + 6, y + 14, { width: w - 12 });
+
+  doc.font('Helvetica').fontSize(8.5).fillColor('#374151');
+  let ty = y + 28;
+  (lines || []).filter(Boolean).forEach(line => {
+    doc.text(line, x + 6, ty, { width: w - 12 });
+    ty += 11;
+  });
+}
+
+// ── Tableau produits ─────────────────────────────────────────────────────────
+function drawProductTable(doc, products, startY, accentHex) {
+  const L = 40, W = 515.28;
+  const cols = { desc: L, qty: L + 270, pu: L + 330, total: L + 430 };
+
+  // En-tête
+  doc.rect(L, startY, W, 22).fill(accentHex);
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#ffffff')
+     .text('DÉSIGNATION',        cols.desc + 6, startY + 7)
+     .text('QTÉ',                cols.qty,       startY + 7, { width: 50, align: 'center' })
+     .text('P.U. HT',            cols.pu,        startY + 7, { width: 70, align: 'right' })
+     .text('TOTAL TTC',          cols.total,     startY + 7, { width: 85, align: 'right' });
+
+  let y = startY + 22;
+  const TVA = 0.18;
+
+  (products || []).forEach((p, i) => {
+    const rowH = 20;
+    if (i % 2 === 0) doc.rect(L, y, W, rowH).fill('#f0fdf4');
+    else             doc.rect(L, y, W, rowH).fill('#ffffff');
+    doc.rect(L, y, W, rowH).stroke('#e5e7eb');
+
+    const nameTxt = (p.name || '').length > 48 ? p.name.slice(0,45) + '…' : (p.name || '');
+    const qty     = p.quantity || p.qty || 1;
+    const priceTTC = Math.round((p.price || 0) * qty);
+    const priceHT  = Math.round(priceTTC / (1 + TVA));
+
+    doc.font('Helvetica').fontSize(9).fillColor('#111827')
+       .text(nameTxt,                         cols.desc + 6, y + 6, { width: 250 });
+    doc.text(String(qty),                     cols.qty,      y + 6, { width: 50,  align: 'center' });
+    doc.fillColor(accentHex)
+       .text(fmtFCFA(priceHT),               cols.pu,       y + 6, { width: 70,  align: 'right' });
+    doc.font('Helvetica-Bold').fillColor('#111827')
+       .text(fmtFCFA(priceTTC),              cols.total,    y + 6, { width: 85,  align: 'right' });
+
+    y += rowH;
+  });
+
+  return y + 4;
+}
+
+// ── Bloc totaux ──────────────────────────────────────────────────────────────
+function drawTotals(doc, y, amounts, shippingFcfa, accentHex) {
+  const L = 320, W = 235.28;
+
+  const rows = [
+    ['Sous-total HT',  fmtFCFA(amounts.amountHT)],
+    ['TVA (18 %)',      fmtFCFA(amounts.tva)],
+    ['Livraison',      shippingFcfa > 0 ? fmtFCFA(shippingFcfa) : 'Gratuite'],
+  ];
+
+  rows.forEach(([lbl, val]) => {
+    doc.font('Helvetica').fontSize(9).fillColor('#6b7280').text(lbl, L, y, { width: 130 });
+    doc.font('Helvetica').fontSize(9).fillColor('#111827').text(val, L + 130, y, { width: 105, align: 'right' });
+    y += 14;
+  });
+
+  // Ligne TOTAL TTC
+  y += 4;
+  doc.rect(L, y, W, 26).fill(accentHex);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#ffffff')
+     .text('TOTAL TTC', L + 8, y + 8, { width: 120 });
+  doc.fontSize(12)
+     .text(fmtFCFA(amounts.amountTTC), L + 130, y + 7, { width: 105 - 8, align: 'right' });
+
+  return y + 36;
+}
+
+// ── Bloc commissions vendeur ────────────────────────────────────────────────
+function drawVendorCommissions(doc, y, amounts, accentHex) {
+  const L = 40, W = 515.28;
+
+  doc.rect(L, y, W, 22).fill('#fff7ed');
+  doc.rect(L, y, W, 22).stroke('#fed7aa');
+  doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#92400e')
+     .text('DÉCOMPTE COMMISSION NEXUS', L + 8, y + 7);
+  y += 22;
+
+  const commRows = [
+    ['Montant TTC total',      fmtFCFA(amounts.amountTTC)],
+    ['Commission NEXUS (10%)', '− ' + fmtFCFA(amounts.commission)],
+    ['NET À PERCEVOIR',        fmtFCFA(amounts.netVendor)],
+  ];
+
+  commRows.forEach(([lbl, val], i) => {
+    const isFinal = i === commRows.length - 1;
+    const bg = isFinal ? '#fff7ed' : '#ffffff';
+    doc.rect(L, y, W, 18).fill(bg).stroke('#e5e7eb');
+
+    doc.font(isFinal ? 'Helvetica-Bold' : 'Helvetica')
+       .fontSize(isFinal ? 10 : 9)
+       .fillColor(isFinal ? accentHex : '#374151')
+       .text(lbl, L + 8, y + 5, { width: 300 });
+    doc.text(val, L + 308, y + 5, { width: W - 316, align: 'right' });
+    y += 18;
+  });
+
+  return y + 8;
+}
+
+// ── Notes légales ─────────────────────────────────────────────────────────────
+function drawLegalNotes(doc, y, type) {
+  const notes = type === 'buyer' ? [
+    '• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d'origine).',
+    '• Garantie légale de conformité : 2 ans pour les vices cachés. Contactez contact@nexus.sn.',
+    '• Ce document fait foi de paiement. Conservez-le précieusement.',
+    '• En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn · +221 33 123 45 67.',
+  ] : [
+    '• Ce relevé est émis par NEXUS Market Sénégal pour le compte du vendeur.',
+    '• Le net à percevoir sera versé selon les modalités convenues (Orange Money / Wave / Virement).',
+    '• Pour toute contestation : vendor@nexus.sn · délai de traitement : 48h ouvrées.',
+    '• NEXUS Market conserve 10% de commission sur le montant TTC de chaque vente.',
+  ];
+
+  doc.rect(40, y, 515.28, 6 + notes.length * 12).fill('#eff6ff').stroke('#bfdbfe');
+  doc.font('Helvetica-Bold').fontSize(8).fillColor('#1e40af').text('CONDITIONS', 48, y + 4);
+  doc.font('Helvetica').fontSize(7.5).fillColor('#1e3a5f');
+  notes.forEach((line, i) => doc.text(line, 48, y + 14 + i * 12, { width: 499.28 }));
+
+  return y + 6 + notes.length * 12 + 8;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// GÉNÉRATEURS PDF
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Génère le PDF d'une facture acheteur et le pipe dans res.
+ */
+async function generateBuyerInvoicePDF(invoice, order, res) {
+  const accentHex = PDF_COLORS.green;
+  const shippingFcfa = order.shipping !== 'gratuit' ? 655 : 0;
+  const amounts = computeInvoiceAmounts(invoice.amount_ttc, 'buyer', shippingFcfa);
+  const dateStr = new Date(invoice.created_at || Date.now()).toLocaleDateString('fr-FR', {
+    day: '2-digit', month: 'long', year: 'numeric',
+  });
+  const invNum = invoice.invoice_number || `NEXUS-${Date.now()}`;
+  const meta   = invoice.metadata || {};
+
+  const doc = new PDFDocument({ size: 'A4', margin: 0, info: {
+    Title:    `Facture ${invNum}`,
+    Author:   'NEXUS Market Sénégal',
+    Subject:  `Facture acheteur — commande ${order.id}`,
+    Creator:  'NEXUS Market PDF Engine',
+  }});
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="Facture-NEXUS-${invNum}.pdf"`);
+  doc.pipe(res);
+
+  drawPdfHeader(doc, 'buyer', invNum, dateStr, accentHex);
+
+  let y = 108;
+  const hw = 237;
+
+  // Parties
+  drawPartyBlock(doc, 40, y, hw, 'FACTURÉ À',
+    order.buyer_name || meta.buyerName || '—',
+    [order.buyer_email || meta.buyerEmail, order.buyer_address || meta.buyerAddress, order.buyer_phone || meta.buyerPhone],
+    accentHex
+  );
+  drawPartyBlock(doc, 40 + hw + 8, y, hw, 'VENDU PAR',
+    order.vendor_name || meta.vendorName || 'Vendeur NEXUS',
+    ['Vendeur certifié NEXUS Market', order.vendor_email || meta.vendorEmail || ''],
+    PDF_COLORS.greenL
+  );
+
+  y += 80;
+
+  // Infos commande
+  doc.rect(40, y, 515.28, 18).fill('#f9fafb').stroke('#e5e7eb');
+  doc.font('Helvetica').fontSize(8.5).fillColor('#374151')
+     .text(`Commande : ${order.id}`, 48, y + 5, { continued: true })
+     .text(`  ·  Statut : ${order.status || '—'}`, { continued: true })
+     .text(`  ·  Paiement : ${order.payment_method === 'mobile' ? 'Mobile Money' : order.payment_method === 'card' ? 'Carte bancaire' : order.payment_method || '—'}`)
+  ;
+  if (order.tracking_number) {
+    doc.text(`Suivi : ${order.tracking_number}`, 48, y + 11);
+  }
+  y += 26;
+
+  // Tableau produits
+  const products = (order.products || meta.products || []).map(p => ({
+    name: p.name, quantity: p.quantity || p.qty || 1, price: p.price,
+  }));
+  y = drawProductTable(doc, products, y, accentHex);
+  y = drawTotals(doc, y, amounts, shippingFcfa, accentHex);
+
+  // Stamp PAYÉ
+  if (['paid','delivered','processing','in_transit'].includes(order.payment_status || order.status)) {
+    doc.save()
+       .rotate(-30, { origin: [430, 480] })
+       .rect(340, 460, 180, 40).fill('rgba(0,133,62,0.12)').stroke(accentHex)
+       .font('Helvetica-Bold').fontSize(22).fillColor(accentHex)
+       .text('PAYÉ', 370, 471)
+       .restore();
+  }
+
+  y = drawLegalNotes(doc, y, 'buyer');
+  drawPdfFooter(doc, accentHex);
+
+  doc.end();
+}
+
+/**
+ * Génère le relevé de vente vendeur et le pipe dans res.
+ */
+async function generateVendorInvoicePDF(invoice, order, res) {
+  const accentHex = PDF_COLORS.orange;
+  const shippingFcfa = 0;
+  const amounts = computeInvoiceAmounts(invoice.amount_ttc, 'vendor', shippingFcfa);
+  const dateStr = new Date(invoice.created_at || Date.now()).toLocaleDateString('fr-FR', {
+    day: '2-digit', month: 'long', year: 'numeric',
+  });
+  const invNum = invoice.invoice_number || `NEXUS-V-${Date.now()}`;
+  const meta   = invoice.metadata || {};
+
+  const doc = new PDFDocument({ size: 'A4', margin: 0, info: {
+    Title:    `Relevé vente ${invNum}`,
+    Author:   'NEXUS Market Sénégal',
+    Subject:  `Relevé vendeur — commande ${order.id}`,
+    Creator:  'NEXUS Market PDF Engine',
+  }});
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="Releve-Vente-NEXUS-${invNum}.pdf"`);
+  doc.pipe(res);
+
+  drawPdfHeader(doc, 'vendor', invNum, dateStr, accentHex);
+
+  let y = 108;
+  const hw = 237;
+
+  drawPartyBlock(doc, 40, y, hw, 'VENDEUR',
+    order.vendor_name || meta.vendorName || '—',
+    [order.vendor_email || meta.vendorEmail || '', 'Vendeur certifié NEXUS Market'],
+    accentHex
+  );
+  drawPartyBlock(doc, 40 + hw + 8, y, hw, 'ACHETEUR',
+    order.buyer_name || meta.buyerName || '—',
+    [order.buyer_email || meta.buyerEmail, order.buyer_address || meta.buyerAddress],
+    PDF_COLORS.grey
+  );
+
+  y += 80;
+
+  // Infos commande
+  doc.rect(40, y, 515.28, 18).fill('#fff7ed').stroke('#fed7aa');
+  doc.font('Helvetica').fontSize(8.5).fillColor('#92400e')
+     .text(`Commande : ${order.id}  ·  Statut : ${order.status || '—'}  ·  Date : ${new Date(order.created_at || Date.now()).toLocaleDateString('fr-FR')}`, 48, y + 5);
+  y += 26;
+
+  const products = (order.products || meta.products || []).map(p => ({
+    name: p.name, quantity: p.quantity || p.qty || 1, price: p.price,
+  }));
+  y = drawProductTable(doc, products, y, accentHex);
+  y = drawTotals(doc, y, amounts, shippingFcfa, accentHex);
+  y = drawVendorCommissions(doc, y, amounts, accentHex);
+  y = drawLegalNotes(doc, y, 'vendor');
+  drawPdfFooter(doc, accentHex);
+
+  doc.end();
+}
+
+/**
+ * Génère le relevé mensuel vendeur (plusieurs commandes) et le pipe dans res.
+ */
+async function generateMonthlyStatementPDF(vendor, orders, month, res) {
+  const accentHex = PDF_COLORS.blue;
+  const [year, mon] = month.split('-');
+  const monthLabel  = new Date(parseInt(year), parseInt(mon) - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const invNum  = `STMT-${vendor.id.slice(0,6).toUpperCase()}-${year}${mon}`;
+  const dateStr = `Période : ${monthLabel}`;
+
+  // Calcul des totaux
+  const delivered = orders.filter(o => o.status === 'delivered');
+  const totalCA   = delivered.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalComm = delivered.reduce((s, o) => s + (Number(o.commission) || 0), 0);
+  const totalNet  = totalCA - totalComm;
+
+  const doc = new PDFDocument({ size: 'A4', margin: 0, info: {
+    Title:  `Relevé mensuel ${monthLabel}`,
+    Author: 'NEXUS Market Sénégal',
+  }});
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="Releve-Mensuel-NEXUS-${year}${mon}.pdf"`);
+  doc.pipe(res);
+
+  drawPdfHeader(doc, 'statement', invNum, dateStr, accentHex);
+
+  let y = 108;
+
+  // Bloc vendeur
+  drawPartyBlock(doc, 40, y, 250, 'VENDEUR',
+    vendor.name || '—',
+    [vendor.email || '', vendor.phone || '', `Boutique : ${vendor.company_name || vendor.name}`],
+    accentHex
+  );
+
+  // Récap financier
+  doc.rect(305, y, 250.28, 70).fill('#eff6ff').stroke('#bfdbfe');
+  doc.font('Helvetica-Bold').fontSize(9).fillColor('#1e40af').text('RÉCAPITULATIF', 313, y + 6);
+  const recaps = [
+    [`Commandes livrées`, `${delivered.length} / ${orders.length}`],
+    [`Chiffre d'affaires`, fmtFCFA(totalCA)],
+    [`Commission NEXUS`,  '− ' + fmtFCFA(totalComm)],
+    [`NET À PERCEVOIR`,   fmtFCFA(totalNet)],
+  ];
+  recaps.forEach(([lbl, val], i) => {
+    const isFinal = i === recaps.length - 1;
+    doc.font(isFinal ? 'Helvetica-Bold' : 'Helvetica')
+       .fontSize(isFinal ? 10 : 8.5)
+       .fillColor(isFinal ? accentHex : '#374151')
+       .text(lbl, 313, y + 20 + i * 13)
+       .text(val, 313, y + 20 + i * 13, { width: 234.28, align: 'right' });
+  });
+
+  y += 82;
+
+  // Tableau des commandes
+  const hdr = ['COMMANDE', 'DATE', 'PRODUITS', 'STATUT', 'MONTANT', 'NET'];
+  const cw  = [90, 55, 145, 55, 80, 80];
+  const xs  = cw.reduce((acc, w, i) => { acc.push((acc[i-1] || 40) + (i > 0 ? cw[i-1] : 0)); return acc; }, []);
+
+  // Header tableau
+  doc.rect(40, y, 515.28, 20).fill(accentHex);
+  hdr.forEach((h, i) => {
+    doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#ffffff')
+       .text(h, xs[i] + 3, y + 6, { width: cw[i] - 6, align: i >= 4 ? 'right' : 'left' });
+  });
+  y += 20;
+
+  orders.forEach((o, idx) => {
+    const rowH = 18;
+    if (y > 780) {
+      doc.addPage({ size: 'A4', margin: 0 });
+      drawPdfFooter(doc, accentHex);
+      y = 20;
+    }
+    doc.rect(40, y, 515.28, rowH).fill(idx % 2 === 0 ? '#f0f9ff' : '#ffffff').stroke('#e0e7ff');
+
+    const ordNet   = (Number(o.total) || 0) - (Number(o.commission) || 0);
+    const dateStr2 = new Date(o.created_at).toLocaleDateString('fr-FR');
+    const prodsStr = (o.products || []).slice(0, 2).map(p => p.name).join(', ') + (o.products?.length > 2 ? '…' : '');
+    const statusTxt = { delivered:'Livré', processing:'En cours', in_transit:'Transit', cancelled:'Annulé', pending_payment:'En attente' }[o.status] || o.status;
+    const isDeliv  = o.status === 'delivered';
+
+    doc.font('Helvetica').fontSize(7.5).fillColor('#111827')
+       .text(o.id.slice(0, 14) + '…',     xs[0]+3, y+5, { width: cw[0]-6 })
+       .text(dateStr2,                      xs[1]+3, y+5, { width: cw[1]-6 })
+       .text(prodsStr,                      xs[2]+3, y+5, { width: cw[2]-6 })
+    ;
+    doc.fillColor(isDeliv ? '#15803d' : '#dc2626')
+       .text(statusTxt,                     xs[3]+3, y+5, { width: cw[3]-6 });
+    doc.fillColor('#111827')
+       .text(fmtFCFA(o.total),              xs[4]+3, y+5, { width: cw[4]-6, align: 'right' });
+    doc.fillColor(isDeliv ? accentHex : '#9ca3af').font('Helvetica-Bold')
+       .text(isDeliv ? fmtFCFA(ordNet) : '—', xs[5]+3, y+5, { width: cw[5]-6, align: 'right' });
+
+    y += rowH;
+  });
+
+  y += 12;
+
+  // Ligne totaux
+  doc.rect(40, y, 515.28, 22).fill(accentHex);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff')
+     .text('TOTAUX', 48, y + 7)
+     .text(fmtFCFA(totalCA),  xs[4]+3, y+7, { width: cw[4]-6, align: 'right' })
+     .text(fmtFCFA(totalNet), xs[5]+3, y+7, { width: cw[5]-6, align: 'right' });
+  y += 32;
+
+  // Note légale
+  doc.rect(40, y, 515.28, 40).fill('#eff6ff').stroke('#bfdbfe');
+  doc.font('Helvetica').fontSize(7.5).fillColor('#1e3a5f')
+     .text(
+       'Ce relevé est généré automatiquement par NEXUS Market Sénégal. ' +
+       'Le paiement du net à percevoir sera effectué selon vos modalités enregistrées (Orange Money / Wave / Virement). ' +
+       'Pour toute contestation, contactez vendor@nexus.sn dans un délai de 10 jours ouvrés.',
+       48, y + 6, { width: 499.28 }
+     );
+
+  drawPdfFooter(doc, accentHex);
+  doc.end();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ROUTES PDF
+// ════════════════════════════════════════════════════════════════════════════
+
+// GET /api/invoices/:id/pdf — Télécharger une facture existante en PDF
+// (facture déjà enregistrée en base)
+app.get('/api/invoices/:id/pdf', verifyToken, async (req, res) => {
+  try {
+    const { data: invoice, error } = await supabase
+      .from('invoices').select('*').eq('id', req.params.id).single();
+
+    if (error || !invoice) return res.status(404).json({ error: 'Facture introuvable' });
+
+    const isAdmin  = req.user.role === 'admin';
+    const isBuyer  = invoice.buyer_id  === req.user.id;
+    const isVendor = invoice.vendor_id === req.user.id;
+    if (!isAdmin && !isBuyer && !isVendor)
+      return res.status(403).json({ error: 'Accès refusé' });
+
+    // Récupérer la commande associée
+    const { data: order } = await supabase
+      .from('orders').select('*').eq('id', invoice.order_id).single();
+
+    Logger.info('invoice', 'pdf.download', `PDF facture ${invoice.invoice_number} téléchargé`, { userId: req.user.id });
+
+    if (invoice.type === 'buyer') {
+      return generateBuyerInvoicePDF(invoice, order || {}, res);
+    } else {
+      return generateVendorInvoicePDF(invoice, order || {}, res);
+    }
+  } catch (e) {
+    Logger.error('invoice', 'pdf.error', e.message, { userId: req.user.id });
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/invoices/order/:orderId/pdf?type=buyer|vendor
+// Génère, enregistre ET télécharge le PDF pour une commande donnée
+app.get('/api/invoices/order/:orderId/pdf', verifyToken, async (req, res) => {
+  const type    = req.query.type || 'buyer';
+  const orderId = req.params.orderId;
+
+  if (!['buyer', 'vendor'].includes(type))
+    return res.status(400).json({ error: 'type invalide : buyer | vendor' });
+
+  try {
+    const { data: order, error: orderErr } = await supabase
+      .from('orders').select('*').eq('id', orderId).single();
+
+    if (orderErr || !order) return res.status(404).json({ error: 'Commande introuvable' });
+
+    // Contrôle d'accès
+    if (type === 'buyer'  && order.buyer_id  !== req.user.id && req.user.role !== 'admin')
+      return res.status(403).json({ error: 'Accès refusé' });
+    if (type === 'vendor' && order.vendor_id !== req.user.id && req.user.role !== 'admin')
+      return res.status(403).json({ error: 'Accès refusé' });
+
+    // Chercher ou créer l'enregistrement en base
+    let invoice;
+    const { data: existing } = await supabase
+      .from('invoices').select('*')
+      .eq('order_id', orderId).eq('type', type).maybeSingle();
+
+    if (existing) {
+      invoice = existing;
+    } else {
+      const shippingFcfa = order.shipping !== 'gratuit' ? 655 : 0;
+      const amounts = computeInvoiceAmounts(Number(order.total) || 0, type, shippingFcfa);
+      const { data: saved } = await supabase.rpc('save_invoice', {
+        p_type:       type,
+        p_order_id:   orderId,
+        p_buyer_id:   type === 'buyer'  ? order.buyer_id  : order.buyer_id,
+        p_vendor_id:  type === 'vendor' ? order.vendor_id : order.vendor_id,
+        p_amount_ht:  amounts.amountHT,
+        p_tva:        amounts.tva,
+        p_amount_ttc: amounts.amountTTC,
+        p_commission: amounts.commission,
+        p_net_vendor: amounts.netVendor,
+        p_status:     'issued',
+        p_metadata:   {
+          buyerName:     order.buyer_name,
+          buyerEmail:    order.buyer_email,
+          buyerAddress:  order.buyer_address,
+          vendorName:    order.vendor_name,
+          products:      order.products || [],
+          paymentMethod: order.payment_method,
+          trackingNumber:order.tracking_number,
+          ...amounts,
+          generatedBy: req.user.id,
+          generatedAt: new Date().toISOString(),
+        },
+      });
+
+      // Récupérer l'invoice créée
+      const { data: fresh } = await supabase
+        .from('invoices').select('*').eq('order_id', orderId).eq('type', type).single();
+      invoice = fresh || { invoice_number: `NEXUS-${Date.now()}`, amount_ttc: order.total, metadata: {}, created_at: new Date().toISOString() };
+    }
+
+    Logger.info('invoice', 'pdf.generated', `PDF ${type} commande ${orderId}`, { userId: req.user.id });
+
+    if (type === 'buyer') {
+      return generateBuyerInvoicePDF(invoice, order, res);
+    } else {
+      return generateVendorInvoicePDF(invoice, order, res);
+    }
+  } catch (e) {
+    Logger.error('invoice', 'pdf.order.error', e.message, { userId: req.user.id, meta: { orderId, type } });
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/invoices/statement/vendor?month=YYYY-MM
+// Relevé mensuel complet d'un vendeur (toutes commandes du mois)
+app.get('/api/invoices/statement/vendor', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
+  const month    = req.query.month || new Date().toISOString().slice(0, 7); // YYYY-MM
+  const vendorId = req.user.role === 'admin' && req.query.vendorId
+    ? req.query.vendorId
+    : req.user.id;
+
+  const [year, mon] = month.split('-').map(Number);
+  const startDate = new Date(year, mon - 1, 1).toISOString();
+  const endDate   = new Date(year, mon, 1).toISOString();
+
+  try {
+    const { data: vendor } = await supabase
+      .from('profiles').select('id, name, email, phone, company_name').eq('id', vendorId).single();
+
+    if (!vendor) return res.status(404).json({ error: 'Vendeur introuvable' });
+
+    const { data: orders, error: ordErr } = await supabase
+      .from('orders')
+      .select('id, buyer_name, buyer_email, vendor_name, products, total, commission, status, payment_method, created_at, tracking_number')
+      .eq('vendor_id', vendorId)
+      .gte('created_at', startDate)
+      .lt('created_at', endDate)
+      .order('created_at', { ascending: true });
+
+    if (ordErr) throw ordErr;
+
+    Logger.info('invoice', 'statement.generated', `Relevé mensuel ${month} vendeur ${vendorId}`, { userId: req.user.id });
+
+    return generateMonthlyStatementPDF(vendor, orders || [], month, res);
+  } catch (e) {
+    Logger.error('invoice', 'statement.error', e.message, { userId: req.user.id });
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
 
 // POST /api/invoices — Sauvegarde une facture après génération PDF côté client
 app.post('/api/invoices', verifyToken, async (req, res) => {
