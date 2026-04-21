@@ -1245,15 +1245,31 @@ const DataService = {
   _token: null, // JWT backend (feature 7)
   init() {
     this._sb = isSupabaseConfigured() ? initSupabase() : null;
-    // Restaurer le JWT depuis sessionStorage
-    const storedJwt = sessionStorage.getItem("nexus_jwt");
-    const storedExp = sessionStorage.getItem("nexus_jwt_exp");
+    // [FIX 10] Restaurer le JWT depuis sessionStorage, avec fallback localStorage.
+    // sessionStorage est vidé à chaque rechargement — sans ce fallback _token reste null
+    // et tous les appels apiFetch() sont envoyés sans Authorization header → 401.
+    let storedJwt = sessionStorage.getItem("nexus_jwt");
+    let storedExp = sessionStorage.getItem("nexus_jwt_exp");
+    if (!storedJwt || !storedExp) {
+      // Fallback localStorage (rechargement de page / nouvel onglet)
+      storedJwt = localStorage.getItem("nexus_jwt");
+      storedExp = localStorage.getItem("nexus_jwt_exp");
+      if (storedJwt && storedExp && Date.now() < Number(storedExp)) {
+        // Réhydrater sessionStorage pour les appels dans cet onglet
+        sessionStorage.setItem("nexus_jwt",     storedJwt);
+        sessionStorage.setItem("nexus_jwt_exp", storedExp);
+      } else {
+        storedJwt = null; // expiré ou absent
+      }
+    }
     if (storedJwt && storedExp && Date.now() < Number(storedExp)) {
       this._token = storedJwt;
     } else if (storedJwt) {
-      // Token expiré — nettoyer
+      // Token expiré — nettoyer les deux storages
       sessionStorage.removeItem("nexus_jwt");
       sessionStorage.removeItem("nexus_jwt_exp");
+      localStorage.removeItem("nexus_jwt");
+      localStorage.removeItem("nexus_jwt_exp");
     }
   },
   async getProducts({ page = 1, limit = 50, category = null, search = null } = {}) {
@@ -1326,16 +1342,20 @@ const DataService = {
       }
     }
 
-    // CORRECTION : On bloque TOTALEMENT la requête si on n'a ni buyer ni vendor
+    // [FIX 6] Ne tenter le fallback Supabase direct que si une session active existe.
+    // Sans session, Supabase retourne 400 "no relation named orders" ou un 401 RLS.
     if (this._sb && (buyer || vendor)) {
-      let q = this._sb.from("orders").select("*", { count: "exact" });
-      if (buyer) q = q.eq("buyer_id", buyer);
-      if (vendor) q = q.eq("vendor_id", vendor);
-      if (status) q = q.eq("status", status);
-
-      q = q.order("created_at", { ascending: false }).range((page-1)*limit, page*limit-1);
-      const { data, error } = await q;
-      if (!error) return data;
+      let sbSession = null;
+      try { ({ data: { session: sbSession } } = await this._sb.auth.getSession()); } catch (_) {}
+      if (sbSession) {
+        let q = this._sb.from("orders").select("*", { count: "exact" });
+        if (buyer)  q = q.eq("buyer_id",  buyer);
+        if (vendor) q = q.eq("vendor_id", vendor);
+        if (status) q = q.eq("status", status);
+        q = q.order("created_at", { ascending: false }).range((page-1)*limit, page*limit-1);
+        const { data, error } = await q;
+        if (!error) return data;
+      }
     }
 
     // Fallback localStorage (exécuté si pas de _sb OU si pas de buyer/vendor)
@@ -1540,10 +1560,15 @@ const DataService = {
       if (res && res.ok) { const json = await res.json(); return json; }
     }
     if (this._sb) {
-      const { data, error } = await this._sb.from("notifications")
-        .select("*").eq("user_id", userId)
-        .order("created_at", { ascending: false }).limit(30);
-      if (!error && data) return data;
+      // [FIX 7] Ne passer par Supabase direct que si une session active existe (évite le 400/401 RLS)
+      let sbSession = null;
+      try { ({ data: { session: sbSession } } = await this._sb.auth.getSession()); } catch (_) {}
+      if (sbSession) {
+        const { data, error } = await this._sb.from("notifications")
+          .select("*").eq("user_id", userId)
+          .order("created_at", { ascending: false }).limit(30);
+        if (!error && data) return data;
+      }
     }
     const all = storage.get("notifications") || {};
     return (all[userId] || []).slice(0, 30);
@@ -1615,6 +1640,16 @@ const DataService = {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || json.message || "Erreur inscription");
       if (json.emailConfirmPending) return { __emailConfirmPending: true, email };
+      // [FIX 8] Si le backend retourne un token (buyer inscrit sans confirmation email),
+      // le sauvegarder immédiatement pour éviter un 401 sur la première action post-inscription.
+      if (json.token) {
+        const expTs = String(Date.now() + (json.expiresIn || 604800) * 1000);
+        sessionStorage.setItem("nexus_jwt",     json.token);
+        sessionStorage.setItem("nexus_jwt_exp", expTs);
+        localStorage.setItem("nexus_jwt",       json.token);
+        localStorage.setItem("nexus_jwt_exp",   expTs);
+        this._token = json.token;
+      }
       return json.user || json;
     }
     if (this._sb) {
@@ -1694,8 +1729,14 @@ const DataService = {
         const json = await res.json();
         if (!res.ok) throw new Error(json.error || json.message || "Email ou mot de passe incorrect");
         if (json.token) {
-          sessionStorage.setItem("nexus_jwt", json.token);
-          sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 28800) * 1000));
+          // [FIX 2a] Sauvegarder dans sessionStorage ET localStorage.
+          // sessionStorage est vidé à chaque rechargement → tous les appels API
+          // devenaient 401. localStorage persiste entre les onglets et reloads.
+          const expTs = String(Date.now() + (json.expiresIn || 28800) * 1000);
+          sessionStorage.setItem("nexus_jwt",     json.token);
+          sessionStorage.setItem("nexus_jwt_exp", expTs);
+          localStorage.setItem("nexus_jwt",       json.token);
+          localStorage.setItem("nexus_jwt_exp",   expTs);
           this._token = json.token;
         }
         // [FIX 3] Tentative de connexion Supabase pour les appels directs (notifications, etc.)
@@ -1780,7 +1821,7 @@ const DataService = {
       setTimeout(() => { this._voluntarySignOut = false; }, 500);
     }
     if (NEXUS_CONFIG.apiUrl) {
-      const token = sessionStorage.getItem("nexus_jwt");
+      const token = this._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
       if (token) {
         const ctrl = new AbortController();
         const tid = setTimeout(() => ctrl.abort(), 4000); // 4s max
@@ -1788,19 +1829,28 @@ const DataService = {
           method: "POST", headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal
         }).catch(()=>{}).finally(() => clearTimeout(tid));
       }
+      // [FIX 5] Nettoyer sessionStorage ET localStorage pour éviter la réhydratation après déco
       sessionStorage.removeItem("nexus_jwt");
       sessionStorage.removeItem("nexus_jwt_exp");
+      localStorage.removeItem("nexus_jwt");
+      localStorage.removeItem("nexus_jwt_exp");
+      this._token = null;
     }
   },
   // ── Session expiry check ─────────────────────────────────────────────────
   isSessionExpired() {
-    const exp = sessionStorage.getItem("nexus_jwt_exp");
+    // [FIX] Vérifier sessionStorage en priorité, puis localStorage en fallback
+    const exp = sessionStorage.getItem("nexus_jwt_exp") || localStorage.getItem("nexus_jwt_exp");
     if (!exp) return false;
     return Date.now() > parseInt(exp, 10);
   },
   saveSession(token, expiresInSeconds) {
-    sessionStorage.setItem("nexus_jwt", token);
-    sessionStorage.setItem("nexus_jwt_exp", Date.now() + expiresInSeconds * 1000);
+    // [FIX] Double-sauvegarde sessionStorage + localStorage
+    const expTs = String(Date.now() + expiresInSeconds * 1000);
+    sessionStorage.setItem("nexus_jwt",     token);
+    sessionStorage.setItem("nexus_jwt_exp", expTs);
+    localStorage.setItem("nexus_jwt",       token);
+    localStorage.setItem("nexus_jwt_exp",   expTs);
   },
   // Wrapper fetch → auto-logout on 401 + PERF FIX: timeout 4s pour éviter les cold starts Render
   async apiFetch(path, options = {}) {
@@ -1809,8 +1859,20 @@ const DataService = {
       window.dispatchEvent(new CustomEvent("nexus:session-expired"));
       throw new Error("SESSION_EXPIRED");
     }
-    // [FIX 1] Utiliser le JWT backend si disponible, sinon le token Supabase en fallback
+    // [FIX 4] Récupérer le JWT depuis sessionStorage, avec fallback localStorage.
+    // sessionStorage est vidé à chaque rechargement → 401 en cascade sans ce fallback.
     let token = sessionStorage.getItem("nexus_jwt");
+    if (!token) {
+      const lsToken = localStorage.getItem("nexus_jwt");
+      const lsExp   = localStorage.getItem("nexus_jwt_exp");
+      if (lsToken && lsExp && Date.now() < Number(lsExp)) {
+        token = lsToken;
+        // Réhydrater sessionStorage pour éviter de relire localStorage à chaque appel
+        sessionStorage.setItem("nexus_jwt",     lsToken);
+        sessionStorage.setItem("nexus_jwt_exp", lsExp);
+        this._token = lsToken;
+      }
+    }
     if (!token && this._sb) {
       try {
         // PERF FIX: cache Supabase token 30s pour éviter getSession() sur chaque appel
@@ -1871,10 +1933,22 @@ const DataService = {
     }
   },
   async restoreSession() {
-    // [FIX] Essayer d'abord le backend /api/auth/me (token JWT valide)
+    // [FIX 3] Récupérer le JWT depuis sessionStorage OU localStorage.
+    // sessionStorage est réinitialisé à chaque rechargement de page ; localStorage persiste.
     if (NEXUS_CONFIG.apiUrl) {
-      const jwt = sessionStorage.getItem("nexus_jwt");
-      const exp = sessionStorage.getItem("nexus_jwt_exp");
+      let jwt = sessionStorage.getItem("nexus_jwt");
+      let exp = sessionStorage.getItem("nexus_jwt_exp");
+      // Fallback localStorage si sessionStorage vide (rechargement de page)
+      if (!jwt || !exp) {
+        jwt = localStorage.getItem("nexus_jwt");
+        exp = localStorage.getItem("nexus_jwt_exp");
+        if (jwt && exp && Date.now() < Number(exp)) {
+          // Réhydrater sessionStorage pour les appels suivants dans cet onglet
+          sessionStorage.setItem("nexus_jwt",     jwt);
+          sessionStorage.setItem("nexus_jwt_exp", exp);
+          this._token = jwt;
+        }
+      }
       if (jwt && exp && Date.now() < Number(exp)) {
         const res = await this.apiFetch("/api/auth/me").catch(() => null);
         if (res && res.ok) {
@@ -2504,7 +2578,7 @@ const EmailService = {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${storage.get('nexus_token')}`
           },
-          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>`, text })
+          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>` })
         });
         if (resp.ok) {
           const r = await resp.json();
@@ -2583,6 +2657,29 @@ const EmailService = {
         shipping_city:    order.shippingCity  || '—',
         vendor_name:      order.vendorName    || '—',
         site_url:         window.location.origin,
+        // [FIX] html_body — utilisé par le fallback backend /api/email/send
+        // quand EmailJS n'est pas configuré ou échoue.
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+            <div style="background:#00853E;padding:20px;text-align:center">
+              <h1 style="color:white;margin:0">NEXUS Market Sénégal</h1>
+            </div>
+            <div style="padding:30px;background:#f9f9f9">
+              <h2 style="color:#1F2937">Bonjour ${order.buyerName || '—'},</h2>
+              <p>Votre commande <strong>#${order.id || '—'}</strong> a été confirmée le ${order.date ? new Date(order.date).toLocaleDateString('fr-FR') : new Date().toLocaleDateString('fr-FR')} !</p>
+              ${itemListHtml}
+              <div style="background:#e8f5e9;border-radius:8px;padding:15px;margin:15px 0">
+                <p style="margin:0"><strong>📦 Numéro de suivi :</strong> ${order.trackingNumber || 'En cours de génération'}</p>
+                <p style="margin:8px 0 0"><strong>🏠 Livraison :</strong> ${order.buyerAddress || 'Non précisée'}${order.shippingCity ? ', ' + order.shippingCity : ''}</p>
+              </div>
+              <p>Vendeur : <strong>${order.vendorName || '—'}</strong></p>
+              <p style="color:#666;font-size:14px">Pour toute question : <a href="mailto:sav@nexus.sn">sav@nexus.sn</a></p>
+            </div>
+            <div style="background:#333;color:white;padding:15px;text-align:center;font-size:12px">
+              NEXUS Market SARL — Dakar, Sénégal
+            </div>
+          </div>
+        `,
       }
     });
   },
@@ -2618,6 +2715,36 @@ const EmailService = {
         order_id: offer.id || '—',
         total: formatPrice(offer.offeredPrice),
         vendor_name: offer.vendorName || '—',
+        // [FIX] html_body — fallback backend /api/email/send
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:30px">
+            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center">
+              <h2 style="color:white;margin:0">NEXUS Market</h2>
+            </div>
+            <div style="background:#f9f9f9;padding:24px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937">Bonjour ${offer.vendorName || 'Vendeur'},</h3>
+              <p><strong>${offer.buyerName}</strong> a soumis une offre pour <strong>${offer.productName}</strong>.</p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:16px 0;background:white;border-radius:8px;overflow:hidden">
+                <tr style="background:#f3f4f6">
+                  <td style="padding:10px 14px;font-size:13px;color:#374151;font-weight:600">Produit</td>
+                  <td style="padding:10px 14px;font-size:13px;color:#374151;font-weight:600;text-align:right">Prix</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 14px;font-size:14px">${offer.productName}</td>
+                  <td style="padding:10px 14px;font-size:14px;text-align:right;text-decoration:line-through;color:#9ca3af">${formatPrice(offer.originalPrice || offer.offeredPrice)}</td>
+                </tr>
+                <tr style="background:#ecfdf5">
+                  <td style="padding:10px 14px;font-size:14px;font-weight:700;color:#00853E">💰 Prix proposé</td>
+                  <td style="padding:10px 14px;font-size:16px;font-weight:700;color:#00853E;text-align:right">${formatPrice(offer.offeredPrice)}</td>
+                </tr>
+              </table>
+              ${offer.message ? `<div style="background:#fffbeb;border-left:4px solid #FDEF42;padding:12px 16px;margin:16px 0;border-radius:4px"><p style="margin:0;font-style:italic;color:#374151">"${offer.message}"</p></div>` : ''}
+              <p style="text-align:center;margin-top:24px">
+                <a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Accepter ou refuser l'offre</a>
+              </p>
+            </div>
+          </div>
+        `,
       }
     });
   },
@@ -2642,6 +2769,33 @@ const EmailService = {
         order_id: offer.id || '—',
         total: formatPrice(offer.offeredPrice),
         vendor_name: offer.vendorName || '—',
+        // [FIX] html_body — fallback backend /api/email/send
+        html_body: `
+          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:30px">
+            <div style="background:${accepted ? '#00853E' : '#E11B22'};padding:20px;border-radius:8px 8px 0 0;text-align:center">
+              <h2 style="color:white;margin:0">NEXUS Market — Offre ${accepted ? 'acceptée ✅' : 'refusée ❌'}</h2>
+            </div>
+            <div style="background:#f9f9f9;padding:24px;border-radius:0 0 8px 8px">
+              <h3 style="color:#1F2937">Bonjour ${offer.buyerName || 'Client'},</h3>
+              <p>${accepted
+                ? `🎉 Bonne nouvelle ! Le vendeur a <strong style="color:#00853E">accepté</strong> votre offre.`
+                : `Le vendeur n'a pas pu <strong style="color:#E11B22">accepter</strong> votre offre. Vous pouvez soumettre une nouvelle proposition.`
+              }</p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:16px 0;background:white;border-radius:8px;overflow:hidden">
+                <tr style="background:#f3f4f6">
+                  <td style="padding:10px 14px;font-size:13px;color:#374151;font-weight:600">Produit</td>
+                  <td style="padding:10px 14px;font-size:13px;color:#374151;font-weight:600;text-align:right">Votre offre</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 14px;font-size:14px">${offer.productName}</td>
+                  <td style="padding:10px 14px;font-size:16px;font-weight:700;color:${accepted ? '#00853E' : '#E11B22'};text-align:right">${formatPrice(offer.offeredPrice)}</td>
+                </tr>
+              </table>
+              ${accepted ? `<p style="text-align:center;margin-top:24px"><a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Finaliser ma commande</a></p>` : ''}
+              <p style="color:#666;font-size:13px">Vendeur : ${offer.vendorName || '—'}</p>
+            </div>
+          </div>
+        `,
       }
     });
   },
@@ -5191,6 +5345,15 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           clearTimeout(tid);
           const _vendorJson = await _vendorRes.json();
           if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
+          // [FIX 9] Sauvegarder le token si le backend en retourne un (cohérence avec login/buyer/B2B)
+          if (_vendorJson.token) {
+            const expTs = String(Date.now() + (_vendorJson.expiresIn || 604800) * 1000);
+            sessionStorage.setItem("nexus_jwt",     _vendorJson.token);
+            sessionStorage.setItem("nexus_jwt_exp", expTs);
+            localStorage.setItem("nexus_jwt",       _vendorJson.token);
+            localStorage.setItem("nexus_jwt_exp",   expTs);
+            DataService._token = _vendorJson.token;
+          }
         } else if (DataService._sb) {
           // [FALLBACK] Supabase direct uniquement si pas de backend configuré
           const { error: pendingErr } = await DataService._sb.from("pending_vendors").insert(pendingEntry);
@@ -5230,10 +5393,13 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           });
           const json = await res.json();
           if (!res.ok) throw new Error(json.error || "Erreur inscription B2B");
-          // Stocker le token JWT
+          // [FIX 2b] Même double-sauvegarde qu'au login (sessionStorage + localStorage)
           if (json.token) {
-            sessionStorage.setItem("nexus_jwt", json.token);
-            sessionStorage.setItem("nexus_jwt_exp", String(Date.now() + (json.expiresIn || 604800) * 1000));
+            const expTs = String(Date.now() + (json.expiresIn || 604800) * 1000);
+            sessionStorage.setItem("nexus_jwt",     json.token);
+            sessionStorage.setItem("nexus_jwt_exp", expTs);
+            localStorage.setItem("nexus_jwt",       json.token);
+            localStorage.setItem("nexus_jwt_exp",   expTs);
           }
           newUser = json.user;
         } else {
@@ -7315,7 +7481,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     // Backend
     if (NEXUS_CONFIG.apiUrl) {
       try {
-        const token = sessionStorage.getItem("nexus_jwt");
+        const token = DataService._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
         await fetch(`${NEXUS_CONFIG.apiUrl}/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH", headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }
         });
