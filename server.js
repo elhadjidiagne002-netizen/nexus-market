@@ -824,16 +824,27 @@ app.get('/api/products/check-stock', async (req, res) => {
   try {
     const { ids } = req.query; // ids=uuid1,uuid2,uuid3
     if (!ids) return res.status(400).json({ error: 'ids requis' });
-    const productIds = ids.split(',').filter(Boolean).slice(0, 50); // max 50 produits
-    const { data, error } = await supabase.rpc('get_product_stocks', {
-      p_ids: productIds,
-    });
-    if (error) throw error;
-    // Retourne un objet { [id]: { stock, active } }
+    const allIds = ids.split(',').filter(Boolean).slice(0, 50); // max 50 produits
+
+    // [FIX 1] Les IDs démo (prod1, prod2, …) ne sont pas dans Supabase.
+    // On les intercepte et on leur attribue stock=999/active=true pour ne pas
+    // faire planter la requête RPC en 500.
+    const DEMO_ID_RE = /^prod\d+$/i;
+    const demoIds    = allIds.filter(id => DEMO_ID_RE.test(id));
+    const realIds    = allIds.filter(id => !DEMO_ID_RE.test(id));
+
     const result = {};
-    for (const row of (data || [])) {
-      result[row.id] = { stock: row.stock, active: row.active };
+
+    // IDs démo → stock fictif immédiat, sans appel Supabase
+    for (const id of demoIds) result[id] = { stock: 999, active: true };
+
+    // IDs réels → appel RPC seulement si nécessaire
+    if (realIds.length > 0) {
+      const { data, error } = await supabase.rpc('get_product_stocks', { p_ids: realIds });
+      if (error) throw error;
+      for (const row of (data || [])) result[row.id] = { stock: row.stock, active: row.active };
     }
+
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2936,15 +2947,15 @@ function drawVendorCommissions(doc, y, amounts, accentHex) {
 // ── Notes légales ─────────────────────────────────────────────────────────────
 function drawLegalNotes(doc, y, type) {
   const notes = type === 'buyer' ? [
-    "• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d'origine).",
-    "• Garantie légale de conformité : 2 ans pour les vices cachés. Contactez contact@nexus.sn.",
-    "• Ce document fait foi de paiement. Conservez-le précieusement.",
-    "• En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn · +221 33 123 45 67.",
+    '• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d'origine).',
+    '• Garantie légale de conformité : 2 ans pour les vices cachés. Contactez contact@nexus.sn.',
+    '• Ce document fait foi de paiement. Conservez-le précieusement.',
+    '• En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn · +221 33 123 45 67.',
   ] : [
-    "• Ce relevé est émis par NEXUS Market Sénégal pour le compte du vendeur.",
-    "• Le net à percevoir sera versé selon les modalités convenues (Orange Money / Wave / Virement).",
-    "• Pour toute contestation : vendor@nexus.sn · délai de traitement : 48h ouvrées.",
-    "• NEXUS Market conserve 10% de commission sur le montant TTC de chaque vente.",
+    '• Ce relevé est émis par NEXUS Market Sénégal pour le compte du vendeur.',
+    '• Le net à percevoir sera versé selon les modalités convenues (Orange Money / Wave / Virement).',
+    '• Pour toute contestation : vendor@nexus.sn · délai de traitement : 48h ouvrées.',
+    '• NEXUS Market conserve 10% de commission sur le montant TTC de chaque vente.',
   ];
 
   doc.rect(40, y, 515.28, 6 + notes.length * 12).fill('#eff6ff').stroke('#bfdbfe');
@@ -3210,9 +3221,9 @@ async function generateMonthlyStatementPDF(vendor, orders, month, res) {
   doc.rect(40, y, 515.28, 40).fill('#eff6ff').stroke('#bfdbfe');
   doc.font('Helvetica').fontSize(7.5).fillColor('#1e3a5f')
      .text(
-       "Ce relevé est généré automatiquement par NEXUS Market Sénégal. " +
-       "Le paiement du net à percevoir sera effectué selon vos modalités enregistrées (Orange Money / Wave / Virement). " +
-       "Pour toute contestation, contactez vendor@nexus.sn dans un délai de 10 jours ouvrés.",
+       'Ce relevé est généré automatiquement par NEXUS Market Sénégal. ' +
+       'Le paiement du net à percevoir sera effectué selon vos modalités enregistrées (Orange Money / Wave / Virement). ' +
+       'Pour toute contestation, contactez vendor@nexus.sn dans un délai de 10 jours ouvrés.',
        48, y + 6, { width: 499.28 }
      );
 
