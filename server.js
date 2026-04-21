@@ -393,7 +393,7 @@ app.options('*', (req, res) => {
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
 
 app.use(express.json({ limit: '2mb' }));
-app.use(cookieParser()); // Requis pour le state anti-CSRF du GitHub OAuth
+app.use(cookieParser); // Requis pour le state anti-CSRF du GitHub OAuth
 app.use(requestLogger); // Log HTTP → Supabase
 
 // [FIX] Rate limits — keyGenerator utilise l'IP réelle (après fix CF-Connecting-IP ci-dessus)
