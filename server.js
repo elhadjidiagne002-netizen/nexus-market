@@ -2936,15 +2936,15 @@ function drawVendorCommissions(doc, y, amounts, accentHex) {
 // ── Notes légales ─────────────────────────────────────────────────────────────
 function drawLegalNotes(doc, y, type) {
   const notes = type === 'buyer' ? [
-    '• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d'origine).',
-    '• Garantie légale de conformité : 2 ans pour les vices cachés. Contactez contact@nexus.sn.',
-    '• Ce document fait foi de paiement. Conservez-le précieusement.',
-    '• En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn · +221 33 123 45 67.',
+    "• Droit de rétractation : 30 jours à compter de la réception (produit non ouvert, en état d'origine).",
+    "• Garantie légale de conformité : 2 ans pour les vices cachés. Contactez contact@nexus.sn.",
+    "• Ce document fait foi de paiement. Conservez-le précieusement.",
+    "• En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn · +221 33 123 45 67.",
   ] : [
-    '• Ce relevé est émis par NEXUS Market Sénégal pour le compte du vendeur.',
-    '• Le net à percevoir sera versé selon les modalités convenues (Orange Money / Wave / Virement).',
-    '• Pour toute contestation : vendor@nexus.sn · délai de traitement : 48h ouvrées.',
-    '• NEXUS Market conserve 10% de commission sur le montant TTC de chaque vente.',
+    "• Ce relevé est émis par NEXUS Market Sénégal pour le compte du vendeur.",
+    "• Le net à percevoir sera versé selon les modalités convenues (Orange Money / Wave / Virement).",
+    "• Pour toute contestation : vendor@nexus.sn · délai de traitement : 48h ouvrées.",
+    "• NEXUS Market conserve 10% de commission sur le montant TTC de chaque vente.",
   ];
 
   doc.rect(40, y, 515.28, 6 + notes.length * 12).fill('#eff6ff').stroke('#bfdbfe');
@@ -3210,9 +3210,9 @@ async function generateMonthlyStatementPDF(vendor, orders, month, res) {
   doc.rect(40, y, 515.28, 40).fill('#eff6ff').stroke('#bfdbfe');
   doc.font('Helvetica').fontSize(7.5).fillColor('#1e3a5f')
      .text(
-       'Ce relevé est généré automatiquement par NEXUS Market Sénégal. ' +
-       'Le paiement du net à percevoir sera effectué selon vos modalités enregistrées (Orange Money / Wave / Virement). ' +
-       'Pour toute contestation, contactez vendor@nexus.sn dans un délai de 10 jours ouvrés.',
+       "Ce relevé est généré automatiquement par NEXUS Market Sénégal. " +
+       "Le paiement du net à percevoir sera effectué selon vos modalités enregistrées (Orange Money / Wave / Virement). " +
+       "Pour toute contestation, contactez vendor@nexus.sn dans un délai de 10 jours ouvrés.",
        48, y + 6, { width: 499.28 }
      );
 
