@@ -2262,14 +2262,41 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
     if (error || !pending) return res.status(404).json({ error: 'Demande introuvable' });
 
     if (approved) {
-      const existingProfile = await supabase.from('profiles').select('id').eq('email', pending.email).single();
-      if (!existingProfile.data) {
-        await supabase.from('profiles').insert({
-          name: pending.owner_name, email: pending.email, password_hash: pending.password_hash,
-          role: 'vendor', status: 'approved', avatar: pending.avatar || pending.owner_name.slice(0,2).toUpperCase(), shop_category: pending.category
+      const { data: existingProfile } = await supabase.from('profiles').select('id, password_hash').eq('email', pending.email).single();
+      if (!existingProfile) {
+        // Nouveau profil — copier toutes les infos du dossier vendeur
+        const { error: insertErr } = await supabase.from('profiles').insert({
+          name:          pending.owner_name,
+          email:         pending.email,
+          password_hash: pending.password_hash,
+          role:          'vendor',
+          status:        'approved',
+          avatar:        pending.avatar || (pending.owner_name || 'VE').slice(0, 2).toUpperCase(),
+          shop_name:     pending.name,
+          shop_category: pending.category,
+          phone:         pending.phone   || null,
+          address:       pending.address || null,
         });
+        if (insertErr) throw insertErr;
       } else {
-        await supabase.from('profiles').update({ role: 'vendor', status: 'approved' }).eq('email', pending.email);
+        // Profil existant — mettre à jour rôle, statut, shop_name
+        // [FIX] Transférer password_hash si le profil n'en a pas encore
+        const updatePayload = {
+          role:          'vendor',
+          status:        'approved',
+          shop_name:     pending.name,
+          shop_category: pending.category,
+        };
+        if (!existingProfile.password_hash && pending.password_hash) {
+          updatePayload.password_hash = pending.password_hash;
+        }
+        const { error: updateErr } = await supabase.from('profiles').update(updatePayload).eq('email', pending.email);
+        if (updateErr) throw updateErr;
+      }
+      // [FIX] Invalider le cache profil pour ce vendeur — évite que le token mis en cache
+      // retourne encore status:'pending' lors du prochain appel verifyToken
+      for (const [key, val] of _profileCache.entries()) {
+        if (val.user?.email === pending.email) _profileCache.delete(key);
       }
     }
 
@@ -4447,21 +4474,34 @@ app.listen(PORT, async () => {
   // ── [FIX] Création automatique du bucket nexus-images si inexistant ──────
   if (hasDb) {
     try {
-      const { data: buckets } = await supabase.storage.listBuckets();
-      const exists = (buckets || []).some(b => b.name === 'nexus-images');
-      if (!exists) {
-        const { error: bucketErr } = await supabase.storage.createBucket('nexus-images', {
-          public: true,
-          fileSizeLimit: 8 * 1024 * 1024, // 8 Mo
-          allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-        });
-        if (bucketErr) {
-          console.warn(`   Storage  : ⚠️  Bucket nexus-images — erreur création: ${bucketErr.message}`);
-        } else {
-          console.log(`   Storage  : ✅ Bucket nexus-images créé automatiquement`);
-        }
+      const { data: buckets, error: listErr } = await supabase.storage.listBuckets();
+
+      // [FIX] Si listBuckets échoue (droits Storage Admin insuffisants),
+      // on suppose que le bucket existe déjà plutôt que de tenter une création
+      // aveugle qui produira "signature verification failed".
+      if (listErr) {
+        console.warn(`   Storage  : ⚠️  listBuckets échoué (${listErr.message}) — bucket supposé existant`);
       } else {
-        console.log(`   Storage  : ✅ Bucket nexus-images OK`);
+        const exists = (buckets || []).some(b => b.name === 'nexus-images');
+        if (!exists) {
+          const { error: bucketErr } = await supabase.storage.createBucket('nexus-images', {
+            public: true,
+            fileSizeLimit: 8 * 1024 * 1024, // 8 Mo
+            allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+          });
+          if (bucketErr) {
+            // "already exists" n'est pas une vraie erreur
+            if (bucketErr.message?.toLowerCase().includes('already exist')) {
+              console.log(`   Storage  : ✅ Bucket nexus-images déjà existant`);
+            } else {
+              console.warn(`   Storage  : ⚠️  Bucket nexus-images — erreur création: ${bucketErr.message}`);
+            }
+          } else {
+            console.log(`   Storage  : ✅ Bucket nexus-images créé automatiquement`);
+          }
+        } else {
+          console.log(`   Storage  : ✅ Bucket nexus-images OK`);
+        }
       }
     } catch (e) {
       console.warn(`   Storage  : ⚠️  Vérification bucket échouée: ${e.message}`);
