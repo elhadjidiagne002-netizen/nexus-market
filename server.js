@@ -1194,7 +1194,7 @@ app.post('/api/products', verifyToken, requireRole('vendor'), async (req, res) =
     return res.status(400).json({ error: 'Le prix barré doit être supérieur au prix de vente' });
   try {
     const { data: vendor } = await supabase.from('profiles').select('name, status').eq('id', req.user.id).single();
-    if (vendor?.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur non approuvé' });
+    if (vendor?.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur non approuvé. Attendez la validation de votre boutique par l\'équipe NEXUS.' });
     const { data, error } = await supabase.from('products').insert({
       name, category: category || 'Autre',
       price: parseFloat(price), stock: parseInt(stock),
@@ -1205,13 +1205,18 @@ app.post('/api/products', verifyToken, requireRole('vendor'), async (req, res) =
       vendor_id: req.user.id, vendor_name: vendor?.name || req.user.name,
       rating: 0, reviews_count: 0,
       active: active !== false,
-      moderated: false,
+      // [FIX] Produits approuvés immédiatement — modération a posteriori (signalement)
+      // Les vendeurs approuvés sont de confiance ; l'admin peut retirer un produit si besoin.
+      moderated: true,
     }).select().single();
     if (error) throw error;
-    const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
-    for (const admin of (admins || [])) {
-      await pushNotification(admin.id, { type: 'system', title: '🏷️ Produit à modérer', message: `"${name}" — ${vendor?.name}`, link: '/admin/products' });
-    }
+    // Notifier les admins en arrière-plan (sans bloquer la réponse)
+    supabase.from('profiles').select('id').eq('role', 'admin').then(({ data: admins }) => {
+      for (const admin of (admins || [])) {
+        pushNotification(admin.id, { type: 'system', title: '🏷️ Nouveau produit publié', message: `"${name}" — ${vendor?.name} (publié directement)`, link: '/admin/products' });
+      }
+    });
+    Logger.info('product', 'created', `Produit créé: "${name}" par ${vendor?.name}`, { userId: req.user.id });
     res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4423,7 +4428,7 @@ process.on('uncaughtException', (err) => {
   process.exit(1); // Quitter sur les erreurs vraiment fatales
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   const env     = process.env.NODE_ENV || 'development';
   const hasDb   = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY);
   const hasStripe = !!process.env.STRIPE_SECRET_KEY;
@@ -4439,7 +4444,30 @@ app.listen(PORT, () => {
   console.log(`   Logs     : Supabase table server_logs ✅`);
   console.log(`   Health   : http://localhost:${PORT}/api/health\n`);
 
-  // Log de démarrage dans Supabase
+  // ── [FIX] Création automatique du bucket nexus-images si inexistant ──────
+  if (hasDb) {
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const exists = (buckets || []).some(b => b.name === 'nexus-images');
+      if (!exists) {
+        const { error: bucketErr } = await supabase.storage.createBucket('nexus-images', {
+          public: true,
+          fileSizeLimit: 8 * 1024 * 1024, // 8 Mo
+          allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+        });
+        if (bucketErr) {
+          console.warn(`   Storage  : ⚠️  Bucket nexus-images — erreur création: ${bucketErr.message}`);
+        } else {
+          console.log(`   Storage  : ✅ Bucket nexus-images créé automatiquement`);
+        }
+      } else {
+        console.log(`   Storage  : ✅ Bucket nexus-images OK`);
+      }
+    } catch (e) {
+      console.warn(`   Storage  : ⚠️  Vérification bucket échouée: ${e.message}`);
+    }
+  }
+
   Logger.info('system', 'startup', `API démarrée sur le port ${PORT}`, {
     meta: { env, hasDb, hasStripe, hasEmail, hasWebhook, version: 'v3.2.0' }
   });
