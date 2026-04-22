@@ -2060,40 +2060,146 @@ app.patch('/api/disputes/:id', verifyToken, requireRole('admin'), async (req, re
 
 // ─── RETURNS ─────────────────────────────────────────────────────────────────
 app.get('/api/returns', verifyToken, async (req, res) => {
-  let query = supabase.from('return_requests').select('*');
-  if (req.user.role === 'buyer')  query = query.eq('buyer_id', req.user.id);
-  if (req.user.role === 'vendor') query = query.eq('vendor_id', req.user.id);
-  const { data } = await query.order('created_at', { ascending: false });
-  res.json(data || []);
-});
-app.post('/api/returns', verifyToken, requireRole('buyer'), async (req, res) => {
-  const { orderId, category, description } = req.body;
-  if (!orderId || !category || !description) return res.status(400).json({ error: 'Champs requis manquants' });
   try {
-    const { data: order } = await supabase.from('orders').select('*').eq('id', orderId).eq('buyer_id', req.user.id).single();
-    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    const { data, error } = await supabase.from('return_requests').insert({
-      order_id: orderId, buyer_id: req.user.id, buyer_name: req.user.name,
-      vendor_id: order.vendor_id, vendor_name: order.vendor_name,
-      products: order.products, order_total: order.total, category, description
-    }).select().single();
+    let query = supabase.from('return_requests').select('*');
+    if (req.user.role === 'buyer')  query = query.eq('buyer_id',  req.user.id);
+    if (req.user.role === 'vendor') query = query.eq('vendor_id', req.user.id);
+    const { data, error } = await query.order('created_at', { ascending: false });
     if (error) throw error;
-    await supabase.from('orders').update({ return_status: 'pending', return_id: data.id }).eq('id', orderId);
-    res.status(201).json(data);
+    res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
+
+app.post('/api/returns', verifyToken, requireRole('buyer'), async (req, res) => {
+  const { orderId, category, description } = req.body;
+  if (!orderId)     return res.status(400).json({ error: 'orderId requis' });
+  if (!category)    return res.status(400).json({ error: 'category requis' });
+  if (!description || description.trim().length < 20)
+    return res.status(400).json({ error: 'description trop courte (min 20 caractères)' });
+
+  const CATEGORY_LABELS = {
+    non_conforme:   'Produit non conforme à la description',
+    defectueux:     'Produit défectueux ou endommagé',
+    non_recu:       'Colis non reçu',
+    mauvaise_taille:'Mauvaise taille / couleur',
+    autre:          'Autre raison',
+  };
+  const VALID_CATEGORIES = Object.keys(CATEGORY_LABELS);
+  if (!VALID_CATEGORIES.includes(category))
+    return res.status(400).json({ error: `category invalide. Valeurs : ${VALID_CATEGORIES.join(', ')}` });
+
+  try {
+    const { data: order, error: orderErr } = await supabase
+      .from('orders').select('*').eq('id', orderId).eq('buyer_id', req.user.id).single();
+    if (orderErr || !order) return res.status(404).json({ error: 'Commande introuvable' });
+
+    // Vérifier qu'il n'y a pas déjà une demande de retour ouverte pour cette commande
+    const { data: existing } = await supabase
+      .from('return_requests').select('id, status').eq('order_id', orderId).maybeSingle();
+    if (existing) return res.status(409).json({
+      error: 'Une demande de retour existe déjà pour cette commande',
+      existingId: existing.id, existingStatus: existing.status,
+    });
+
+    const returnId = `RET-${Date.now()}`;
+    const { data, error } = await supabase.from('return_requests').insert({
+      id:             returnId,
+      order_id:       orderId,
+      buyer_id:       req.user.id,
+      buyer_name:     req.user.name,
+      buyer_email:    req.user.email  || null,
+      vendor_id:      order.vendor_id || null,
+      vendor_name:    order.vendor_name || null,
+      products:       order.products  || [],
+      order_total:    order.total     || 0,
+      category,
+      category_label: CATEGORY_LABELS[category],
+      description:    description.trim(),
+      status:         'pending',
+    }).select().single();
+    if (error) throw error;
+
+    // Mettre à jour la commande
+    await supabase.from('orders').update({
+      return_status: 'pending',
+      return_id:     returnId,
+    }).eq('id', orderId);
+
+    // Notifier les admins
+    const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
+    (admins || []).forEach(admin => pushNotification(admin.id, {
+      type:    'system',
+      title:   '↩️ Nouvelle demande de retour',
+      message: `${req.user.name} — Commande #${orderId.slice(-6)} (${CATEGORY_LABELS[category]})`,
+      link:    '/admin/returns',
+    }));
+
+    // Notifier le vendeur
+    if (order.vendor_id) {
+      await pushNotification(order.vendor_id, {
+        type:    'system',
+        title:   '↩️ Demande de retour reçue',
+        message: `Commande #${orderId.slice(-6)} — ${CATEGORY_LABELS[category]}`,
+        link:    '/vendor/returns',
+      });
+    }
+
+    Logger.info('returns', 'created', `Retour ${returnId} — ${req.user.email}`, {
+      userId: req.user.id, meta: { orderId, category },
+    });
+
+    res.status(201).json(data);
+  } catch (e) {
+    Logger.error('returns', 'create.error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/api/returns/:id', verifyToken, requireRole('admin'), async (req, res) => {
   const { status, adminNotes } = req.body;
-  const updates = { status };
-  if (adminNotes)             updates.admin_notes  = adminNotes;
-  if (status === 'approved')  updates.approved_at  = new Date().toISOString();
-  if (status === 'rejected')  updates.rejected_at  = new Date().toISOString();
-  if (status === 'refunded')  updates.refunded_at  = new Date().toISOString();
-  const { data, error } = await supabase.from('return_requests').update(updates).eq('id', req.params.id).select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  const VALID_STATUSES = ['approved', 'rejected', 'refunded'];
+  if (!status || !VALID_STATUSES.includes(status))
+    return res.status(400).json({ error: `status invalide. Valeurs : ${VALID_STATUSES.join(', ')}` });
+
+  try {
+    const { data: existing } = await supabase
+      .from('return_requests').select('*').eq('id', req.params.id).single();
+    if (!existing) return res.status(404).json({ error: 'Demande introuvable' });
+
+    const updates = { status };
+    if (adminNotes)            updates.admin_notes = adminNotes;
+    if (status === 'approved') updates.approved_at = new Date().toISOString();
+    if (status === 'rejected') updates.rejected_at = new Date().toISOString();
+    if (status === 'refunded') updates.refunded_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('return_requests').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+
+    // Mettre à jour le statut de retour sur la commande
+    await supabase.from('orders').update({ return_status: status }).eq('id', existing.order_id);
+
+    // Notifier l'acheteur
+    const MSG = {
+      approved: '✅ Votre demande de retour a été approuvée. Vous serez remboursé sous 5-7 jours ouvrés.',
+      rejected: '❌ Votre demande de retour a été refusée.' + (adminNotes ? ` Motif : ${adminNotes}` : ''),
+      refunded: '💰 Votre remboursement a été effectué.',
+    };
+    await pushNotification(existing.buyer_id, {
+      type:    'system',
+      title:   '↩️ Mise à jour de votre retour',
+      message: MSG[status],
+      link:    '/orders',
+    });
+
+    Logger.info('returns', 'updated', `Retour ${req.params.id} → ${status}`, { userId: req.user.id });
+    res.json(data);
+  } catch (e) {
+    Logger.error('returns', 'update.error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── REVIEWS ─────────────────────────────────────────────────────────────────
@@ -3984,607 +4090,6 @@ app.patch('/api/invoices/:id/status', verifyToken, requireRole('admin'), async (
     res.status(500).json({ error: e.message });
   }
 });
-
-// ════════════════════════════════════════════════════════════════════════════════
-// VÉRIFICATION DE STOCK TEMPS RÉEL v1.0
-// Endpoints : SSE stream, check-batch, réservation panier, dashboard vendeur,
-//             historique, seuils d'alerte, ajustement admin.
-// Prérequis  : migration stock_realtime_migration.sql exécutée dans Supabase.
-// Var .env   : STOCK_RESERVATION_TTL (minutes, défaut 15)
-// ════════════════════════════════════════════════════════════════════════════════
-
-// ── SSE BROKER — gestionnaire central des connexions Server-Sent Events ───────
-// Architecture : Map<productId, Set<SSEClient>>
-const SSEBroker = (() => {
-  const _subscribers  = new Map();
-  const GLOBAL_CHANNEL = '__global__';
-
-  function subscribe(productId, client) {
-    const ch = productId || GLOBAL_CHANNEL;
-    if (!_subscribers.has(ch)) _subscribers.set(ch, new Set());
-    _subscribers.get(ch).add(client);
-    Logger.debug('sse', 'subscribe', `Client abonné à ${ch}`, { meta: { total: _subscribers.get(ch).size } });
-  }
-
-  function unsubscribe(productId, client) {
-    const ch  = productId || GLOBAL_CHANNEL;
-    const set = _subscribers.get(ch);
-    if (set) { set.delete(client); if (set.size === 0) _subscribers.delete(ch); }
-  }
-
-  function emit(productId, stockData) {
-    const payload = JSON.stringify({ ...stockData, productId, ts: Date.now() });
-    const event   = `data: ${payload}\n\n`;
-    for (const ch of [productId, GLOBAL_CHANNEL]) {
-      const subs = _subscribers.get(ch);
-      if (!subs || subs.size === 0) continue;
-      const dead = [];
-      subs.forEach(client => { try { client.res.write(event); } catch (_) { dead.push(client); } });
-      dead.forEach(c => subs.delete(c));
-    }
-  }
-
-  function emitLowStock(productId, stockData) { emit(productId, { ...stockData, event: 'low_stock' }); }
-
-  function stats() {
-    let total = 0; const channels = [];
-    _subscribers.forEach((set, ch) => { total += set.size; channels.push({ channel: ch, clients: set.size }); });
-    return { total, channels };
-  }
-
-  return { subscribe, unsubscribe, emit, emitLowStock, stats };
-})();
-
-// ── Helpers stock ──────────────────────────────────────────────────────────────
-const computeStockStatus = (stock, threshold = 5) =>
-  stock === 0          ? 'rupture'   :
-  stock <= threshold   ? 'faible'    :
-  stock <= threshold * 2 ? 'attention' : 'ok';
-
-const formatStockResponse = (p) => {
-  const reserved  = p.reserved_quantity || 0;
-  const available = Math.max(0, p.stock - reserved);
-  const threshold = p.low_stock_threshold || 5;
-  return {
-    productId:  p.id,
-    name:       p.name,
-    stock:      p.stock,
-    reserved,
-    available,
-    threshold,
-    status:     computeStockStatus(p.stock, threshold),
-    active:     p.active,
-    updatedAt:  p.stock_updated_at || p.updated_at,
-  };
-};
-
-const logStockHistory = async ({ productId, vendorId, previousStock, newStock, changeType, orderId, reservationId, note, actorId }) => {
-  try {
-    await supabase.from('stock_history').insert({
-      product_id:     productId,
-      vendor_id:      vendorId       || null,
-      previous_stock: previousStock,
-      new_stock:      newStock,
-      change_type:    changeType,
-      order_id:       orderId        || null,
-      reservation_id: reservationId  || null,
-      note:           note           || null,
-      actor_id:       actorId        || null,
-    });
-  } catch (e) { Logger.warn('stock', 'history.write.error', e.message); }
-};
-
-const RESERVATION_TTL_MINUTES = parseInt(process.env.STOCK_RESERVATION_TTL || '15');
-const SSE_HEARTBEAT_INTERVAL  = 25000;
-
-// ── broadcastStockUpdate — à appeler après chaque commande/annulation ─────────
-const broadcastStockUpdate = async (productId) => {
-  if (!productId) return;
-  try {
-    const { data: p } = await supabase
-      .from('products')
-      .select('id, name, stock, reserved_quantity, active, low_stock_threshold, stock_updated_at')
-      .eq('id', productId).single();
-    if (p) {
-      const sd = formatStockResponse(p);
-      SSEBroker.emit(productId, sd);
-      if (p.stock > 0 && p.stock <= (p.low_stock_threshold || 5)) SSEBroker.emitLowStock(productId, sd);
-    }
-  } catch (_) {}
-};
-
-// ── CRON INTERNE : nettoyage des réservations expirées (toutes les 2 min) ────
-const _cleanupReservations = async () => {
-  try {
-    const { data: expired } = await supabase
-      .from('stock_reservations')
-      .select('id, product_id, quantity')
-      .lt('expires_at', new Date().toISOString())
-      .eq('confirmed', false).eq('released', false).limit(100);
-
-    if (!expired?.length) return;
-
-    for (const r of expired) {
-      const { data: prod } = await supabase
-        .from('products')
-        .select('stock, reserved_quantity, vendor_id, low_stock_threshold, name, active, stock_updated_at')
-        .eq('id', r.product_id).single();
-      if (!prod) continue;
-
-      const newStock    = prod.stock + r.quantity;
-      const newReserved = Math.max(0, (prod.reserved_quantity || 0) - r.quantity);
-
-      await supabase.from('products').update({
-        stock:             newStock,
-        reserved_quantity: newReserved,
-        stock_updated_at:  new Date().toISOString(),
-      }).eq('id', r.product_id);
-
-      await supabase.from('stock_reservations').update({ released: true, updated_at: new Date().toISOString() }).eq('id', r.id);
-
-      await logStockHistory({
-        productId: r.product_id, vendorId: prod.vendor_id,
-        previousStock: prod.stock, newStock, changeType: 'release',
-        reservationId: r.id, note: 'Réservation expirée — libération automatique',
-      });
-
-      SSEBroker.emit(r.product_id, formatStockResponse({ ...prod, id: r.product_id, stock: newStock, reserved_quantity: newReserved }));
-
-      // Déclencher les alertes acheteurs si produit revient en stock
-      if (prod.stock === 0 && newStock > 0) {
-        supabase.rpc('notify_stock_alerts', { p_product_id: r.product_id })
-          .then(({ data: users }) => {
-            (users || []).forEach(row =>
-              pushNotification(row.user_id, {
-                type: 'system', title: '🔔 Produit disponible !',
-                message: `"${prod.name}" est de nouveau disponible — commandez vite !`,
-                link: `/products/${r.product_id}`,
-              })
-            );
-          }).catch(() => {});
-      }
-    }
-    Logger.info('stock', 'cleanup.reservations', `${expired.length} réservation(s) expirée(s) libérées`);
-  } catch (e) { Logger.error('stock', 'cleanup.error', e.message); }
-};
-
-_cleanupReservations();
-setInterval(_cleanupReservations, 2 * 60 * 1000);
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 1. GET /api/stock/stream — SSE temps réel
-// Query : ?productId=uuid1,uuid2  OU  ?scope=global (vendeur/admin uniquement)
-// ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/stock/stream', async (req, res) => {
-  const { productId, scope } = req.query;
-  const isGlobal = scope === 'global';
-  const productIds = productId ? productId.split(',').filter(Boolean).slice(0, 20) : [];
-
-  if (!isGlobal && productIds.length === 0) {
-    return res.status(400).json({ error: 'productId ou scope=global requis' });
-  }
-
-  // Scope global : réservé aux vendeurs/admins
-  if (isGlobal) {
-    const auth = req.headers.authorization;
-    if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Authentification requise' });
-    try {
-      const decoded = jwt.verify(auth.slice(7), process.env.JWT_SECRET);
-      if (!['vendor', 'admin'].includes(decoded.role)) return res.status(403).json({ error: 'Accès refusé' });
-    } catch (_) { return res.status(401).json({ error: 'Token invalide' }); }
-  }
-
-  res.setHeader('Content-Type',       'text/event-stream');
-  res.setHeader('Cache-Control',      'no-cache, no-store');
-  res.setHeader('Connection',         'keep-alive');
-  res.setHeader('X-Accel-Buffering',  'no');
-  res.flushHeaders();
-
-  const client = { res, connectedAt: Date.now() };
-  if (isGlobal) {
-    SSEBroker.subscribe(null, client);
-  } else {
-    productIds.forEach(pid => SSEBroker.subscribe(pid, client));
-  }
-
-  // État initial : envoyer le stock actuel de chaque produit
-  if (productIds.length > 0) {
-    try {
-      const { data: products } = await supabase
-        .from('products')
-        .select('id, name, stock, reserved_quantity, active, low_stock_threshold, stock_updated_at')
-        .in('id', productIds);
-      (products || []).forEach(p =>
-        res.write(`data: ${JSON.stringify({ ...formatStockResponse(p), event: 'init' })}\n\n`)
-      );
-    } catch (_) {}
-  }
-
-  // Heartbeat 25s (évite timeout Render/Cloudflare)
-  const heartbeat = setInterval(() => {
-    try { res.write(`: ping\n\n`); } catch (_) { clearInterval(heartbeat); }
-  }, SSE_HEARTBEAT_INTERVAL);
-
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    if (isGlobal) SSEBroker.unsubscribe(null, client);
-    else productIds.forEach(pid => SSEBroker.unsubscribe(pid, client));
-    Logger.debug('sse', 'disconnect', `Client déconnecté (${productIds.join(',') || 'global'})`);
-  });
-
-  Logger.debug('sse', 'connect', `Client SSE — ${isGlobal ? 'global' : productIds.join(',')}`,
-    { meta: SSEBroker.stats() });
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 2. GET /api/stock/:productId — Stock détaillé d'un produit (public)
-// ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/stock/:productId', async (req, res) => {
-  try {
-    const { data: p, error } = await supabase
-      .from('products')
-      .select('id, name, stock, reserved_quantity, active, low_stock_threshold, stock_updated_at, vendor_id, category')
-      .eq('id', req.params.productId).single();
-    if (error || !p) return res.status(404).json({ error: 'Produit introuvable' });
-    res.setHeader('Cache-Control', 'public, max-age=5');
-    res.json(formatStockResponse(p));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 3. PATCH /api/stock/:productId — Mise à jour manuelle du stock
-// Body : { stock: number, note?: string }
-// → émet un événement SSE, notifie vendeur si stock faible, acheteurs si restockage
-// ──────────────────────────────────────────────────────────────────────────────
-app.patch('/api/stock/:productId', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
-  const { stock, note } = req.body;
-  if (stock === undefined || isNaN(parseInt(stock)) || parseInt(stock) < 0)
-    return res.status(400).json({ error: 'stock doit être un entier ≥ 0' });
-  const newStock = parseInt(stock);
-  try {
-    const { data: product, error: fetchErr } = await supabase
-      .from('products')
-      .select('id, name, stock, reserved_quantity, vendor_id, active, low_stock_threshold, stock_updated_at')
-      .eq('id', req.params.productId).single();
-    if (fetchErr || !product) return res.status(404).json({ error: 'Produit introuvable' });
-    if (req.user.role === 'vendor' && product.vendor_id !== req.user.id)
-      return res.status(403).json({ error: 'Non autorisé' });
-
-    const prevStock = product.stock;
-    const { data: updated, error: updateErr } = await supabase
-      .from('products')
-      .update({ stock: newStock, stock_updated_at: new Date().toISOString(), active: newStock > 0 ? product.active : false })
-      .eq('id', req.params.productId)
-      .select('id, name, stock, reserved_quantity, active, low_stock_threshold, stock_updated_at').single();
-    if (updateErr) throw updateErr;
-
-    await logStockHistory({
-      productId: product.id, vendorId: product.vendor_id,
-      previousStock: prevStock, newStock, changeType: 'manual',
-      note: note || `Mise à jour manuelle par ${req.user.email}`, actorId: req.user.id,
-    });
-
-    // Notification rupture → admins
-    if (prevStock > 0 && newStock === 0) {
-      const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
-      (admins || []).forEach(a => pushNotification(a.id, {
-        type: 'system', title: '⚠️ Rupture de stock',
-        message: `"${product.name}" est en rupture de stock.`, link: `/products/${product.id}`,
-      }));
-    }
-
-    // Notification low-stock → vendeur
-    const threshold = updated.low_stock_threshold || 5;
-    if (newStock > 0 && newStock <= threshold && prevStock > threshold) {
-      await pushNotification(product.vendor_id, {
-        type: 'system', title: '📉 Stock faible',
-        message: `"${product.name}" — il ne reste que ${newStock} unité(s).`, link: `/vendor/stock`,
-      });
-      SSEBroker.emitLowStock(product.id, formatStockResponse(updated));
-    }
-
-    // Restockage → alertes acheteurs
-    if (prevStock === 0 && newStock > 0) {
-      const { data: usersToNotify } = await supabase.rpc('notify_stock_alerts', { p_product_id: product.id });
-      (usersToNotify || []).forEach(row =>
-        pushNotification(row.user_id, {
-          type: 'system', title: '🔔 Produit disponible !',
-          message: `"${product.name}" est de nouveau disponible — commandez vite !`, link: `/products/${product.id}`,
-        })
-      );
-    }
-
-    const stockData = formatStockResponse(updated);
-    SSEBroker.emit(product.id, stockData);
-    Logger.info('stock', 'manual.update', `"${product.name}" : ${prevStock} → ${newStock}`,
-      { userId: req.user.id, meta: { productId: product.id } });
-    res.json({ ok: true, ...stockData });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 4. GET /api/stock/:productId/history — Historique des variations
-// ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/stock/:productId/history', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
-  try {
-    if (req.user.role === 'vendor') {
-      const { data: p } = await supabase.from('products').select('vendor_id').eq('id', req.params.productId).single();
-      if (!p || p.vendor_id !== req.user.id) return res.status(403).json({ error: 'Non autorisé' });
-    }
-    const { page = 1, limit = 30, type } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    let query = supabase.from('stock_history').select('*', { count: 'exact' })
-      .eq('product_id', req.params.productId)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + parseInt(limit) - 1);
-    if (type) query = query.eq('change_type', type);
-    const { data, error, count } = await query;
-    if (error) throw error;
-    res.json({ history: data || [], total: count, page: parseInt(page) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 5a. GET /api/stock/check-batch — Vérification batch avec stock disponible
-// Query : ?ids=uuid1,uuid2
-// ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/stock/check-batch', async (req, res) => {
-  try {
-    const { ids } = req.query;
-    if (!ids) return res.status(400).json({ error: 'ids requis' });
-    const productIds = ids.split(',').filter(Boolean).slice(0, 50);
-    const { data, error } = await supabase
-      .from('products')
-      .select('id, name, stock, reserved_quantity, active, low_stock_threshold, stock_updated_at')
-      .in('id', productIds);
-    if (error) throw error;
-    const result = {};
-    (data || []).forEach(p => { result[p.id] = formatStockResponse(p); });
-    res.setHeader('Cache-Control', 'no-store');
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 5b. POST /api/stock/check-batch — Vérification avec quantités (checkout)
-// Body : { items: [{ productId, quantity }] }
-// Retourne : { ok, items, outOfStock }
-// ──────────────────────────────────────────────────────────────────────────────
-app.post('/api/stock/check-batch', async (req, res) => {
-  const { items } = req.body;
-  if (!Array.isArray(items) || items.length === 0)
-    return res.status(400).json({ error: 'items requis : [{ productId, quantity }]' });
-  const safeItems = items.slice(0, 50).map(i => ({
-    productId: String(i.productId || i.product_id || ''),
-    quantity:  Math.max(1, parseInt(i.quantity) || 1),
-  })).filter(i => i.productId);
-  try {
-    const { data: products, error } = await supabase
-      .from('products')
-      .select('id, name, stock, reserved_quantity, active, low_stock_threshold, stock_updated_at')
-      .in('id', safeItems.map(i => i.productId));
-    if (error) throw error;
-    const map = {};
-    (products || []).forEach(p => { map[p.id] = p; });
-    const outOfStock = [];
-    const result = safeItems.map(item => {
-      const p = map[item.productId];
-      const available = p ? Math.max(0, p.stock - (p.reserved_quantity || 0)) : 0;
-      const ok = !!p && p.active && available >= item.quantity;
-      if (!ok) outOfStock.push({ productId: item.productId, name: p?.name || 'Produit inconnu', requested: item.quantity, available });
-      return { productId: item.productId, name: p?.name, requested: item.quantity, available, ok,
-               status: p ? computeStockStatus(p.stock, p.low_stock_threshold || 5) : 'rupture' };
-    });
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: outOfStock.length === 0, items: result, outOfStock });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 6. POST /api/stock/reserve — Réserver du stock (panier → checkout)
-// Body : { items: [{ productId, quantity }], sessionId? }
-// Retourne : { ok, reservationIds, expiresAt, ttlMinutes, failed? }
-// ──────────────────────────────────────────────────────────────────────────────
-app.post('/api/stock/reserve', verifyToken, async (req, res) => {
-  const { items, sessionId } = req.body;
-  if (!Array.isArray(items) || items.length === 0)
-    return res.status(400).json({ error: 'items requis' });
-  const safeItems = items.slice(0, 20)
-    .map(i => ({ productId: String(i.productId || ''), quantity: Math.max(1, parseInt(i.quantity) || 1) }))
-    .filter(i => i.productId);
-  const expiresAt = new Date(Date.now() + RESERVATION_TTL_MINUTES * 60 * 1000).toISOString();
-  const reservationIds = [], failed = [];
-  try {
-    for (const item of safeItems) {
-      const { data: product } = await supabase
-        .from('products')
-        .select('id, name, stock, reserved_quantity, active, low_stock_threshold, vendor_id')
-        .eq('id', item.productId).single();
-      if (!product || !product.active) {
-        failed.push({ productId: item.productId, reason: 'Produit indisponible' }); continue;
-      }
-      const available = Math.max(0, product.stock - (product.reserved_quantity || 0));
-      if (available < item.quantity) {
-        failed.push({ productId: item.productId, name: product.name, requested: item.quantity, available, reason: 'Stock insuffisant' }); continue;
-      }
-      // Mise à jour réservation existante ou création
-      const { data: existing } = await supabase.from('stock_reservations').select('id, quantity')
-        .eq('user_id', req.user.id).eq('product_id', item.productId)
-        .eq('confirmed', false).eq('released', false)
-        .gt('expires_at', new Date().toISOString()).maybeSingle();
-      if (existing) {
-        const diff = item.quantity - existing.quantity;
-        await supabase.from('stock_reservations').update({ quantity: item.quantity, expires_at: expiresAt, updated_at: new Date().toISOString() }).eq('id', existing.id);
-        if (diff !== 0) await supabase.from('products').update({ reserved_quantity: Math.max(0, (product.reserved_quantity || 0) + diff) }).eq('id', item.productId);
-        reservationIds.push(existing.id);
-      } else {
-        const { data: newRes, error: resErr } = await supabase.from('stock_reservations')
-          .insert({ user_id: req.user.id, product_id: item.productId, quantity: item.quantity, expires_at: expiresAt, session_id: sessionId || null })
-          .select('id').single();
-        if (resErr) { failed.push({ productId: item.productId, reason: resErr.message }); continue; }
-        await supabase.from('products').update({ reserved_quantity: (product.reserved_quantity || 0) + item.quantity }).eq('id', item.productId);
-        await logStockHistory({ productId: item.productId, vendorId: product.vendor_id, previousStock: product.stock, newStock: product.stock, changeType: 'reserve', reservationId: newRes.id, note: `Réservation panier — ${item.quantity} unité(s)`, actorId: req.user.id });
-        SSEBroker.emit(item.productId, formatStockResponse({ ...product, reserved_quantity: (product.reserved_quantity || 0) + item.quantity }));
-        reservationIds.push(newRes.id);
-      }
-    }
-    Logger.info('stock', 'reserve', `${reservationIds.length} article(s) réservés pour ${req.user.email}`, { userId: req.user.id });
-    res.status(201).json({ ok: failed.length === 0, reservationIds, expiresAt, ttlMinutes: RESERVATION_TTL_MINUTES, failed: failed.length > 0 ? failed : undefined });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 7. DELETE /api/stock/reserve/:reservationId — Libération manuelle
-// ──────────────────────────────────────────────────────────────────────────────
-app.delete('/api/stock/reserve/:reservationId', verifyToken, async (req, res) => {
-  try {
-    const { data: r, error } = await supabase.from('stock_reservations')
-      .select('id, user_id, product_id, quantity, confirmed, released').eq('id', req.params.reservationId).single();
-    if (error || !r) return res.status(404).json({ error: 'Réservation introuvable' });
-    if (r.user_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Non autorisé' });
-    if (r.confirmed) return res.status(409).json({ error: 'Commande déjà confirmée' });
-    if (r.released)  return res.status(409).json({ error: 'Déjà libérée' });
-    const { data: product } = await supabase.from('products')
-      .select('stock, reserved_quantity, vendor_id, low_stock_threshold, name, active, stock_updated_at')
-      .eq('id', r.product_id).single();
-    if (product) {
-      const newReserved = Math.max(0, (product.reserved_quantity || 0) - r.quantity);
-      await supabase.from('products').update({ reserved_quantity: newReserved, stock_updated_at: new Date().toISOString() }).eq('id', r.product_id);
-      SSEBroker.emit(r.product_id, formatStockResponse({ ...product, id: r.product_id, reserved_quantity: newReserved }));
-    }
-    await supabase.from('stock_reservations').update({ released: true, updated_at: new Date().toISOString() }).eq('id', r.id);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 8. GET /api/stock/reservations/mine — Réservations actives de l'utilisateur
-// ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/stock/reservations/mine', verifyToken, async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('stock_reservations')
-      .select(`id, product_id, quantity, expires_at, created_at, products (id, name, price, image_url, stock, reserved_quantity, active)`)
-      .eq('user_id', req.user.id).eq('confirmed', false).eq('released', false)
-      .gt('expires_at', new Date().toISOString()).order('expires_at', { ascending: true });
-    if (error) throw error;
-    const now = Date.now();
-    res.json((data || []).map(r => ({
-      reservationId: r.id, productId: r.product_id, product: r.products,
-      quantity: r.quantity, expiresAt: r.expires_at,
-      remainingMs: Math.max(0, new Date(r.expires_at).getTime() - now),
-    })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 9. GET /api/vendor/stock — Dashboard stock complet (vendeur/admin)
-// Query : ?filter=all|rupture|faible|attention|ok  &sort=stock-asc|stock-desc|name|updated
-// ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/vendor/stock', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
-  try {
-    const { filter = 'all', sort = 'stock-asc', page = 1, limit = 50 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    let query = supabase.from('products')
-      .select('id, name, category, stock, reserved_quantity, active, low_stock_threshold, stock_updated_at, price, image_url', { count: 'exact' });
-    if (req.user.role === 'vendor') query = query.eq('vendor_id', req.user.id);
-    if (filter === 'rupture')  query = query.eq('stock', 0);
-    if (filter === 'faible')   query = query.gt('stock', 0).lte('stock', 10);
-    if (filter === 'ok')       query = query.gt('stock', 10);
-    if (filter === 'inactive') query = query.eq('active', false);
-    switch (sort) {
-      case 'stock-desc': query = query.order('stock',            { ascending: false }); break;
-      case 'name':       query = query.order('name',             { ascending: true  }); break;
-      case 'updated':    query = query.order('stock_updated_at', { ascending: false }); break;
-      default:           query = query.order('stock',            { ascending: true  });
-    }
-    query = query.range(offset, offset + parseInt(limit) - 1);
-    const { data: products, error, count } = await query;
-    if (error) throw error;
-
-    // Statistiques globales
-    let statsQuery = supabase.from('products').select('stock, active, low_stock_threshold');
-    if (req.user.role === 'vendor') statsQuery = statsQuery.eq('vendor_id', req.user.id);
-    const { data: statsData } = await statsQuery;
-    const stats = { total: count || 0, rupture: 0, faible: 0, attention: 0, ok: 0 };
-    (statsData || []).forEach(p => {
-      const s = computeStockStatus(p.stock, p.low_stock_threshold || 5);
-      stats[s] = (stats[s] || 0) + 1;
-    });
-
-    res.json({
-      products: (products || []).map(p => ({ ...formatStockResponse(p), price: p.price, imageUrl: p.image_url, category: p.category })),
-      stats, total: count, page: parseInt(page),
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 10. GET /api/vendor/stock/low — Produits sous le seuil d'alerte
-// ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/vendor/stock/low', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
-  try {
-    let query = supabase.from('products')
-      .select('id, name, category, stock, reserved_quantity, low_stock_threshold, stock_updated_at, price, active, vendor_id')
-      .eq('active', true).gt('stock', 0).lte('stock', 10).order('stock', { ascending: true }).limit(100);
-    if (req.user.role === 'vendor') query = query.eq('vendor_id', req.user.id);
-    const { data, error } = await query;
-    if (error) throw error;
-    const filtered = (data || []).filter(p => p.stock <= (p.low_stock_threshold || 5));
-    res.json(filtered.map(p => ({ ...formatStockResponse(p), category: p.category, price: p.price })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 11. PATCH /api/stock/:productId/threshold — Modifier le seuil d'alerte low-stock
-// Body : { threshold: number }
-// ──────────────────────────────────────────────────────────────────────────────
-app.patch('/api/stock/:productId/threshold', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
-  const { threshold } = req.body;
-  if (threshold === undefined || isNaN(parseInt(threshold)) || parseInt(threshold) < 0)
-    return res.status(400).json({ error: 'threshold doit être un entier ≥ 0' });
-  try {
-    const { data: p } = await supabase.from('products').select('vendor_id, name').eq('id', req.params.productId).single();
-    if (!p) return res.status(404).json({ error: 'Produit introuvable' });
-    if (req.user.role === 'vendor' && p.vendor_id !== req.user.id) return res.status(403).json({ error: 'Non autorisé' });
-    await supabase.from('products').update({ low_stock_threshold: parseInt(threshold) }).eq('id', req.params.productId);
-    res.json({ ok: true, productId: req.params.productId, threshold: parseInt(threshold) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 12. POST /api/stock/:productId/adjust — Ajustement d'inventaire (admin)
-// Body : { adjustment: number, reason: string }
-// ──────────────────────────────────────────────────────────────────────────────
-app.post('/api/stock/:productId/adjust', verifyToken, requireRole('admin'), async (req, res) => {
-  const { adjustment, reason } = req.body;
-  if (!adjustment || isNaN(parseInt(adjustment))) return res.status(400).json({ error: 'adjustment (entier) requis' });
-  if (!reason || reason.trim().length < 5) return res.status(400).json({ error: 'reason requis (min 5 caractères)' });
-  try {
-    const { data: p } = await supabase.from('products')
-      .select('id, name, stock, reserved_quantity, vendor_id, active, low_stock_threshold, stock_updated_at')
-      .eq('id', req.params.productId).single();
-    if (!p) return res.status(404).json({ error: 'Produit introuvable' });
-    const newStock = Math.max(0, p.stock + parseInt(adjustment));
-    const { data: updated } = await supabase.from('products')
-      .update({ stock: newStock, stock_updated_at: new Date().toISOString() })
-      .eq('id', req.params.productId).select().single();
-    await logStockHistory({ productId: p.id, vendorId: p.vendor_id, previousStock: p.stock, newStock, changeType: 'adjustment', note: `[Admin] ${reason}`, actorId: req.user.id });
-    SSEBroker.emit(p.id, formatStockResponse({ ...p, stock: newStock }));
-    Logger.info('stock', 'adjust', `"${p.name}" : ${p.stock} → ${newStock} (${parseInt(adjustment) > 0 ? '+' : ''}${adjustment})`, { userId: req.user.id, meta: { reason } });
-    res.json({ ok: true, ...formatStockResponse({ ...p, ...updated }) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 13. GET /api/stock/sse/stats — Statistiques SSE (admin)
-// ──────────────────────────────────────────────────────────────────────────────
-app.get('/api/stock/sse/stats', verifyToken, requireRole('admin'), (req, res) => {
-  res.json({ ...SSEBroker.stats(), reservationTtlMinutes: RESERVATION_TTL_MINUTES });
-});
-
-// ════════════════════════════════════════════════════════════════════════════════
-// FIN — Vérification de Stock Temps Réel
-// ════════════════════════════════════════════════════════════════════════════════
 
 // ─── 404 & ERROR HANDLER ──────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` }));
