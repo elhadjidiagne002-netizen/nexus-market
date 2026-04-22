@@ -7804,6 +7804,282 @@ const TrackingModal = ({ order, onClose }) => {
     )
   );
 };
+
+// ══════════════════════════════════════════════════════════════════════════
+// AdminB2BPanel — Tableau admin des acheteurs professionnels B2B
+// Rendu dans AdminDashboard quand view === "b2b"
+// ══════════════════════════════════════════════════════════════════════════
+const AdminB2BPanel = ({ addToast }) => {
+  const [buyers, setBuyers]     = useState([]);
+  const [total, setTotal]       = useState(0);
+  const [stats, setStats]       = useState({ total:0, verified:0, pending:0, newThisMonth:0 });
+  const [search, setSearch]     = useState('');
+  const [filterVerified, setFilterVerified] = useState('');
+  const [page, setPage]         = useState(1);
+  const [noteModal, setNoteModal] = useState(null); // { userId, company, currentNote }
+  const [noteText, setNoteText] = useState('');
+  const [loading, setLoading]   = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const LIMIT = 20;
+
+  const apiBase = typeof NEXUS_CONFIG !== 'undefined' ? NEXUS_CONFIG.apiUrl : '';
+  const token   = storage.get('nexus_token') || localStorage.getItem('nexus_token') || '';
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  useEffect(() => { loadStats(); }, []);
+  useEffect(() => { loadBuyers(); }, [search, filterVerified, page]);
+
+  const loadStats = async () => {
+    try {
+      const r = await fetch(`${apiBase}/api/admin/b2b/stats`, { headers });
+      if (r.ok) setStats(await r.json());
+    } catch (_) {}
+  };
+
+  const loadBuyers = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ page, limit: LIMIT });
+      if (search)         params.set('search', search);
+      if (filterVerified) params.set('verified', filterVerified);
+      const r = await fetch(`${apiBase}/api/admin/b2b?${params}`, { headers });
+      if (r.ok) { const d = await r.json(); setBuyers(d.buyers || []); setTotal(d.total || 0); }
+    } catch (_) {}
+    setLoading(false);
+  };
+
+  const verifyNinea = async (userId, verified, note) => {
+    try {
+      const r = await fetch(`${apiBase}/api/b2b/verify-ninea/${userId}`, {
+        method: 'PATCH', headers, body: JSON.stringify({ verified, note: note || null })
+      });
+      if (r.ok) {
+        addToast(verified ? '✅ NINEA vérifié' : '❌ NINEA refusé', verified ? 'success' : 'warning');
+        setNoteModal(null); setNoteText('');
+        loadBuyers(); loadStats();
+      } else { const e = await r.json(); addToast(e.error || 'Erreur', 'error'); }
+    } catch (_) { addToast('Erreur réseau', 'error'); }
+  };
+
+  const suspendBuyer = async (userId, company) => {
+    if (!confirm(`Suspendre le compte de ${company} ?`)) return;
+    try {
+      const r = await fetch(`${apiBase}/api/admin/b2b/${userId}`, { method: 'DELETE', headers });
+      if (r.ok) { addToast(`${company} suspendu`, 'warning'); loadBuyers(); loadStats(); }
+    } catch (_) { addToast('Erreur réseau', 'error'); }
+  };
+
+  const exportCSV = async () => {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ page: 1, limit: 1000 });
+      if (search)         params.set('search', search);
+      if (filterVerified) params.set('verified', filterVerified);
+      const r = await fetch(`${apiBase}/api/admin/b2b?${params}`, { headers });
+      if (!r.ok) throw new Error();
+      const { buyers: all } = await r.json();
+      const rows = [
+        'Entreprise,NINEA,RC,Responsable,Email,Téléphone,Adresse,NINEA vérifié,Date inscription'
+      ];
+      all.forEach(b => rows.push([
+        b.company || '', b.ninea || '', b.rc || '',
+        b.profiles?.name || '', b.profiles?.email || '',
+        b.profiles?.phone || '', (b.address || '').replace(/,/g,' '),
+        b.ninea_verified ? 'Oui' : 'Non',
+        b.created_at ? new Date(b.created_at).toLocaleDateString('fr-FR') : ''
+      ].join(',')));
+      const a = document.createElement('a');
+      a.href = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(rows.join('\n'));
+      a.download = `b2b-buyers-nexus-${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+    } catch (_) { addToast('Erreur export', 'error'); }
+    setExporting(false);
+  };
+
+  const totalPages = Math.ceil(total / LIMIT);
+
+  return React.createElement(React.Fragment, null,
+    // Stats cards
+    React.createElement('div', { className:'stats-grid', style:{marginBottom:'1.5rem'} },
+      [
+        { icon:'building',   label:'Total B2B',       value:stats.total,        color:'#0284c7' },
+        { icon:'check-circle',label:'NINEA Vérifiés', value:stats.verified,     color:'#16a34a' },
+        { icon:'clock',      label:'En attente',      value:stats.pending,      color:'#d97706' },
+        { icon:'user-plus',  label:'Ce mois-ci',      value:stats.newThisMonth, color:'#7c3aed' },
+      ].map((s,i) => React.createElement('div', { key:i, className:'stat-card', style:{borderTop:`3px solid ${s.color}`} },
+        React.createElement('i', { className:`fas fa-${s.icon} stat-icon`, style:{color:s.color} }),
+        React.createElement('div', { className:'stat-label' }, s.label),
+        React.createElement('div', { className:'stat-value' }, s.value)
+      ))
+    ),
+
+    // Tableau principal
+    React.createElement('div', { className:'card' },
+      React.createElement('div', { className:'card-header', style:{flexWrap:'wrap',gap:'0.75rem'} },
+        React.createElement('h2', { className:'card-title' },
+          React.createElement('i', { className:'fas fa-building', style:{marginRight:'0.5rem',color:'#0284c7'} }),
+          `Acheteurs Professionnels B2B (${total})`
+        ),
+        React.createElement('div', { style:{display:'flex',gap:'0.5rem',flexWrap:'wrap',alignItems:'center'} },
+          // Recherche
+          React.createElement('input', {
+            type:'text', className:'form-input', placeholder:'Rechercher entreprise, NINEA…',
+            style:{width:'200px',fontSize:'0.85rem',padding:'0.4rem 0.7rem'},
+            value:search, onChange:e=>{ setSearch(e.target.value); setPage(1); }
+          }),
+          // Filtre statut
+          React.createElement('select', {
+            className:'form-select', style:{width:'auto',fontSize:'0.85rem',padding:'0.4rem 0.7rem'},
+            value:filterVerified, onChange:e=>{ setFilterVerified(e.target.value); setPage(1); }
+          },
+            React.createElement('option',{value:''},'Tous'),
+            React.createElement('option',{value:'true'},'NINEA vérifié'),
+            React.createElement('option',{value:'false'},'En attente')
+          ),
+          // Export CSV
+          React.createElement('button', {
+            className:`btn btn-secondary btn-sm${exporting?' btn-loading':''}`,
+            onClick:exportCSV, disabled:exporting
+          }, React.createElement('i',{className:'fas fa-file-csv'}), ' Export CSV')
+        )
+      ),
+
+      stats.pending > 0 && React.createElement('div', {
+        className:'alert alert-warning', style:{margin:'0 0 1rem',borderRadius:0}
+      },
+        React.createElement('i',{className:'fas fa-exclamation-triangle'}),
+        React.createElement('strong', null, ` ${stats.pending} NINEA en attente de vérification`)
+      ),
+
+      loading
+        ? React.createElement('div', {style:{textAlign:'center',padding:'2rem'}},
+            React.createElement('i',{className:'fas fa-spinner fa-spin',style:{fontSize:'1.5rem',color:'#0284c7'}})
+          )
+        : buyers.length === 0
+          ? React.createElement('div', {className:'empty-state'},
+              React.createElement('i',{className:'fas fa-building'}),
+              React.createElement('h3',null,'Aucun acheteur pro'),
+              React.createElement('p',null,'Les inscriptions B2B apparaîtront ici')
+            )
+          : React.createElement(React.Fragment, null,
+              React.createElement('div', {className:'table-wrapper'},
+                React.createElement('table', {className:'data-table'},
+                  React.createElement('thead', null,
+                    React.createElement('tr', null,
+                      React.createElement('th',null,'Entreprise'),
+                      React.createElement('th',null,'NINEA'),
+                      React.createElement('th',null,'Responsable'),
+                      React.createElement('th',null,'Contact'),
+                      React.createElement('th',null,'Statut NINEA'),
+                      React.createElement('th',null,'Inscrit le'),
+                      React.createElement('th',null,'Actions')
+                    )
+                  ),
+                  React.createElement('tbody', null,
+                    buyers.map(b => {
+                      const prof = b.profiles || {};
+                      return React.createElement('tr', { key:b.id },
+                        React.createElement('td', {'data-label':'Entreprise'},
+                          React.createElement('strong', null, b.company||'—'),
+                          b.job_title && React.createElement('div',{style:{fontSize:'0.75rem',color:'var(--text-secondary)'}}, b.job_title)
+                        ),
+                        React.createElement('td', {'data-label':'NINEA'},
+                          React.createElement('span', {style:{fontFamily:'monospace',fontSize:'0.85rem'}}, b.ninea||'—'),
+                          b.rc && React.createElement('div',{style:{fontSize:'0.72rem',color:'var(--text-secondary)'}}, `RC: ${b.rc}`)
+                        ),
+                        React.createElement('td', {'data-label':'Responsable'}, prof.name||'—'),
+                        React.createElement('td', {'data-label':'Contact'},
+                          React.createElement('div',{style:{fontSize:'0.8rem'}}, prof.email||'—'),
+                          prof.phone && React.createElement('div',{style:{fontSize:'0.75rem',color:'var(--text-secondary)'}}, prof.phone)
+                        ),
+                        React.createElement('td', {'data-label':'Statut NINEA'},
+                          b.ninea_verified
+                            ? React.createElement('span',{className:'badge badge-success'}, '✅ Vérifié')
+                            : React.createElement('span',{className:'badge badge-warning'}, '⏳ En attente'),
+                          b.verification_note && React.createElement('div',{style:{fontSize:'0.7rem',color:'var(--text-secondary)',marginTop:'0.2rem'}}, b.verification_note)
+                        ),
+                        React.createElement('td', {'data-label':'Inscrit'},
+                          b.created_at ? new Date(b.created_at).toLocaleDateString('fr-FR') : '—'
+                        ),
+                        React.createElement('td', {'data-label':'Actions'},
+                          React.createElement('div', {style:{display:'flex',gap:'0.35rem',flexWrap:'wrap'}},
+                            !b.ninea_verified
+                              ? React.createElement('button', {
+                                  className:'btn btn-success btn-sm',
+                                  style:{fontSize:'0.75rem',padding:'0.25rem 0.5rem'},
+                                  onClick:()=>verifyNinea(b.user_id, true, null),
+                                  title:'Vérifier NINEA'
+                                }, React.createElement('i',{className:'fas fa-check'}), ' Vérifier')
+                              : React.createElement('button', {
+                                  className:'btn btn-secondary btn-sm',
+                                  style:{fontSize:'0.75rem',padding:'0.25rem 0.5rem'},
+                                  onClick:()=>verifyNinea(b.user_id, false, null),
+                                  title:'Annuler vérification'
+                                }, React.createElement('i',{className:'fas fa-times'}), ' Annuler'),
+                            React.createElement('button', {
+                              className:'btn btn-secondary btn-sm',
+                              style:{fontSize:'0.75rem',padding:'0.25rem 0.5rem',background:'#7c3aed',color:'white',border:'none'},
+                              onClick:()=>{ setNoteModal({userId:b.user_id,company:b.company,verified:!b.ninea_verified}); setNoteText(b.verification_note||''); },
+                              title:'Vérifier avec note'
+                            }, React.createElement('i',{className:'fas fa-sticky-note'}), ' Note'),
+                            React.createElement('button', {
+                              className:'btn btn-danger btn-sm',
+                              style:{fontSize:'0.75rem',padding:'0.25rem 0.5rem'},
+                              onClick:()=>suspendBuyer(b.user_id, b.company),
+                              title:'Suspendre le compte'
+                            }, React.createElement('i',{className:'fas fa-ban'}))
+                          )
+                        )
+                      );
+                    })
+                  )
+                )
+              ),
+              // Pagination
+              totalPages > 1 && React.createElement('div', {style:{display:'flex',gap:'0.5rem',justifyContent:'center',margin:'1rem 0',alignItems:'center'}},
+                React.createElement('button',{className:'btn btn-secondary btn-sm',disabled:page<=1,onClick:()=>setPage(p=>p-1)}, React.createElement('i',{className:'fas fa-chevron-left'})),
+                React.createElement('span',{style:{fontSize:'0.85rem',color:'var(--text-secondary)'}}, `Page ${page} / ${totalPages}`),
+                React.createElement('button',{className:'btn btn-secondary btn-sm',disabled:page>=totalPages,onClick:()=>setPage(p=>p+1)}, React.createElement('i',{className:'fas fa-chevron-right'}))
+              )
+            )
+    ),
+
+    // Modal note de vérification
+    noteModal && React.createElement('div', {className:'modal-overlay', onClick:()=>setNoteModal(null)},
+      React.createElement('div', {className:'modal', style:{maxWidth:'460px'}, onClick:e=>e.stopPropagation()},
+        React.createElement('div', {className:'modal-header'},
+          React.createElement('h3', {className:'modal-title'},
+            noteModal.verified ? '✅ Vérifier le NINEA' : '❌ Refuser le NINEA'
+          ),
+          React.createElement('button', {className:'close-btn', onClick:()=>setNoteModal(null)}, React.createElement('i',{className:'fas fa-times'}))
+        ),
+        React.createElement('div', {style:{padding:'1.25rem'}},
+          React.createElement('p', {style:{marginBottom:'1rem',color:'var(--text-secondary)',fontSize:'0.9rem'}},
+            `Entreprise : `, React.createElement('strong',null, noteModal.company)
+          ),
+          React.createElement('div', {className:'form-group'},
+            React.createElement('label', {className:'form-label'},
+              noteModal.verified ? 'Note (optionnelle)' : 'Motif de refus (recommandé)'
+            ),
+            React.createElement('textarea', {
+              className:'form-textarea', rows:3,
+              placeholder: noteModal.verified ? 'Ex : Vérifié via APIX DGI' : 'Ex : NINEA introuvable dans le registre',
+              value:noteText, onChange:e=>setNoteText(e.target.value)
+            })
+          ),
+          React.createElement('div', {style:{display:'flex',gap:'0.75rem'}},
+            React.createElement('button', {className:'btn btn-secondary flex-1', onClick:()=>setNoteModal(null)}, 'Annuler'),
+            React.createElement('button', {
+              className:`btn flex-1 ${noteModal.verified ? 'btn-success' : 'btn-danger'}`,
+              onClick:()=>verifyNinea(noteModal.userId, noteModal.verified, noteText)
+            }, noteModal.verified ? '✅ Vérifier' : '❌ Refuser')
+          )
+        )
+      )
+    )
+  );
+};
+
 const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const [view, setView] = useState("overview");
   const [stats, setStats] = useState({});
@@ -7945,6 +8221,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "payouts", icon: "money-bill-wave", label: "Paiements vendeurs" },
     { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: storage.getArray("payout_requests").filter((r) => r.status === "pending").length },
     { id: "users", icon: "users-cog", label: "Utilisateurs" },
+    { id: "b2b", icon: "building", label: "Acheteurs Pro B2B" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
     { id: "config", icon: "cog", label: "Configuration" }
@@ -8043,11 +8320,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-download" }), " Export CSV"),
     /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { marginLeft: "0.5rem", background: "#1e40af", color: "white", border: "none" }, onClick: () => {
       const month = new Date().toISOString().slice(0, 7);
-      if (window.__nexusDownloadMonthlyStatement) {
-        window.__nexusDownloadMonthlyStatement(month);
-      } else {
-        alert("Connectez-vous au serveur NEXUS pour télécharger le relevé mensuel.");
-      }
+      _downloadStatement(month);
     }}, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Relevé mensuel PDF")
   ), /* @__PURE__ */ React.createElement("div", { className: "chart-container" }, salesData.length > 0 && /* @__PURE__ */ React.createElement(SafeLineChart, { data: salesData, dataKey: "ventes", label: "Ventes", color: "#00853E", type: "line" }))), view === "reviews" && (() => {
     const allReviews = storage.getArray("reviews");
@@ -8079,7 +8352,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       var _a, _b;
       return /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, r.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, r.buyerName, /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, r.buyerEmail)), /* @__PURE__ */ React.createElement("td", { "data-label": "Commande" }, /* @__PURE__ */ React.createElement("strong", null, r.orderId)), /* @__PURE__ */ React.createElement("td", { "data-label": "Motif", style: { maxWidth: "160px", fontSize: "0.82rem" } }, r.categoryLabel), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(r.orderTotal || 0))), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${((_a = STATUS_RETURN[r.status]) == null ? void 0 : _a.badge) || "warning"}` }, ((_b = STATUS_RETURN[r.status]) == null ? void 0 : _b.label) || r.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, r.status === "pending" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleReturnAction(r.id, "approved") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleReturnAction(r.id, "rejected") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser")), r.status === "approved" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => handleReturnAction(r.id, "refunded") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }), " Marquer rembours\xE9"), ["refunded", "rejected"].includes(r.status) && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--text-secondary)", fontSize: "0.82rem" } }, "Trait\xE9")));
     })))));
-  })(), view === "coupons" && (() => {
+  })(), view === "b2b" && /* @__PURE__ */ React.createElement(AdminB2BPanel, { addToast }), view === "coupons" && (() => {
     const newCoupon = adminNewCoupon; const setNewCoupon = setAdminNewCoupon;
     const coupons = storage.get("nexus_coupons") || [
       { id: "c1", code: "BIENVENUE10", discount: 10, description: "10% bienvenue", active: true, usedCount: 0, maxUses: 1e3 },
@@ -9372,7 +9645,9 @@ const VendorOnboardingChecklist = ({ currentUser, products, onNavigate, addToast
   );
 };
 
-const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar }) => {
+const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, onDownloadStatement }) => {
+  // Fallback : si onDownloadStatement n'est pas fourni, utilise la fonction globale
+  const _downloadStatement = onDownloadStatement || window.__nexusDownloadMonthlyStatement || (() => alert("Relevé mensuel : connectez-vous au serveur NEXUS."));
   const [view, setView] = useState("overview");
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -9618,7 +9893,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   })))))), view === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h2", { className: "section-title" }, "Mes Produits (", products.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowBulkImport(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Import CSV"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true), "aria-expanded": showAddProduct }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit"))), products.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit"), /* @__PURE__ */ React.createElement("p", null, "Commencez \xE0 vendre en ajoutant votre premier produit"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.id, className: "product-card", role: "article", "aria-label": p.name }, /* @__PURE__ */ React.createElement(ProductImg, { product: p, height: 180 }), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product: p }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), " ", /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? p.stock + " stock" : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", onClick: () => setEditProduct(p) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-edit" }), " Modifier / Supprimer")))))), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Offres re\xE7ues (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Les offres de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Acheteur"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Acheteur" }, offer.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, offer.status === "pending" ? /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleOffer(offer.id, true) }, "Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleOffer(offer.id, false) }, "Refuser")) : /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : "danger"}` }, offer.status)))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Toutes mes commandes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Produits"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, orders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE).map((o) => {
     var _a, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Produits" }, (o.products || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: "0.82rem" } }, p.name, " \xD7", p.quantity))), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("select", { className: "form-select", style: { padding: "0.3rem", fontSize: "0.8rem", width: "auto" }, value: o.status, onChange: (e) => updateOrderStatus(o.id, e.target.value), "aria-label": `Statut commande ${o.id}` }, /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => downloadBuyerInvoicePDF(o), title: "Facture client PDF (serveur PDFKit)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Client"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-sm", style: { background: "#ea580c", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => downloadVendorInvoicePDF(o), title: "Relevé de vente PDF (serveur PDFKit)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-chart-line" }), " Relevé"),
-            /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { background: "#1e40af", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => { const m = new Date(o.date || o.created_at || Date.now()).toISOString().slice(0,7); window.__nexusDownloadMonthlyStatement && window.__nexusDownloadMonthlyStatement(m); }, title: "Relevé mensuel PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-calendar-alt" }), " Mois"))));
+            /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { background: "#1e40af", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => { const m = new Date(o.date || o.created_at || Date.now()).toISOString().slice(0,7); _downloadStatement(m); }, title: "Relevé mensuel PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-calendar-alt" }), " Mois"))));
   })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "messages" && React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "qa" && (() => {
     const allQA = storage.get("product_qa") || {};
     const myProductIds = products.map((p) => p.id);
@@ -10082,6 +10357,364 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
     }
   ), /* @__PURE__ */ React.createElement(LiveChat, { currentUser: null }));
 };
+
+// ══════════════════════════════════════════════════════════════════════════
+// B2BProDashboard — tableau de bord dédié aux acheteurs professionnels
+// Rendu à l'intérieur de BuyerDashboard quand view === "b2b_profile" | "b2b_orders" | "b2b_statement"
+// ══════════════════════════════════════════════════════════════════════════
+const B2BProDashboard = ({ currentUser: currentUser2, addToast, view: b2bView, setParentView }) => {
+  const [b2bProfile, setB2bProfile]         = useState(null);
+  const [discount, setDiscount]             = useState({ discountRate: 0, nineaVerified: false, message: '' });
+  const [orders, setOrders]                 = useState([]);
+  const [ordersTotal, setOrdersTotal]       = useState(0);
+  const [ordersPage, setOrdersPage]         = useState(1);
+  const [ordersMonth, setOrdersMonth]       = useState('');
+  const [loading, setLoading]               = useState(true);
+  const [editMode, setEditMode]             = useState(false);
+  const [editForm, setEditForm]             = useState({});
+  const [saving, setSaving]                 = useState(false);
+  const [dlMonth, setDlMonth]               = useState(new Date().toISOString().slice(0, 7));
+  const [dlLoading, setDlLoading]           = useState(false);
+  const ORDERS_PER_PAGE = 10;
+
+  const apiBase = typeof NEXUS_CONFIG !== 'undefined' ? NEXUS_CONFIG.apiUrl : '';
+  const token   = storage.get('nexus_token') || localStorage.getItem('nexus_token') || '';
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  // ── Chargement initial ──────────────────────────────────────────────────
+  useEffect(() => {
+    loadProfile();
+    loadDiscount();
+  }, [currentUser2.id]);
+
+  useEffect(() => {
+    if (b2bView === 'b2b_orders') loadOrders();
+  }, [b2bView, ordersPage, ordersMonth]);
+
+  const loadProfile = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`${apiBase}/api/b2b/profile`, { headers });
+      if (r.ok) {
+        const d = await r.json();
+        setB2bProfile(d);
+        setEditForm({ company: d?.company || '', jobTitle: d?.job_title || '', rc: d?.rc || '', address: d?.address || '' });
+      }
+    } catch (_) {}
+    setLoading(false);
+  };
+
+  const loadDiscount = async () => {
+    try {
+      const r = await fetch(`${apiBase}/api/b2b/discount`, { headers });
+      if (r.ok) setDiscount(await r.json());
+    } catch (_) {}
+  };
+
+  const loadOrders = async () => {
+    try {
+      const params = new URLSearchParams({ page: ordersPage, limit: ORDERS_PER_PAGE });
+      if (ordersMonth) params.set('month', ordersMonth);
+      const r = await fetch(`${apiBase}/api/b2b/orders?${params}`, { headers });
+      if (r.ok) { const d = await r.json(); setOrders(d.orders || []); setOrdersTotal(d.total || 0); }
+    } catch (_) {}
+  };
+
+  const saveProfile = async () => {
+    setSaving(true);
+    try {
+      const r = await fetch(`${apiBase}/api/b2b/profile`, {
+        method: 'PATCH', headers,
+        body: JSON.stringify(editForm)
+      });
+      if (r.ok) {
+        const d = await r.json(); setB2bProfile(d);
+        setEditMode(false); addToast('Profil B2B mis à jour !', 'success');
+      } else {
+        const e = await r.json(); addToast(e.error || 'Erreur mise à jour', 'error');
+      }
+    } catch (_) { addToast('Erreur réseau', 'error'); }
+    setSaving(false);
+  };
+
+  const downloadStatement = async () => {
+    setDlLoading(true);
+    try {
+      const url  = `${apiBase}/api/invoices/statement/buyer?month=${dlMonth}`;
+      const r    = await fetch(url, { headers });
+      if (!r.ok) { addToast('Erreur génération relevé', 'error'); setDlLoading(false); return; }
+      const blob = await r.blob();
+      const a    = document.createElement('a');
+      a.href     = URL.createObjectURL(blob);
+      a.download = `Releve-Acheteur-B2B-NEXUS-${dlMonth}.pdf`;
+      a.click(); URL.revokeObjectURL(a.href);
+    } catch (_) { addToast('Erreur téléchargement relevé', 'error'); }
+    setDlLoading(false);
+  };
+
+  const downloadOrderInvoice = async (orderId) => {
+    try {
+      const url  = `${apiBase}/api/invoices/order/${orderId}/pdf?type=buyer`;
+      const r    = await fetch(url, { headers });
+      if (!r.ok) { addToast('Erreur génération facture', 'error'); return; }
+      const blob = await r.blob();
+      const a    = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = `Facture-NEXUS-${orderId.slice(0, 8)}.pdf`; a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (_) { addToast('Erreur téléchargement facture', 'error'); }
+  };
+
+  const STATUS_MAP = {
+    processing:      { label: 'En cours',   badge: 'warning' },
+    in_transit:      { label: 'En transit', badge: 'info'    },
+    delivered:       { label: 'Livré',      badge: 'success' },
+    cancelled:       { label: 'Annulé',     badge: 'danger'  },
+    pending_payment: { label: 'En attente', badge: 'warning' },
+  };
+
+  const NavTabs = () => React.createElement('div', { style: { display:'flex', gap:'0.5rem', marginBottom:'1.5rem', borderBottom:'2px solid var(--border)', paddingBottom:'0.5rem' } },
+    [
+      { id:'b2b_profile',   icon:'building', label:'Profil Entreprise' },
+      { id:'b2b_orders',    icon:'file-invoice', label:'Commandes B2B' },
+      { id:'b2b_statement', icon:'file-pdf', label:'Relevé mensuel' },
+    ].map(tab => React.createElement('button', {
+      key: tab.id,
+      onClick: () => setParentView(tab.id),
+      style: {
+        padding: '0.5rem 1rem', border: 'none', borderRadius: '6px 6px 0 0', cursor: 'pointer',
+        fontWeight: b2bView === tab.id ? 700 : 400, fontSize: '0.88rem',
+        background: b2bView === tab.id ? '#0284c7' : 'transparent',
+        color: b2bView === tab.id ? 'white' : 'var(--text-secondary)',
+        borderBottom: b2bView === tab.id ? '2px solid #0284c7' : 'none',
+      }
+    }, React.createElement('i', { className:`fas fa-${tab.icon}`, style:{marginRight:'0.4rem'} }), tab.label))
+  );
+
+  if (loading) return React.createElement('div', { className:'card', style:{textAlign:'center',padding:'3rem'} },
+    React.createElement('i', { className:'fas fa-spinner fa-spin', style:{fontSize:'2rem',color:'#0284c7'} }),
+    React.createElement('p', { style:{marginTop:'1rem',color:'var(--text-secondary)'} }, 'Chargement du profil B2B...')
+  );
+
+  // ── VUE : Profil Entreprise ─────────────────────────────────────────────
+  if (b2bView === 'b2b_profile') return React.createElement(React.Fragment, null,
+    React.createElement(NavTabs),
+
+    // Bandeau statut NINEA
+    React.createElement('div', {
+      style: {
+        background: discount.nineaVerified ? 'linear-gradient(135deg,#dcfce7,#bbf7d0)' : 'linear-gradient(135deg,#fef9c3,#fde68a)',
+        border: `1.5px solid ${discount.nineaVerified ? '#16a34a' : '#d97706'}`,
+        borderRadius: '12px', padding: '1rem 1.25rem', marginBottom: '1.5rem',
+        display: 'flex', alignItems: 'center', gap: '1rem'
+      }
+    },
+      React.createElement('div', { style:{fontSize:'2rem'} }, discount.nineaVerified ? '✅' : '⏳'),
+      React.createElement('div', null,
+        React.createElement('div', { style:{fontWeight:700, fontSize:'1rem', color: discount.nineaVerified ? '#15803d' : '#92400e'} },
+          discount.nineaVerified ? 'NINEA Vérifié — Remise B2B active' : 'NINEA en attente de vérification'
+        ),
+        React.createElement('div', { style:{fontSize:'0.85rem', color:'var(--text-secondary)', marginTop:'0.2rem'} }, discount.message),
+        discount.nineaVerified && React.createElement('div', { style:{marginTop:'0.4rem'} },
+          React.createElement('span', { style:{background:'#16a34a',color:'white',padding:'0.2rem 0.6rem',borderRadius:'999px',fontSize:'0.78rem',fontWeight:700} },
+            `− ${discount.discountRate} % sur tous vos achats`
+          )
+        )
+      )
+    ),
+
+    // Carte infos entreprise
+    React.createElement('div', { className:'card', style:{marginBottom:'1.5rem'} },
+      React.createElement('div', { className:'card-header' },
+        React.createElement('h2', { className:'card-title' }, React.createElement('i', {className:'fas fa-building', style:{marginRight:'0.5rem',color:'#0284c7'}}), 'Informations Entreprise'),
+        !editMode && React.createElement('button', { className:'btn btn-secondary btn-sm', onClick:()=>setEditMode(true) },
+          React.createElement('i', {className:'fas fa-edit'}), ' Modifier'
+        )
+      ),
+
+      !editMode ? React.createElement('div', { style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1rem', padding:'0 0 0.5rem'} },
+        [
+          ['Raison sociale',  b2bProfile?.company   || '—', 'building'],
+          ['Poste / Fonction', b2bProfile?.job_title || '—', 'user-tie'],
+          ['NINEA',           b2bProfile?.ninea      || '—', 'id-card'],
+          ['N° RC Commerce',  b2bProfile?.rc         || '—', 'file-contract'],
+          ['Adresse siège',   b2bProfile?.address    || '—', 'map-marker-alt'],
+          ['Email pro',       currentUser2.email,            'envelope'],
+        ].map(([lbl, val, icon]) => React.createElement('div', { key:lbl, style:{padding:'0.75rem', background:'var(--bg-light)', borderRadius:'8px'} },
+          React.createElement('div', {style:{fontSize:'0.75rem',color:'var(--text-secondary)',marginBottom:'0.25rem'}},
+            React.createElement('i', {className:`fas fa-${icon}`, style:{marginRight:'0.3rem',color:'#0284c7'}}), lbl
+          ),
+          React.createElement('div', {style:{fontWeight:600,fontSize:'0.92rem'}}, val)
+        ))
+      ) : React.createElement('div', { style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1rem'} },
+        React.createElement('div', { className:'form-group' },
+          React.createElement('label', { className:'form-label' }, 'Raison sociale *'),
+          React.createElement('input', { className:'form-input', value:editForm.company, onChange:e=>setEditForm(f=>({...f,company:e.target.value})) })
+        ),
+        React.createElement('div', { className:'form-group' },
+          React.createElement('label', { className:'form-label' }, 'Poste / Fonction'),
+          React.createElement('input', { className:'form-input', value:editForm.jobTitle, onChange:e=>setEditForm(f=>({...f,jobTitle:e.target.value})) })
+        ),
+        React.createElement('div', { className:'form-group' },
+          React.createElement('label', { className:'form-label' }, 'N° RC Commerce'),
+          React.createElement('input', { className:'form-input', value:editForm.rc, onChange:e=>setEditForm(f=>({...f,rc:e.target.value})) })
+        ),
+        React.createElement('div', { className:'form-group', style:{gridColumn:'1/-1'} },
+          React.createElement('label', { className:'form-label' }, 'Adresse siège social'),
+          React.createElement('textarea', { className:'form-textarea', rows:2, value:editForm.address, onChange:e=>setEditForm(f=>({...f,address:e.target.value})) })
+        ),
+        React.createElement('div', { style:{gridColumn:'1/-1', display:'flex', gap:'0.75rem'} },
+          React.createElement('button', { className:'btn btn-secondary', onClick:()=>setEditMode(false) }, 'Annuler'),
+          React.createElement('button', { className:`btn btn-primary${saving?' btn-loading':''}`, onClick:saveProfile, disabled:saving },
+            saving ? 'Enregistrement...' : React.createElement(React.Fragment, null, React.createElement('i',{className:'fas fa-save'}), ' Enregistrer')
+          )
+        )
+      )
+    )
+  );
+
+  // ── VUE : Commandes B2B ─────────────────────────────────────────────────
+  if (b2bView === 'b2b_orders') return React.createElement(React.Fragment, null,
+    React.createElement(NavTabs),
+    React.createElement('div', { className:'card' },
+      React.createElement('div', { className:'card-header' },
+        React.createElement('h2', { className:'card-title' }, React.createElement('i',{className:'fas fa-file-invoice',style:{marginRight:'0.5rem',color:'#0284c7'}}), `Commandes B2B (${ordersTotal})`),
+        React.createElement('div', { style:{display:'flex', gap:'0.5rem', alignItems:'center'} },
+          React.createElement('label', {style:{fontSize:'0.82rem',color:'var(--text-secondary)'}}, 'Mois :'),
+          React.createElement('input', {
+            type:'month', className:'form-input', style:{width:'auto',fontSize:'0.85rem',padding:'0.3rem 0.6rem'},
+            value:ordersMonth, onChange:e=>{ setOrdersMonth(e.target.value); setOrdersPage(1); }
+          }),
+          ordersMonth && React.createElement('button', {className:'btn btn-secondary btn-sm', onClick:()=>{ setOrdersMonth(''); setOrdersPage(1); }},
+            React.createElement('i',{className:'fas fa-times'})
+          )
+        )
+      ),
+
+      orders.length === 0
+        ? React.createElement('div', {className:'empty-state'},
+            React.createElement('i',{className:'fas fa-file-invoice-dollar'}),
+            React.createElement('h3',null,'Aucune commande'),
+            React.createElement('p',null, ordersMonth ? `Aucune commande pour ${ordersMonth}` : 'Vos commandes professionnelles apparaîtront ici')
+          )
+        : React.createElement(React.Fragment, null,
+            React.createElement('div', {className:'table-wrapper'},
+              React.createElement('table', {className:'data-table'},
+                React.createElement('thead', null,
+                  React.createElement('tr', null,
+                    React.createElement('th',null,'Commande'),
+                    React.createElement('th',null,'Fournisseur'),
+                    React.createElement('th',null,'Produits'),
+                    React.createElement('th',null,'Montant TTC'),
+                    React.createElement('th',null,'Statut'),
+                    React.createElement('th',null,'Date'),
+                    React.createElement('th',null,'Facture')
+                  )
+                ),
+                React.createElement('tbody', null,
+                  orders.map(o => {
+                    const sm = STATUS_MAP[o.status] || { label: o.status, badge:'secondary' };
+                    const prods = (o.products||[]).slice(0,2).map(p=>p.name).join(', ') + (o.products?.length>2?'…':'');
+                    return React.createElement('tr', {key:o.id},
+                      React.createElement('td',{'data-label':'Commande'}, React.createElement('strong',{style:{fontSize:'0.78rem'}}, o.id.slice(0,12)+'…')),
+                      React.createElement('td',{'data-label':'Fournisseur'}, o.vendor_name||'—'),
+                      React.createElement('td',{'data-label':'Produits',style:{maxWidth:'160px',fontSize:'0.82rem'}}, prods||'—'),
+                      React.createElement('td',{'data-label':'Montant'}, React.createElement('strong',null, formatPrice(o.total||0))),
+                      React.createElement('td',{'data-label':'Statut'}, React.createElement('span',{className:`badge badge-${sm.badge}`}, sm.label)),
+                      React.createElement('td',{'data-label':'Date'}, o.created_at ? new Date(o.created_at).toLocaleDateString('fr-FR') : '—'),
+                      React.createElement('td',{'data-label':'Facture'},
+                        React.createElement('button',{
+                          className:'btn btn-secondary btn-sm',
+                          style:{fontSize:'0.78rem', padding:'0.2rem 0.5rem'},
+                          onClick:()=>downloadOrderInvoice(o.id),
+                          title:'Télécharger la facture PDF'
+                        }, React.createElement('i',{className:'fas fa-file-pdf',style:{color:'#dc2626'}}), ' PDF')
+                      )
+                    );
+                  })
+                )
+              )
+            ),
+            // Pagination
+            ordersTotal > ORDERS_PER_PAGE && React.createElement('div', {style:{display:'flex',gap:'0.5rem',justifyContent:'center',marginTop:'1rem',alignItems:'center'}},
+              React.createElement('button',{className:'btn btn-secondary btn-sm',disabled:ordersPage<=1,onClick:()=>setOrdersPage(p=>p-1)},
+                React.createElement('i',{className:'fas fa-chevron-left'})
+              ),
+              React.createElement('span',{style:{fontSize:'0.85rem',color:'var(--text-secondary)'}},
+                `Page ${ordersPage} / ${Math.ceil(ordersTotal/ORDERS_PER_PAGE)}`
+              ),
+              React.createElement('button',{className:'btn btn-secondary btn-sm',disabled:ordersPage>=Math.ceil(ordersTotal/ORDERS_PER_PAGE),onClick:()=>setOrdersPage(p=>p+1)},
+                React.createElement('i',{className:'fas fa-chevron-right'})
+              )
+            )
+          )
+    )
+  );
+
+  // ── VUE : Relevé mensuel ────────────────────────────────────────────────
+  return React.createElement(React.Fragment, null,
+    React.createElement(NavTabs),
+    React.createElement('div', {className:'card'},
+      React.createElement('div', {className:'card-header'},
+        React.createElement('h2', {className:'card-title'}, React.createElement('i',{className:'fas fa-file-pdf',style:{marginRight:'0.5rem',color:'#dc2626'}}), 'Relevé mensuel des achats')
+      ),
+      React.createElement('div', {style:{padding:'1.5rem 0'}},
+        // Info
+        React.createElement('div', {className:'alert alert-info', style:{marginBottom:'1.5rem'}},
+          React.createElement('i',{className:'fas fa-info-circle'}),
+          React.createElement('span',null,
+            'Votre relevé mensuel liste toutes vos commandes du mois sélectionné. ',
+            'Ce document constitue un justificatif comptable utilisable par votre service financier.'
+          )
+        ),
+        // Sélecteur de mois + bouton
+        React.createElement('div', {style:{display:'flex',gap:'1rem',alignItems:'flex-end',flexWrap:'wrap'}},
+          React.createElement('div', {className:'form-group', style:{marginBottom:0}},
+            React.createElement('label',{className:'form-label'},'Sélectionner le mois'),
+            React.createElement('input',{
+              type:'month', className:'form-input', style:{fontSize:'1rem',padding:'0.6rem 0.9rem'},
+              value:dlMonth,
+              onChange:e=>setDlMonth(e.target.value),
+              max:new Date().toISOString().slice(0,7)
+            })
+          ),
+          React.createElement('button', {
+            className:`btn btn-primary${dlLoading?' btn-loading':''}`,
+            style:{background:'#1e40af', padding:'0.7rem 1.5rem'},
+            onClick:downloadStatement, disabled:dlLoading||!dlMonth
+          },
+            dlLoading
+              ? 'Génération...'
+              : React.createElement(React.Fragment,null, React.createElement('i',{className:'fas fa-download'}), ' Télécharger le relevé PDF')
+          )
+        ),
+
+        // Historique des relevés disponibles (12 derniers mois)
+        React.createElement('div', {style:{marginTop:'2rem'}},
+          React.createElement('h3',{style:{fontWeight:600,fontSize:'0.95rem',marginBottom:'1rem',color:'var(--text-secondary)'}},
+            React.createElement('i',{className:'fas fa-history',style:{marginRight:'0.4rem'}}), '12 derniers mois'
+          ),
+          React.createElement('div', {style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:'0.5rem'}},
+            Array.from({length:12},(_,i)=>{
+              const d = new Date(); d.setMonth(d.getMonth()-i);
+              const m = d.toISOString().slice(0,7);
+              const lbl = d.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+              return React.createElement('button',{
+                key:m,
+                className:'btn btn-secondary btn-sm',
+                style:{textAlign:'left',fontSize:'0.8rem',padding:'0.5rem 0.75rem'},
+                onClick:()=>{ setDlMonth(m); downloadStatement(); }
+              },
+                React.createElement('i',{className:'fas fa-file-pdf',style:{color:'#dc2626',marginRight:'0.3rem'}}),
+                lbl
+              );
+            })
+          )
+        )
+      )
+    )
+  );
+};
+
 const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, cartTrigger, wishlistTrigger }) => {
   const [view, setView] = useState("catalog");
   const [products, setProducts] = useState([]);
@@ -10249,13 +10882,22 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "orders", icon: "box", label: "Mes Commandes" },
     { id: "messages", icon: "comments", label: "Messages", badge: (() => { const msgs = storage.getArray("messages"); return msgs.filter(m => m.to === currentUser2.id && !m.read).length; })() },
     { id: "offers", icon: "hand-holding-usd", label: "Mes Offres", badge: offers.filter((o) => o.status === "pending").length },
-    { id: "loyalty", icon: "star", label: "Fidélité & Points" },
-    { id: "referral", icon: "users", label: "Parrainage" },
+    ...(currentUser2.role === "buyer_pro"
+      ? [
+          { id: "b2b_profile",   icon: "building",     label: "Profil Entreprise",  b2b: true },
+          { id: "b2b_orders",    icon: "file-invoice",  label: "Commandes B2B",      b2b: true },
+          { id: "b2b_statement", icon: "file-pdf",      label: "Relevé mensuel",     b2b: true },
+        ]
+      : [
+          { id: "loyalty",  icon: "star",  label: "Fidélité & Points" },
+          { id: "referral", icon: "users", label: "Parrainage" },
+        ]
+    ),
     { id: "profile", icon: "user", label: "Mon Profil" }
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
-  } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))), cart.length > 0 && /* @__PURE__ */ React.createElement("li", { role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: "sidebar-item", onClick: () => setShowCart(true), "aria-label": `Panier avec ${cart.length} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), "Panier", /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0)))));
+  }, style: item.b2b ? { borderLeft: "3px solid #0284c7" } : undefined }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true", style: item.b2b ? { color: "#0284c7" } : undefined }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))), cart.length > 0 && /* @__PURE__ */ React.createElement("li", { role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: "sidebar-item", onClick: () => setShowCart(true), "aria-label": `Panier avec ${cart.length} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), "Panier", /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0)))));
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
     SearchWithAutocomplete,
     {
@@ -10363,7 +11005,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     const total = pts[currentUser2.id] || 0;
     const orders2 = orders.filter((o) => o.status === "delivered");
     return orders2.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star" }), /* @__PURE__ */ React.createElement("h3", null, "Pas encore de points"), /* @__PURE__ */ React.createElement("p", null, "Passez votre premi\xE8re commande pour commencer \xE0 gagner des points !"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "D\xE9couvrir le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Commande"), /* @__PURE__ */ React.createElement("th", null, "Montant"), /* @__PURE__ */ React.createElement("th", null, "Points gagn\xE9s"), /* @__PURE__ */ React.createElement("th", null, "Date"))), /* @__PURE__ */ React.createElement("tbody", null, orders2.slice(0, 10).map((o) => /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, o.id)), /* @__PURE__ */ React.createElement("td", null, formatPrice(o.total)), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, "+", Math.floor(o.total * 10), " pts")), /* @__PURE__ */ React.createElement("td", null, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"))))));
-  })())), view === "referral" && /* @__PURE__ */ React.createElement(ReferralWidget, { currentUser: currentUser2 }), view === "profile" && /* @__PURE__ */ React.createElement(ProfileEditor, { currentUser: currentUser2, addToast })), cart.length > 0 && view !== "orders" && /* @__PURE__ */ React.createElement("button", { className: "floating-cart", onClick: () => setShowCart(true), "aria-label": `Panier: ${cart.reduce((s, i) => s + i.quantity, 0)} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0))), selectedProduct && /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: () => setSelectedProduct(null) }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "prod-detail-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "prod-detail-title" }, selectedProduct.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: () => setSelectedProduct(null), "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-detail-grid" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: selectedProduct, height: 280 }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
+  })())), view === "referral" && /* @__PURE__ */ React.createElement(ReferralWidget, { currentUser: currentUser2 }), (view === "b2b_profile" || view === "b2b_orders" || view === "b2b_statement") && /* @__PURE__ */ React.createElement(B2BProDashboard, { currentUser: currentUser2, addToast, view, setParentView: setView }), view === "profile" && /* @__PURE__ */ React.createElement(ProfileEditor, { currentUser: currentUser2, addToast })), cart.length > 0 && view !== "orders" && /* @__PURE__ */ React.createElement("button", { className: "floating-cart", onClick: () => setShowCart(true), "aria-label": `Panier: ${cart.reduce((s, i) => s + i.quantity, 0)} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0))), selectedProduct && /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: () => setSelectedProduct(null) }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "prod-detail-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "prod-detail-title" }, selectedProduct.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: () => setSelectedProduct(null), "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-detail-grid" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: selectedProduct, height: 280 }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(selectedProduct);
   } }, /* @__PURE__ */ React.createElement("i", { className: `fa${wishlist.includes(selectedProduct.id) ? "s" : "r"} fa-heart` }))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "product-category mb-1" }, selectedProduct.category), /* @__PURE__ */ React.createElement(PriceDisplay, { product: selectedProduct, style: { fontSize: "2rem" }, className: "product-price" }), /* @__PURE__ */ React.createElement("div", { className: "product-rating mb-2" }, /* @__PURE__ */ React.createElement(Stars, { rating: selectedProduct.rating }), /* @__PURE__ */ React.createElement("span", null, selectedProduct.rating), /* @__PURE__ */ React.createElement("span", { className: "text-muted" }, "(", selectedProduct.reviewsCount || 0, " avis)")), /* @__PURE__ */ React.createElement("p", { style: { marginBottom: "1.5rem", color: "var(--text-secondary)", lineHeight: "1.8" } }, selectedProduct.description), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement("span", { className: `badge ${selectedProduct.stock > 10 ? "badge-success" : "badge-warning"}` }, selectedProduct.stock, " en stock")), /* @__PURE__ */ React.createElement(VariantSelector, { product: selectedProduct, selectedVariants, onVariantChange: (type, val) => setSelectedVariants((v) => __spreadProps(__spreadValues({}, v), { [type]: val })) }), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2", style: { flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-lg flex-1", onClick: () => {
@@ -10997,7 +11639,7 @@ const App = ({ onUserChange }) => {
       sidebarOpen,
       onToggleSidebar: toggleSidebar
     }
-  ), !currentUser2 ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), !currentUser2 ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
