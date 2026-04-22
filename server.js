@@ -2979,14 +2979,155 @@ app.patch('/api/b2b/verify-ninea/:userId', verifyToken, requireRole('admin'), as
 });
 
 // GET /api/admin/b2b — liste tous les buyers pro avec leur statut NINEA (admin)
+// Supporte : ?search=, ?verified=true|false, ?page=, ?limit=
 app.get('/api/admin/b2b', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const page    = Math.max(1, parseInt(req.query.page  || '1'));
+    const limit   = Math.min(100, parseInt(req.query.limit || '50'));
+    const search  = req.query.search  || '';
+    const verified = req.query.verified; // 'true' | 'false' | undefined
+
+    let query = supabase
+      .from('buyer_pro_profiles')
+      .select('*, profiles!inner(name, email, status, created_at, phone)', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range((page - 1) * limit, page * limit - 1);
+
+    if (verified === 'true')  query = query.eq('ninea_verified', true);
+    if (verified === 'false') query = query.eq('ninea_verified', false);
+    if (search) query = query.or(`company.ilike.%${search}%,ninea.ilike.%${search}%`);
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+    res.json({ buyers: data || [], total: count || 0, page, limit });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/b2b/stats — statistiques globales B2B (admin)
+app.get('/api/admin/b2b/stats', verifyToken, requireRole('admin'), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('buyer_pro_profiles')
-      .select('*, profiles(name, email, status, created_at)')
-      .order('created_at', { ascending: false });
+      .select('ninea_verified, created_at');
     if (error) throw error;
-    res.json(data || []);
+
+    const total    = data.length;
+    const verified = data.filter(p => p.ninea_verified).length;
+    const pending  = total - verified;
+    const startOfMonth = new Date(); startOfMonth.setDate(1); startOfMonth.setHours(0,0,0,0);
+    const newThisMonth = data.filter(p => new Date(p.created_at) >= startOfMonth).length;
+
+    res.json({ total, verified, pending, newThisMonth });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/admin/b2b/:userId — supprimer un compte B2B (admin)
+app.delete('/api/admin/b2b/:userId', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    // Supprimer le profil B2B d'abord (cascade devrait s'en charger, mais on est explicite)
+    await supabase.from('buyer_pro_profiles').delete().eq('user_id', req.params.userId);
+    // Supprimer le profil principal (désactivation douce : passer status à 'suspended')
+    const { error } = await supabase.from('profiles')
+      .update({ status: 'suspended' })
+      .eq('id', req.params.userId);
+    if (error) throw error;
+    Logger.info('admin', 'b2b.delete', `Compte B2B suspendu : ${req.params.userId}`, { userId: req.user.id });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/b2b/profile — mise à jour du profil B2B (acheteur pro connecté)
+app.patch('/api/b2b/profile', verifyToken, requireRole('buyer_pro'), async (req, res) => {
+  const { company, jobTitle, rc, address, phone } = req.body;
+  if (!company) return res.status(400).json({ error: 'Raison sociale requise' });
+
+  const updates = {};
+  if (company)   updates.company   = company.trim();
+  if (jobTitle)  updates.job_title = jobTitle.trim();
+  if (rc != null) updates.rc       = rc.trim().toUpperCase() || null;
+  if (address)   updates.address   = address.trim();
+
+  try {
+    const { data, error } = await supabase
+      .from('buyer_pro_profiles')
+      .update(updates)
+      .eq('user_id', req.user.id)
+      .select().single();
+    if (error) throw error;
+
+    if (phone) await supabase.from('profiles').update({ phone }).eq('id', req.user.id);
+
+    Logger.info('b2b', 'profile.update', `Profil B2B mis à jour : ${req.user.email}`, { userId: req.user.id });
+    res.json(data);
+  } catch (e) {
+    Logger.error('b2b', 'profile.update.error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/b2b/discount — taux de remise B2B actuel de l'utilisateur connecté
+app.get('/api/b2b/discount', verifyToken, requireRole('buyer_pro', 'admin'), async (req, res) => {
+  try {
+    const userId = req.user.role === 'admin' ? (req.query.userId || req.user.id) : req.user.id;
+    const { data } = await supabase
+      .from('buyer_pro_profiles')
+      .select('ninea_verified, company')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    // Règle de remise : NINEA vérifié = 5%, sinon 0%
+    const discountRate    = data?.ninea_verified ? 5 : 0;
+    const nineaVerified   = data?.ninea_verified || false;
+    res.json({
+      discountRate,
+      nineaVerified,
+      company: data?.company || null,
+      message: discountRate > 0
+        ? `Remise B2B de ${discountRate} % appliquée — NINEA vérifié`
+        : 'Remise B2B disponible après vérification de votre NINEA par l\'équipe NEXUS',
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/b2b/orders — commandes paginées de l'acheteur pro connecté
+// Paramètres optionnels : ?page=, ?limit=, ?status=, ?month=YYYY-MM
+app.get('/api/b2b/orders', verifyToken, requireRole('buyer_pro', 'admin'), async (req, res) => {
+  try {
+    const userId = req.user.role === 'admin' ? (req.query.userId || req.user.id) : req.user.id;
+    const page   = Math.max(1, parseInt(req.query.page  || '1'));
+    const limit  = Math.min(50,  parseInt(req.query.limit || '20'));
+    const status = req.query.status;
+    const month  = req.query.month; // YYYY-MM
+
+    let query = supabase
+      .from('orders')
+      .select(
+        'id, total, commission, status, payment_method, products, vendor_name, created_at, tracking_number, buyer_name, buyer_email',
+        { count: 'exact' }
+      )
+      .eq('buyer_id', userId)
+      .order('created_at', { ascending: false })
+      .range((page - 1) * limit, page * limit - 1);
+
+    if (status) query = query.eq('status', status);
+    if (month) {
+      const [y, m] = month.split('-').map(Number);
+      query = query
+        .gte('created_at', new Date(y, m - 1, 1).toISOString())
+        .lt('created_at', new Date(y, m,     1).toISOString());
+    }
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+    res.json({ orders: data || [], total: count || 0, page, limit });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -3753,6 +3894,132 @@ async function generateMonthlyStatementPDF(vendor, orders, month, res) {
   doc.end();
 }
 
+/**
+ * Génère le relevé mensuel acheteur pro (toutes commandes du mois) — PDF.
+ */
+function generateBuyerStatementPDF(buyer, b2bProfile, orders, month, res) {
+  const accentHex  = '#0284c7'; // bleu B2B
+  const [year, mon] = month.split('-');
+  const monthLabel  = new Date(parseInt(year), parseInt(mon) - 1, 1)
+    .toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  const invNum  = `B2B-STMT-${buyer.id.slice(0, 6).toUpperCase()}-${year}${mon}`;
+  const dateStr = `Période : ${monthLabel}`;
+
+  // Totaux
+  const delivered   = orders.filter(o => o.status === 'delivered');
+  const totalAchats = delivered.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  const totalCmds   = orders.length;
+
+  const doc = new PDFDocument({ size: 'A4', margin: 0, info: {
+    Title:  `Relevé Acheteur Pro ${monthLabel}`,
+    Author: 'NEXUS Market Sénégal',
+  }});
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="Releve-Acheteur-B2B-NEXUS-${year}${mon}.pdf"`);
+  doc.pipe(res);
+
+  // ── En-tête ──────────────────────────────────────────────────────────────
+  drawPdfHeader(doc, 'statement', invNum, dateStr, accentHex);
+
+  let y = 108;
+
+  // Bloc acheteur
+  drawPartyBlock(doc, 40, y, 250, 'ACHETEUR PRO',
+    b2bProfile?.company || buyer.name,
+    [
+      buyer.email  || '',
+      buyer.phone  || '',
+      b2bProfile?.address || '',
+      `NINEA : ${b2bProfile?.ninea || '—'}${b2bProfile?.ninea_verified ? ' ✓ Vérifié' : ' (en attente)'}`,
+    ].filter(Boolean),
+    accentHex
+  );
+
+  // Récapitulatif
+  doc.rect(305, y, 250.28, 80).fill('#eff6ff').stroke('#bfdbfe');
+  doc.font('Helvetica-Bold').fontSize(9).fillColor('#0c4a6e').text('RÉCAPITULATIF MENSUEL', 313, y + 6);
+  const recaps = [
+    ['Commandes passées',    `${totalCmds}`],
+    ['Commandes livrées',    `${delivered.length}`],
+    ['Total achats HT',      fmtFCFA(Math.round(totalAchats / 1.18))],
+    ['TVA (18 %)',           fmtFCFA(Math.round(totalAchats - totalAchats / 1.18))],
+    ['TOTAL TTC',            fmtFCFA(totalAchats)],
+  ];
+  recaps.forEach(([lbl, val], i) => {
+    const isFinal = i === recaps.length - 1;
+    doc.font(isFinal ? 'Helvetica-Bold' : 'Helvetica')
+       .fontSize(isFinal ? 10 : 8.5)
+       .fillColor(isFinal ? accentHex : '#374151')
+       .text(lbl, 313, y + 20 + i * 12)
+       .text(val, 313, y + 20 + i * 12, { width: 234.28, align: 'right' });
+  });
+
+  y += 94;
+
+  // ── Tableau des commandes ────────────────────────────────────────────────
+  const hdr = ['COMMANDE', 'DATE', 'FOURNISSEUR', 'PRODUITS', 'STATUT', 'MONTANT TTC'];
+  const cw  = [80, 50, 90, 130, 55, 90];
+  const xs  = cw.reduce((acc, w, i) => { acc.push((acc[i - 1] || 40) + (i > 0 ? cw[i - 1] : 0)); return acc; }, []);
+
+  doc.rect(40, y, 515.28, 20).fill(accentHex);
+  hdr.forEach((h, i) => {
+    doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#ffffff')
+       .text(h, xs[i] + 3, y + 6, { width: cw[i] - 6, align: i === 5 ? 'right' : 'left' });
+  });
+  y += 20;
+
+  orders.forEach((o, idx) => {
+    const rowH = 18;
+    if (y > 780) {
+      doc.addPage({ size: 'A4', margin: 0 });
+      drawPdfFooter(doc, accentHex);
+      y = 20;
+    }
+    doc.rect(40, y, 515.28, rowH).fill(idx % 2 === 0 ? '#f0f9ff' : '#ffffff').stroke('#e0e7ff');
+
+    const dateStr2  = new Date(o.created_at).toLocaleDateString('fr-FR');
+    const prodsStr  = (o.products || []).slice(0, 2).map(p => p.name).join(', ') + (o.products?.length > 2 ? '…' : '');
+    const statusTxt = { delivered: 'Livré', processing: 'En cours', in_transit: 'Transit', cancelled: 'Annulé', pending_payment: 'Attente' }[o.status] || o.status;
+    const isDeliv   = o.status === 'delivered';
+
+    doc.font('Helvetica').fontSize(7.5).fillColor('#111827')
+       .text(o.id.slice(0, 12) + '…', xs[0] + 3, y + 5, { width: cw[0] - 6 })
+       .text(dateStr2,                xs[1] + 3, y + 5, { width: cw[1] - 6 })
+       .text(o.vendor_name || '—',   xs[2] + 3, y + 5, { width: cw[2] - 6 })
+       .text(prodsStr,               xs[3] + 3, y + 5, { width: cw[3] - 6 });
+    doc.fillColor(isDeliv ? '#15803d' : '#dc2626')
+       .text(statusTxt,              xs[4] + 3, y + 5, { width: cw[4] - 6 });
+    doc.fillColor(isDeliv ? accentHex : '#9ca3af').font(isDeliv ? 'Helvetica-Bold' : 'Helvetica')
+       .text(fmtFCFA(o.total),       xs[5] + 3, y + 5, { width: cw[5] - 6, align: 'right' });
+
+    y += rowH;
+  });
+
+  y += 12;
+
+  // Ligne totaux
+  doc.rect(40, y, 515.28, 22).fill(accentHex);
+  doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff')
+     .text('TOTAL ACHATS DU MOIS', 48, y + 7)
+     .text(fmtFCFA(totalAchats), xs[5] + 3, y + 7, { width: cw[5] - 6, align: 'right' });
+  y += 32;
+
+  // Note légale B2B
+  const noteY = Math.min(y, 750);
+  doc.rect(40, noteY, 515.28, 44).fill('#eff6ff').stroke('#bfdbfe');
+  doc.font('Helvetica').fontSize(7.5).fillColor('#1e3a5f')
+     .text(
+       'Ce relevé est généré automatiquement par NEXUS Market Sénégal et constitue un justificatif comptable pour votre entreprise. ' +
+       `NINEA : ${b2bProfile?.ninea || '—'}. ` +
+       'Pour toute contestation ou demande de facture pro-forma, contactez b2b@nexus.sn dans un délai de 15 jours ouvrés.',
+       48, noteY + 6, { width: 499.28 }
+     );
+
+  drawPdfFooter(doc, accentHex);
+  doc.end();
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // ROUTES PDF
 // ════════════════════════════════════════════════════════════════════════════
@@ -3898,6 +4165,43 @@ app.get('/api/invoices/statement/vendor', verifyToken, requireRole('vendor', 'ad
     return generateMonthlyStatementPDF(vendor, orders || [], month, res);
   } catch (e) {
     Logger.error('invoice', 'statement.error', e.message, { userId: req.user.id });
+    if (!res.headersSent) res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/invoices/statement/buyer?month=YYYY-MM — relevé mensuel acheteur pro
+app.get('/api/invoices/statement/buyer', verifyToken, requireRole('buyer_pro', 'admin'), async (req, res) => {
+  const month   = req.query.month || new Date().toISOString().slice(0, 7);
+  const buyerId = req.user.role === 'admin' && req.query.buyerId
+    ? req.query.buyerId : req.user.id;
+
+  const [year, mon] = month.split('-').map(Number);
+  const startDate = new Date(year, mon - 1, 1).toISOString();
+  const endDate   = new Date(year, mon,     1).toISOString();
+
+  try {
+    const { data: buyer } = await supabase
+      .from('profiles').select('id, name, email, phone').eq('id', buyerId).single();
+    if (!buyer) return res.status(404).json({ error: 'Acheteur introuvable' });
+
+    const { data: b2bProfile } = await supabase
+      .from('buyer_pro_profiles')
+      .select('company, ninea, ninea_verified, address, job_title')
+      .eq('user_id', buyerId).maybeSingle();
+
+    const { data: orders, error: ordErr } = await supabase
+      .from('orders')
+      .select('id, vendor_name, products, total, status, payment_method, created_at, tracking_number')
+      .eq('buyer_id', buyerId)
+      .gte('created_at', startDate)
+      .lt('created_at', endDate)
+      .order('created_at', { ascending: true });
+    if (ordErr) throw ordErr;
+
+    Logger.info('invoice', 'statement.buyer.generated', `Relevé acheteur pro ${month} (${buyerId})`, { userId: req.user.id });
+    return generateBuyerStatementPDF(buyer, b2bProfile || {}, orders || [], month, res);
+  } catch (e) {
+    Logger.error('invoice', 'statement.buyer.error', e.message, { userId: req.user.id });
     if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
