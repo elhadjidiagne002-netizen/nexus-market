@@ -625,7 +625,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       if (referrer && referrer.id !== data.id) {
         await supabase.from('referrals').insert({
           referrer_id: referrer.id, referred_id: data.id, code: safeCode, rewarded: false,
-        }).catch(() => {});
+        }).then(null, () => {});
         await pushNotification(referrer.id, {
           type: 'system', title: '🎁 Nouveau filleul !',
           message: `${name} vient de s'inscrire avec votre code. Récompense dès sa 1ère commande.`,
@@ -885,7 +885,7 @@ app.get('/api/auth/github/callback', async (req, res) => {
           title: '🐙 Nouveau membre via GitHub',
           message: `${ghName} (${primaryEmail}) vient de créer un compte via GitHub OAuth.`,
           read: false,
-        }).catch(() => {});
+        }).then(null, () => {});
       }
     }
 
@@ -949,7 +949,7 @@ app.patch('/api/auth/github/role', verifyToken, async (req, res) => {
         id: data.id, name: data.name, email: data.email,
         status: 'pending', source: 'github_oauth',
         created_at: new Date().toISOString(),
-      }, { onConflict: 'id' }).catch(() => {});
+      }, { onConflict: 'id' }).then(null, () => {});
 
       await supabase.from('notifications').insert({
         user_id: 'admin',
@@ -957,7 +957,7 @@ app.patch('/api/auth/github/role', verifyToken, async (req, res) => {
         title: '🏪 Demande vendeur (GitHub)',
         message: `${data.name} (${data.email}) souhaite devenir vendeur. Compte créé via GitHub OAuth.`,
         read: false,
-      }).catch(() => {});
+      }).then(null, () => {});
     }
 
     // Émettre un nouveau JWT avec le bon rôle
@@ -1464,7 +1464,7 @@ app.post('/api/orders/split', verifyToken, async (req, res) => {
       title: 'Nouvelle commande !',
       message: `${customerInfo.name} a commandé ${group.items.map(p => p.name).join(', ')}`,
       read: false,
-    }).catch(() => {});
+    }).then(null, () => {});
   }
 
   Logger.info('order', 'split.done', `${createdOrders.length} sous-commande(s) créées pour panier mixte`, {
@@ -1523,7 +1523,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       serverDiscount = Math.round(parseFloat(subtotal || total) * (coupon.discount / 100) * 100) / 100;
       // Incrémenter used_count (non-bloquant)
       supabase.from('coupons').update({ used_count: (coupon.used_count || 0) + 1 })
-        .eq('id', coupon.id).catch(() => {});
+        .eq('id', coupon.id).then(null, () => {});
     }
 
     // ── Étape 1 : Vérification ET décrémentation atomique du stock ────────
@@ -1593,8 +1593,9 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       Logger.error('order', 'create.rollback', `INSERT order échoué — re-crédit stock`, {
         userId: req.user.id, meta: { vendorId, items: stockItems, error: orderErr.message }
       });
-      await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) })
-        .catch(e => Logger.error('order', 'rollback.failed', e.message));
+      try {
+        await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) });
+      } catch(e) { Logger.error('order', 'rollback.failed', e.message); }
       throw orderErr;
     }
 
@@ -1759,10 +1760,10 @@ app.patch('/api/orders/:id/cancel', verifyToken, async (req, res) => {
                       title: '🔔 Produit disponible !',
                       message: `"${row.product_name}" est de nouveau en stock — commandez vite !`,
                       link: `/products/${item.product_id}`,
-                    }).catch(() => {});
+                    }).then(null, () => {});
                   }
                 }
-              }).catch(() => {});
+              }).then(null, () => {});
           }
         }
       }
@@ -1873,9 +1874,11 @@ async function handleStripeWebhook(req, res) {
       if (failedOrder?.stock_reserved) {
         const stockItems = cartToStockItems(failedOrder.products || []);
         if (stockItems.length > 0) {
-          await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) }).catch(e =>
-            Logger.error('payment', 'stripe.failed.release_stock', e.message, { meta: { orderId: failedOrder.id } })
-          );
+          try {
+            await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) });
+          } catch(e) {
+            Logger.error('payment', 'stripe.failed.release_stock', e.message, { meta: { orderId: failedOrder.id } });
+          }
           await supabase.from('orders').update({ stock_reserved: false }).eq('id', failedOrder.id);
           Logger.info('payment', 'stripe.failed.stock_released', `Stock re-crédité après échec Stripe`, { meta: { orderId: failedOrder.id } });
         }
@@ -2358,7 +2361,7 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
           shop_category:   pending.category || null,
           address:         pending.address  || null,
           ninea:           pending.ninea    || null,
-        }).eq('id', newProf.id).catch(() => {});
+        }).eq('id', newProf.id).then(null, () => {});
       } else {
         // Profil existant — colonnes de base garanties
         const { error: updateErr } = await supabase
@@ -2373,7 +2376,7 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
           shop_category:   pending.category || null,
           ...((!existingProfile.password_hash && pending.password_hash)
             ? { password_hash: pending.password_hash } : {}),
-        }).eq('id', existingProfile.id).catch(() => {});
+        }).eq('id', existingProfile.id).then(null, () => {});
       }
 
       // 3a. Invalider le cache token pour ce vendeur
@@ -2388,7 +2391,7 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
         .update({ status: 'approved' }).eq('id', vendorId);
       await supabase.from('pending_vendors')
         .update({ notes: null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
-        .eq('id', vendorId).catch(() => {});
+        .eq('id', vendorId).then(null, () => {});
 
       // 5a. Email de confirmation
       const tpl = emailTemplates.vendorApproved(pending.owner_name);
@@ -2398,7 +2401,7 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       await supabase.from('admin_logs').insert({
         admin_id: req.user.id, action: 'vendor_approved',
         target_id: vendorId, details: { vendor_name: pending.name, email: pending.email }
-      }).catch(() => {}); // log non-bloquant
+      }).then(null, () => {}); // log non-bloquant
 
       return res.json({ message: 'Vendeur approuvé', vendorId, email: pending.email });
 
@@ -2409,7 +2412,7 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
         .update({ status: 'rejected' }).eq('id', vendorId);
       await supabase.from('pending_vendors')
         .update({ notes: reason || null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
-        .eq('id', vendorId).catch(() => {});
+        .eq('id', vendorId).then(null, () => {});
 
       const tpl = emailTemplates.vendorRejected(pending.owner_name, reason);
       await sendEmail({ to: pending.email, ...tpl });
@@ -2418,7 +2421,7 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       await supabase.from('admin_logs').insert({
         admin_id: req.user.id, action: 'vendor_rejected',
         target_id: vendorId, details: { vendor_name: pending.name, email: pending.email, reason: reason || null }
-      }).catch(() => {});
+      }).then(null, () => {});
 
       return res.json({ message: 'Demande refusée', vendorId });
     }
