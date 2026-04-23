@@ -17,19 +17,20 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
     <!-- prop-types DOIT être chargé avant Recharts (Recharts lit window.PropTypes) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
-    <!-- Recharts — chargement fiable avec retry -->
+    <!-- Recharts — chargement avec callback onload pour éviter la race condition -->
     <script>
     (function(){
         var s = document.createElement('script');
         s.src = 'https://cdn.jsdelivr.net/npm/recharts@2.5.0/umd/Recharts.js';
         s.crossOrigin = 'anonymous';
-        s.defer = true;
+        s.onload = function(){ window.__rechartsLoaded = true; };
         s.onerror = function(){
             console.warn('[NEXUS] Recharts CDN principal échoué — tentative secours...');
             window.__rechartsLoadFailed = true;
             var fallback = document.createElement('script');
             fallback.src = 'https://cdnjs.cloudflare.com/ajax/libs/recharts/2.5.0/Recharts.js';
             fallback.crossOrigin = 'anonymous';
+            fallback.onload = function(){ window.__rechartsLoaded = true; };
             fallback.onerror = function(){ console.warn('[NEXUS] Recharts indisponible — graphiques en mode fallback'); };
             document.head.appendChild(fallback);
         };
@@ -1550,18 +1551,44 @@ const DataService = {
     }
   },
   async getUsers() {
+    // [FIX] Utiliser l'export admin si disponible, sinon Supabase direct avec normalizeUser
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch("/api/admin/export/users").catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const map = {};
+          (data || []).forEach(u => { const n = normalizeUser(u); map[n.id] = n; });
+          storage.set("users", map); return map;
+        }
+      } catch (e) {
+        console.warn("[getUsers] API indisponible, fallback Supabase:", e.message);
+      }
+    }
     if (this._sb) {
       const { data } = await this._sb.from("profiles").select("*");
-      if (data) return data.reduce((acc, u) => {
-        acc[u.id] = u;
-        return acc;
-      }, {});
+      if (data) {
+        const map = {};
+        data.forEach(u => { const n = normalizeUser(u); map[n.id] = n; });
+        storage.set("users", map); return map;
+      }
     }
     return storage.get("users") || {};
   },
   async saveUser(user) {
     if (this._sb) {
-      await this._sb.from("profiles").upsert(user);
+      // [FIX] Convertir camelCase → snake_case avant d'envoyer à Supabase
+      const row = {
+        id: user.id, name: user.name, email: user.email,
+        role: user.role, status: user.status, avatar: user.avatar,
+        shop_name:     user.shopName     || user.shop_name     || null,
+        shop_category: user.shopCat      || user.shopCategory  || user.shop_category || null,
+        phone:         user.phone        || null,
+        address:       user.address      || null,
+        commission_rate: user.commission || user.commission_rate || null,
+      };
+      Object.keys(row).forEach(k => row[k] === null && delete row[k]);
+      await this._sb.from("profiles").upsert(row);
       return;
     }
     const users = storage.get("users") || {};
@@ -2108,10 +2135,10 @@ const DataService = {
         console.warn('[saveReturnRequest] API indisponible, fallback Supabase:', e.message);
       }
     }
-    // Fallback Supabase direct (snake_case obligatoire)
+    // Fallback Supabase direct (snake_case obligatoire, sans id local non-UUID)
     if (this._sb) {
       const row = {
-        id:             req.id,
+        // [FIX] id supprimé — "RET-TIMESTAMP" n'est pas un UUID valide pour Supabase
         order_id:       req.orderId,
         buyer_id:       req.buyerId,
         buyer_name:     req.buyerName,
@@ -2181,53 +2208,163 @@ const DataService = {
 
   // ── MESSAGES ──────────────────────────────────────────────────────
   async getMessages(userId) {
+    // [FIX] API en priorité + order("date") inexistant → created_at
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch("/api/messages").catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const mapped = (data || []).map(r => ({
+            id: r.id, from: r.from_id, fromName: r.from_name,
+            to: r.to_id, toName: r.to_name,
+            text: r.text, date: r.created_at, read: r.read, deleted: r.deleted
+          }));
+          storage.set("messages", mapped); return mapped;
+        }
+      } catch (e) { console.warn("[getMessages] fallback Supabase:", e.message); }
+    }
     if (this._sb) {
       const { data, error } = await this._sb.from("messages")
         .select("*")
         .or(`from_id.eq.${userId},to_id.eq.${userId}`)
         .eq("deleted", false)
-        .order("date", { ascending: true });
-      if (!error && data) { storage.set("messages", data); return data; }
+        .order("created_at", { ascending: true }); // [FIX] created_at
+      if (!error && data) {
+        const mapped = data.map(r => ({
+          id: r.id, from: r.from_id, fromName: r.from_name,
+          to: r.to_id, toName: r.to_name,
+          text: r.text, date: r.created_at, read: r.read
+        }));
+        storage.set("messages", mapped); return mapped;
+      }
     }
     return storage.getArray("messages");
   },
   async saveMessage(msg) {
+    // [FIX] API en priorité — id local "msg_TIMESTAMP" non-UUID + colonne "date" inexistante en Supabase
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch("/api/messages", {
+          method: "POST",
+          body: JSON.stringify({ toId: msg.to, text: msg.text }),
+        });
+        if (res && res.ok) {
+          const data = await res.json();
+          const saved = { ...msg, id: data.id, date: data.created_at || msg.date };
+          const all = storage.getArray("messages"); all.push(saved); storage.set("messages", all);
+          return saved;
+        }
+      } catch (e) { console.warn("[saveMessage] fallback Supabase:", e.message); }
+    }
+    // Fallback Supabase — sans id local ni colonne "date"
     if (this._sb) {
-      const row = { id: msg.id, from_id: msg.from, to_id: msg.to,
+      const row = { from_id: msg.from, to_id: msg.to,
         from_name: msg.fromName, to_name: msg.toName,
-        text: msg.text, date: msg.date || new Date().toISOString(),
-        read: false, deleted: false };
+        text: msg.text, read: false, deleted: false };
       const { data, error } = await this._sb.from("messages").insert(row).select().single();
       if (!error && data) {
-        const all = storage.getArray("messages");
-        all.push(msg); storage.set("messages", all);
-        return data;
+        const saved = { ...msg, id: data.id, date: data.created_at };
+        const all = storage.getArray("messages"); all.push(saved); storage.set("messages", all);
+        return saved;
       }
     }
     const all = storage.getArray("messages");
-    all.push(msg); storage.set("messages", all);
-    return msg;
+    all.push(msg); storage.set("messages", all); return msg;
   },
-  async markMessageRead(msgId) {
-    if (this._sb) { const { error: e } = await this._sb.from("messages").update({ read: true }).eq("id", msgId); if (e) console.warn("[markMessageRead]", e.message); }
+  async markMessageRead(msgId, fromId) {
+    // [FIX] Appeler le backend en priorité — PATCH /api/messages/read marque par fromId, plus efficace
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        await this.apiFetch("/api/messages/read", {
+          method: "PATCH",
+          body: JSON.stringify({ fromId: fromId || null }),
+        }).catch(() => null);
+      } catch (e) {
+        console.warn("[markMessageRead] API indisponible, fallback Supabase:", e.message);
+      }
+    } else if (this._sb) {
+      const { error: e } = await this._sb.from("messages").update({ read: true }).eq("id", msgId);
+      if (e) console.warn("[markMessageRead]", e.message);
+    }
+    // Mise à jour du cache localStorage
     const all = storage.getArray("messages");
     const idx = all.findIndex(m => m.id === msgId);
     if (idx >= 0) { all[idx].read = true; storage.set("messages", all); }
   },
 
-  // ── OFFERS ────────────────────────────────────────────────────────
+  // [FIX] getReviews — utilise GET /api/reviews (route ajoutée au backend)
+  async getReviews(filters = {}) {
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const params = new URLSearchParams();
+        if (filters.productId) params.set('productId', filters.productId);
+        if (filters.vendorId)  params.set('vendorId',  filters.vendorId);
+        const res = await this.apiFetch(`/api/reviews?${params}`).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const mapped = (data || []).map(r => ({
+            id: r.id, productId: r.product_id, userId: r.user_id,
+            userName: r.user_name, rating: r.rating, comment: r.comment,
+            vendorReply: r.vendor_reply, date: r.created_at,
+          }));
+          if (!filters.productId && !filters.vendorId) storage.set('reviews', mapped);
+          return mapped;
+        }
+      } catch (e) {
+        console.warn('[getReviews] API indisponible, fallback Supabase:', e.message);
+      }
+    }
+    if (this._sb) {
+      let q = this._sb.from('reviews').select('*').order('created_at', { ascending: false });
+      if (filters.productId) q = q.eq('product_id', filters.productId);
+      if (filters.vendorId)  q = q.eq('vendor_id',  filters.vendorId);
+      const { data, error } = await q;
+      if (!error && data) {
+        const mapped = data.map(r => ({
+          id: r.id, productId: r.product_id, userId: r.user_id,
+          userName: r.user_name, rating: r.rating, comment: r.comment,
+          vendorReply: r.vendor_reply, date: r.created_at,
+        }));
+        if (!filters.productId && !filters.vendorId) storage.set('reviews', mapped);
+        return mapped;
+      }
+    }
+    let reviews = storage.getArray('reviews');
+    if (filters.productId) reviews = reviews.filter(r => r.productId === filters.productId);
+    if (filters.vendorId)  reviews = reviews.filter(r => r.vendorId  === filters.vendorId);
+    return reviews;
+  },
+
   async getOffers(filters = {}) {
+    // [FIX] API en priorité + order("date") inexistant → created_at + r.date → r.created_at
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch("/api/offers").catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const mapped = (data || []).map(r => ({
+            id: r.id, productId: r.product_id, productName: r.product_name,
+            buyerId: r.buyer_id, buyerName: r.buyer_name,
+            vendorId: r.vendor_id, offeredPrice: r.offered_price,
+            counterPrice: r.counter_price,
+            message: r.message, status: r.status, date: r.created_at // [FIX] r.date → r.created_at
+          }));
+          storage.set("offers", mapped); return mapped;
+        }
+      } catch (e) { console.warn("[getOffers] fallback Supabase:", e.message); }
+    }
     if (this._sb) {
       let q = this._sb.from("offers").select("*");
       if (filters.buyerId)  q = q.eq("buyer_id",  filters.buyerId);
       if (filters.vendorId) q = q.eq("vendor_id", filters.vendorId);
-      const { data, error } = await q.order("date", { ascending: false });
+      const { data, error } = await q.order("created_at", { ascending: false }); // [FIX] created_at
       if (!error && data) {
         const mapped = data.map(r => ({
           id: r.id, productId: r.product_id, productName: r.product_name,
           buyerId: r.buyer_id, buyerName: r.buyer_name,
           vendorId: r.vendor_id, offeredPrice: r.offered_price,
-          message: r.message, status: r.status, date: r.date
+          counterPrice: r.counter_price,
+          message: r.message, status: r.status, date: r.created_at // [FIX]
         }));
         storage.set("offers", mapped); return mapped;
       }
@@ -2238,23 +2375,78 @@ const DataService = {
     return offers;
   },
   async saveOffer(offer) {
+    // [FIX] Appeler le backend en priorité — génère un vrai UUID, envoie email+notif vendeur
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch("/api/offers", {
+          method: "POST",
+          body: JSON.stringify({
+            productId:    offer.productId,
+            productName:  offer.productName,
+            vendorId:     offer.vendorId,
+            offeredPrice: offer.offeredPrice,
+            message:      offer.message || null,
+          }),
+        });
+        if (res && res.ok) {
+          const data = await res.json();
+          const all = storage.getArray("offers");
+          // Fusionner avec les champs camelCase locaux pour la cohérence UI
+          const saved = { ...offer, id: data.id, status: data.status || "pending" };
+          all.push(saved); storage.set("offers", all);
+          return saved;
+        }
+        const err = await res.json().catch(() => ({}));
+        console.warn("[saveOffer] API erreur:", err.error || res.status);
+      } catch (e) {
+        console.warn("[saveOffer] API indisponible, fallback Supabase:", e.message);
+      }
+    }
+    // Fallback Supabase direct (sans ID local non-UUID)
     if (this._sb) {
-      const row = { id: offer.id, product_id: offer.productId, product_name: offer.productName,
+      const row = {
+        product_id: offer.productId, product_name: offer.productName,
         buyer_id: offer.buyerId, buyer_name: offer.buyerName,
         vendor_id: offer.vendorId, offered_price: offer.offeredPrice,
-        message: offer.message, status: offer.status || "pending",
-        date: offer.date || new Date().toISOString() };
+        message: offer.message || null, status: offer.status || "pending"
+        // [FIX] colonne "date" supprimée — Supabase utilise created_at automatiquement
+      };
       const { data, error } = await this._sb.from("offers").insert(row).select().single();
-      if (!error) { const all = storage.getArray("offers"); all.push(offer); storage.set("offers", all); return offer; }
+      if (!error && data) {
+        const saved = { ...offer, id: data.id };
+        const all = storage.getArray("offers"); all.push(saved); storage.set("offers", all);
+        return saved;
+      }
     }
     const all = storage.getArray("offers");
     all.push(offer); storage.set("offers", all); return offer;
   },
   async updateOffer(id, updates) {
+    // [FIX] Appeler PATCH /api/offers/:id en priorité — Supabase direct ne notifie pas le vendeur
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch(`/api/offers/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            status:       updates.status,
+            counterPrice: updates.counterPrice ?? undefined,
+          }),
+        }).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json().catch(() => null);
+          const all = storage.getArray("offers");
+          const idx = all.findIndex(o => o.id === id);
+          if (idx >= 0) { all[idx] = { ...all[idx], ...(data || updates) }; storage.set("offers", all); }
+          return data;
+        }
+      } catch (e) { console.warn("[updateOffer] fallback Supabase:", e.message); }
+    }
     if (this._sb) {
       const sbUpdates = {};
-      if (updates.status) sbUpdates.status = updates.status;
-      const { error: eOffer } = await this._sb.from("offers").update(sbUpdates).eq("id", id); if (eOffer) console.warn("[saveOffer]", eOffer.message);
+      if (updates.status)       sbUpdates.status        = updates.status;
+      if (updates.counterPrice) sbUpdates.counter_price = updates.counterPrice;
+      const { error: eOffer } = await this._sb.from("offers").update(sbUpdates).eq("id", id);
+      if (eOffer) console.warn("[updateOffer]", eOffer.message);
     }
     const all = storage.getArray("offers");
     const idx = all.findIndex(o => o.id === id);
@@ -2263,17 +2455,38 @@ const DataService = {
 
   // ── DISPUTES ──────────────────────────────────────────────────────
   async getDisputes(filters = {}) {
+    // [FIX] Appeler le backend en priorité (retourne les vrais UUIDs et les champs computed)
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch("/api/disputes").catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const mapped = (data || []).map(r => ({
+            id: r.id, orderId: r.order_id, buyerId: r.buyer_id, buyerName: r.buyer_name,
+            vendorId: r.vendor_id, vendorName: r.vendor_name, reason: r.reason,
+            description: r.description, status: r.status, resolution: r.resolution,
+            adminNote: r.admin_notes || r.admin_note,          // [FIX] les deux formes
+            date: r.created_at || r.date,                      // [FIX] r.date n'existe pas en Supabase
+            orderTotal: r.order_total, resolvedAt: r.resolved_at,
+          }));
+          storage.set("disputes", mapped); return mapped;
+        }
+      } catch (e) {
+        console.warn("[getDisputes] API indisponible, fallback Supabase:", e.message);
+      }
+    }
     if (this._sb) {
       let q = this._sb.from("disputes").select("*");
       if (filters.buyerId)  q = q.eq("buyer_id",  filters.buyerId);
       if (filters.vendorId) q = q.eq("vendor_id", filters.vendorId);
-      const { data, error } = await q.order("date", { ascending: false });
+      const { data, error } = await q.order("created_at", { ascending: false });
       if (!error && data) {
         const mapped = data.map(r => ({
           id: r.id, orderId: r.order_id, buyerId: r.buyer_id, buyerName: r.buyer_name,
           vendorId: r.vendor_id, vendorName: r.vendor_name, reason: r.reason,
           description: r.description, status: r.status, resolution: r.resolution,
-          adminNote: r.admin_note, date: r.date
+          adminNote: r.admin_notes || r.admin_note, date: r.created_at,
+          orderTotal: r.order_total, resolvedAt: r.resolved_at,
         }));
         storage.set("disputes", mapped); return mapped;
       }
@@ -2281,23 +2494,75 @@ const DataService = {
     return storage.getArray("disputes");
   },
   async saveDispute(dispute) {
+    // [FIX] Appeler le backend en priorité — met à jour orders.has_dispute, notifie les admins, génère UUID réel
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch("/api/disputes", {
+          method: "POST",
+          body: JSON.stringify({
+            orderId:     dispute.orderId,
+            reason:      dispute.reason,
+            description: dispute.description,
+          }),
+        });
+        if (res && res.ok) {
+          const data = await res.json();
+          const saved = { ...dispute, id: data.id };
+          const all = storage.getArray("disputes"); all.push(saved); storage.set("disputes", all);
+          return saved;
+        }
+        const err = await res.json().catch(() => ({}));
+        console.warn("[saveDispute] API erreur:", err.error || res.status);
+      } catch (e) {
+        console.warn("[saveDispute] API indisponible, fallback Supabase:", e.message);
+      }
+    }
+    // Fallback Supabase direct (sans ID local non-UUID)
     if (this._sb) {
-      const row = { id: dispute.id, order_id: dispute.orderId,
-        buyer_id: dispute.buyerId, buyer_name: dispute.buyerName,
-        vendor_id: dispute.vendorId, vendor_name: dispute.vendorName,
-        reason: dispute.reason, description: dispute.description,
-        status: dispute.status || "open", date: dispute.date || new Date().toISOString() };
-      const { error } = await this._sb.from("disputes").insert(row);
-      if (!error) { const all = storage.getArray("disputes"); all.push(dispute); storage.set("disputes", all); return dispute; }
+      const row = {
+        order_id:    dispute.orderId,  buyer_id:   dispute.buyerId,
+        buyer_name:  dispute.buyerName, vendor_id:  dispute.vendorId,
+        vendor_name: dispute.vendorName, reason:     dispute.reason,
+        description: dispute.description, status:   dispute.status || "open"
+        // [FIX] colonne "date" supprimée — Supabase utilise created_at automatiquement
+      };
+      const { data, error } = await this._sb.from("disputes").insert(row).select().single();
+      if (!error && data) {
+        const saved = { ...dispute, id: data.id };
+        const all = storage.getArray("disputes"); all.push(saved); storage.set("disputes", all);
+        return saved;
+      }
     }
     const all = storage.getArray("disputes");
     all.push(dispute); storage.set("disputes", all); return dispute;
   },
   async updateDispute(id, updates) {
+    // [FIX] Appeler le backend en priorité — enregistre resolved_at/closed_at/investigating_at
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch(`/api/disputes/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            status:     updates.status,
+            resolution: updates.resolution || undefined,
+            adminNotes: updates.adminNote || updates.adminNotes || undefined, // [FIX] normalise les deux formes
+          }),
+        }).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json().catch(() => null);
+          const all = storage.getArray("disputes");
+          const idx = all.findIndex(d => d.id === id);
+          if (idx >= 0) { all[idx] = { ...all[idx], ...(data || updates) }; storage.set("disputes", all); }
+          return data;
+        }
+      } catch (e) {
+        console.warn("[updateDispute] API indisponible, fallback Supabase:", e.message);
+      }
+    }
     if (this._sb) {
-      const sbUp = { status: updates.status, resolution: updates.resolution, admin_note: updates.adminNote };
+      const sbUp = { status: updates.status, resolution: updates.resolution, admin_note: updates.adminNote || updates.adminNotes };
       Object.keys(sbUp).forEach(k => sbUp[k] === undefined && delete sbUp[k]);
-      const { error: eDisp } = await this._sb.from("disputes").update(sbUp).eq("id", id); if (eDisp) console.warn("[saveDispute]", eDisp.message);
+      const { error: eDisp } = await this._sb.from("disputes").update(sbUp).eq("id", id); if (eDisp) console.warn("[updateDispute]", eDisp.message);
     }
     const all = storage.getArray("disputes");
     const idx = all.findIndex(d => d.id === id);
@@ -2538,11 +2803,13 @@ const DataService = {
         return saved;
       }
     }
+    // Fallback Supabase direct (sans ID local non-UUID)
     if (this._sb) {
-      await this._sb.from("flash_sales").upsert({
-        id: sale.id, product_id: sale.productId, discount: sale.discount,
+      const { data: sbData } = await this._sb.from("flash_sales").insert({
+        product_id: sale.productId, discount: sale.discount,
         ends_at: sale.endsAt, active: sale.active !== false
-      }).catch(() => {});
+      }).select("id").single().catch(() => ({ data: null }));
+      if (sbData?.id) sale = { ...sale, id: sbData.id };
     }
     const all = storage.getArray("flash_sales");
     const idx = all.findIndex(s => s.id === sale.id);
@@ -2562,6 +2829,20 @@ const DataService = {
 
   // ── COUPONS ───────────────────────────────────────────────────────
   async getCoupons() {
+    // [FIX] API en priorité — Supabase direct contournait la vérification des droits admin
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch("/api/coupons").catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const mapped = (data || []).map(r => ({
+            id: r.id, code: r.code, discount: r.discount, description: r.description,
+            maxUses: r.max_uses, usedCount: r.used_count, expiresAt: r.expires_at, active: r.active
+          }));
+          storage.set("nexus_coupons", mapped); return mapped;
+        }
+      } catch (e) { console.warn("[getCoupons] fallback Supabase:", e.message); }
+    }
     if (this._sb) {
       const { data, error } = await this._sb.from("coupons").select("*").order("code");
       if (!error && data) {
@@ -2575,13 +2856,39 @@ const DataService = {
     return storage.get("nexus_coupons") || [];
   },
   async saveCoupon(coupon) {
+    // [FIX] POST /api/coupons en priorité — Supabase direct contournait requireRole('admin')
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const isNew = !coupon.id || typeof coupon.id === 'string' && coupon.id.length < 10;
+        const res = await this.apiFetch(isNew ? "/api/coupons" : `/api/coupons/${coupon.id}`, {
+          method: isNew ? "POST" : "PATCH",
+          body: JSON.stringify({
+            code: coupon.code, discount: coupon.discount, description: coupon.description,
+            maxUses: coupon.maxUses || null, expiresAt: coupon.expiresAt || null,
+            active: coupon.active !== false,
+          }),
+        }).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const all = storage.get("nexus_coupons") || [];
+          const idx = all.findIndex(c => c.id === (data.id || coupon.id));
+          const saved = { id: data.id || coupon.id, code: data.code || coupon.code,
+            discount: data.discount ?? coupon.discount, description: data.description || coupon.description,
+            maxUses: data.max_uses ?? coupon.maxUses, usedCount: data.used_count ?? coupon.usedCount ?? 0,
+            expiresAt: data.expires_at || coupon.expiresAt, active: data.active ?? coupon.active };
+          if (idx >= 0) all[idx] = saved; else all.push(saved);
+          storage.set("nexus_coupons", all);
+          return saved;
+        }
+      } catch (e) { console.warn("[saveCoupon] fallback Supabase:", e.message); }
+    }
     if (this._sb) {
       await this._sb.from("coupons").upsert({
         id: coupon.id, code: coupon.code, discount: coupon.discount,
         description: coupon.description, max_uses: coupon.maxUses || null,
         used_count: coupon.usedCount || 0, expires_at: coupon.expiresAt || null,
         active: coupon.active !== false
-      }).catch(()=>{});
+      }).catch(() => {});
     }
     const all = storage.get("nexus_coupons") || [];
     const idx = all.findIndex(c => c.id === coupon.id);
@@ -2589,7 +2896,15 @@ const DataService = {
     storage.set("nexus_coupons", all);
   },
   async updateCoupon(id, updates) {
-    if (this._sb) {
+    // [FIX] PATCH /api/coupons/:id en priorité
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        await this.apiFetch(`/api/coupons/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify(updates),
+        }).catch(() => null);
+      } catch (e) { console.warn("[updateCoupon]", e.message); }
+    } else if (this._sb) {
       const sbUp = {};
       if (updates.active !== undefined) sbUp.active = updates.active;
       if (updates.usedCount !== undefined) sbUp.used_count = updates.usedCount;
@@ -2603,12 +2918,13 @@ const DataService = {
   // ── PRODUCT Q&A ───────────────────────────────────────────────────
   async getQA(productId) {
     if (this._sb) {
-      const { data, error } = await this._sb.from("product_qa").select("*").eq("product_id", productId).order("date");
+      const { data, error } = await this._sb.from("product_qa").select("*").eq("product_id", productId).order("created_at"); // [FIX] created_at
       if (!error && data) {
         const qa = storage.get("product_qa") || {};
         qa[productId] = data.map(r => ({
           id: r.id, productId: r.product_id, userId: r.user_id, userName: r.user_name,
-          vendorId: r.vendor_id, question: r.question, answer: r.answer, date: r.date
+          vendorId: r.vendor_id, question: r.question, answer: r.answer,
+          date: r.created_at // [FIX] r.date → r.created_at
         }));
         storage.set("product_qa", qa); return qa[productId];
       }
@@ -2617,11 +2933,15 @@ const DataService = {
   },
   async saveQuestion(qa) {
     if (this._sb) {
-      await this._sb.from("product_qa").upsert({
-        id: qa.id, product_id: qa.productId, user_id: qa.userId, user_name: qa.userName,
-        vendor_id: qa.vendorId || null, question: qa.question, answer: qa.answer || null,
-        date: qa.date || new Date().toISOString()
-      }).catch(()=>{});
+      // [FIX] Ne pas inclure l'id local non-UUID — laisser Supabase gen_random_uuid()
+      const row = {
+        product_id: qa.productId, user_id: qa.userId, user_name: qa.userName,
+        vendor_id:  qa.vendorId || null, question: qa.question,
+        answer:     qa.answer || null
+        // [FIX] colonne "date" supprimée — Supabase utilise created_at automatiquement
+      };
+      const { data } = await this._sb.from("product_qa").insert(row).select("id").single().catch(() => ({ data: null }));
+      if (data?.id) qa = { ...qa, id: data.id }; // remplacer l'ID local par le vrai UUID
     }
     const all = storage.get("product_qa") || {};
     if (!all[qa.productId]) all[qa.productId] = [];
@@ -3232,7 +3552,12 @@ const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
       if (NEXUS_CONFIG.apiUrl) {
         const fd = new FormData();
         fd.append("file", compressed, file.name);
-        const res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/upload`, { method: "POST", body: fd });
+        // [FIX] Authorization header manquant — /api/upload exige verifyToken
+        const _uploadToken = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
+        const res = await fetch(`${NEXUS_CONFIG.apiUrl}/api/upload`, {
+          method: "POST", body: fd,
+          headers: _uploadToken ? { "Authorization": `Bearer ${_uploadToken}` } : {}
+        });
         if (res.ok) {
           const { url } = await res.json();
           setUploadProgress(100);
@@ -3415,9 +3740,32 @@ const VendorProfileEditor = ({ currentUser: currentUser2, addToast }) => {
   const products = (storage.getArray("products")).filter((p) => p.vendor === currentUser2.id);
   const avgRating = products.length > 0 ? (products.reduce((s, p) => s + (p.rating || 0), 0) / products.length).toFixed(1) : "\u2014";
   const CATEGORIES = ["\xC9lectronique", "Informatique", "Mode", "Beaut\xE9", "Maison", "Sport", "Alimentation", "Tissus & Wax", "Artisanat", "Produits locaux", "Autre"];
-  const handleSave = () => {
+  const handleSave = async () => {
     setSaving(true);
-    setTimeout(() => {
+    try {
+      // [FIX] PATCH /api/auth/profile — le setTimeout localStorage ne persiste pas côté serveur
+      if (NEXUS_CONFIG.apiUrl) {
+        const res = await DataService.apiFetch("/api/auth/profile", {
+          method: "PATCH",
+          body: JSON.stringify({ name: form.name, phone: form.phone, bio: form.bio }),
+        });
+        if (res && res.ok) {
+          const updated = await res.json();
+          const users = storage.get("users") || {};
+          if (users[currentUser2.id]) {
+            users[currentUser2.id] = { ...users[currentUser2.id], ...normalizeUser(updated) };
+            storage.set("users", users);
+          }
+          if (DataService._currentUser) Object.assign(DataService._currentUser, normalizeUser(updated));
+          setSaving(false);
+          addToast("Profil boutique mis \xE0 jour !", "success");
+          return;
+        }
+        const err = await res?.json().catch(() => ({}));
+        addToast(err?.error || "Erreur lors de la mise \xE0 jour. R\xE9essayez.", "danger");
+        setSaving(false); return;
+      }
+      // Fallback localStorage (mode hors-ligne)
       const users = storage.get("users") || {};
       if (users[currentUser2.id]) {
         users[currentUser2.id] = __spreadProps(__spreadValues(__spreadValues({}, users[currentUser2.id]), form), { avatar: form.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2) });
@@ -3425,26 +3773,53 @@ const VendorProfileEditor = ({ currentUser: currentUser2, addToast }) => {
       }
       setSaving(false);
       addToast("Profil boutique mis \xE0 jour !", "success");
-    }, 600);
+    } catch (e) {
+      console.warn("[handleSave]", e);
+      setSaving(false);
+      addToast("Erreur r\xE9seau. R\xE9essayez.", "danger");
+    }
   };
-  const handleChangePw = () => {
+  const handleChangePw = async () => {
     const errs = {};
-    const users = storage.get("users") || {};
-    const user = users[currentUser2.id];
-    if (!user || !verifyPassword(pwForm.current, user.password)) errs.current = "Mot de passe incorrect";
+    if (!pwForm.current) errs.current = "Mot de passe actuel requis";
     if (!validatePassword(pwForm.newPw)) errs.newPw = "Minimum 6 caract\xE8res";
     if (pwForm.newPw !== pwForm.confirm) errs.confirm = "Ne correspondent pas";
     setPwErrors(errs);
     if (Object.keys(errs).length > 0) return;
     setPwSaving(true);
-    setTimeout(() => {
+    try {
+      // [FIX] PATCH /api/auth/change-password — localStorage ne contient pas password_hash bcrypt
+      if (NEXUS_CONFIG.apiUrl) {
+        const res = await DataService.apiFetch("/api/auth/change-password", {
+          method: "PATCH",
+          body: JSON.stringify({ currentPassword: pwForm.current, newPassword: pwForm.newPw }),
+        });
+        if (res && res.ok) {
+          setPwForm({ current: "", newPw: "", confirm: "" });
+          setPwSaving(false);
+          addToast("Mot de passe modifi\xE9 !", "success");
+          return;
+        }
+        const err = await res?.json().catch(() => ({}));
+        setPwErrors({ current: err?.error || "Mot de passe actuel incorrect" });
+        setPwSaving(false); return;
+      }
+      // Fallback localStorage (mode hors-ligne uniquement)
       const users2 = storage.get("users") || {};
-      users2[currentUser2.id].password = hashPassword(pwForm.newPw);
-      storage.set("users", users2);
-      setPwForm({ current: "", newPw: "", confirm: "" });
-      setPwSaving(false);
-      addToast("Mot de passe modifi\xE9 !", "success");
-    }, 600);
+      const u = users2[currentUser2.id];
+      if (u && verifyPassword(pwForm.current, u.password)) {
+        u.password = hashPassword(pwForm.newPw);
+        storage.set("users", users2);
+        setPwForm({ current: "", newPw: "", confirm: "" });
+        addToast("Mot de passe modifi\xE9 !", "success");
+      } else {
+        setPwErrors({ current: "Mot de passe actuel incorrect" });
+      }
+    } catch (e) {
+      console.warn("[handleChangePw]", e);
+      addToast("Erreur r\xE9seau. R\xE9essayez.", "danger");
+    }
+    setPwSaving(false);
   };
   return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: "640px" } }, /* @__PURE__ */ React.createElement("div", { className: "card", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "1.25rem", marginBottom: "1.5rem", padding: "1.25rem", background: "var(--bg-light)", borderRadius: "12px" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "72px", height: "72px", borderRadius: "50%", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.8rem", fontWeight: 700, flexShrink: 0 } }, currentUser2.avatar || ((_a = currentUser2.name) == null ? void 0 : _a[0]) || "?"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.1rem" } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.4rem" } }, currentUser2.email), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "1rem", fontSize: "0.82rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box text-primary" }), " ", products.length, " produits"), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart text-primary" }), " ", orders.length, " commandes"), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star text-primary" }), " ", avgRating, "/5")))), /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" } }, "Informations de la boutique"), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Nom de la boutique *"), /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: form.name, onChange: (e) => setForm(__spreadProps(__spreadValues({}, form), { name: e.target.value })) })), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Cat\xE9gorie principale"), /* @__PURE__ */ React.createElement("select", { className: "form-select", value: form.shopCategory, onChange: (e) => setForm(__spreadProps(__spreadValues({}, form), { shopCategory: e.target.value })) }, /* @__PURE__ */ React.createElement("option", { value: "" }, "Choisir..."), CATEGORIES.map((c) => /* @__PURE__ */ React.createElement("option", { key: c, value: c }, c))))), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Email de contact"), /* @__PURE__ */ React.createElement("input", { type: "email", className: "form-input", value: form.email, onChange: (e) => setForm(__spreadProps(__spreadValues({}, form), { email: e.target.value })) })), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "T\xE9l\xE9phone"), /* @__PURE__ */ React.createElement("input", { type: "tel", className: "form-input", value: form.phone, onChange: (e) => setForm(__spreadProps(__spreadValues({}, form), { phone: e.target.value })), placeholder: "77 123 45 67" }))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Description de la boutique"), /* @__PURE__ */ React.createElement("textarea", { className: "form-textarea", rows: "3", value: form.bio, onChange: (e) => setForm(__spreadProps(__spreadValues({}, form), { bio: e.target.value })), placeholder: "D\xE9crivez votre boutique, vos produits, votre histoire..." }), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right", fontSize: "0.75rem", color: "var(--text-secondary)" } }, form.bio.length, "/300")), /* @__PURE__ */ React.createElement(ImageUploadField, { value: form.logo, onChange: (v) => setForm(__spreadProps(__spreadValues({}, form), { logo: v })), label: "Logo / Photo de profil boutique" }), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary ${saving ? "btn-loading" : ""}`, onClick: handleSave, disabled: saving }, saving ? "Sauvegarde..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-save" }), " Sauvegarder la boutique"))), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" } }, "S\xE9curit\xE9 \u2014 Changer le mot de passe"), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Mot de passe actuel *"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-lock" }), /* @__PURE__ */ React.createElement("input", { type: showPw ? "text" : "password", className: `form-input ${pwErrors.current ? "error" : ""}`, value: pwForm.current, onChange: (e) => setPwForm(__spreadProps(__spreadValues({}, pwForm), { current: e.target.value })) }), /* @__PURE__ */ React.createElement("button", { type: "button", className: "input-action", onClick: () => setShowPw(!showPw) }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-eye${showPw ? "-slash" : ""}` }))), pwErrors.current && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), pwErrors.current)), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Nouveau mot de passe *"), /* @__PURE__ */ React.createElement("input", { type: "password", className: `form-input ${pwErrors.newPw ? "error" : ""}`, value: pwForm.newPw, onChange: (e) => setPwForm(__spreadProps(__spreadValues({}, pwForm), { newPw: e.target.value })) }), /* @__PURE__ */ React.createElement(PasswordStrengthBar, { password: pwForm.newPw }), pwErrors.newPw && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), pwErrors.newPw)), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Confirmer *"), /* @__PURE__ */ React.createElement("input", { type: "password", className: `form-input ${pwErrors.confirm ? "error" : ""}`, value: pwForm.confirm, onChange: (e) => setPwForm(__spreadProps(__spreadValues({}, pwForm), { confirm: e.target.value })) }), pwErrors.confirm && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), pwErrors.confirm))), /* @__PURE__ */ React.createElement("button", { className: `btn btn-secondary ${pwSaving ? "btn-loading" : ""}`, onClick: handleChangePw, disabled: pwSaving }, pwSaving ? "" : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-key" }), " Modifier le mot de passe"))));
 };
@@ -4399,7 +4774,9 @@ const RouterProvider = ({ children }) => {
   return /* @__PURE__ */ React.createElement(RouterContext.Provider, { value: { route, navigate } }, children);
 };
 // ── Recharts sécurisé ─────────────────────────────────────────────────────────
-const getSafeRecharts = () => (typeof window !== 'undefined' && window.Recharts) ? window.Recharts : null;
+// Retourne l'objet Recharts uniquement s'il est complètement chargé.
+// __rechartsLoaded est positionné par le callback onload de l'injection dynamique.
+const getSafeRecharts = () => (typeof window !== 'undefined' && window.__rechartsLoaded && window.Recharts) ? window.Recharts : null;
 
 const SafeLineChart = ({ data, dataKey = "ventes", label = "Ventes", color = "#00853E", type = "line" }) => {
   const RC = getSafeRecharts();
@@ -4759,32 +5136,57 @@ const ReviewModal = ({ product, currentUser: currentUser2, onClose, addToast, on
     }
     if (rating < 1 || rating > 5) return;
     setLoading(true);
-    // [PERF] setTimeout 800ms supprimé — délai artificiel inutile
-    const reviews = storage.getArray("reviews");
-    const newReview = {
-      id: "rev_" + Date.now(),
-      productId: product.id,
-      userId: currentUser2.id,
-      userName: currentUser2.name,
-      rating,
-      comment,
-      date: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    reviews.push(newReview);
-    storage.set("reviews", reviews);
-    const products = storage.getArray("products");
-    const prodIdx = products.findIndex((p) => p.id === product.id);
-    if (prodIdx !== -1) {
-      const prodReviews = reviews.filter((r) => r.productId === product.id);
-      const avgRating = prodReviews.reduce((acc, r) => acc + r.rating, 0) / prodReviews.length;
-      products[prodIdx].rating = Math.round(avgRating * 10) / 10;
-      products[prodIdx].reviewsCount = prodReviews.length;
-      storage.set("products", products);
+    try {
+      // [FIX] Appeler POST /api/reviews — génère UUID réel, recalcule la note moyenne côté serveur
+      if (NEXUS_CONFIG.apiUrl) {
+        const res = await DataService.apiFetch("/api/reviews", {
+          method: "POST",
+          body: JSON.stringify({ productId: product.id, rating, comment }),
+        }).catch(() => null);
+        if (res && res.status === 409) {
+          addToast("Vous avez déjà noté ce produit.", "info");
+          setLoading(false); return;
+        }
+        if (res && res.ok) {
+          const data = await res.json();
+          // Mettre à jour le cache localStorage avec le vrai UUID retourné
+          const reviews = storage.getArray("reviews");
+          reviews.push({ id: data.id, productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment, date: data.created_at || new Date().toISOString() });
+          storage.set("reviews", reviews);
+          setLoading(false);
+          addToast("Avis publié ! Merci.", "success");
+          onReviewSubmitted(); onClose(); return;
+        }
+      }
+      // Fallback Supabase direct
+      if (DataService._sb) {
+        const { data, error } = await DataService._sb.from("reviews").insert({ product_id: product.id, user_id: currentUser2.id, user_name: currentUser2.name, rating, comment: comment || null }).select().single();
+        if (error?.code === "23505") { addToast("Vous avez déjà noté ce produit.", "info"); setLoading(false); return; }
+        if (!error && data) {
+          const reviews = storage.getArray("reviews");
+          reviews.push({ id: data.id, productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment, date: data.created_at || new Date().toISOString() });
+          storage.set("reviews", reviews);
+        }
+      } else {
+        // Fallback localStorage pur
+        const reviews = storage.getArray("reviews");
+        reviews.push({ id: "rev_" + Date.now(), productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment, date: new Date().toISOString() });
+        storage.set("reviews", reviews);
+        const products = storage.getArray("products");
+        const prodIdx = products.findIndex((p) => p.id === product.id);
+        if (prodIdx !== -1) {
+          const prodReviews = storage.getArray("reviews").filter((r) => r.productId === product.id);
+          products[prodIdx].rating = Math.round((prodReviews.reduce((a, r) => a + r.rating, 0) / prodReviews.length) * 10) / 10;
+          products[prodIdx].reviewsCount = prodReviews.length;
+          storage.set("products", products);
+        }
+      }
+    } catch (e) {
+      console.warn("[ReviewModal]", e);
     }
     setLoading(false);
-    addToast("Avis publi\xE9 ! Merci.", "success");
-    onReviewSubmitted();
-    onClose();
+    addToast("Avis publié ! Merci.", "success");
+    onReviewSubmitted(); onClose();
   };
   return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, "Donnez votre avis"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("p", null, /* @__PURE__ */ React.createElement("strong", null, product.name)), /* @__PURE__ */ React.createElement("div", { className: "star-rating mb-2" }, [1, 2, 3, 4, 5].map((star) => /* @__PURE__ */ React.createElement("button", { key: star, className: `star-btn ${star <= rating ? "active" : ""}`, onClick: () => setRating(star), "aria-label": `${star} \xE9toile${star > 1 ? "s" : ""}` }, "\u2605"))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Votre commentaire"), /* @__PURE__ */ React.createElement("textarea", { className: "form-textarea", rows: "4", value: comment, onChange: (e) => setComment(e.target.value), placeholder: "Partagez votre exp\xE9rience..." })), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${loading ? "btn-loading" : ""}`, onClick: submitReview, disabled: loading }, loading ? "Publication..." : "Publier l'avis")));
 };
@@ -8108,102 +8510,121 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     _loadDataTimer.current = setTimeout(_loadDataImmediate, 80);
   };
   const _loadDataImmediate = async () => {
-    const ordersData = storage.getArray("orders");
+    const ordersData   = storage.getArray("orders");
     const productsData = storage.getArray("products");
-    const usersData = storage.get("users") || {};
-    const vendorsList = Object.values(usersData).filter((u) => u.role === "vendor");
+    const usersData    = storage.get("users") || {};
+    const vendorsList  = Object.values(usersData).filter((u) => u.role === "vendor");
     setOrders(ordersData);
     setProducts(productsData);
     setVendors(vendorsList);
-    // [FIX 2] Charger les vendeurs en attente depuis l'API (pas le localStorage)
-    let pendingData = [];
+
+    // Charger les vendeurs en attente depuis l'API — fallback localStorage si indisponible
+    let pendingData = storage.get("pendingVendors") || [];
     if (NEXUS_CONFIG.apiUrl) {
       try {
-        const token = DataService._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
-        const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/admin/vendors/pending`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {}
-        });
-        if (resp.ok) {
-          const apiPending = await resp.json();
-          // Normaliser les champs : owner_name → ownerName, created_at → date
-          pendingData = (apiPending || []).map(v => ({
-            id: v.id,
-            name: v.name,
-            ownerName: v.owner_name || v.ownerName || "",
-            email: v.email,
-            category: v.category || "",
-            date: v.created_at || v.date || new Date().toISOString(),
-            avatar: v.avatar || "",
-            phone: v.phone || "",
-            ninea: v.ninea || "",
-            address: v.address || ""
-          }));
+        const resp = await DataService.apiFetch("/api/admin/vendors/pending").catch(() => null);
+        if (resp && resp.ok) {
+          // La route normalise déjà les champs (ownerName, date) côté serveur
+          pendingData = await resp.json();
         }
       } catch (e) {
         console.warn("[loadData] pendingVendors API error:", e);
       }
     }
     setPendingVendors(pendingData);
-    const totalRevenue = ordersData.reduce((sum, o) => sum + o.total, 0);
+
+    const totalRevenue     = ordersData.reduce((sum, o) => sum + o.total, 0);
     const totalCommissions = ordersData.reduce((sum, o) => sum + (o.commission || 0), 0);
-    const today = (/* @__PURE__ */ new Date()).toDateString();
-    const todayOrders = ordersData.filter((o) => o.date && new Date(o.date).toDateString() === today).length;
-    setStats({ totalRevenue, totalCommissions, todayOrders, totalOrders: ordersData.length, totalVendors: vendorsList.length, totalProducts: productsData.length, pendingVendors: pendingData.length });
+    const today            = (/* @__PURE__ */ new Date()).toDateString();
+    const todayOrders      = ordersData.filter((o) => o.date && new Date(o.date).toDateString() === today).length;
+
+    // Enrichir les stats avec les compteurs API pour les badges nav
+    let apiStats = {};
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const sRes = await DataService.apiFetch("/api/admin/stats").catch(() => null);
+        if (sRes && sRes.ok) apiStats = await sRes.json();
+      } catch (_) {}
+    }
+    setStats({
+      totalRevenue, totalCommissions, todayOrders,
+      totalOrders:    ordersData.length,
+      totalVendors:   vendorsList.length,
+      totalProducts:  productsData.length,
+      pendingVendors: pendingData.length,
+      openDisputes:   apiStats.openDisputes   ?? (storage.getArray("disputes")).filter(d => d.status === "open").length,
+      pendingReturns: apiStats.pendingReturns ?? (storage.getArray("return_requests")).filter(r => r.status === "pending").length,
+      pendingPayouts: apiStats.pendingPayouts ?? storage.getArray("payout_requests").filter(r => r.status === "pending").length,
+      stockAlerts:    apiStats.stockAlerts    ?? storage.getArray("stock_alerts").length,
+    });
+
     const last7Days = Array.from({ length: 7 }, (_, i) => {
       const d = /* @__PURE__ */ new Date();
       d.setDate(d.getDate() - (6 - i));
       return d.toISOString().split("T")[0];
     });
     setSalesData(last7Days.map((date) => ({
-      date: date.slice(5),
+      date:   date.slice(5),
       ventes: ordersData.filter((o) => o.date.startsWith(date)).reduce((sum, o) => sum + o.total, 0).toFixed(0)
     })));
   };
   const approveVendor = async (vendorId) => {
-    // [FIX 2] Chercher dans le state (chargé depuis l'API), pas dans localStorage
-    const vendor = pendingVendors.find((v) => v.id === vendorId);
-    if (!vendor) return;
-    // Backend
     if (NEXUS_CONFIG.apiUrl) {
       try {
-        const token = DataService._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
-        const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/admin/vendors/${vendorId}/approve`, {
+        const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH",
-          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ approved: true })
+          body: JSON.stringify({ approved: true }),
         });
-        if (!resp.ok) { addToast("Erreur lors de l'approbation. Réessayez.", "danger"); return; }
-      } catch(e) { console.warn("[approveVendor]", e); addToast("Erreur réseau lors de l'approbation.", "danger"); return; }
+        if (!resp || !resp.ok) {
+          const err = await resp?.json().catch(() => ({}));
+          addToast(err?.error || "Erreur lors de l'approbation. Réessayez.", "danger");
+          return;
+        }
+      } catch (e) {
+        console.warn("[approveVendor]", e);
+        addToast("Erreur réseau lors de l'approbation.", "danger");
+        return;
+      }
     } else if (DataService._sb) {
-      await DataService._sb.from("profiles").upsert({
-        id: vendor.id, email: vendor.email, name: vendor.name, role: "vendor", status: "approved",
-        commission_rate: 15, shop_name: vendor.name, shop_category: vendor.category,
-        phone: vendor.phone, ninea: vendor.ninea, address: vendor.address, avatar: vendor.avatar
-      }).catch(e => console.warn(e));
-      const { error: ePvA } = await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
-      if (ePvA) console.warn("[approveVendor delete]", ePvA.message);
+      // Fallback Supabase direct (sans apiUrl)
+      const vendor = pendingVendors.find((v) => v.id === vendorId);
+      if (vendor) {
+        await DataService._sb.from("profiles").upsert({
+          id: vendor.id, email: vendor.email, name: vendor.name, role: "vendor", status: "approved",
+          commission_rate: 15, shop_name: vendor.name, shop_category: vendor.category,
+          phone: vendor.phone || null, address: vendor.address || null, avatar: vendor.avatar || null,
+        }).catch(e => console.warn("[approveVendor upsert]", e));
+        await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
+      }
     }
-    DataService.addNotification(vendorId, { type: "vendor", title: "🎉 Boutique approuvée !", message: "Votre boutique a été validée. Vous pouvez maintenant vendre sur NEXUS Market." });
+    DataService.addNotification(vendorId, {
+      type: "vendor", title: "🎉 Boutique approuvée !",
+      message: "Votre boutique a été validée. Vous pouvez maintenant vendre sur NEXUS Market.",
+    });
     loadData();
     addToast("Vendeur approuvé ! Email de confirmation envoyé.", "success");
   };
   const rejectVendor = async (vendorId) => {
-    // [FIX 2] Chercher dans le state (chargé depuis l'API), pas dans localStorage
-    const vendor = pendingVendors.find(v => v.id === vendorId);
-    if (!vendor) return;
     if (NEXUS_CONFIG.apiUrl) {
       try {
-        const token = DataService._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
-        const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/admin/vendors/${vendorId}/approve`, {
+        const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH",
-          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ approved: false })
+          body: JSON.stringify({ approved: false }),
         });
-        if (!resp.ok) { addToast("Erreur lors du refus. Réessayez.", "danger"); return; }
-      } catch(e) { console.warn("[rejectVendor]", e); addToast("Erreur réseau lors du refus.", "danger"); return; }
+        if (!resp || !resp.ok) {
+          const err = await resp?.json().catch(() => ({}));
+          addToast(err?.error || "Erreur lors du refus. Réessayez.", "danger");
+          return;
+        }
+      } catch (e) {
+        console.warn("[rejectVendor]", e);
+        addToast("Erreur réseau lors du refus.", "danger");
+        return;
+      }
     } else if (DataService._sb) {
-      const { error: ePvR } = await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
-      if (ePvR) console.warn("[rejectVendor delete]", ePvR.message);
+      // Fallback Supabase direct
+      await DataService._sb.from("pending_vendors").delete().eq("id", vendorId)
+        .then(({ error }) => { if (error) console.warn("[rejectVendor delete]", error.message); });
     }
     loadData();
     addToast("Demande refusée. Email envoyé au vendeur.", "info");
@@ -8229,16 +8650,17 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "analytics", icon: "chart-bar", label: "Analytics" },
     { id: "vendors", icon: "users", label: "Vendeurs", badge: pendingVendors.length },
     { id: "orders", icon: "box", label: "Commandes" },
-    { id: "returns", icon: "undo", label: "Retours", badge: (storage.getArray("return_requests")).filter((r) => r.status === "pending").length },
-    { id: "disputes", icon: "gavel", label: "Litiges", badge: (storage.getArray("disputes")).filter((d) => d.status === "open").length },
+    // [FIX] Badges lus depuis stats API (déjà dans le state) — plus localStorage inter-navigateurs
+    { id: "returns",  icon: "undo",  label: "Retours",  badge: stats.pendingReturns ?? (storage.getArray("return_requests")).filter((r) => r.status === "pending").length },
+    { id: "disputes", icon: "gavel", label: "Litiges",  badge: stats.openDisputes   ?? (storage.getArray("disputes")).filter((d) => d.status === "open").length },
     { id: "products", icon: "tags", label: "Produits" },
     { id: "analytics", icon: "chart-bar", label: "Analytics" },
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
-    { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: (storage.getArray("stock_alerts")).length },
+    { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: stats.stockAlerts ?? (storage.getArray("stock_alerts")).length },
     { id: "email_templates", icon: "file-alt", label: "Templates email" },
     { id: "emails", icon: "envelope", label: "Emails envoy\xE9s" },
     { id: "payouts", icon: "money-bill-wave", label: "Paiements vendeurs" },
-    { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: storage.getArray("payout_requests").filter((r) => r.status === "pending").length },
+    { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: stats.pendingPayouts ?? storage.getArray("payout_requests").filter((r) => r.status === "pending").length },
     { id: "users", icon: "users-cog", label: "Utilisateurs" },
     { id: "b2b", icon: "building", label: "Acheteurs Pro B2B" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
@@ -8316,8 +8738,14 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
 } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Export CSV")), /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, approved.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.id, className: "product-card" }, /* @__PURE__ */ React.createElement(ProductImg, { product: p, height: 160 }), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement("div", { className: "product-vendor" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store" }), " ", p.vendorName), /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement(PriceDisplay, { product: p }), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? p.stock + " en stock" : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm btn-block", style: { marginTop: "0.5rem" }, onClick: () => moderateProduct(p.id, false) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-ban" }), " Retirer du catalogue")))))));
   })(), view === "analytics" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "stats-grid" }, (() => {
     const allOrders = storage.getArray("orders");
-    const allUsers = storage.get("users") || {};
-    const buyers = Object.values(allUsers).filter((u) => u.role === "buyer");
+    // [FIX] Utiliser les vendors/users déjà chargés dans le state React (depuis l'API), pas localStorage
+    const buyers = vendors ? [] : []; // placeholder — le vrai compte vient de l'API ci-dessous
+    const [buyerCount, setBuyerCount] = React.useState(Object.values(storage.get("users") || {}).filter(u => u.role === "buyer").length);
+    React.useEffect(() => {
+      DataService.getUsers().then(map => {
+        if (map) setBuyerCount(Object.values(map).filter(u => u.role === "buyer").length);
+      }).catch(() => {});
+    }, []);
     const allReviews = storage.getArray("reviews");
     const delivered = allOrders.filter((o) => o.status === "delivered");
     const avgCart = allOrders.length > 0 ? allOrders.reduce((s, o) => s + o.total, 0) / allOrders.length : 0;
@@ -8326,7 +8754,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     return [
       { label: "Taux de Livraison", value: `${convRate}%`, trend: `${delivered.length}/${allOrders.length} commandes`, icon: "check-circle" },
       { label: "Panier Moyen", value: formatPrice(avgCart), trend: `${allOrders.length} commandes total`, icon: "shopping-bag" },
-      { label: "Acheteurs inscrits", value: buyers.length, trend: `+${buyers.length} comptes`, icon: "users" },
+      { label: "Acheteurs inscrits", value: buyerCount, trend: `+${buyerCount} comptes`, icon: "users" },
       { label: "Satisfaction", value: avgRating === "N/A" ? "N/A" : `${avgRating}/5`, trend: `${allReviews.length} avis`, icon: "star" }
     ].map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${s.icon} stat-icon`, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, s.label), /* @__PURE__ */ React.createElement("div", { className: "stat-value" }, s.value), /* @__PURE__ */ React.createElement("div", { className: "stat-trend" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle", "aria-hidden": "true" }), " ", s.trend)));
   })()), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, color: "var(--primary)", margin: 0 } }, "Ventes des 7 derniers jours"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => {
@@ -8342,10 +8770,17 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       _downloadStatement(month);
     }}, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Relevé mensuel PDF")
   ), /* @__PURE__ */ React.createElement("div", { className: "chart-container" }, salesData.length > 0 && /* @__PURE__ */ React.createElement(SafeLineChart, { data: salesData, dataKey: "ventes", label: "Ventes", color: "#00853E", type: "line" }))), view === "reviews" && (() => {
-    const allReviews = storage.getArray("reviews");
+    // [FIX] Charger les avis depuis GET /api/reviews au lieu du localStorage
+    const [myReviews, setMyReviews] = React.useState(
+      (storage.getArray("reviews")).filter(r => products.map(p => p.id).includes(r.productId))
+    );
+    React.useEffect(() => {
+      DataService.getReviews({ vendorId: currentUser2.id }).then(data => {
+        if (data) setMyReviews(data);
+      }).catch(() => {});
+    }, [view]);
     const myProductIds = products.map((p) => p.id);
-    const myReviews = allReviews.filter((r) => myProductIds.includes(r.productId));
-    const localReviews = vendorLocalReviews.length ? vendorLocalReviews : myReviews; const setLocalReviews = setVendorLocalReviews;
+    const localReviews = myReviews; const setLocalReviews = (updater) => setMyReviews(updater);
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Avis clients (", myReviews.length, ")"), myReviews.length > 0 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.88rem", color: "var(--text-secondary)" } }, "Note moyenne : ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, (myReviews.reduce((s, r) => s + r.rating, 0) / myReviews.length).toFixed(1), "/5"))), myReviews.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun avis"), /* @__PURE__ */ React.createElement("p", null, "Les avis de vos clients appara\xEEtront ici")) : myReviews.sort((a, b) => new Date(b.date) - new Date(a.date)).map((r) => {
       const prod = products.find((p) => p.id === r.productId);
       return /* @__PURE__ */ React.createElement("div", { key: r.id, style: { padding: "1rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.88rem", marginBottom: "0.2rem" } }, (prod == null ? void 0 : prod.name) || r.productId), /* @__PURE__ */ React.createElement("div", { className: "flex", style: { gap: "0.5rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement(Stars, { rating: r.rating }), /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.85rem" } }, r.userName), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.75rem", color: "var(--text-secondary)" } }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"))), /* @__PURE__ */ React.createElement("div", { className: "flex", style: { gap: "0.3rem" } }, [1, 2, 3, 4, 5].map((s) => /* @__PURE__ */ React.createElement("i", { key: s, className: `fas fa-star`, style: { color: s <= r.rating ? "#FFD700" : "var(--border)", fontSize: "0.85rem" } })))), r.comment && /* @__PURE__ */ React.createElement("p", { style: { marginTop: "0.35rem", fontSize: "0.85rem", color: "var(--text-secondary)" } }, r.comment), /* @__PURE__ */ React.createElement(VendorReviewReply, { review: r, currentUser: null, addToast, onReplied: () => {
@@ -8354,18 +8789,18 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       } }));
     }));
   })(), view === "returns" && (() => {
-    const returns = storage.getArray("return_requests");
+    // [FIX] Charger depuis GET /api/returns + handleReturnAction appelle PATCH /api/returns/:id
+    const [returns, setReturns] = React.useState(storage.getArray("return_requests"));
+    React.useEffect(() => {
+      DataService.getReturnRequests().then(data => { if (data) setReturns(data); }).catch(() => {});
+    }, [view]);
     const STATUS_RETURN = { pending: { label: "En attente", badge: "warning" }, approved: { label: "Approuv\xE9", badge: "success" }, rejected: { label: "Refus\xE9", badge: "danger" }, refunded: { label: "Rembours\xE9", badge: "success" } };
-    const handleReturnAction = (retId, newStatus) => {
+    const handleReturnAction = async (retId, newStatus) => {
       var _a;
-      const all = storage.getArray("return_requests");
-      const idx = all.findIndex((r) => r.id === retId);
-      if (idx >= 0) {
-        all[idx].status = newStatus;
-        storage.set("return_requests", all);
-        loadData();
-        addToast(`Retour marqu\xE9 : ${(_a = STATUS_RETURN[newStatus]) == null ? void 0 : _a.label}`, "success");
-      }
+      // [FIX] Appeler PATCH /api/returns/:id au lieu de localStorage uniquement
+      await DataService.updateReturnRequest(retId, { status: newStatus }).catch(e => console.warn("[handleReturnAction]", e));
+      setReturns(prev => prev.map(r => r.id === retId ? { ...r, status: newStatus } : r));
+      addToast(`Retour marqu\xE9 : ${(_a = STATUS_RETURN[newStatus]) == null ? void 0 : _a.label}`, "success");
     };
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retour (", returns.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, returns.filter((r) => r.status === "pending").length, " en attente"))), returns.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune demande de retour")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "ID Retour"), /* @__PURE__ */ React.createElement("th", null, "Client"), /* @__PURE__ */ React.createElement("th", null, "Commande"), /* @__PURE__ */ React.createElement("th", null, "Motif"), /* @__PURE__ */ React.createElement("th", null, "Montant"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, returns.map((r) => {
       var _a, _b;
@@ -8417,21 +8852,34 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       a.click();
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-download" }), " Exporter CSV")), /* @__PURE__ */ React.createElement("div", { className: "stats-grid", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave stat-icon" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, "Total \xE0 reverser"), /* @__PURE__ */ React.createElement("div", { className: "stat-value", style: { fontSize: "1.4rem" } }, formatPrice(totalPayout))), /* @__PURE__ */ React.createElement("div", { className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-percent stat-icon" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, "Commissions NEXUS"), /* @__PURE__ */ React.createElement("div", { className: "stat-value", style: { fontSize: "1.4rem" } }, formatPrice(totalCommission))), /* @__PURE__ */ React.createElement("div", { className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-users stat-icon" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, "Vendeurs actifs"), /* @__PURE__ */ React.createElement("div", { className: "stat-value", style: { fontSize: "1.4rem" } }, vendors2.length))), vendors2.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune vente livr\xE9e"), /* @__PURE__ */ React.createElement("p", null, "Les paiements appara\xEEtront ici une fois les commandes livr\xE9es")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Commandes livr\xE9es"), /* @__PURE__ */ React.createElement("th", null, "Chiffre d\\'affaires"), /* @__PURE__ */ React.createElement("th", null, "Commission NEXUS (15%)"), /* @__PURE__ */ React.createElement("th", null, "Montant \xE0 reverser"))), /* @__PURE__ */ React.createElement("tbody", null, vendors2.map((v) => /* @__PURE__ */ React.createElement("tr", { key: v.vendorId }, /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, /* @__PURE__ */ React.createElement("strong", null, v.vendorName)), /* @__PURE__ */ React.createElement("td", { "data-label": "Commandes" }, v.ordersCount), /* @__PURE__ */ React.createElement("td", { "data-label": "CA" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(v.totalSales))), /* @__PURE__ */ React.createElement("td", { "data-label": "Commission", style: { color: "var(--primary)" } }, formatPrice(v.totalCommission)), /* @__PURE__ */ React.createElement("td", { "data-label": "\xC0 reverser" }, /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--success)", fontSize: "1.05rem" } }, formatPrice(v.netPayout)))))), /* @__PURE__ */ React.createElement("tfoot", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--bg-light)", fontWeight: 700 } }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, "TOTAL")), /* @__PURE__ */ React.createElement("td", null, vendors2.reduce((s, v) => s + v.ordersCount, 0)), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, formatPrice(vendors2.reduce((s, v) => s + v.totalSales, 0)))), /* @__PURE__ */ React.createElement("td", { style: { color: "var(--primary)" } }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(totalCommission))), /* @__PURE__ */ React.createElement("td", { style: { color: "var(--success)" } }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(totalPayout))))))));
   })(), view === "users" && (() => {
-    const allUsers = Object.values(storage.get("users") || {});
-    const buyers = allUsers.filter((u) => u.role === "buyer");
-    const handleBan = (uid, ban) => {
-      const users = storage.get("users") || {};
-      if (users[uid]) {
-        users[uid].status = ban ? "banned" : "active";
-        storage.set("users", users);
-        loadData();
-        addToast(ban ? "Utilisateur banni" : "Utilisateur r\xE9activ\xE9", ban ? "error" : "success");
+    // [FIX] Charger les utilisateurs depuis l'API au lieu du localStorage
+    const [allUsersArr, setAllUsersArr] = React.useState(Object.values(storage.get("users") || {}));
+    React.useEffect(() => {
+      DataService.getUsers().then(map => { if (map) setAllUsersArr(Object.values(map)); }).catch(() => {});
+    }, [view]);
+    const buyers = allUsersArr.filter((u) => u.role === "buyer");
+    const handleBan = async (uid, ban) => {
+      // [FIX] Appeler PATCH /api/admin/users/:id/ban en priorité
+      if (NEXUS_CONFIG.apiUrl) {
+        try {
+          const res = await DataService.apiFetch(`/api/admin/users/${uid}/ban`, {
+            method: "PATCH",
+            body: JSON.stringify({ banned: ban }),
+          });
+          if (!res || !res.ok) { addToast("Erreur lors de l'action. Réessayez.", "danger"); return; }
+        } catch (e) { console.warn("[handleBan]", e); addToast("Erreur réseau.", "danger"); return; }
+      } else {
+        const users = storage.get("users") || {};
+        if (users[uid]) { users[uid].status = ban ? "banned" : "active"; storage.set("users", users); }
       }
+      // Rafraîchir la liste depuis l'API
+      DataService.getUsers().then(map => { if (map) setAllUsersArr(Object.values(map)); }).catch(() => {});
+      addToast(ban ? "Utilisateur banni" : "Utilisateur réactivé", ban ? "error" : "success");
     };
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Gestion Utilisateurs (", buyers.length, " acheteurs)"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, buyers.filter((u) => u.status === "banned").length, " bannis"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", title: "Exporter la liste des utilisateurs en CSV", onClick: () => {
   const BOM = "\uFEFF";
   const rows = [["ID","Nom","Email","Rôle","Statut","Commandes","Total achats FCFA"].join(",")];
-  allUsers.forEach(u => {
+  allUsersArr.forEach(u => {
     const uOrds = (storage.getArray("orders")).filter(o => o.buyer === u.id);
     rows.push([u.id, `"${u.name||""}"`, u.email||"", u.role||"", u.status||"active", uOrds.length, Math.round(uOrds.reduce((s,o)=>s+(o.total||0),0)*655.957)].join(","));
   });
@@ -8444,12 +8892,27 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       return /* @__PURE__ */ React.createElement("tr", { key: u.id, style: { background: u.status === "banned" ? "rgba(225,27,34,0.04)" : "transparent" } }, /* @__PURE__ */ React.createElement("td", { "data-label": "Nom" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.5rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { width: "28px", height: "28px", fontSize: "0.7rem" } }, u.avatar), /* @__PURE__ */ React.createElement("strong", null, u.name))), /* @__PURE__ */ React.createElement("td", { "data-label": "Email", style: { fontSize: "0.85rem" } }, u.email), /* @__PURE__ */ React.createElement("td", { "data-label": "Commandes" }, uOrders.length, " (", formatPrice(uOrders.reduce((s, o) => s + o.total, 0)), ")"), /* @__PURE__ */ React.createElement("td", { "data-label": "Inscrit", style: { fontSize: "0.82rem" } }, u.id.startsWith("buyer") ? "D\xE9mo" : "Inscrit"), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${u.status === "banned" ? "danger" : "success"}` }, u.status === "banned" ? "Banni" : "Actif")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, u.role !== "admin" && /* @__PURE__ */ React.createElement("button", { className: `btn btn-sm btn-${u.status === "banned" ? "success" : "danger"}`, onClick: () => handleBan(u.id, u.status !== "banned") }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${u.status === "banned" ? "unlock" : "ban"}` }), " ", u.status === "banned" ? "R\xE9activer" : "Bannir")));
     })))));
   })(), view === "payout_requests" && (() => {
-    const reqs = storage.getArray("payout_requests");
+    // [FIX] Charger depuis l'API admin en priorité — payout_requests localStorage est vide inter-navigateurs
+    const [reqs, setReqs] = React.useState(storage.getArray("payout_requests"));
+    React.useEffect(() => {
+      DataService.apiFetch("/api/admin/payouts").then(async res => {
+        if (res && res.ok) {
+          const data = await res.json();
+          const list = (data.requests || data || []).map(r => ({
+            id: r.id, vendorId: r.vendor_id, vendorName: r.vendor_name,
+            amount: r.amount, provider: r.provider, destination: r.destination,
+            status: r.status, date: r.created_at || r.date,
+          }));
+          storage.set("payout_requests", list); setReqs(list);
+        }
+      }).catch(() => {});
+    }, [view]);
     const handlePayout = (id, approved) => {
       const status = approved ? "paid" : "rejected";
       DataService.updatePayout(id, { status, processedAt: new Date().toISOString() }).catch(()=>{});
-      loadData();
-      addToast(approved ? "Retrait marqu\xE9 pay\xE9 \u2705" : "Retrait refus\xE9", "info");
+      // Mise à jour optimiste locale
+      setReqs(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+      addToast(approved ? "Retrait marqué payé ✅" : "Retrait refusé", "info");
     };
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retrait (", reqs.length, ")"), /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, reqs.filter((r) => r.status === "pending").length, " en attente")), reqs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune demande")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "ID"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Montant"), /* @__PURE__ */ React.createElement("th", null, "M\xE9thode"), /* @__PURE__ */ React.createElement("th", null, "Destination"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, reqs.sort((a, b) => new Date(b.date) - new Date(a.date)).map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, r.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, r.vendorName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--success)" } }, formatPrice(r.amount))), /* @__PURE__ */ React.createElement("td", { "data-label": "M\xE9thode" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, r.provider)), /* @__PURE__ */ React.createElement("td", { "data-label": "Destination", style: { fontFamily: "monospace", fontSize: "0.82rem" } }, r.destination), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${r.status === "paid" ? "success" : r.status === "rejected" ? "danger" : "warning"}` }, r.status === "paid" ? "Pay\xE9" : r.status === "rejected" ? "Refus\xE9" : "En attente")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, r.status === "pending" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handlePayout(r.id, true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Valider"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handlePayout(r.id, false) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))))))))));
   })(), view === "health" && /* @__PURE__ */ React.createElement(PlatformHealth, null), view === "config" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Configuration Syst\xE8me")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Base de donn\xE9es"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_SUPABASE_CONFIGURED ? NEXUS_CONFIG.supabase.url : "localStorage (mode d\xE9monstration)")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_SUPABASE_CONFIGURED ? "success" : "warning"}` }, IS_SUPABASE_CONFIGURED ? "Supabase actif" : "localStorage")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Paiements Stripe"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_STRIPE_CONFIGURED ? NEXUS_CONFIG.stripe.publishableKey.slice(0, 20) + "..." : "Mode simulation uniquement")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_STRIPE_CONFIGURED ? "success" : "warning"}` }, IS_STRIPE_CONFIGURED ? "Stripe actif" : "Simulation")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Emails (EmailJS)"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_EMAILJS_CONFIGURED ? `Service: ${NEXUS_CONFIG.emailjs.serviceId}` : "Mode journalisation locale")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_EMAILJS_CONFIGURED ? "success" : "warning"}` }, IS_EMAILJS_CONFIGURED ? "EmailJS actif" : "Simulation"))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => {
@@ -8484,7 +8947,11 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       return /* @__PURE__ */ React.createElement("tr", { key: s.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, (prod == null ? void 0 : prod.name) || s.productId), /* @__PURE__ */ React.createElement("td", { "data-label": "Remise" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-danger" }, "-", s.discount, "%")), /* @__PURE__ */ React.createElement("td", { "data-label": "Fin", style: { fontSize: "0.82rem" } }, new Date(s.endsAt).toLocaleString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${active ? "success" : "danger"}` }, active ? "Active" : "Expir\xE9e")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => removeFlash(s.id) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }))));
     }))))));
   })(), view === "disputes" && (() => {
-    const disputes = storage.getArray("disputes");
+    // [FIX] Lire depuis l'API (via DataService.getDisputes) au lieu du localStorage
+    const [disputes, setDisputes] = React.useState(storage.getArray("disputes"));
+    React.useEffect(() => {
+      DataService.getDisputes().then(d => { if (d) setDisputes(d); }).catch(() => {});
+    }, [view]);
     const activeDispute = adminActiveDispute; const setActiveDispute = setAdminActiveDispute;
     const adminMsg = adminDisputeMsg; const setAdminMsg = setAdminDisputeMsg;
     const refundPct = adminRefundPct; const setRefundPct = setAdminRefundPct;
@@ -9891,7 +10358,11 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     { id: "products", icon: "box", label: "Mes Produits" },
     { id: "orders", icon: "shopping-cart", label: "Commandes", badge: stats.pendingOrders },
     { id: "offers", icon: "hand-holding-usd", label: "Offres re\xE7ues", badge: stats.pendingOffers },
-    { id: "returns", icon: "undo", label: "Retours", badge: (storage.getArray("return_requests")).filter((r) => r.vendorId === currentUser2.id && r.status === "pending").length },
+    { id: "returns", icon: "undo", label: "Retours", badge: (() => {
+        // [FIX] localStorage ne reçoit pas les retours créés sur un autre navigateur
+        // Le badge est mis à jour au montage via getReturnRequests() dans le panel returns
+        return (storage.getArray("return_requests")).filter((r) => r.vendorId === currentUser2.id && r.status === "pending").length;
+      })() },
     { id: "messages", icon: "envelope", label: "Messages" },
     { id: "analytics", icon: "chart-bar", label: "Statistiques" },
     { id: "reviews", icon: "star", label: "Avis clients" },
@@ -9993,7 +10464,15 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       return /* @__PURE__ */ React.createElement("div", { key: q.id, style: { padding: "0.85rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--primary)", fontWeight: 600, marginBottom: "0.25rem" } }, q.productName), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-question text-primary", style: { fontSize: "0.75rem" } }), " ", q.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginBottom: "0.5rem" } }, "Pos\xE9 par ", q.userName, " \u2014 ", new Date(q.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: answer[q.id] || "", onChange: (e) => setAnswer((a) => __spreadProps(__spreadValues({}, a), { [q.id]: e.target.value })), placeholder: "Votre r\xE9ponse...", style: { flex: 1, fontSize: "0.85rem" }, onKeyDown: (e) => e.key === "Enter" && saveAnswer(q.id, q.productId) }), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => saveAnswer(q.id, q.productId), disabled: !((_a = answer[q.id]) == null ? void 0 : _a.trim()) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-reply" }), " R\xE9pondre")));
     }));
   })(), view === "profile" && /* @__PURE__ */ React.createElement(VendorProfileEditor, { currentUser: currentUser2, addToast }), view === "analytics" && /* @__PURE__ */ React.createElement(VendorAnalyticsDashboard, { currentUser: currentUser2, orders, products, salesData, onRequestPayout: () => setShowPayoutModal(true), addToast }), view === "returns" && (() => {
-    const myReturns = (storage.getArray("return_requests")).filter((r) => r.vendorId === currentUser2.id);
+    // [FIX] Charger depuis GET /api/returns (filtré par le token côté serveur)
+    const [myReturns, setMyReturns] = React.useState(
+      (storage.getArray("return_requests")).filter((r) => r.vendorId === currentUser2.id)
+    );
+    React.useEffect(() => {
+      DataService.getReturnRequests().then(data => {
+        if (data) setMyReturns(data.filter(r => r.vendorId === currentUser2.id));
+      }).catch(() => {});
+    }, [view]);
     const STATUS_R = { pending: { label: "En attente", badge: "warning" }, approved: { label: "Approuv\xE9", badge: "success" }, rejected: { label: "Refus\xE9", badge: "danger" }, refunded: { label: "Rembours\xE9", badge: "success" } };
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retour (", myReturns.length, ")"), myReturns.filter((r) => r.status === "pending").length > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, myReturns.filter((r) => r.status === "pending").length, " en attente")), myReturns.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune demande de retour"), /* @__PURE__ */ React.createElement("p", null, "Les demandes de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { role: "list" }, myReturns.map((r) => {
       var _a, _b;
@@ -10950,7 +11429,11 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "catalog", icon: "store", label: "Catalogue" },
     { id: "wishlist", icon: "heart", label: "Ma Wishlist", badge: wishlist.length },
     { id: "orders", icon: "box", label: "Mes Commandes" },
-    { id: "messages", icon: "comments", label: "Messages", badge: (() => { const msgs = storage.getArray("messages"); return msgs.filter(m => m.to === currentUser2.id && !m.read).length; })() },
+    { id: "messages", icon: "comments", label: "Messages", badge: (() => {
+        // [FIX] Fallback localStorage — le vrai compteur est mis à jour par useEffect sur unreadMsgCount
+        const msgs = storage.getArray("messages");
+        return msgs.filter(m => (m.to === currentUser2.id || m.to_id === currentUser2.id) && !m.read).length;
+      })() },
     { id: "offers", icon: "hand-holding-usd", label: "Mes Offres", badge: offers.filter((o) => o.status === "pending").length },
     ...(currentUser2.role === "buyer_pro"
       ? [
@@ -11180,41 +11663,84 @@ const ProfileEditor = ({ currentUser: currentUser2, addToast }) => {
   const orders = storage.getArray("orders").filter((o) => o.buyer === currentUser2.id);
   const wishlists = storage.get("wishlists") || {};
   const wishCount = ((_b = wishlists[currentUser2.id]) == null ? void 0 : _b.length) || 0;
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     const errs = {};
     if (!form.name.trim() || form.name.trim().length < 2) errs.name = "Nom trop court";
     if (!validateEmail(form.email)) errs.email = "Email invalide";
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
     setSaving(true);
-    setTimeout(() => {
+    try {
+      // [FIX] PATCH /api/auth/profile — le setTimeout localStorage ne persiste pas côté serveur
+      if (NEXUS_CONFIG.apiUrl) {
+        const res = await DataService.apiFetch("/api/auth/profile", {
+          method: "PATCH",
+          body: JSON.stringify({ name: form.name.trim(), phone: form.phone }),
+        });
+        if (res && res.ok) {
+          const updated = await res.json();
+          const users = storage.get("users") || {};
+          if (users[currentUser2.id]) {
+            users[currentUser2.id] = { ...users[currentUser2.id], ...normalizeUser(updated) };
+            storage.set("users", users);
+          }
+          if (DataService._currentUser) Object.assign(DataService._currentUser, normalizeUser(updated));
+          setSaving(false);
+          addToast("Profil mis \xE0 jour !", "success");
+          return;
+        }
+        const err = await res?.json().catch(() => ({}));
+        addToast(err?.error || "Erreur lors de la mise \xE0 jour.", "danger");
+        setSaving(false); return;
+      }
+      // Fallback localStorage
       const users = storage.get("users") || {};
       if (users[currentUser2.id]) {
-        users[currentUser2.id] = __spreadProps(__spreadValues({}, users[currentUser2.id]), { name: form.name.trim(), email: form.email, phone: form.phone });
+        users[currentUser2.id] = { ...users[currentUser2.id], name: form.name.trim(), email: form.email, phone: form.phone };
         storage.set("users", users);
       }
-      setSaving(false);
       addToast("Profil mis \xE0 jour !", "success");
-    }, 600);
+    } catch (e) { addToast("Erreur r\xE9seau. R\xE9essayez.", "danger"); }
+    setSaving(false);
   };
-  const handleChangePw = () => {
+  const handleChangePw = async () => {
     const errs = {};
-    const users = storage.get("users") || {};
-    const user = users[currentUser2.id];
-    if (!user || !verifyPassword(pwForm.current, user.password)) errs.current = "Mot de passe incorrect";
+    if (!pwForm.current) errs.current = "Mot de passe actuel requis";
     if (!validatePassword(pwForm.newPw)) errs.newPw = "Minimum 6 caract\xE8res";
     if (pwForm.newPw !== pwForm.confirm) errs.confirm = "Les mots de passe ne correspondent pas";
     setPwErrors(errs);
     if (Object.keys(errs).length > 0) return;
     setSavingPw(true);
-    setTimeout(() => {
+    try {
+      // [FIX] PATCH /api/auth/change-password — localStorage ne contient pas password_hash bcrypt
+      if (NEXUS_CONFIG.apiUrl) {
+        const res = await DataService.apiFetch("/api/auth/change-password", {
+          method: "PATCH",
+          body: JSON.stringify({ currentPassword: pwForm.current, newPassword: pwForm.newPw }),
+        });
+        if (res && res.ok) {
+          setPwForm({ current: "", newPw: "", confirm: "" });
+          setSavingPw(false);
+          addToast("Mot de passe modifi\xE9 avec succ\xE8s !", "success");
+          return;
+        }
+        const err = await res?.json().catch(() => ({}));
+        setPwErrors({ current: err?.error || "Mot de passe actuel incorrect" });
+        setSavingPw(false); return;
+      }
+      // Fallback localStorage
       const users2 = storage.get("users") || {};
-      users2[currentUser2.id].password = hashPassword(pwForm.newPw);
-      storage.set("users", users2);
-      setPwForm({ current: "", newPw: "", confirm: "" });
-      setSavingPw(false);
-      addToast("Mot de passe modifi\xE9 avec succ\xE8s !", "success");
-    }, 600);
+      const u = users2[currentUser2.id];
+      if (u && verifyPassword(pwForm.current, u.password)) {
+        u.password = hashPassword(pwForm.newPw);
+        storage.set("users", users2);
+        setPwForm({ current: "", newPw: "", confirm: "" });
+        addToast("Mot de passe modifi\xE9 avec succ\xE8s !", "success");
+      } else {
+        setPwErrors({ current: "Mot de passe actuel incorrect" });
+      }
+    } catch (e) { addToast("Erreur r\xE9seau. R\xE9essayez.", "danger"); }
+    setSavingPw(false);
   };
   return /* @__PURE__ */ React.createElement("div", { style: { maxWidth: "600px" } }, /* @__PURE__ */ React.createElement("div", { className: "card", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "1.5rem", marginBottom: "1.5rem", padding: "1.25rem", background: "var(--bg-light)", borderRadius: "12px" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { width: "72px", height: "72px", fontSize: "1.8rem", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, flexShrink: 0 } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.2rem" } }, form.name), /* @__PURE__ */ React.createElement("div", { style: { color: "var(--text-secondary)", fontSize: "0.88rem" } }, form.email), /* @__PURE__ */ React.createElement("span", { className: "badge badge-success", style: { marginTop: "0.3rem" } }, "Client v\xE9rifi\xE9"))), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginBottom: "1.5rem" } }, [
     { label: "Commandes", value: orders.length, color: "var(--primary)" },
