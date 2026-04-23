@@ -647,58 +647,98 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
+
+  // [PERF] Timeout global de 8s — évite les connexions suspendues indéfiniment
+  const loginTimeout = setTimeout(() => {
+    if (!res.headersSent) res.status(503).json({ error: 'Délai de connexion dépassé, réessayez.' });
+  }, 8000);
+  const done = (fn) => { clearTimeout(loginTimeout); return fn(); };
+
   try {
-    const { data: user } = await supabase.from('profiles').select('*').eq('email', email.trim().toLowerCase()).single();
+    // [PERF] Les deux lookups en parallèle — au lieu de séquentiels (2× latence Supabase)
+    const [profileResult, pendingResult] = await Promise.all([
+      supabase.from('profiles')
+        .select('id, name, email, role, status, password_hash, avatar, phone, commission_rate, shop_category')
+        .eq('email', email.trim().toLowerCase())
+        .maybeSingle(),
+      supabase.from('pending_vendors')
+        .select('id, status')
+        .eq('email', email.trim().toLowerCase())
+        .maybeSingle(),
+    ]);
 
-    // Chemin 1 : user bcrypt (créé via backend)
-    if (user && user.password_hash) {
+    const user          = profileResult.data;
+    const pendingVendor = pendingResult.data;
+
+    // ── Chemin 1 : bcrypt (comptes créés via /api/auth/register) ─────────────
+    if (user?.password_hash) {
       const valid = await bcrypt.compare(password, user.password_hash);
-      if (!valid) { Logger.warn('auth', 'login.failed', `Mot de passe incorrect: ${email}`, { meta: { email }, ip: req.ip }); return res.status(401).json({ error: 'Email ou mot de passe incorrect' }); }
-      if (user.role === 'vendor' && user.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur en attente de validation' });
-      if (user.status === 'banned') return res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' });
-      await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id);
-      const token = jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
+      if (!valid) {
+        Logger.warn('auth', 'login.failed', `Mot de passe incorrect: ${email}`, { meta: { email }, ip: req.ip });
+        return done(() => res.status(401).json({ error: 'Email ou mot de passe incorrect' }));
+      }
+      if (user.status === 'banned') return done(() => res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' }));
+      if (user.role === 'vendor' && user.status !== 'approved') {
+        return done(() => res.status(403).json({ error: 'Votre boutique est en attente de validation.' }));
+      }
+      // [PERF] last_login en fire-and-forget — ne bloque pas la réponse
+      supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id).then(null, () => {});
+      const token = jwt.sign(
+        { id: user.id, role: user.role, name: user.name, email: user.email },
+        process.env.JWT_SECRET,
+        { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }
+      );
       const { password_hash, ...safeUser } = user;
-      Logger.info('auth', 'login', `Login OK: ${email} (${user.role})`, { userId: user.id, userEmail: email, userRole: user.role, ip: req.ip });
-      return res.json({ token, user: safeUser, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
+      Logger.info('auth', 'login', `Login OK: ${email} (${user.role})`, { userId: user.id, userRole: user.role, ip: req.ip });
+      return done(() => res.json({ token, user: safeUser, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }));
     }
 
-    // Chemin 1b : vendeur en attente de validation
-    const { data: pendingVendor } = await supabase.from('pending_vendors').select('id, status').eq('email', email.trim().toLowerCase()).single();
+    // ── Chemin 1b : vendeur en attente ────────────────────────────────────────
     if (pendingVendor) {
-      if (pendingVendor.status === 'pending')  return res.status(403).json({ error: 'Votre demande vendeur est en cours de validation (délai : 48h). Vous recevrez un email dès approbation.' });
-      if (pendingVendor.status === 'rejected') return res.status(403).json({ error: "Votre demande vendeur a été refusée. Contactez support@nexus.sn pour plus d'informations." });
+      if (pendingVendor.status === 'pending')
+        return done(() => res.status(403).json({ error: 'Votre demande vendeur est en cours de validation (délai : 48h). Vous recevrez un email dès approbation.' }));
+      if (pendingVendor.status === 'rejected')
+        return done(() => res.status(403).json({ error: "Votre demande vendeur a été refusée. Contactez support@nexus.sn pour plus d'informations." }));
     }
 
-    // Chemin 2 : Fallback Supabase Auth (users créés via dashboard Supabase, sans password_hash)
-    // Guard : SUPABASE_ANON_KEY requise — la SERVICE_KEY n'est pas compatible avec signInWithPassword
+    // ── Chemin 2 : Fallback Supabase Auth ────────────────────────────────────
+    // Uniquement si SUPABASE_ANON_KEY est configurée (SERVICE_KEY n'est pas compatible)
     if (!process.env.SUPABASE_ANON_KEY) {
-      return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
+      return done(() => res.status(401).json({ error: 'Email ou mot de passe incorrect' }));
     }
-    const { data: sbData, error: sbErr } = await supabaseAnon.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
-    // 400 = mauvais mot de passe ou compte inexistant dans Supabase Auth
-    if (sbErr || !sbData?.user) return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
-
+    const { data: sbData, error: sbErr } = await supabaseAnon.auth.signInWithPassword({
+      email: email.trim().toLowerCase(), password
+    });
+    if (sbErr || !sbData?.user) {
+      return done(() => res.status(401).json({ error: 'Email ou mot de passe incorrect' }));
+    }
     let profile = user;
     if (!profile) {
       const meta = sbData.user.user_metadata || {};
       const name = meta.name || email.split('@')[0];
       const { data: np } = await supabase.from('profiles').upsert({
         id: sbData.user.id, email: email.trim().toLowerCase(),
-        name, role: meta.role || 'buyer', avatar: (meta.avatar || name.slice(0,2)).toUpperCase(), status: 'active', password_hash: null
+        name, role: meta.role || 'buyer',
+        avatar: (meta.avatar || name.slice(0, 2)).toUpperCase(),
+        status: 'active', password_hash: null
       }, { onConflict: 'id' }).select().single();
       profile = np || { id: sbData.user.id, email, name, role: meta.role || 'buyer', status: 'active' };
     }
-    if (profile.status === 'banned') return res.status(403).json({ error: 'Compte suspendu' });
-    try { await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id); } catch(_) {}
-    const token = jwt.sign({ id: profile.id, role: profile.role, name: profile.name, email: profile.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
+    if (profile.status === 'banned') return done(() => res.status(403).json({ error: 'Compte suspendu' }));
+    supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).then(null, () => {});
+    const sbToken = jwt.sign(
+      { id: profile.id, role: profile.role, name: profile.name, email: profile.email },
+      process.env.JWT_SECRET,
+      { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }
+    );
     const { password_hash: _ph, ...safeProfile } = profile;
-    Logger.info('auth', 'login.supabase_fallback', `Login Supabase OK: ${email} (${profile.role})`, { userId: profile.id, userEmail: email, userRole: profile.role, ip: req.ip });
-    return res.json({ token, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
+    Logger.info('auth', 'login.supabase_fallback', `Login Supabase OK: ${email} (${profile.role})`, { userId: profile.id, ip: req.ip });
+    return done(() => res.json({ token: sbToken, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }));
 
   } catch (e) {
+    clearTimeout(loginTimeout);
     Logger.error('auth', 'login.error', e.message, { meta: { email }, ip: req.ip });
-    res.status(500).json({ error: 'Erreur serveur' });
+    if (!res.headersSent) res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
