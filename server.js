@@ -43,6 +43,7 @@ const stripe       = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createClient } = require('@supabase/supabase-js');
 const multer       = require('multer');
 const PDFDocument  = require('pdfkit');
+const path         = require('path');
 
 // ── Parser de cookies inline (évite la dépendance cookie-parser) ─────────────
 // Utilisé uniquement pour le state anti-CSRF du GitHub OAuth.
@@ -360,6 +361,11 @@ const corsOptions = {
   origin: (origin, callback) => {
     // Requêtes sans Origin (curl, Postman, cron-job.org) → toujours autorisé
     if (!origin) return callback(null, true);
+    // [FIX] Origin "null" = ouverture depuis file:// ou redirection opaque → autoriser en dev
+    if (origin === 'null') {
+      if (process.env.NODE_ENV !== 'production') return callback(null, true);
+      return callback(null, false);
+    }
     // Reflète l'origine si elle correspond à un pattern connu
     if (ALLOWED_ORIGIN_PATTERNS.some(p => p.test(origin))) {
       return callback(null, origin);
@@ -395,6 +401,11 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), hand
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser); // Requis pour le state anti-CSRF du GitHub OAuth
 app.use(requestLogger); // Log HTTP → Supabase
+
+// ── Fichiers statiques (frontend single-file) ─────────────────────────────────
+// Sert index.html et tous les assets depuis le répertoire courant.
+// Doit être AVANT les routes API pour ne pas intercepter les requêtes /api/...
+app.use(express.static(path.join(__dirname)));
 
 // [FIX] Rate limits — keyGenerator utilise l'IP réelle (après fix CF-Connecting-IP ci-dessus)
 // skipSuccessfulRequests:true sur authLimiter → les logins réussis ne comptent pas dans la fenêtre
@@ -4527,7 +4538,16 @@ app.patch('/api/invoices/:id/status', verifyToken, requireRole('admin'), async (
 });
 
 // ─── 404 & ERROR HANDLER ──────────────────────────────────────────────────────
-app.use((req, res) => res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` }));
+// ── Fallback SPA — renvoie index.html pour toutes les routes non-API ─────────
+// Permet la navigation directe vers une URL (ex: /dashboard, /products/123)
+// sans obtenir un 404. Le routeur côté client (React) prend le relais.
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` });
+  }
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 app.use((err, req, res, _next) => {
   Logger.error('system', 'unhandled_error', err.message, { path: req.path, method: req.method, meta: { stack: err.stack?.slice(0, 300) } });
   res.status(500).json({ error: 'Erreur interne du serveur' });
