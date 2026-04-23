@@ -1021,6 +1021,26 @@ app.get('/api/auth/me', verifyToken, async (req, res) => {
   }
 });
 
+// Alias — certains composants appelaient /api/profiles/me (chemin historique)
+// On le redirige vers la même logique pour ne pas casser la compatibilité
+app.get('/api/profiles/me', verifyToken, async (req, res) => {
+  try {
+    const { data: user, error } = await supabase.from('profiles').select('*').eq('id', req.user.id).single();
+    if (error || !user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    const { password_hash, ...safeUser } = user;
+    // Normaliser les champs snake_case → camelCase pour le VendorDashboard
+    res.json({
+      ...safeUser,
+      shopName:      safeUser.shop_name      || null,
+      shopCategory:  safeUser.shop_category  || null,
+      commissionRate: safeUser.commission_rate || null,
+      vendorStatus:  safeUser.status,   // champ explicite attendu par le frontend
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // [FIX] POST /api/auth/sync-profile — crée/MAJ le profil pour users Supabase Auth
 app.post('/api/auth/sync-profile', verifyToken, async (req, res) => {
   try {
@@ -2208,7 +2228,22 @@ app.patch('/api/returns/:id', verifyToken, requireRole('admin'), async (req, res
 });
 
 // ─── REVIEWS ─────────────────────────────────────────────────────────────────
-app.post('/api/reviews', verifyToken, requireRole('buyer'), async (req, res) => {
+// [FIX] GET /api/reviews manquant — le frontend lisait localStorage directement
+app.get('/api/reviews', async (req, res) => {
+  try {
+    const { productId, vendorId, limit = 50 } = req.query;
+    let q = supabase.from('reviews').select('id, product_id, user_id, user_name, rating, comment, vendor_reply, created_at').order('created_at', { ascending: false }).limit(Number(limit));
+    if (productId) q = q.eq('product_id', productId);
+    if (vendorId)  q = q.eq('vendor_id',  vendorId);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
   const { productId, rating, comment } = req.body;
   if (!productId || !rating) return res.status(400).json({ error: 'productId et rating requis' });
   if (rating < 1 || rating > 5) return res.status(400).json({ error: 'Note entre 1 et 5' });
@@ -2251,60 +2286,124 @@ app.get('/api/admin/stats', verifyToken, requireRole('admin'), async (req, res) 
 });
 
 app.get('/api/admin/vendors/pending', verifyToken, requireRole('admin'), async (req, res) => {
-  const { data } = await supabase.from('pending_vendors').select('*').eq('status', 'pending').order('created_at', { ascending: true });
-  res.json(data || []);
+  try {
+    const { data, error } = await supabase
+      .from('pending_vendors')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    // Normaliser les champs snake_case → camelCase pour le frontend
+    const normalized = (data || []).map(v => ({
+      id:        v.id,
+      name:      v.name,
+      ownerName: v.owner_name  || '',          // owner_name → ownerName
+      email:     v.email,
+      category:  v.category    || '',
+      date:      v.created_at  || v.date || new Date().toISOString(), // created_at → date
+      avatar:    v.avatar      || '',
+      phone:     v.phone       || '',
+      ninea:     v.ninea       || '',
+      address:   v.address     || '',
+      status:    v.status,
+    }));
+    res.json(normalized);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), async (req, res) => {
   const { approved, reason } = req.body;
+  const vendorId = req.params.id;
+
   try {
-    const { data: pending, error } = await supabase.from('pending_vendors').select('*').eq('id', req.params.id).single();
-    if (error || !pending) return res.status(404).json({ error: 'Demande introuvable' });
+    // 1. Récupérer le dossier vendeur en attente
+    const { data: pending, error: pendingErr } = await supabase
+      .from('pending_vendors').select('*').eq('id', vendorId).single();
+    if (pendingErr || !pending) return res.status(404).json({ error: 'Demande introuvable' });
 
     if (approved) {
-      const { data: existingProfile } = await supabase.from('profiles').select('id, password_hash').eq('email', pending.email).single();
+      // 2a. Approbation : créer ou mettre à jour le profil dans profiles
+      // [FIX] Utiliser .maybeSingle() pour éviter l'erreur silencieuse sur existingProfile.data
+      const { data: existingProfile } = await supabase
+        .from('profiles').select('id, password_hash').eq('email', pending.email).maybeSingle();
+
       if (!existingProfile) {
-        // Nouveau profil — copier toutes les infos du dossier vendeur
+        // Nouveau compte — insérer un profil complet
         const { error: insertErr } = await supabase.from('profiles').insert({
           name:          pending.owner_name,
           email:         pending.email,
-          password_hash: pending.password_hash,
+          password_hash: pending.password_hash || null,
           role:          'vendor',
           status:        'approved',
           avatar:        pending.avatar || (pending.owner_name || 'VE').slice(0, 2).toUpperCase(),
           shop_name:     pending.name,
-          shop_category: pending.category,
-          phone:         pending.phone   || null,
-          address:       pending.address || null,
+          shop_category: pending.category  || null,
+          phone:         pending.phone     || null,
+          address:       pending.address   || null,
+          ninea:         pending.ninea     || null,
         });
-        if (insertErr) throw insertErr;
+        if (insertErr) throw new Error(`Création profil : ${insertErr.message}`);
       } else {
-        // Profil existant — mettre à jour rôle, statut, shop_name
-        // [FIX] Transférer password_hash si le profil n'en a pas encore
+        // Profil existant — passer en vendor/approved + compléter les champs boutique
         const updatePayload = {
           role:          'vendor',
           status:        'approved',
           shop_name:     pending.name,
-          shop_category: pending.category,
+          shop_category: pending.category || null,
         };
+        // [FIX] Transférer password_hash seulement si le profil n'en a pas encore
         if (!existingProfile.password_hash && pending.password_hash) {
           updatePayload.password_hash = pending.password_hash;
         }
-        const { error: updateErr } = await supabase.from('profiles').update(updatePayload).eq('email', pending.email);
-        if (updateErr) throw updateErr;
+        const { error: updateErr } = await supabase
+          .from('profiles').update(updatePayload).eq('id', existingProfile.id);
+        if (updateErr) throw new Error(`Mise à jour profil : ${updateErr.message}`);
       }
-      // [FIX] Invalider le cache profil pour ce vendeur — évite que le token mis en cache
-      // retourne encore status:'pending' lors du prochain appel verifyToken
+
+      // 3a. Invalider le cache token pour ce vendeur
       for (const [key, val] of _profileCache.entries()) {
         if (val.user?.email === pending.email) _profileCache.delete(key);
       }
+
+      // 4a. Marquer la demande comme approuvée
+      await supabase.from('pending_vendors')
+        .update({ status: 'approved', notes: null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+        .eq('id', vendorId);
+
+      // 5a. Email de confirmation
+      const tpl = emailTemplates.vendorApproved(pending.owner_name);
+      await sendEmail({ to: pending.email, ...tpl });
+
+      // 6a. Log d'audit
+      await supabase.from('admin_logs').insert({
+        admin_id: req.user.id, action: 'vendor_approved',
+        target_id: vendorId, details: { vendor_name: pending.name, email: pending.email }
+      }).catch(() => {}); // log non-bloquant
+
+      return res.json({ message: 'Vendeur approuvé', vendorId, email: pending.email });
+
+    } else {
+      // 2b. Refus : marquer la demande et envoyer l'email de refus
+      await supabase.from('pending_vendors')
+        .update({ status: 'rejected', notes: reason || null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+        .eq('id', vendorId);
+
+      const tpl = emailTemplates.vendorRejected(pending.owner_name, reason);
+      await sendEmail({ to: pending.email, ...tpl });
+
+      // Log d'audit
+      await supabase.from('admin_logs').insert({
+        admin_id: req.user.id, action: 'vendor_rejected',
+        target_id: vendorId, details: { vendor_name: pending.name, email: pending.email, reason: reason || null }
+      }).catch(() => {});
+
+      return res.json({ message: 'Demande refusée', vendorId });
     }
 
-    await supabase.from('pending_vendors').update({ status: approved ? 'approved' : 'rejected', notes: reason || null }).eq('id', req.params.id);
-    const tpl = approved ? emailTemplates.vendorApproved(pending.owner_name) : emailTemplates.vendorRejected(pending.owner_name, reason);
-    await sendEmail({ to: pending.email, ...tpl });
-    res.json({ message: approved ? 'Vendeur approuvé' : 'Demande refusée' });
   } catch (e) {
+    console.error('[approve vendor]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
