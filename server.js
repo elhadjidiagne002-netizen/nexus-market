@@ -361,7 +361,7 @@ const corsOptions = {
   origin: (origin, callback) => {
     // Requêtes sans Origin (curl, Postman, cron-job.org) → toujours autorisé
     if (!origin) return callback(null, true);
-    // [FIX] Origin "null" = ouverture depuis file:// ou redirection opaque → autoriser en dev
+    // [FIX] Origin "null" = ouverture depuis file:// ou redirection opaque
     if (origin === 'null') {
       if (process.env.NODE_ENV !== 'production') return callback(null, true);
       return callback(null, false);
@@ -402,9 +402,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser); // Requis pour le state anti-CSRF du GitHub OAuth
 app.use(requestLogger); // Log HTTP → Supabase
 
-// ── Fichiers statiques (frontend single-file) ─────────────────────────────────
-// Sert index.html directement depuis http://localhost:PORT
-// Placé AVANT les routes API pour servir les assets, APRÈS cors/helmet/requestLogger
+// ── Fichiers statiques + fallback SPA ────────────────────────────────────────
 app.use(express.static(path.join(__dirname)));
 
 // [FIX] Rate limits — keyGenerator utilise l'IP réelle (après fix CF-Connecting-IP ci-dessus)
@@ -2254,7 +2252,8 @@ app.get('/api/reviews', async (req, res) => {
   }
 });
 
-// POST /api/reviews — soumettre une note/avis sur un produit (acheteur authentifié)
+// POST /api/reviews — soumettre une note/avis (acheteur authentifié)
+// [FIX] Déclaration de route manquante — le handler était orphelin hors de toute fonction
 app.post('/api/reviews', verifyToken, async (req, res) => {
   const { productId, rating, comment } = req.body;
   if (!productId || !rating) return res.status(400).json({ error: 'productId et rating requis' });
@@ -2344,26 +2343,28 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       if (!existingProfile) {
         // Nouveau compte — insérer un profil complet
         const { error: insertErr } = await supabase.from('profiles').insert({
-          name:          pending.owner_name,
-          email:         pending.email,
-          password_hash: pending.password_hash || null,
-          role:          'vendor',
-          status:        'approved',
-          avatar:        pending.avatar || (pending.owner_name || 'VE').slice(0, 2).toUpperCase(),
-          shop_name:     pending.name,
-          shop_category: pending.category  || null,
-          phone:         pending.phone     || null,
-          address:       pending.address   || null,
-          ninea:         pending.ninea     || null,
+          name:            pending.owner_name,
+          email:           pending.email,
+          password_hash:   pending.password_hash || null,
+          role:            'vendor',
+          status:          'approved',
+          commission_rate: 15, // [FIX] valeur par défaut — évite violation NOT NULL
+          avatar:          pending.avatar || (pending.owner_name || 'VE').slice(0, 2).toUpperCase(),
+          shop_name:       pending.name,
+          shop_category:   pending.category  || null,
+          phone:           pending.phone     || null,
+          address:         pending.address   || null,
+          ninea:           pending.ninea     || null,
         });
         if (insertErr) throw new Error(`Création profil : ${insertErr.message}`);
       } else {
         // Profil existant — passer en vendor/approved + compléter les champs boutique
         const updatePayload = {
-          role:          'vendor',
-          status:        'approved',
-          shop_name:     pending.name,
-          shop_category: pending.category || null,
+          role:            'vendor',
+          status:          'approved',
+          commission_rate: existingProfile.commission_rate || 15, // [FIX] préserver si déjà défini
+          shop_name:       pending.name,
+          shop_category:   pending.category || null,
         };
         // [FIX] Transférer password_hash seulement si le profil n'en a pas encore
         if (!existingProfile.password_hash && pending.password_hash) {
@@ -2380,9 +2381,13 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       }
 
       // 4a. Marquer la demande comme approuvée
+      // [FIX] Mise à jour en deux étapes : status d'abord (colonnes garanties),
+      // puis champs d'audit reviewed_at/reviewed_by en best-effort (peuvent ne pas exister).
       await supabase.from('pending_vendors')
-        .update({ status: 'approved', notes: null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
-        .eq('id', vendorId);
+        .update({ status: 'approved' }).eq('id', vendorId);
+      await supabase.from('pending_vendors')
+        .update({ notes: null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+        .eq('id', vendorId).catch(() => {});
 
       // 5a. Email de confirmation
       const tpl = emailTemplates.vendorApproved(pending.owner_name);
@@ -2398,9 +2403,12 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
 
     } else {
       // 2b. Refus : marquer la demande et envoyer l'email de refus
+      // [FIX] Idem approve : status d'abord, colonnes d'audit en best-effort
       await supabase.from('pending_vendors')
-        .update({ status: 'rejected', notes: reason || null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
-        .eq('id', vendorId);
+        .update({ status: 'rejected' }).eq('id', vendorId);
+      await supabase.from('pending_vendors')
+        .update({ notes: reason || null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+        .eq('id', vendorId).catch(() => {});
 
       const tpl = emailTemplates.vendorRejected(pending.owner_name, reason);
       await sendEmail({ to: pending.email, ...tpl });
@@ -2415,7 +2423,7 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
     }
 
   } catch (e) {
-    console.error('[approve vendor]', e.message);
+    Logger.error('admin', 'approve_vendor', e.message, { meta: { vendorId: req.params.id, stack: e.stack?.slice(0,300) } });
     res.status(500).json({ error: e.message });
   }
 });
@@ -4539,15 +4547,12 @@ app.patch('/api/invoices/:id/status', verifyToken, requireRole('admin'), async (
 });
 
 // ─── 404 & ERROR HANDLER ──────────────────────────────────────────────────────
-// ── Fallback SPA — sert index.html pour toutes les routes non-API ────────────
-// Permet la navigation directe vers /dashboard, /products/:id etc. sans 404.
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` });
   }
   res.sendFile(path.join(__dirname, 'index.html'));
 });
-
 app.use((err, req, res, _next) => {
   Logger.error('system', 'unhandled_error', err.message, { path: req.path, method: req.method, meta: { stack: err.stack?.slice(0, 300) } });
   res.status(500).json({ error: 'Erreur interne du serveur' });
