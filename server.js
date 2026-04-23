@@ -656,7 +656,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       if (!valid) { Logger.warn('auth', 'login.failed', `Mot de passe incorrect: ${email}`, { meta: { email }, ip: req.ip }); return res.status(401).json({ error: 'Email ou mot de passe incorrect' }); }
       if (user.role === 'vendor' && user.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur en attente de validation' });
       if (user.status === 'banned') return res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' });
-      await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id);
+      await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id).catch(() => {});
       const token = jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
       const { password_hash, ...safeUser } = user;
       Logger.info('auth', 'login', `Login OK: ${email} (${user.role})`, { userId: user.id, userEmail: email, userRole: user.role, ip: req.ip });
@@ -686,10 +686,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       profile = np || { id: sbData.user.id, email, name, role: meta.role || 'buyer', status: 'active' };
     }
     if (profile.status === 'banned') return res.status(403).json({ error: 'Compte suspendu' });
-    await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id);
-    const token = jwt.sign({ id: profile.id, role: profile.role, name: profile.name, email: profile.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
-    const { password_hash: _ph, ...safeProfile } = profile;
-    Logger.info('auth', 'login.supabase_fallback', `Login Supabase OK: ${email} (${profile.role})`, { userId: profile.id, userEmail: email, userRole: profile.role, ip: req.ip });
+    await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).catch(() => {});
     return res.json({ token, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
 
   } catch (e) {
@@ -844,17 +841,18 @@ app.get('/api/auth/github/callback', async (req, res) => {
 
       if (byEmail) {
         // Compte existant email → lier le compte GitHub
+        const updatePayload = { last_login: new Date().toISOString() };
+        // github_id/login/avatar n'existent qu'après migration — mise à jour best-effort
+        if (ghId)     updatePayload.github_id     = ghId;
+        if (ghLogin)  updatePayload.github_login  = ghLogin;
+        if (ghAvatar) updatePayload.github_avatar = ghAvatar;
         const { data: updated } = await supabase
           .from('profiles')
-          .update({
-            github_id: ghId,
-            github_login: ghLogin,
-            github_avatar: ghAvatar,
-            last_login: new Date().toISOString(),
-          })
+          .update(updatePayload)
           .eq('id', byEmail.id)
           .select('*')
-          .single();
+          .single()
+          .catch(() => ({ data: null }));
         profile = updated || byEmail;
       } else {
         // Nouvel utilisateur GitHub → créer le profil
@@ -865,13 +863,14 @@ app.get('/api/auth/github/callback', async (req, res) => {
           .insert({
             email:         primaryEmail,
             name:          ghName,
-            role:          'buyer',           // rôle par défaut — modifiable au 1er login
+            role:          'buyer',
             avatar,
             status:        'active',
-            github_id:     ghId,
-            github_login:  ghLogin,
-            github_avatar: ghAvatar,
-            password_hash: null,              // pas de mot de passe → OAuth uniquement
+            password_hash: null,
+            // Colonnes OAuth — best-effort (ignoré si la migration n'a pas encore tourné)
+            ...(ghId     ? { github_id:     ghId }     : {}),
+            ...(ghLogin  ? { github_login:  ghLogin }  : {}),
+            ...(ghAvatar ? { github_avatar: ghAvatar } : {}),
           })
           .select('*')
           .single();
@@ -2341,38 +2340,40 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
         .from('profiles').select('id, password_hash').eq('email', pending.email).maybeSingle();
 
       if (!existingProfile) {
-        // Nouveau compte — insérer un profil complet
-        const { error: insertErr } = await supabase.from('profiles').insert({
-          name:            pending.owner_name,
-          email:           pending.email,
-          password_hash:   pending.password_hash || null,
-          role:            'vendor',
-          status:          'approved',
-          commission_rate: 15, // [FIX] valeur par défaut — évite violation NOT NULL
-          avatar:          pending.avatar || (pending.owner_name || 'VE').slice(0, 2).toUpperCase(),
-          shop_name:       pending.name,
-          shop_category:   pending.category  || null,
-          phone:           pending.phone     || null,
-          address:         pending.address   || null,
-          ninea:           pending.ninea     || null,
-        });
+        // Nouveau compte — insérer les colonnes garanties d'abord
+        const { data: newProf, error: insertErr } = await supabase.from('profiles').insert({
+          name:          pending.owner_name,
+          email:         pending.email,
+          password_hash: pending.password_hash || null,
+          role:          'vendor',
+          status:        'approved',
+          avatar:        pending.avatar || (pending.owner_name || 'VE').slice(0, 2).toUpperCase(),
+          phone:         pending.phone   || null,
+        }).select('id').single();
         if (insertErr) throw new Error(`Création profil : ${insertErr.message}`);
-      } else {
-        // Profil existant — passer en vendor/approved + compléter les champs boutique
-        const updatePayload = {
-          role:            'vendor',
-          status:          'approved',
-          commission_rate: existingProfile.commission_rate || 15, // [FIX] préserver si déjà défini
+        // Colonnes optionnelles vendeur — best-effort (existent après migration)
+        await supabase.from('profiles').update({
+          commission_rate: 15,
           shop_name:       pending.name,
           shop_category:   pending.category || null,
-        };
-        // [FIX] Transférer password_hash seulement si le profil n'en a pas encore
-        if (!existingProfile.password_hash && pending.password_hash) {
-          updatePayload.password_hash = pending.password_hash;
-        }
+          address:         pending.address  || null,
+          ninea:           pending.ninea    || null,
+        }).eq('id', newProf.id).catch(() => {});
+      } else {
+        // Profil existant — colonnes de base garanties
         const { error: updateErr } = await supabase
-          .from('profiles').update(updatePayload).eq('id', existingProfile.id);
+          .from('profiles')
+          .update({ role: 'vendor', status: 'approved' })
+          .eq('id', existingProfile.id);
         if (updateErr) throw new Error(`Mise à jour profil : ${updateErr.message}`);
+        // Colonnes vendeur optionnelles — best-effort
+        await supabase.from('profiles').update({
+          commission_rate: existingProfile.commission_rate || 15,
+          shop_name:       pending.name,
+          shop_category:   pending.category || null,
+          ...((!existingProfile.password_hash && pending.password_hash)
+            ? { password_hash: pending.password_hash } : {}),
+        }).eq('id', existingProfile.id).catch(() => {});
       }
 
       // 3a. Invalider le cache token pour ce vendeur
