@@ -403,8 +403,8 @@ app.use(cookieParser); // Requis pour le state anti-CSRF du GitHub OAuth
 app.use(requestLogger); // Log HTTP → Supabase
 
 // ── Fichiers statiques (frontend single-file) ─────────────────────────────────
-// Sert index.html et tous les assets depuis le répertoire courant.
-// Doit être AVANT les routes API pour ne pas intercepter les requêtes /api/...
+// Sert index.html directement depuis http://localhost:PORT
+// Placé AVANT les routes API pour servir les assets, APRÈS cors/helmet/requestLogger
 app.use(express.static(path.join(__dirname)));
 
 // [FIX] Rate limits — keyGenerator utilise l'IP réelle (après fix CF-Connecting-IP ci-dessus)
@@ -2254,7 +2254,8 @@ app.get('/api/reviews', async (req, res) => {
   }
 });
 
-
+// POST /api/reviews — soumettre une note/avis sur un produit (acheteur authentifié)
+app.post('/api/reviews', verifyToken, async (req, res) => {
   const { productId, rating, comment } = req.body;
   if (!productId || !rating) return res.status(400).json({ error: 'productId et rating requis' });
   if (rating < 1 || rating > 5) return res.status(400).json({ error: 'Note entre 1 et 5' });
@@ -4538,9 +4539,8 @@ app.patch('/api/invoices/:id/status', verifyToken, requireRole('admin'), async (
 });
 
 // ─── 404 & ERROR HANDLER ──────────────────────────────────────────────────────
-// ── Fallback SPA — renvoie index.html pour toutes les routes non-API ─────────
-// Permet la navigation directe vers une URL (ex: /dashboard, /products/123)
-// sans obtenir un 404. Le routeur côté client (React) prend le relais.
+// ── Fallback SPA — sert index.html pour toutes les routes non-API ────────────
+// Permet la navigation directe vers /dashboard, /products/:id etc. sans 404.
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` });
