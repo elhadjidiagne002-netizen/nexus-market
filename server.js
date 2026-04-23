@@ -656,7 +656,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       if (!valid) { Logger.warn('auth', 'login.failed', `Mot de passe incorrect: ${email}`, { meta: { email }, ip: req.ip }); return res.status(401).json({ error: 'Email ou mot de passe incorrect' }); }
       if (user.role === 'vendor' && user.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur en attente de validation' });
       if (user.status === 'banned') return res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' });
-      await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id).catch(() => {});
+      try { await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id) } catch(_) {}
       const token = jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
       const { password_hash, ...safeUser } = user;
       Logger.info('auth', 'login', `Login OK: ${email} (${user.role})`, { userId: user.id, userEmail: email, userRole: user.role, ip: req.ip });
@@ -686,7 +686,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       profile = np || { id: sbData.user.id, email, name, role: meta.role || 'buyer', status: 'active' };
     }
     if (profile.status === 'banned') return res.status(403).json({ error: 'Compte suspendu' });
-    await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).catch(() => {});
+    try { await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id) } catch(_) {}
     return res.json({ token, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
 
   } catch (e) {
@@ -896,7 +896,7 @@ app.get('/api/auth/github/callback', async (req, res) => {
 
     // MAJ last_login si pas déjà fait
     if (!isNewUser) {
-      await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).catch(() => {});
+      try { await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id) } catch(_) {}
     }
 
     // 4. Émettre JWT NEXUS
@@ -1450,7 +1450,7 @@ app.post('/api/orders/split', verifyToken, async (req, res) => {
         const rollbackItems = createdOrders.flatMap(o => (o.products || []).map(p => ({
           product_id: p.id, quantity: p.quantity
         })));
-        await supabase.rpc('release_stock', { p_items: JSON.stringify(rollbackItems) }).catch(() => {});
+        try { await supabase.rpc('release_stock', { p_items: JSON.stringify(rollbackItems) }) } catch(_) {}
       }
       return res.status(500).json({ error: `Erreur création commande vendeur ${group.vendorName}: ${orderErr.message}` });
     }
@@ -1893,7 +1893,7 @@ async function handleStripeWebhook(req, res) {
       if (refundedOrder?.stock_reserved) {
         const stockItems = cartToStockItems(refundedOrder.products || []);
         if (stockItems.length > 0) {
-          await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) }).catch(() => {});
+          try { await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) }) } catch(_) {}
           await supabase.from('orders').update({ stock_reserved: false }).eq('id', refundedOrder.id);
         }
       }
@@ -3382,7 +3382,7 @@ app.get('/api/flash-sales', async (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
   try {
     // Expirer les ventes passées en arrière-plan (non bloquant)
-    supabase.rpc('expire_flash_sales').catch(() => {});
+    supabase.rpc('expire_flash_sales').then(null, () => {});
 
     const { data, error } = await supabase
       .from('flash_sales')
