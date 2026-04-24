@@ -32,6 +32,7 @@
 
 require('dotenv').config(); // DOIT être en premier
 
+const path         = require('path');
 const express      = require('express');
 const cors         = require('cors');
 const helmet       = require('helmet');
@@ -43,7 +44,6 @@ const stripe       = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createClient } = require('@supabase/supabase-js');
 const multer       = require('multer');
 const PDFDocument  = require('pdfkit');
-const path         = require('path');
 
 // ── Parser de cookies inline (évite la dépendance cookie-parser) ─────────────
 // Utilisé uniquement pour le state anti-CSRF du GitHub OAuth.
@@ -73,10 +73,10 @@ const supabase = createClient(
 );
 
 // ─── SUPABASE ANON (singleton — évite de recréer un client à chaque login) ──────
-const supabaseAnon = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_KEY
-);
+// [FIX] Ne jamais utiliser SERVICE_KEY comme fallback : signInWithPassword retourne 400 avec la service key
+const supabaseAnon = process.env.SUPABASE_ANON_KEY
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
+  : null; // null → la route login retournera 503 avec un message explicite
 
 // ─── LOGGER (écrit dans Supabase + console) ──────────────────────────────────
 const Logger = {
@@ -361,11 +361,6 @@ const corsOptions = {
   origin: (origin, callback) => {
     // Requêtes sans Origin (curl, Postman, cron-job.org) → toujours autorisé
     if (!origin) return callback(null, true);
-    // [FIX] Origin "null" = ouverture depuis file:// ou redirection opaque
-    if (origin === 'null') {
-      if (process.env.NODE_ENV !== 'production') return callback(null, true);
-      return callback(null, false);
-    }
     // Reflète l'origine si elle correspond à un pattern connu
     if (ALLOWED_ORIGIN_PATTERNS.some(p => p.test(origin))) {
       return callback(null, origin);
@@ -401,8 +396,7 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), hand
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser); // Requis pour le state anti-CSRF du GitHub OAuth
 app.use(requestLogger); // Log HTTP → Supabase
-
-// ── Fichiers statiques + fallback SPA ────────────────────────────────────────
+// [FIX] Servir index.html statiquement depuis le même dossier que server.js
 app.use(express.static(path.join(__dirname)));
 
 // [FIX] Rate limits — keyGenerator utilise l'IP réelle (après fix CF-Connecting-IP ci-dessus)
@@ -625,7 +619,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       if (referrer && referrer.id !== data.id) {
         await supabase.from('referrals').insert({
           referrer_id: referrer.id, referred_id: data.id, code: safeCode, rewarded: false,
-        }).then(null, () => {});
+        });
         await pushNotification(referrer.id, {
           type: 'system', title: '🎁 Nouveau filleul !',
           message: `${name} vient de s'inscrire avec votre code. Récompense dès sa 1ère commande.`,
@@ -647,98 +641,57 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
-
-  // [PERF] Timeout global de 8s — évite les connexions suspendues indéfiniment
-  const loginTimeout = setTimeout(() => {
-    if (!res.headersSent) res.status(503).json({ error: 'Délai de connexion dépassé, réessayez.' });
-  }, 8000);
-  const done = (fn) => { clearTimeout(loginTimeout); return fn(); };
-
   try {
-    // [PERF] Les deux lookups en parallèle — au lieu de séquentiels (2× latence Supabase)
-    const [profileResult, pendingResult] = await Promise.all([
-      supabase.from('profiles')
-        .select('id, name, email, role, status, password_hash, avatar, phone, commission_rate, shop_category')
-        .eq('email', email.trim().toLowerCase())
-        .maybeSingle(),
-      supabase.from('pending_vendors')
-        .select('id, status')
-        .eq('email', email.trim().toLowerCase())
-        .maybeSingle(),
-    ]);
+    const { data: user } = await supabase.from('profiles').select('*').eq('email', email.trim().toLowerCase()).single();
 
-    const user          = profileResult.data;
-    const pendingVendor = pendingResult.data;
-
-    // ── Chemin 1 : bcrypt (comptes créés via /api/auth/register) ─────────────
-    if (user?.password_hash) {
+    // Chemin 1 : user bcrypt (créé via backend)
+    if (user && user.password_hash) {
       const valid = await bcrypt.compare(password, user.password_hash);
-      if (!valid) {
-        Logger.warn('auth', 'login.failed', `Mot de passe incorrect: ${email}`, { meta: { email }, ip: req.ip });
-        return done(() => res.status(401).json({ error: 'Email ou mot de passe incorrect' }));
-      }
-      if (user.status === 'banned') return done(() => res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' }));
-      if (user.role === 'vendor' && user.status !== 'approved') {
-        return done(() => res.status(403).json({ error: 'Votre boutique est en attente de validation.' }));
-      }
-      // [PERF] last_login en fire-and-forget — ne bloque pas la réponse
-      supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id).then(null, () => {});
-      const token = jwt.sign(
-        { id: user.id, role: user.role, name: user.name, email: user.email },
-        process.env.JWT_SECRET,
-        { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }
-      );
+      if (!valid) { Logger.warn('auth', 'login.failed', `Mot de passe incorrect: ${email}`, { meta: { email }, ip: req.ip }); return res.status(401).json({ error: 'Email ou mot de passe incorrect' }); }
+      if (user.role === 'vendor' && user.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur en attente de validation' });
+      if (user.status === 'banned') return res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' });
+      await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id);
+      const token = jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
       const { password_hash, ...safeUser } = user;
-      Logger.info('auth', 'login', `Login OK: ${email} (${user.role})`, { userId: user.id, userRole: user.role, ip: req.ip });
-      return done(() => res.json({ token, user: safeUser, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }));
+      Logger.info('auth', 'login', `Login OK: ${email} (${user.role})`, { userId: user.id, userEmail: email, userRole: user.role, ip: req.ip });
+      return res.json({ token, user: safeUser, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
     }
 
-    // ── Chemin 1b : vendeur en attente ────────────────────────────────────────
+    // Chemin 1b : vendeur en attente de validation
+    const { data: pendingVendor } = await supabase.from('pending_vendors').select('id, status').eq('email', email.trim().toLowerCase()).single();
     if (pendingVendor) {
-      if (pendingVendor.status === 'pending')
-        return done(() => res.status(403).json({ error: 'Votre demande vendeur est en cours de validation (délai : 48h). Vous recevrez un email dès approbation.' }));
-      if (pendingVendor.status === 'rejected')
-        return done(() => res.status(403).json({ error: "Votre demande vendeur a été refusée. Contactez support@nexus.sn pour plus d'informations." }));
+      if (pendingVendor.status === 'pending')  return res.status(403).json({ error: 'Votre demande vendeur est en cours de validation (délai : 48h). Vous recevrez un email dès approbation.' });
+      if (pendingVendor.status === 'rejected') return res.status(403).json({ error: "Votre demande vendeur a été refusée. Contactez support@nexus.sn pour plus d'informations." });
     }
 
-    // ── Chemin 2 : Fallback Supabase Auth ────────────────────────────────────
-    // Uniquement si SUPABASE_ANON_KEY est configurée (SERVICE_KEY n'est pas compatible)
-    if (!process.env.SUPABASE_ANON_KEY) {
-      return done(() => res.status(401).json({ error: 'Email ou mot de passe incorrect' }));
+    // Chemin 2 : [FIX] Fallback Supabase Auth (users créés via Supabase, sans password_hash)
+    // [FIX] supabaseAnon est null si SUPABASE_ANON_KEY manque — retourner 503 explicite plutôt que crash
+    if (!supabaseAnon) {
+      return res.status(503).json({ error: 'Configuration serveur incomplète : SUPABASE_ANON_KEY manquante. Contactez l\'administrateur.' });
     }
-    const { data: sbData, error: sbErr } = await supabaseAnon.auth.signInWithPassword({
-      email: email.trim().toLowerCase(), password
-    });
-    if (sbErr || !sbData?.user) {
-      return done(() => res.status(401).json({ error: 'Email ou mot de passe incorrect' }));
-    }
+    const { data: sbData, error: sbErr } = await supabaseAnon.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
+    if (sbErr || !sbData?.user) return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
+
     let profile = user;
     if (!profile) {
       const meta = sbData.user.user_metadata || {};
       const name = meta.name || email.split('@')[0];
       const { data: np } = await supabase.from('profiles').upsert({
         id: sbData.user.id, email: email.trim().toLowerCase(),
-        name, role: meta.role || 'buyer',
-        avatar: (meta.avatar || name.slice(0, 2)).toUpperCase(),
-        status: 'active', password_hash: null
+        name, role: meta.role || 'buyer', avatar: (meta.avatar || name.slice(0,2)).toUpperCase(), status: 'active', password_hash: null
       }, { onConflict: 'id' }).select().single();
       profile = np || { id: sbData.user.id, email, name, role: meta.role || 'buyer', status: 'active' };
     }
-    if (profile.status === 'banned') return done(() => res.status(403).json({ error: 'Compte suspendu' }));
-    supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).then(null, () => {});
-    const sbToken = jwt.sign(
-      { id: profile.id, role: profile.role, name: profile.name, email: profile.email },
-      process.env.JWT_SECRET,
-      { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }
-    );
+    if (profile.status === 'banned') return res.status(403).json({ error: 'Compte suspendu' });
+    await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id);
+    const token = jwt.sign({ id: profile.id, role: profile.role, name: profile.name, email: profile.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
     const { password_hash: _ph, ...safeProfile } = profile;
-    Logger.info('auth', 'login.supabase_fallback', `Login Supabase OK: ${email} (${profile.role})`, { userId: profile.id, ip: req.ip });
-    return done(() => res.json({ token: sbToken, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }));
+    Logger.info('auth', 'login.supabase_fallback', `Login Supabase OK: ${email} (${profile.role})`, { userId: profile.id, userEmail: email, userRole: profile.role, ip: req.ip });
+    return res.json({ token, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
 
   } catch (e) {
-    clearTimeout(loginTimeout);
     Logger.error('auth', 'login.error', e.message, { meta: { email }, ip: req.ip });
-    if (!res.headersSent) res.status(500).json({ error: 'Erreur serveur' });
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -930,7 +883,7 @@ app.get('/api/auth/github/callback', async (req, res) => {
           title: '🐙 Nouveau membre via GitHub',
           message: `${ghName} (${primaryEmail}) vient de créer un compte via GitHub OAuth.`,
           read: false,
-        }).then(null, () => {});
+        });
       }
     }
 
@@ -941,7 +894,7 @@ app.get('/api/auth/github/callback', async (req, res) => {
 
     // MAJ last_login si pas déjà fait
     if (!isNewUser) {
-      await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).then(null, () => {});
+      try { await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id); } catch(_) {}
     }
 
     // 4. Émettre JWT NEXUS
@@ -990,11 +943,13 @@ app.patch('/api/auth/github/role', verifyToken, async (req, res) => {
 
     // Si le vendeur choisit "vendre" → créer une entrée pending_vendors
     if (role === 'vendor') {
-      await supabase.from('pending_vendors').upsert({
-        id: data.id, name: data.name, email: data.email,
-        status: 'pending', source: 'github_oauth',
-        created_at: new Date().toISOString(),
-      }, { onConflict: 'id' }).then(null, () => {});
+      try {
+        await supabase.from('pending_vendors').upsert({
+          id: data.id, name: data.name, email: data.email,
+          status: 'pending', source: 'github_oauth',
+          created_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+      } catch(_) {}
 
       await supabase.from('notifications').insert({
         user_id: 'admin',
@@ -1002,7 +957,7 @@ app.patch('/api/auth/github/role', verifyToken, async (req, res) => {
         title: '🏪 Demande vendeur (GitHub)',
         message: `${data.name} (${data.email}) souhaite devenir vendeur. Compte créé via GitHub OAuth.`,
         read: false,
-      }).then(null, () => {});
+      });
     }
 
     // Émettre un nouveau JWT avec le bon rôle
@@ -1212,18 +1167,16 @@ app.get('/api/products/check-stock', async (req, res) => {
 });
 
 app.get('/api/products', async (req, res) => {
+  // [PERF] Cache CDN 60s + cache client 30s — le catalogue ne change pas à chaque seconde
   res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=120');
   try {
     const { category, search, vendor, min_price, max_price, sort, page = 1, limit = 20, include_pending } = req.query;
     let query = supabase.from('products').select('*', { count: 'exact' }).eq('active', true);
-
-    // [FIX] Filtre moderated en best-effort — la colonne peut ne pas exister encore
-    // On tente, si ça échoue on relance sans ce filtre
     if (include_pending !== 'true') query = query.eq('moderated', true);
-
     if (category && category !== 'all') query = query.eq('category', category);
     if (vendor) query = query.eq('vendor_id', vendor);
     if (search) {
+      // [FIX] Échapper les caractères spéciaux LIKE avant interpolation
       const safeSearch = search.replace(/[%_\\]/g, '\\$&').slice(0, 100);
       query = query.or(`name.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%,category.ilike.%${safeSearch}%`);
     }
@@ -1238,36 +1191,9 @@ app.get('/api/products', async (req, res) => {
     }
     const offset = (parseInt(page) - 1) * parseInt(limit);
     query = query.range(offset, offset + parseInt(limit) - 1);
-
-    let { data, error, count } = await query;
-
-    // Si la colonne moderated n'existe pas encore → relancer sans ce filtre
-    if (error && error.message && error.message.includes('moderated')) {
-      let q2 = supabase.from('products').select('*', { count: 'exact' }).eq('active', true);
-      if (category && category !== 'all') q2 = q2.eq('category', category);
-      if (vendor)    q2 = q2.eq('vendor_id', vendor);
-      if (search) {
-        const safeSearch = search.replace(/[%_\\]/g, '\\$&').slice(0, 100);
-        q2 = q2.or(`name.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%,category.ilike.%${safeSearch}%`);
-      }
-      if (min_price) q2 = q2.gte('price', parseFloat(min_price));
-      if (max_price) q2 = q2.lte('price', parseFloat(max_price));
-      switch (sort) {
-        case 'price-asc':  q2 = q2.order('price', { ascending: true });  break;
-        case 'price-desc': q2 = q2.order('price', { ascending: false }); break;
-        case 'rating':     q2 = q2.order('rating', { ascending: false }); break;
-        case 'newest':     q2 = q2.order('created_at', { ascending: false }); break;
-        default:           q2 = q2.order('reviews_count', { ascending: false });
-      }
-      q2 = q2.range(offset, offset + parseInt(limit) - 1);
-      const res2 = await q2;
-      data  = res2.data;
-      error = res2.error;
-      count = res2.count;
-    }
-
+    const { data, error, count } = await query;
     if (error) throw error;
-    res.json({ products: data || [], total: count || 0, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil((count || 0) / parseInt(limit)) });
+    res.json({ products: data, total: count, page: parseInt(page), limit: parseInt(limit), pages: Math.ceil(count / parseInt(limit)) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1524,7 +1450,7 @@ app.post('/api/orders/split', verifyToken, async (req, res) => {
         const rollbackItems = createdOrders.flatMap(o => (o.products || []).map(p => ({
           product_id: p.id, quantity: p.quantity
         })));
-        await supabase.rpc('release_stock', { p_items: JSON.stringify(rollbackItems) }).then(null, () => {});
+        try { await supabase.rpc('release_stock', { p_items: JSON.stringify(rollbackItems) }); } catch(_) {}
       }
       return res.status(500).json({ error: `Erreur création commande vendeur ${group.vendorName}: ${orderErr.message}` });
     }
@@ -1538,7 +1464,7 @@ app.post('/api/orders/split', verifyToken, async (req, res) => {
       title: 'Nouvelle commande !',
       message: `${customerInfo.name} a commandé ${group.items.map(p => p.name).join(', ')}`,
       read: false,
-    }).then(null, () => {});
+    });
   }
 
   Logger.info('order', 'split.done', `${createdOrders.length} sous-commande(s) créées pour panier mixte`, {
@@ -1597,7 +1523,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       serverDiscount = Math.round(parseFloat(subtotal || total) * (coupon.discount / 100) * 100) / 100;
       // Incrémenter used_count (non-bloquant)
       supabase.from('coupons').update({ used_count: (coupon.used_count || 0) + 1 })
-        .eq('id', coupon.id).then(null, () => {});
+        .eq('id', coupon.id);
     }
 
     // ── Étape 1 : Vérification ET décrémentation atomique du stock ────────
@@ -1667,9 +1593,8 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       Logger.error('order', 'create.rollback', `INSERT order échoué — re-crédit stock`, {
         userId: req.user.id, meta: { vendorId, items: stockItems, error: orderErr.message }
       });
-      try {
-        await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) });
-      } catch(e) { Logger.error('order', 'rollback.failed', e.message); }
+      await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) })
+        .then(null, e => Logger.error('order', 'rollback.failed', e.message));
       throw orderErr;
     }
 
@@ -1834,10 +1759,10 @@ app.patch('/api/orders/:id/cancel', verifyToken, async (req, res) => {
                       title: '🔔 Produit disponible !',
                       message: `"${row.product_name}" est de nouveau en stock — commandez vite !`,
                       link: `/products/${item.product_id}`,
-                    }).then(null, () => {});
+                    });
                   }
                 }
-              }).then(null, () => {});
+              });
           }
         }
       }
@@ -1948,11 +1873,9 @@ async function handleStripeWebhook(req, res) {
       if (failedOrder?.stock_reserved) {
         const stockItems = cartToStockItems(failedOrder.products || []);
         if (stockItems.length > 0) {
-          try {
-            await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) });
-          } catch(e) {
-            Logger.error('payment', 'stripe.failed.release_stock', e.message, { meta: { orderId: failedOrder.id } });
-          }
+          await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) }).then(null, e =>
+            Logger.error('payment', 'stripe.failed.release_stock', e.message, { meta: { orderId: failedOrder.id } })
+          );
           await supabase.from('orders').update({ stock_reserved: false }).eq('id', failedOrder.id);
           Logger.info('payment', 'stripe.failed.stock_released', `Stock re-crédité après échec Stripe`, { meta: { orderId: failedOrder.id } });
         }
@@ -1970,7 +1893,7 @@ async function handleStripeWebhook(req, res) {
       if (refundedOrder?.stock_reserved) {
         const stockItems = cartToStockItems(refundedOrder.products || []);
         if (stockItems.length > 0) {
-          await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) }).then(null, () => {});
+          try { await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) }); } catch(_) {}
           await supabase.from('orders').update({ stock_reserved: false }).eq('id', refundedOrder.id);
         }
       }
@@ -2328,8 +2251,7 @@ app.get('/api/reviews', async (req, res) => {
   }
 });
 
-// POST /api/reviews — soumettre une note/avis (acheteur authentifié)
-// [FIX] Déclaration de route manquante — le handler était orphelin hors de toute fonction
+// [FIX] Déclaration manquante — le handler existait mais sans la ligne app.post()
 app.post('/api/reviews', verifyToken, async (req, res) => {
   const { productId, rating, comment } = req.body;
   if (!productId || !rating) return res.status(400).json({ error: 'productId et rating requis' });
@@ -2419,28 +2341,26 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       if (!existingProfile) {
         // Nouveau compte — insérer un profil complet
         const { error: insertErr } = await supabase.from('profiles').insert({
-          name:            pending.owner_name,
-          email:           pending.email,
-          password_hash:   pending.password_hash || null,
-          role:            'vendor',
-          status:          'approved',
-          commission_rate: 15, // [FIX] valeur par défaut — évite violation NOT NULL
-          avatar:          pending.avatar || (pending.owner_name || 'VE').slice(0, 2).toUpperCase(),
-          shop_name:       pending.name,
-          shop_category:   pending.category  || null,
-          phone:           pending.phone     || null,
-          address:         pending.address   || null,
-          ninea:           pending.ninea     || null,
+          name:          pending.owner_name,
+          email:         pending.email,
+          password_hash: pending.password_hash || null,
+          role:          'vendor',
+          status:        'approved',
+          avatar:        pending.avatar || (pending.owner_name || 'VE').slice(0, 2).toUpperCase(),
+          shop_name:     pending.name,
+          shop_category: pending.category  || null,
+          phone:         pending.phone     || null,
+          address:       pending.address   || null,
+          ninea:         pending.ninea     || null,
         });
         if (insertErr) throw new Error(`Création profil : ${insertErr.message}`);
       } else {
         // Profil existant — passer en vendor/approved + compléter les champs boutique
         const updatePayload = {
-          role:            'vendor',
-          status:          'approved',
-          commission_rate: existingProfile.commission_rate || 15, // [FIX] préserver si déjà défini
-          shop_name:       pending.name,
-          shop_category:   pending.category || null,
+          role:          'vendor',
+          status:        'approved',
+          shop_name:     pending.name,
+          shop_category: pending.category || null,
         };
         // [FIX] Transférer password_hash seulement si le profil n'en a pas encore
         if (!existingProfile.password_hash && pending.password_hash) {
@@ -2457,34 +2377,29 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       }
 
       // 4a. Marquer la demande comme approuvée
-      // [FIX] Mise à jour en deux étapes : status d'abord (colonnes garanties),
-      // puis champs d'audit reviewed_at/reviewed_by en best-effort (peuvent ne pas exister).
       await supabase.from('pending_vendors')
-        .update({ status: 'approved' }).eq('id', vendorId);
-      await supabase.from('pending_vendors')
-        .update({ notes: null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
-        .eq('id', vendorId).then(null, () => {});
+        .update({ status: 'approved', notes: null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+        .eq('id', vendorId);
 
       // 5a. Email de confirmation
       const tpl = emailTemplates.vendorApproved(pending.owner_name);
       await sendEmail({ to: pending.email, ...tpl });
 
       // 6a. Log d'audit
-      await supabase.from('admin_logs').insert({
-        admin_id: req.user.id, action: 'vendor_approved',
-        target_id: vendorId, details: { vendor_name: pending.name, email: pending.email }
-      }).then(null, () => {}); // log non-bloquant
+      try {
+        await supabase.from('admin_logs').insert({
+          admin_id: req.user.id, action: 'vendor_approved',
+          target_id: vendorId, details: { vendor_name: pending.name, email: pending.email }
+        });
+      } catch(_) {} // log non-bloquant
 
       return res.json({ message: 'Vendeur approuvé', vendorId, email: pending.email });
 
     } else {
       // 2b. Refus : marquer la demande et envoyer l'email de refus
-      // [FIX] Idem approve : status d'abord, colonnes d'audit en best-effort
       await supabase.from('pending_vendors')
-        .update({ status: 'rejected' }).eq('id', vendorId);
-      await supabase.from('pending_vendors')
-        .update({ notes: reason || null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
-        .eq('id', vendorId).then(null, () => {});
+        .update({ status: 'rejected', notes: reason || null, reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+        .eq('id', vendorId);
 
       const tpl = emailTemplates.vendorRejected(pending.owner_name, reason);
       await sendEmail({ to: pending.email, ...tpl });
@@ -2493,13 +2408,13 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       await supabase.from('admin_logs').insert({
         admin_id: req.user.id, action: 'vendor_rejected',
         target_id: vendorId, details: { vendor_name: pending.name, email: pending.email, reason: reason || null }
-      }).then(null, () => {});
+      });
 
       return res.json({ message: 'Demande refusée', vendorId });
     }
 
   } catch (e) {
-    Logger.error('admin', 'approve_vendor', e.message, { meta: { vendorId: req.params.id, stack: e.stack?.slice(0,300) } });
+    console.error('[approve vendor]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -3457,7 +3372,7 @@ app.get('/api/flash-sales', async (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
   try {
     // Expirer les ventes passées en arrière-plan (non bloquant)
-    supabase.rpc('expire_flash_sales').then(null, () => {});
+    try { supabase.rpc('expire_flash_sales'); } catch(_) {}
 
     const { data, error } = await supabase
       .from('flash_sales')
@@ -4623,12 +4538,7 @@ app.patch('/api/invoices/:id/status', verifyToken, requireRole('admin'), async (
 });
 
 // ─── 404 & ERROR HANDLER ──────────────────────────────────────────────────────
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/api')) {
-    return res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` });
-  }
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
+app.use((req, res) => res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` }));
 app.use((err, req, res, _next) => {
   Logger.error('system', 'unhandled_error', err.message, { path: req.path, method: req.method, meta: { stack: err.stack?.slice(0, 300) } });
   res.status(500).json({ error: 'Erreur interne du serveur' });
@@ -4653,6 +4563,15 @@ process.on('uncaughtException', (err) => {
   // Ne pas quitter le process pour les erreurs non critiques
   if (err.code === 'ECONNRESET' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') return;
   process.exit(1); // Quitter sur les erreurs vraiment fatales
+});
+
+// [FIX] Fallback SPA — toutes les routes non-API renvoient index.html
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(__dirname, 'index.html'));
+  } else {
+    res.status(404).json({ error: 'Route non trouvée' });
+  }
 });
 
 app.listen(PORT, async () => {
