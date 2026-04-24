@@ -17,20 +17,19 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
     <!-- prop-types DOIT être chargé avant Recharts (Recharts lit window.PropTypes) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
-    <!-- Recharts — chargement avec callback onload pour éviter la race condition -->
+    <!-- Recharts — chargement fiable avec retry -->
     <script>
     (function(){
         var s = document.createElement('script');
         s.src = 'https://cdn.jsdelivr.net/npm/recharts@2.5.0/umd/Recharts.js';
         s.crossOrigin = 'anonymous';
-        s.onload = function(){ window.__rechartsLoaded = true; };
+        s.defer = true;
         s.onerror = function(){
             console.warn('[NEXUS] Recharts CDN principal échoué — tentative secours...');
             window.__rechartsLoadFailed = true;
             var fallback = document.createElement('script');
             fallback.src = 'https://cdnjs.cloudflare.com/ajax/libs/recharts/2.5.0/Recharts.js';
             fallback.crossOrigin = 'anonymous';
-            fallback.onload = function(){ window.__rechartsLoaded = true; };
             fallback.onerror = function(){ console.warn('[NEXUS] Recharts indisponible — graphiques en mode fallback'); };
             document.head.appendChild(fallback);
         };
@@ -1314,23 +1313,73 @@ const DataService = {
     return localProds;
   },
   async saveProduct(product) {
+    // [FIX D+F] API en priorité — upsert(product) camelCase échoue silencieusement + pas de vérif propriétaire
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const isNew = !product.id;
+        const res = await this.apiFetch(isNew ? "/api/products" : `/api/products/${product.id}`, {
+          method: isNew ? "POST" : "PATCH",
+          body: JSON.stringify({
+            name:          product.name,
+            category:      product.category,
+            price:         product.price,
+            stock:         product.stock,
+            description:   product.description   || null,
+            imageUrl:      product.imageUrl       || product.image || product.image_url || null,
+            images:        product.images         || [],
+            originalPrice: product.originalPrice  || product.original_price || null,
+            active:        product.active         !== false,
+          }),
+        }).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          const normalized = normalizeProduct ? normalizeProduct(data) : { ...product, id: data.id };
+          const all = storage.getArray("products");
+          const idx = all.findIndex((p) => p.id === (product.id || data.id));
+          if (idx >= 0) all[idx] = normalized; else all.push(normalized);
+          storage.set("products", all);
+          return normalized;
+        }
+        const err = await res?.json().catch(() => ({}));
+        console.warn("[saveProduct] API erreur:", err?.error || res?.status);
+      } catch (e) { console.warn("[saveProduct] fallback Supabase:", e.message); }
+    }
+    // Fallback Supabase (snake_case obligatoire)
     if (this._sb) {
-      const { data, error } = await this._sb.from("products").upsert(product).select().single();
-      if (!error) return data;
+      const row = {
+        name: product.name, category: product.category,
+        price: product.price, stock: product.stock,
+        description: product.description || null,
+        image_url: product.imageUrl || product.image_url || null,
+        images: product.images || [],
+        original_price: product.originalPrice || product.original_price || null,
+        vendor_id: product.vendor || product.vendor_id || null,
+        vendor_name: product.vendorName || product.vendor_name || null,
+        active: product.active !== false,
+      };
+      if (product.id) row.id = product.id;
+      const { data, error } = await this._sb.from("products").upsert(row).select().single();
+      if (!error && data) { const all = storage.getArray("products"); const idx = all.findIndex(p => p.id === data.id); if (idx >= 0) all[idx] = data; else all.push(data); storage.set("products", all); return data; }
     }
     const all = storage.getArray("products");
     const idx = all.findIndex((p) => p.id === product.id);
-    if (idx >= 0) all[idx] = product;
-    else all.push(product);
+    if (idx >= 0) all[idx] = product; else all.push(product);
     storage.set("products", all);
     return product;
   },
   async deleteProduct(id) {
-    if (this._sb) {
-      await this._sb.from("products").delete().eq("id", id);
-      return;
+    // [FIX E+F] DELETE /api/products/:id — vérif propriétaire côté serveur + suppression images
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch(`/api/products/${id}`, { method: "DELETE" }).catch(() => null);
+        if (res && res.ok) { storage.set("products", storage.getArray("products").filter((p) => p.id !== id)); return; }
+        const err = await res?.json().catch(() => ({}));
+        console.warn("[deleteProduct] API erreur:", err?.error || res?.status);
+        return;
+      } catch (e) { console.warn("[deleteProduct] fallback Supabase:", e.message); }
     }
-    storage.set("products", (storage.getArray("products")).filter((p) => p.id !== id));
+    if (this._sb) { await this._sb.from("products").delete().eq("id", id); }
+    storage.set("products", storage.getArray("products").filter((p) => p.id !== id));
   },
   async getOrders(filters = {}) {
     const { buyer, vendor, page = 1, limit = 20, status } = filters;
@@ -1433,14 +1482,15 @@ const DataService = {
         return {
           ...orderPayload,
           ...json,
-          id:             json.id              || orderPayload.id,
+          // [FIX O] Toujours utiliser l'ID retourné par le backend (UUID réel), jamais le _localId
+          id:             json.id,
           buyerName:      json.buyer_name      || orderPayload.buyerName,
           buyerEmail:     json.buyer_email     || orderPayload.buyerEmail,
           buyerAddress:   json.buyer_address   || orderPayload.buyerAddress,
           vendorName:     json.vendor_name     || orderPayload.vendorName,
           shippingCity:   json.shipping_city   || orderPayload.shippingCity,
           trackingNumber: json.tracking_number || orderPayload.trackingNumber,
-          date:           json.created_at      || orderPayload.date,
+          date:           json.created_at      || new Date().toISOString(),
           total:          json.total           != null ? json.total : orderPayload.total,
           products:       json.products        || orderPayload.products,
           earnedPoints:   json.earnedPoints    || 0,
@@ -1529,14 +1579,35 @@ const DataService = {
   },
 
   async saveOrder(order) {
+    // [FIX O] Utiliser _localId comme id de fallback + ne pas envoyer les champs privés à Supabase
+    const { _localId, stripePaymentId, fromOffer, date: _ignoredDate, ...cleanOrder } = order;
+    const localId = _localId || ("ORD-" + Date.now());
     if (this._sb) {
-      const { data, error } = await this._sb.from("orders").insert(order).select().single();
-      if (!error) return data;
+      const row = {
+        buyer_id: cleanOrder.buyer, buyer_name: cleanOrder.buyerName,
+        buyer_email: cleanOrder.buyerEmail || null,
+        buyer_address: cleanOrder.buyerAddress || null,
+        vendor_id: cleanOrder.vendor || cleanOrder.vendorId,
+        vendor_name: cleanOrder.vendorName || null,
+        products: cleanOrder.products || [],
+        subtotal: cleanOrder.subtotal || cleanOrder.total,
+        total: cleanOrder.total,
+        commission: cleanOrder.commission || (cleanOrder.total * 0.15),
+        status: cleanOrder.status || "processing",
+        payment_method: cleanOrder.paymentMethod || "unknown",
+        shipping_city: cleanOrder.shippingCity || null,
+        tracking_number: cleanOrder.trackingNumber || null,
+      };
+      const { data, error } = await this._sb.from("orders").insert(row).select().single();
+      if (!error && data) {
+        const saved = { ...cleanOrder, id: data.id, date: data.created_at };
+        const all = storage.getArray("orders"); all.push(saved); storage.set("orders", all);
+        return saved;
+      }
     }
-    const all = storage.getArray("orders");
-    all.push(order);
-    storage.set("orders", all);
-    return order;
+    const saved = { ...cleanOrder, id: localId, date: new Date().toISOString() };
+    const all = storage.getArray("orders"); all.push(saved); storage.set("orders", all);
+    return saved;
   },
   async updateOrder(id, updates) {
     if (this._sb) {
@@ -3849,12 +3920,13 @@ const PayoutRequestModal = ({ currentUser: currentUser2, onClose, addToast }) =>
     }
     setLoading(true);
     const req = {
-      id: "PAY-" + Date.now(),
+      // [FIX H] id local "PAY-TIMESTAMP" supprimé — savePayout l'ignore déjà côté API
+      // [FIX G] date supprimée — colonne inexistante dans payout_requests (c'est created_at)
       vendorId: currentUser2.id, vendorName: currentUser2.name,
       amount: netPayout, method,
       provider: method === "mobile" ? provider : "bank",
       destination: method === "mobile" ? phone : iban,
-      status: "pending", date: new Date().toISOString()
+      status: "pending",
     };
     DataService.savePayout(req).catch(()=>{});
     DataService.addNotification("admin", { type: "system", title: "\u{1F4B0} Demande de retrait", message: `${currentUser2.name} demande ${formatPrice(netPayout)} via ${method === "mobile" ? provider : "virement bancaire"}` });
@@ -3986,7 +4058,7 @@ const DisputeModal = ({ order, currentUser: currentUser2, onClose, addToast }) =
       var _a;
       const disputes = storage.getArray("disputes");
       const dispute = {
-        id: "DIS-" + Date.now(),
+        // [FIX] id local "DIS-TIMESTAMP" supprimé — saveDispute POST /api/disputes génère un UUID
         orderId: order.id,
         buyerId: currentUser2.id,
         buyerName: currentUser2.name,
@@ -3998,8 +4070,8 @@ const DisputeModal = ({ order, currentUser: currentUser2, onClose, addToast }) =
         description,
         status: "open",
         priority: reason === "counterfeit" ? "high" : "normal",
-        date: (/* @__PURE__ */ new Date()).toISOString(),
-        messages: [{ from: "buyer", text: description, date: (/* @__PURE__ */ new Date()).toISOString() }]
+        // [FIX L] date et messages[].date supprimés — colonnes inexistantes (Supabase utilise created_at)
+        messages: [{ from: "buyer", text: description }]
       };
       disputes.push(dispute);
       storage.set("disputes", disputes);
@@ -4425,7 +4497,8 @@ const ProductQA = ({ product, currentUser: currentUser2, addToast }) => {
       return;
     }
     setLoading(true);
-    const q = { id: "q_" + Date.now(), productId: product.id, userId: currentUser2.id, userName: currentUser2.name, vendorId: product.vendor, question: newQ.trim(), answer: null, date: new Date().toISOString() };
+    // [FIX Q] id "q_TIMESTAMP" et date supprimés — saveQuestion retire l'id non-UUID côté Supabase
+    const q = { productId: product.id, userId: currentUser2.id, userName: currentUser2.name, vendorId: product.vendor, question: newQ.trim(), answer: null };
     DataService.saveQuestion(q).catch(()=>{});
     setQuestions([q, ...questions]);
     setNewQ("");
@@ -4774,8 +4847,7 @@ const RouterProvider = ({ children }) => {
   return /* @__PURE__ */ React.createElement(RouterContext.Provider, { value: { route, navigate } }, children);
 };
 // ── Recharts sécurisé ─────────────────────────────────────────────────────────
-// __rechartsLoaded est positionné par le callback onload de l'injection dynamique.
-const getSafeRecharts = () => (typeof window !== 'undefined' && window.__rechartsLoaded && window.Recharts) ? window.Recharts : null;
+const getSafeRecharts = () => (typeof window !== 'undefined' && window.Recharts) ? window.Recharts : null;
 
 const SafeLineChart = ({ data, dataKey = "ventes", label = "Ventes", color = "#00853E", type = "line" }) => {
   const RC = getSafeRecharts();
@@ -5167,9 +5239,9 @@ const ReviewModal = ({ product, currentUser: currentUser2, onClose, addToast, on
           storage.set("reviews", reviews);
         }
       } else {
-        // Fallback localStorage pur
+        // Fallback localStorage pur — id temporaire, date non envoyée à Supabase
         const reviews = storage.getArray("reviews");
-        reviews.push({ id: "rev_" + Date.now(), productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment, date: new Date().toISOString() });
+        reviews.push({ _localId: "rev_" + Date.now(), productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment });
         storage.set("reviews", reviews);
         const products = storage.getArray("products");
         const prodIdx = products.findIndex((p) => p.id === product.id);
@@ -5289,11 +5361,12 @@ const MakeOfferModal = ({ product, currentUser: currentUser2, onClose, addToast 
       return;
     }
     const offer = {
-      id: "off_" + Date.now(),
+      // [FIX M] id local "off_TIMESTAMP" supprimé — saveOffer utilise déjà POST /api/offers qui génère un UUID
+      // date supprimée — colonne inexistante (Supabase utilise created_at)
       productId: product.id, productName: product.name,
       buyerId: currentUser2.id, buyerName: currentUser2.name,
       vendorId: product.vendor, offeredPrice: offerPrice,
-      message, status: "pending", date: new Date().toISOString()
+      message, status: "pending",
     };
     DataService.saveOffer(offer).catch(()=>{});
     const users = storage.get("users") || {};
@@ -5507,8 +5580,9 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           buyerAddress:  `${customerInfo.address}, ${customerInfo.postalCode} ${shippingCity}`,
           buyerPhone:    customerInfo.phone,
           shippingCity,
-          // Champs locaux (pour le fallback localStorage)
-          id:            "ORD-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5).toUpperCase(),
+          // Champs fallback localStorage (ignorés par le backend qui génère son propre UUID et created_at)
+          // [FIX I+J] id et date ne sont PLUS envoyés au backend — le backend génère son UUID + created_at
+          _localId:      "ORD-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5).toUpperCase(),
           buyer:         (currentUser2 == null ? void 0 : currentUser2.id) || "guest",
           buyerName:     customerInfo.name,
           buyerEmail:    customerInfo.email,
@@ -5516,7 +5590,6 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           vendorName:    vendorOrder.vendorName,
           commission:    vendorTotal * 0.15,
           status:        "processing",
-          date:          new Date().toISOString(),
           shipping:      shippingEur > 0 ? "standard" : "gratuit",
           trackingNumber,
           stripePaymentId: (stripeResult == null ? void 0 : stripeResult.paymentMethodId)
@@ -6103,8 +6176,8 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           avatar,
           status:         "pending",
         };
-        // localStorage garde le format local (avec id et camelCase)
-        pending.push({ id, ...pendingEntry, role:"vendor", date:new Date().toISOString() });
+        // localStorage garde le format local — date supprimée (Supabase utilise created_at)
+        pending.push({ id, ...pendingEntry, role: "vendor" });
         storage.set("pendingVendors", pending);
         // [FIX] Appel backend API — utilise la service-role key (bypass RLS)
         // Le backend insère dans pending_vendors ET notifie les admins automatiquement
@@ -6208,7 +6281,8 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           const users = storage.get("users") || {};
           const referrerId = Object.values(users).find(u => ("NEXUS-"+(u.name||"").replace(/\s+/g,"").toUpperCase().slice(0,5)+"-"+(u.id||"").slice(-4)) === refCode)?.id;
           if (referrerId) {
-            const ref = { referrerId, referredId: newUser.id, code: refCode, rewarded: false, date: new Date().toISOString() };
+            // [FIX] date supprimée — colonne inexistante dans referrals (Supabase utilise created_at)
+            const ref = { referrerId, referredId: newUser.id, code: refCode, rewarded: false };
             DataService.saveReferral(ref).catch(()=>{});
             DataService.addNotification(referrerId,{type:"system",title:"\ud83c\udf81 Nouveau filleul !",message:`${form.name} s'est inscrit avec votre code. R\xe9compense d\xe8s sa 1\xe8re commande.`});
           }
@@ -7004,7 +7078,8 @@ function _drawStamp(doc, W, y, text, color) {
 // ── HELPER : sauvegarde facture via API (non bloquant) ───────────────────────
 async function _saveInvoiceToSupabase(type, order, amounts) {
   if (!NEXUS_CONFIG.apiUrl) return null;
-  const token = storage.get('nexus_token');
+  // [FIX] nexus_token → nexus_jwt (clé réelle utilisée par apiFetch et le login)
+  const token = DataService?._token || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
   if (!token) return null;
   try {
     const resp = await fetch(`${NEXUS_CONFIG.apiUrl}/api/invoices`, {
@@ -7494,7 +7569,8 @@ const generateVendorInvoicePDF = async (order) => {
  */
 async function _downloadPdfFromBackend(url, filename) {
   if (!NEXUS_CONFIG.apiUrl) return false;
-  const token = storage.get('nexus_token');
+  // [FIX] nexus_token → nexus_jwt
+  const token = DataService?._token || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
   if (!token) return false;
   try {
     const ctrl = new AbortController();
@@ -7677,7 +7753,7 @@ const ReturnModal = ({ order, currentUser: currentUser2, onClose, addToast }) =>
     setLoading(true);
     try {
       const returnReq = {
-        id: "RET-" + Date.now(),
+        // [FIX] id "RET-TIMESTAMP" supprimé — saveReturnRequest POST /api/returns génère un UUID
         orderId: order.id,
         buyerId: currentUser2.id,
         buyerName: currentUser2.name,
@@ -7690,7 +7766,7 @@ const ReturnModal = ({ order, currentUser: currentUser2, onClose, addToast }) =>
         categoryLabel: (_a = CATEGORIES.find((c) => c.value === category)) == null ? void 0 : _a.label,
         description,
         status: "pending",
-        date: (/* @__PURE__ */ new Date()).toISOString()
+        // [FIX] date supprimée — colonne inexistante dans return_requests (Supabase utilise created_at)
       };
       await DataService.saveReturnRequest(returnReq);
       await DataService.updateOrder(order.id, { returnStatus: "requested", returnId: returnReq.id });
@@ -7947,11 +8023,11 @@ const MessageComposeModal = ({ currentUser: currentUser2, recipientId, recipient
   const handleSend = () => {
     if (!text.trim()) { addToast("Message vide", "error"); return; }
     setLoading(true);
+    // [FIX N1] id "msg_TIMESTAMP" et date supprimés — saveMessage utilise POST /api/messages
     const msg = {
-      id: "msg_" + Date.now(),
       from: currentUser2.id, fromName: currentUser2.name, fromEmail: currentUser2.email,
       to: recipientId, toName: recipientName,
-      text: text.trim(), date: new Date().toISOString(), read: false
+      text: text.trim(), read: false
     };
     DataService.saveMessage(msg).catch(()=>{});
     const users = storage.get("users") || {};
@@ -8224,7 +8300,7 @@ const AdminB2BPanel = ({ addToast }) => {
   const LIMIT = 20;
 
   const apiBase = typeof NEXUS_CONFIG !== 'undefined' ? NEXUS_CONFIG.apiUrl : '';
-  const token   = storage.get('nexus_token') || localStorage.getItem('nexus_token') || '';
+  const token   = DataService?._token || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt') || '';
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
   useEffect(() => { loadStats(); }, []);
@@ -8628,19 +8704,21 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     loadData();
     addToast("Demande refusée. Email envoyé au vendeur.", "info");
   };
-  const updateOrderStatus = (orderId, newStatus) => {
-    const allOrders = storage.getArray("orders");
-    const idx = allOrders.findIndex((o) => o.id === orderId);
-    if (idx !== -1) {
-      allOrders[idx].status = newStatus;
-      storage.set("orders", allOrders);
-      const order = allOrders[idx];
-      const statusLabels = { processing: "En cours", in_transit: "En transit", delivered: "Livr\xE9", cancelled: "Annul\xE9" };
-      if (order.buyer && order.buyer !== "guest") {
-        DataService.addNotification(order.buyer, { type: "order", title: `Commande ${statusLabels[newStatus] || newStatus}`, message: `Votre commande ${orderId} est maintenant : ${statusLabels[newStatus] || newStatus}` });
-      }
-      loadData();
+  const updateOrderStatus = async (orderId, newStatus) => {
+    // [FIX A] PATCH /api/orders/:id/status — localStorage seul ne notifie pas l'acheteur
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
+          method: "PATCH", body: JSON.stringify({ status: newStatus }),
+        });
+        if (!res || !res.ok) { const e = await res?.json().catch(() => ({})); addToast(e?.error || "Erreur statut.", "danger"); return; }
+      } catch (e) { console.warn("[updateOrderStatus admin]", e); addToast("Erreur réseau.", "danger"); return; }
+    } else {
+      const allOrders = storage.getArray("orders");
+      const idx = allOrders.findIndex((o) => o.id === orderId);
+      if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
     }
+    loadData();
   };
   const STATUS_MAP = { processing: { label: "En cours", badge: "warning" }, in_transit: { label: "En transit", badge: "info" }, delivered: { label: "Livr\xE9", badge: "success" }, cancelled: { label: "Annul\xE9", badge: "danger" } };
   const paginatedOrders = orders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE);
@@ -8924,19 +9002,27 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     }
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset donn\xE9es"))), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
-    const flashSales = storage.getArray("flash_sales");
+    // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
+    const [flashSales, setFlashSales] = React.useState(storage.getArray("flash_sales"));
+    React.useEffect(() => {
+      DataService.getFlashSales().then(data => { if (data) setFlashSales(data); }).catch(() => {});
+    }, [view]);
     const allProds = products;
     const createFlash = () => {
       if (!fs.productId || !fs.discount) return;
       const endsAt = new Date(Date.now() + fs.hours * 36e5).toISOString();
-      const sale = { id: "fs_" + Date.now(), productId: fs.productId, discount: parseInt(fs.discount), endsAt, active: true };
-      DataService.saveFlashSale({ ...sale, _new: true }).catch(() => {});
+      // [FIX] id local "fs_TIMESTAMP" renommé en _localId — saveFlashSale POST /api/flash-sales génère un UUID réel
+      const sale = { _localId: "fs_" + Date.now(), productId: fs.productId, discount: parseInt(fs.discount), endsAt, active: true };
+      DataService.saveFlashSale({ ...sale, _new: true }).then(() => {
+        DataService.getFlashSales().then(data => { if (data) setFlashSales(data); }).catch(() => {});
+      }).catch(() => {});
       addToast("Vente flash cr\xE9\xE9e !", "success");
       loadData();
     };
     const removeFlash = (id) => {
-      DataService.deleteFlashSale(id).catch(() => {});
-      storage.set("flash_sales", flashSales.filter((s) => s.id !== id));
+      DataService.deleteFlashSale(id).then(() => {
+        setFlashSales(prev => prev.filter(s => s.id !== id));
+      }).catch(() => {});
       loadData();
       addToast("Vente flash supprim\xE9e", "info");
     };
@@ -9810,11 +9896,11 @@ const VendorChatInline = ({ currentUser: currentUser2, addToast }) => {
   const handleSend = () => {
     if (!text.trim() || !activePartnerId) return;
     setSending(true);
+    // [FIX N2] id "msg_TIMESTAMP" et date supprimés — saveMessage utilise POST /api/messages
     const msg = {
-      id: "msg_" + Date.now(),
       from: currentUser2.id, fromName: currentUser2.name, fromEmail: currentUser2.email,
       to: activePartnerId, toName: activePartnerName,
-      text: text.trim(), date: new Date().toISOString(), read: false
+      text: text.trim(), read: false
     };
     DataService.saveMessage(msg).then(() => {
       DataService.addNotification(activePartnerId, { type: "message", title: `💬 Message de ${currentUser2.name}`, message: text.trim().slice(0, 80) });
@@ -10179,17 +10265,12 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     setOrders(myOrders);
     setMessages(allMessages.filter((m) => m.to === currentUser2.id || m.from === currentUser2.id));
     setOffers(myOffers);
-    // [FIX] Récupérer le statut réel du vendeur depuis l'API
+    // [FIX] Récupérer le statut réel du vendeur via apiFetch (gestion token centralisée)
     try {
-      const token = storage.get('nexus_token') || localStorage.getItem('nexus_token') || '';
-      if (token && NEXUS_CONFIG.apiUrl) {
-        const r = await fetch(`${NEXUS_CONFIG.apiUrl}/api/auth/me`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (r.ok) {
-          const profile = await r.json();
-          setVendorStatus(profile.status || 'approved');
-        }
+      const r = await DataService.apiFetch('/api/auth/me').catch(() => null);
+      if (r && r.ok) {
+        const profile = await r.json();
+        setVendorStatus(profile.status || 'approved');
       }
     } catch (_) {}
     const last7 = Array.from({ length: 7 }, (_, i) => {
@@ -10277,72 +10358,91 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     loadData();
     addToast("Produit ajout\xE9 (hors-ligne) !", "success");
   };
-  const updateOrderStatus = (orderId, newStatus) => {
-    const allOrders = storage.getArray("orders");
-    const idx = allOrders.findIndex((o) => o.id === orderId);
-    if (idx !== -1) {
-      allOrders[idx].status = newStatus;
-      storage.set("orders", allOrders);
-      const order = allOrders[idx];
-      const statusLabels = { processing: "En cours", in_transit: "En transit", delivered: "Livr\xE9", cancelled: "Annul\xE9" };
-      if (order.buyer && order.buyer !== "guest") {
-        DataService.addNotification(order.buyer, { type: "order", title: `Commande ${statusLabels[newStatus] || newStatus}`, message: `Votre commande ${orderId} est pass\xE9e \xE0 : ${statusLabels[newStatus] || newStatus}` });
-      }
-      loadData();
-      addToast("Statut mis \xE0 jour", "success");
+  const updateOrderStatus = async (orderId, newStatus) => {
+    // [FIX B] PATCH /api/orders/:id/status — localStorage seul ne notifie pas l'acheteur
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
+          method: "PATCH", body: JSON.stringify({ status: newStatus }),
+        });
+        if (!res || !res.ok) { const e = await res?.json().catch(() => ({})); addToast(e?.error || "Erreur statut.", "danger"); return; }
+      } catch (e) { console.warn("[updateOrderStatus vendor]", e); addToast("Erreur réseau.", "danger"); return; }
+    } else {
+      const allOrders = storage.getArray("orders");
+      const idx = allOrders.findIndex((o) => o.id === orderId);
+      if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
     }
+    loadData();
+    addToast("Statut mis \xE0 jour", "success");
   };
-  const handleOffer = (offerId, accept) => {
+  const handleOffer = async (offerId, accept) => {
+    // [FIX C] updateOffer en priorité via API
+    await DataService.updateOffer(offerId, { status: accept ? "accepted" : "rejected" }).catch(() => {});
+
+    // Mise à jour optimiste du cache local
     const allOffers = storage.getArray("offers");
     const idx = allOffers.findIndex((o) => o.id === offerId);
-    if (idx !== -1) {
-      const newStatus = accept ? "accepted" : "rejected";
-      allOffers[idx].status = newStatus;
-      storage.set("offers", allOffers);
-      DataService.updateOffer(offerId, { status: newStatus }).catch(()=>{});
-      const offer = allOffers[idx];
-      const users = storage.get("users") || {};
-      const buyer = Object.values(users).find((u) => u.id === offer.buyerId);
-      if (buyer == null ? void 0 : buyer.email) EmailService.sendOfferResponse(buyer.email, offer, accept);
-      if (accept) {
-        DataService.addNotification(offer.buyerId, { type: "offer", title: "\u2705 Offre accept\xE9e !", message: `Votre offre pour "${offer.productName}" a \xE9t\xE9 accept\xE9e par ${currentUser2.name}.` });
-        const allProducts = storage.getArray("products");
-        const product = allProducts.find((p) => p.id === offer.productId);
-        if (product && buyer) {
-          const allOrders = storage.getArray("orders");
-          const trackingNumber = "SN" + Math.floor(1e5 + Math.random() * 9e5);
-          const newOrder = {
-            id: "ORD-OFF-" + Date.now(),
-            buyer: offer.buyerId,
-            buyerName: offer.buyerName,
-            buyerEmail: buyer.email || "",
-            buyerAddress: "\xC0 confirmer",
-            buyerPhone: "",
-            vendor: currentUser2.id,
-            vendorName: currentUser2.name,
-            products: [{ id: product.id, name: product.name, price: offer.offeredPrice, quantity: 1 }],
-            total: offer.offeredPrice,
-            commission: offer.offeredPrice * 0.15,
-            status: "processing",
-            date: (/* @__PURE__ */ new Date()).toISOString(),
-            shipping: "standard",
-            trackingNumber,
-            fromOffer: offerId,
-            stripePaymentId: "offer_" + offerId
-          };
-          allOrders.push(newOrder);
-          storage.set("orders", allOrders);
-          EmailService.sendOrderConfirmation(newOrder, [{ name: product.name, quantity: 1 }]);
-          addToast(`\u2705 Offre accept\xE9e ! Commande ${newOrder.id} cr\xE9\xE9e automatiquement.`, "success");
-        } else {
-          addToast("Offre accept\xE9e !", "success");
+    const offer = idx !== -1 ? allOffers[idx] : null;
+    if (idx !== -1) { allOffers[idx].status = accept ? "accepted" : "rejected"; storage.set("offers", allOffers); }
+
+    if (!offer) { loadData(); return; }
+
+    DataService.addNotification(offer.buyerId, accept
+      ? { type: "offer", title: "\u2705 Offre accept\xE9e !", message: `Votre offre pour "${offer.productName}" a \xE9t\xE9 accept\xE9e par ${currentUser2.name}.` }
+      : { type: "offer", title: "\u274C Offre refus\xE9e", message: `Votre offre pour "${offer.productName}" n'a pas \xE9t\xE9 retenue.` }
+    );
+
+    if (accept) {
+      // [FIX C] Créer la commande via POST /api/orders — stock décrémenté, commission calculée côté serveur
+      if (NEXUS_CONFIG.apiUrl) {
+        try {
+          const res = await DataService.apiFetch("/api/orders", {
+            method: "POST",
+            body: JSON.stringify({
+              vendorId:      currentUser2.id,
+              products:      [{ id: offer.productId, name: offer.productName, price: offer.offeredPrice, quantity: 1 }],
+              subtotal:      offer.offeredPrice,
+              total:         offer.offeredPrice,
+              paymentMethod: "offer",
+              buyerAddress:  "À confirmer",
+              buyerPhone:    "",
+              fromOffer:     offerId,
+            }),
+          });
+          if (res && res.ok) {
+            const newOrder = await res.json();
+            addToast(`\u2705 Offre accept\xE9e ! Commande ${(newOrder.id || "").slice(-6)} cr\xE9\xE9e.`, "success");
+          } else {
+            addToast("Offre accept\xE9e mais erreur cr\xE9ation commande.", "warning");
+          }
+        } catch (e) {
+          console.warn("[handleOffer createOrder]", e);
+          addToast("Offre accept\xE9e (commande en attente de sync).", "info");
         }
       } else {
-        DataService.addNotification(offer.buyerId, { type: "offer", title: "\u274C Offre refus\xE9e", message: `Votre offre pour "${offer.productName}" n'a pas \xE9t\xE9 retenue.` });
-        addToast("Offre refus\xE9e \u2014 acheteur notifi\xE9.", "info");
+        // Fallback localStorage sans API
+        const allProducts = storage.getArray("products");
+        const product = allProducts.find((p) => p.id === offer.productId);
+        // [FIX P] Ne pas chercher l'acheteur dans localStorage (peut être absent) — utiliser les données de l'offre
+        if (product) {
+          const allOrders = storage.getArray("orders");
+          const trackingNumber = "SN" + Math.floor(1e5 + Math.random() * 9e5);
+          allOrders.push({
+            buyer: offer.buyerId, buyerName: offer.buyerName, buyerEmail: offer.buyerEmail || "",
+            buyerAddress: "\xC0 confirmer", buyerPhone: "",
+            vendor: currentUser2.id, vendorName: currentUser2.name,
+            products: [{ id: product.id, name: product.name, price: offer.offeredPrice, quantity: 1 }],
+            total: offer.offeredPrice, commission: offer.offeredPrice * 0.15,
+            status: "processing", shipping: "standard", trackingNumber, fromOffer: offerId,
+          });
+          storage.set("orders", allOrders);
+        }
+        addToast("\u2705 Offre accept\xE9e ! Commande cr\xE9\xE9e.", "success");
       }
-      loadData();
+    } else {
+      addToast("Offre refus\xE9e \u2014 acheteur notifi\xE9.", "info");
     }
+    loadData();
   };
   const stats = {
     totalSales: orders.reduce((sum, o) => sum + o.total, 0),
@@ -10926,7 +11026,7 @@ const B2BProDashboard = ({ currentUser: currentUser2, addToast, view: b2bView, s
   const ORDERS_PER_PAGE = 10;
 
   const apiBase = typeof NEXUS_CONFIG !== 'undefined' ? NEXUS_CONFIG.apiUrl : '';
-  const token   = storage.get('nexus_token') || localStorage.getItem('nexus_token') || '';
+  const token   = DataService?._token || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt') || '';
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
   // ── Chargement initial ──────────────────────────────────────────────────
