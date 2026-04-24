@@ -3612,7 +3612,7 @@ const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
 
   const handleFile = async (file) => {
     if (!file || !file.type.startsWith("image/")) return;
-    if (file.size > 8 * 1024 * 1024) { alert("Image trop lourde (max 8 Mo)"); return; }
+    if (file.size > 8 * 1024 * 1024) { (window.__nexusToast || alert)("Image trop lourde (max 8 Mo)", "error"); return; }
     setUploading(true); setUploadProgress(10);
     try {
       // Compress
@@ -3649,24 +3649,8 @@ const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
       }
       setUploadProgress(75);
 
-      // Fallback imgBB (hébergement gratuit, configuration via NEXUS_CONFIG.imgbb.apiKey)
-      if (NEXUS_CONFIG.imgbb && NEXUS_CONFIG.imgbb.apiKey) {
-        try {
-          const b64 = await new Promise(res => {
-            const r = new FileReader();
-            r.onload = e => res(e.target.result.split(",")[1]);
-            r.readAsDataURL(compressed);
-          });
-          const fd = new FormData();
-          fd.append("image", b64);
-          const res = await fetch(`https://api.imgbb.com/1/upload?key=${NEXUS_CONFIG.imgbb.apiKey}`, { method:"POST", body:fd });
-          if (res.ok) {
-            const { data } = await res.json();
-            setUploadProgress(100);
-            onChange(data.url); setPreview(data.url); setUploading(false); return;
-          }
-        } catch(e) { console.warn("[imgBB upload failed]", e); }
-      }
+      // Fallback imgBB désactivé — NEXUS_CONFIG.imgbb.apiKey non configuré (code mort supprimé).
+      // Pour activer : renseigner NEXUS_CONFIG.imgbb.apiKey avec une clé https://api.imgbb.com
       setUploadProgress(90);
 
       // Dernier recours: base64 dataURL (stocké en localStorage — OK pour petites images)
@@ -5024,6 +5008,8 @@ const ToastProvider = ({ children }) => {
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), duration);
   }, []);
+  // Expose globalement pour les fonctions standalone (PDF, upload) hors contexte React
+  useEffect(() => { window.__nexusToast = addToast; return () => { window.__nexusToast = null; }; }, [addToast]);
   const removeToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
@@ -7111,7 +7097,7 @@ async function _saveInvoiceToSupabase(type, order, amounts) {
 // ════════════════════════════════════════════════════════════════════════════
 const generateBuyerInvoicePDF = async (order) => {
   const { jsPDF } = window.jspdf || {};
-  if (!jsPDF) { alert("jsPDF non chargé — veuillez recharger la page."); return; }
+  if (!jsPDF) { (window.__nexusToast || alert)("jsPDF non chargé — veuillez recharger la page.", "error"); return; }
 
   const doc    = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const W = 210, H = 297, margin = 18;
@@ -7297,7 +7283,7 @@ const generateBuyerInvoicePDF = async (order) => {
 // ════════════════════════════════════════════════════════════════════════════
 const generateVendorInvoicePDF = async (order) => {
   const { jsPDF } = window.jspdf || {};
-  if (!jsPDF) { alert("jsPDF non charg\u00e9 \u2014 veuillez recharger la page."); return; }
+  if (!jsPDF) { (window.__nexusToast || alert)("jsPDF non charg\u00e9 \u2014 veuillez recharger la page.", "error"); return; }
 
   const doc    = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const W = 210, H = 297, margin = 18;
@@ -7626,7 +7612,7 @@ const downloadMonthlyStatement = async (month) => {
   const url      = `${NEXUS_CONFIG.apiUrl}/api/invoices/statement/vendor?month=${m}`;
   const filename = `Releve-Mensuel-NEXUS-${m}.pdf`;
   const ok = await _downloadPdfFromBackend(url, filename);
-  if (!ok) alert('Le relevé mensuel nécessite une connexion au serveur NEXUS.');
+  if (!ok) (window.__nexusToast || alert)('Le relevé mensuel nécessite une connexion au serveur NEXUS.', 'error');
 };
 
 /**
@@ -7638,7 +7624,7 @@ const downloadInvoiceById = async (invoiceId, type = 'buyer') => {
   const url      = `${NEXUS_CONFIG.apiUrl}/api/invoices/${invoiceId}/pdf`;
   const filename = `Facture-NEXUS-${invoiceId.slice(0,8)}.pdf`;
   const ok = await _downloadPdfFromBackend(url, filename);
-  if (!ok) alert('Impossible de télécharger cette facture — réessayez.');
+  if (!ok) (window.__nexusToast || alert)('Impossible de télécharger cette facture — réessayez.', 'error');
 };
 
 // ── Alias générique — détecte le rôle automatiquement ───────────────────────
@@ -7649,11 +7635,10 @@ const generateInvoicePDF = async (order) => {
     : downloadBuyerInvoicePDF(order);
 };
 
-// Exposition globale (accessible depuis AdminDashboard et les événements)
-window.__nexusGenerateBuyerInvoice   = downloadBuyerInvoicePDF;
-window.__nexusGenerateVendorInvoice  = downloadVendorInvoicePDF;
+// __nexusDownloadMonthlyStatement reste global (fallback dans VendorDashboard ligne ~10221)
 window.__nexusDownloadMonthlyStatement = downloadMonthlyStatement;
-window.__nexusDownloadInvoiceById    = downloadInvoiceById;
+// Note : downloadBuyerInvoicePDF, downloadVendorInvoicePDF et downloadInvoiceById
+// sont appelés en interne via props — leur exposition globale window.__ a été supprimée.
 
 const NotificationContext = createContext({ notifications: [], unread: 0, addNotif: () => {
 }, markRead: () => {
@@ -8295,6 +8280,7 @@ const AdminB2BPanel = ({ addToast }) => {
   const [page, setPage]         = useState(1);
   const [noteModal, setNoteModal] = useState(null); // { userId, company, currentNote }
   const [noteText, setNoteText] = useState('');
+  const [suspendModal, setSuspendModal] = useState(null); // { userId, company }
   const [loading, setLoading]   = useState(true);
   const [exporting, setExporting] = useState(false);
   const LIMIT = 20;
@@ -8339,7 +8325,12 @@ const AdminB2BPanel = ({ addToast }) => {
   };
 
   const suspendBuyer = async (userId, company) => {
-    if (!confirm(`Suspendre le compte de ${company} ?`)) return;
+    setSuspendModal({ userId, company });
+  };
+  const _confirmSuspend = async () => {
+    if (!suspendModal) return;
+    const { userId, company } = suspendModal;
+    setSuspendModal(null);
     try {
       const r = await fetch(`${apiBase}/api/admin/b2b/${userId}`, { method: 'DELETE', headers });
       if (r.ok) { addToast(`${company} suspendu`, 'warning'); loadBuyers(); loadStats(); }
@@ -8522,8 +8513,7 @@ const AdminB2BPanel = ({ addToast }) => {
     ),
 
     // Modal note de vérification
-    noteModal && React.createElement('div', {className:'modal-overlay', onClick:()=>setNoteModal(null)},
-      React.createElement('div', {className:'modal', style:{maxWidth:'460px'}, onClick:e=>e.stopPropagation()},
+    noteModal && React.createElement('div', {className:'modal-overlay', onClick:()=>setNoteModal(null)},      React.createElement('div', {className:'modal', style:{maxWidth:'460px'}, onClick:e=>e.stopPropagation()},
         React.createElement('div', {className:'modal-header'},
           React.createElement('h3', {className:'modal-title'},
             noteModal.verified ? '✅ Vérifier le NINEA' : '❌ Refuser le NINEA'
@@ -8550,6 +8540,27 @@ const AdminB2BPanel = ({ addToast }) => {
               className:`btn flex-1 ${noteModal.verified ? 'btn-success' : 'btn-danger'}`,
               onClick:()=>verifyNinea(noteModal.userId, noteModal.verified, noteText)
             }, noteModal.verified ? '✅ Vérifier' : '❌ Refuser')
+          )
+        )
+      )
+    ),
+
+    // Modal de confirmation de suspension (remplace confirm() natif)
+    suspendModal && React.createElement('div', {className:'modal-overlay', onClick:()=>setSuspendModal(null)},
+      React.createElement('div', {className:'modal', style:{maxWidth:'420px'}, onClick:e=>e.stopPropagation()},
+        React.createElement('div', {className:'modal-header'},
+          React.createElement('h3', {className:'modal-title'}, '⚠️ Suspendre le compte'),
+          React.createElement('button', {className:'close-btn', onClick:()=>setSuspendModal(null)}, React.createElement('i',{className:'fas fa-times'}))
+        ),
+        React.createElement('div', {style:{padding:'1.25rem'}},
+          React.createElement('p', {style:{marginBottom:'1.25rem',color:'var(--text-secondary)'}},
+            'Voulez-vous suspendre le compte de ', React.createElement('strong', null, suspendModal.company), ' ? Cette action est réversible.'
+          ),
+          React.createElement('div', {style:{display:'flex',gap:'0.75rem'}},
+            React.createElement('button', {className:'btn btn-secondary flex-1', onClick:()=>setSuspendModal(null)}, 'Annuler'),
+            React.createElement('button', {className:'btn btn-danger flex-1', onClick:_confirmSuspend},
+              React.createElement('i',{className:'fas fa-ban', style:{marginRight:'0.4rem'}}), 'Suspendre'
+            )
           )
         )
       )
@@ -8731,7 +8742,6 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "returns",  icon: "undo",  label: "Retours",  badge: stats.pendingReturns ?? (storage.getArray("return_requests")).filter((r) => r.status === "pending").length },
     { id: "disputes", icon: "gavel", label: "Litiges",  badge: stats.openDisputes   ?? (storage.getArray("disputes")).filter((d) => d.status === "open").length },
     { id: "products", icon: "tags", label: "Produits" },
-    { id: "analytics", icon: "chart-bar", label: "Analytics" },
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
     { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: stats.stockAlerts ?? (storage.getArray("stock_alerts")).length },
     { id: "email_templates", icon: "file-alt", label: "Templates email" },
@@ -8744,6 +8754,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
     { id: "config", icon: "cog", label: "Configuration" }
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
+    if (item.id !== 'orders') setOrdersPage(1);
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-label": `${item.badge} en attente` }, item.badge)))));
@@ -8996,11 +9007,26 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     storage.delete("nexus_setup_done");
     window.location.reload();
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cog" }), " Reconfigurer les services"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => {
-    if (confirm("\u26A0\uFE0F R\xE9initialiser TOUTES les donn\xE9es ? (irr\xE9versible)")) {
-      localStorage.clear();
-      window.location.reload();
-    }
-  } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset donn\xE9es"))), view === "flash_sales" && (() => {
+    // [FIX] Modale React avec double confirmation — confirm() natif retiré
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+    modal.innerHTML = `<div style="background:var(--bg-card,#1e1e2e);border:2px solid #ef4444;border-radius:16px;padding:2rem;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+      <h3 style="color:#ef4444;margin:0 0 .75rem;font-size:1.1rem">⚠️ Réinitialisation complète</h3>
+      <p style="color:var(--text-secondary,#aaa);margin:0 0 1.25rem;font-size:.9rem">Cette action supprime <strong>toutes</strong> les données locales de manière <strong>irréversible</strong>.<br><br>Tapez <code style="background:#2a2a3e;padding:2px 6px;border-radius:4px;color:#ef4444">RESET</code> pour confirmer :</p>
+      <input id="_resetInput" type="text" placeholder="RESET" autocomplete="off"
+        style="width:100%;padding:.6rem .85rem;border-radius:8px;border:1px solid #444;background:#2a2a3e;color:#fff;font-size:1rem;box-sizing:border-box;margin-bottom:1rem">
+      <div style="display:flex;gap:.75rem;justify-content:flex-end">
+        <button id="_resetCancel" style="padding:.5rem 1.2rem;border-radius:8px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;font-size:.9rem">Annuler</button>
+        <button id="_resetConfirm" style="padding:.5rem 1.2rem;border-radius:8px;border:none;background:#ef4444;color:#fff;cursor:pointer;font-size:.9rem;opacity:.4" disabled>Réinitialiser</button>
+      </div></div>`;
+    document.body.appendChild(modal);
+    const inp = modal.querySelector('#_resetInput');
+    const btn = modal.querySelector('#_resetConfirm');
+    inp.addEventListener('input', () => { const ok = inp.value === 'RESET'; btn.disabled = !ok; btn.style.opacity = ok ? '1' : '.4'; });
+    modal.querySelector('#_resetCancel').addEventListener('click', () => document.body.removeChild(modal));
+    btn.addEventListener('click', () => { document.body.removeChild(modal); localStorage.clear(); window.location.reload(); });
+    inp.focus();
+  } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset données"))), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const [flashSales, setFlashSales] = React.useState(storage.getArray("flash_sales"));
@@ -10218,7 +10244,7 @@ const VendorOnboardingChecklist = ({ currentUser, products, onNavigate, addToast
 
 const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, onDownloadStatement }) => {
   // Fallback : si onDownloadStatement n'est pas fourni, utilise la fonction globale
-  const _downloadStatement = onDownloadStatement || window.__nexusDownloadMonthlyStatement || (() => alert("Relevé mensuel : connectez-vous au serveur NEXUS."));
+  const _downloadStatement = onDownloadStatement || window.__nexusDownloadMonthlyStatement || (() => (window.__nexusToast || alert)("Relevé mensuel : connectez-vous au serveur NEXUS.", "error"));
   const [view, setView] = useState("overview");
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -10471,6 +10497,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     })() },
     { id: "profile", icon: "store", label: "Ma Boutique" }
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
+    if (item.id !== 'orders') setOrdersPage(1);
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))));
