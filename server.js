@@ -729,7 +729,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     const token = jwt.sign({ id: profile.id, role: profile.role, name: profile.name, email: profile.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
     const { password_hash: _ph, ...safeProfile } = profile;
     Logger.info('auth', 'login.supabase_fallback', `Login Supabase OK: ${email} (${profile.role})`, { userId: profile.id, userEmail: email, userRole: profile.role, ip: req.ip });
-    return res.json({ token, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
+    return res.json({ token, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800'), supabase_user: true }); // [FIX] indique au frontend que Supabase Auth peut être utilisé directement
 
   } catch (e) {
     Logger.error('auth', 'login.error', e.message, { meta: { email }, ip: req.ip });
