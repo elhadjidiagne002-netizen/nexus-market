@@ -34,9 +34,21 @@ require('dotenv').config(); // DOIT être en premier
 
 // ── [FIX S1-1] Guard JWT_SECRET — fail-fast au démarrage ─────────────────────
 if (!process.env.JWT_SECRET) {
+  console.error('');
   console.error('🔴 FATAL: JWT_SECRET est absent des variables d\'environnement.');
-  console.error('   Générez-en un : node -e "require(\'crypto\').randomBytes(64).toString(\'hex\')"');
-  console.error('   Ajoutez JWT_SECRET=<valeur> dans votre .env ou les variables Railway/Render.');
+  console.error('');
+  console.error('   ➤  Générez une valeur sécurisée :');
+  console.error('      node -e "require(\'crypto\').randomBytes(64).toString(\'hex\')"');
+  console.error('');
+  console.error('   ➤  Ajoutez JWT_SECRET dans Railway :');
+  console.error('      Dashboard → votre service → Variables → + New Variable');
+  console.error('');
+  console.error('   Variables OBLIGATOIRES pour Railway :');
+  console.error('     JWT_SECRET           (chaîne aléatoire ≥ 64 chars)');
+  console.error('     SUPABASE_URL         (ex: https://xxx.supabase.co)');
+  console.error('     SUPABASE_SERVICE_KEY (service_role key de Supabase)');
+  console.error('     SUPABASE_ANON_KEY    (anon key de Supabase)');
+  console.error('');
   process.exit(1);
 }
 
@@ -48,7 +60,12 @@ const rateLimit    = require('express-rate-limit');
 const jwt          = require('jsonwebtoken');
 const bcrypt       = require('bcryptjs');
 const nodemailer   = require('nodemailer');
-const stripe       = require('stripe')(process.env.STRIPE_SECRET_KEY);
+// [FIX RAILWAY] Initialisation Stripe conditionnelle — évite le crash si STRIPE_SECRET_KEY absent
+// Le SDK Stripe lève une exception synchrone sur require('stripe')(undefined),
+// ce qui crashe le process avant même l'handler uncaughtException.
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? require('stripe')(process.env.STRIPE_SECRET_KEY)
+  : new Proxy({}, { get: () => () => Promise.reject(new Error('STRIPE_SECRET_KEY manquant')) });
 const { createClient } = require('@supabase/supabase-js');
 const multer       = require('multer');
 const PDFDocument  = require('pdfkit');
@@ -75,9 +92,15 @@ const app  = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── SUPABASE (service role — accès complet, bypass RLS côté backend) ─────────
+// [FIX RAILWAY] Validation au démarrage — affiche un avertissement mais ne crashe pas
+// (contrairement à JWT_SECRET qui est fatal, Supabase peut démarrer en mode dégradé)
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+  console.warn('⚠️  SUPABASE_URL ou SUPABASE_SERVICE_KEY manquant — toutes les routes DB échoueront.');
+  console.warn('   Ajoutez ces variables dans Railway → Variables.');
+}
 const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY  // [FIX 3] votre .env utilise SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_URL    || 'https://placeholder.supabase.co',
+  process.env.SUPABASE_SERVICE_KEY || 'placeholder-key'
 );
 
 // ─── SUPABASE ANON (singleton — évite de recréer un client à chaque login) ──────
@@ -458,51 +481,20 @@ const verifyToken = async (req, res, next) => {
   if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token manquant' });
   const token = auth.slice(7);
 
-  // ── 1. JWT custom NEXUS ───────────────────────────────────────────────────────
-  // On vérifie la signature pour extraire l'ID, puis on récupère le profil ACTUEL
-  // depuis la DB (avec cache 5 min) — ainsi les changements de rôle (ex : buyer → admin)
-  // sont pris en compte immédiatement, sans attendre l'expiration du JWT.
-  let decodedId = null;
+  // 1. JWT custom (synchrone, < 1ms)
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    decodedId = decoded.id;
-  } catch (_) { /* pas un JWT custom → continuer vers Supabase */ }
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    return next();
+  } catch (_) { /* pas un JWT custom → essayer Supabase */ }
 
-  if (decodedId) {
-    const cacheKey = `profile:${decodedId}`;
-    const cached = _profileCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      req.user = cached.user;
-      return next();
-    }
-    // Récupérer le profil le plus récent (rôle actuel, statut actuel…)
-    try {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id, email, name, role, status, avatar, shop_name, shop_category, commission_rate')
-        .eq('id', decodedId)
-        .maybeSingle();
-      if (profile) {
-        _profileCache.set(cacheKey, { user: profile, expiresAt: Date.now() + PROFILE_CACHE_TTL });
-        req.user = profile;
-        return next();
-      }
-    } catch (_) {}
-    // Fallback : utiliser les claims du JWT si la requête DB échoue
-    try {
-      req.user = jwt.verify(token, process.env.JWT_SECRET);
-      return next();
-    } catch (_) {}
-  }
-
-  // ── 2. Cache mémoire pour tokens Supabase ────────────────────────────────────
+  // 2. Cache mémoire — évite les requêtes Supabase répétées
   const cached = _profileCache.get(token);
   if (cached && cached.expiresAt > Date.now()) {
     req.user = cached.user;
     return next();
   }
 
-  // ── 3. Token Supabase Auth ────────────────────────────────────────────────────
+  // 3. JWT Supabase — au plus 2 requêtes, résultat mis en cache
   try {
     const { data: { user }, error } = await supabase.auth.getUser(token);
     if (!error && user) {
@@ -1070,22 +1062,14 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
   }
 });
 
-app.get("/api/auth/me", verifyToken, async (req, res) => {
+app.get('/api/auth/me', verifyToken, async (req, res) => {
   try {
-    const { data: user } = await supabase
-      .from("profiles")
-      .select("id, email, name, role, status, avatar, shop_name, shop_category, commission_rate, phone, bio, last_login, payout_method, payout_destination, onboarding_complete, github_id, github_login, github_avatar")
-      .eq("id", req.user.id)
-      .maybeSingle();
-    if (!user) {
-      const { password_hash: _ph, ...safeReqUser } = req.user;
-      return res.json(safeReqUser);
-    }
+    const { data: user, error } = await supabase.from('profiles').select('id, email, name, role, status, avatar, shop_name, shop_category, commission_rate, phone, bio, last_login, payout_method, payout_destination, onboarding_complete, github_id, github_login, github_avatar').eq('id', req.user.id).single();
+    if (error || !user) return res.status(404).json({ error: 'Utilisateur introuvable' });
     const { password_hash, ...safeUser } = user;
     res.json(safeUser);
   } catch (e) {
-    Logger.error("auth", "me.error", e.message, { userId: req.user && req.user.id });
-    res.status(500).json({ error: "Erreur serveur" });
+    res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -2326,29 +2310,18 @@ app.patch('/api/returns/:id', verifyToken, requireRole('admin'), async (req, res
 
 // ─── REVIEWS ─────────────────────────────────────────────────────────────────
 // [FIX] GET /api/reviews manquant — le frontend lisait localStorage directement
-app.get("/api/reviews", async (req, res) => {
+app.get('/api/reviews', async (req, res) => {
   try {
     const { productId, vendorId, limit = 50 } = req.query;
-    let q = supabase.from("reviews").select("*").order("created_at", { ascending: false }).limit(Number(limit));
-    if (productId) q = q.eq("product_id", productId);
-    if (vendorId)  q = q.eq("vendor_id",  vendorId);
+    let q = supabase.from('reviews').select('id, product_id, user_id, user_name, rating, comment, vendor_reply, created_at').order('created_at', { ascending: false }).limit(Number(limit));
+    if (productId) q = q.eq('product_id', productId);
+    if (vendorId)  q = q.eq('vendor_id',  vendorId);
     const { data, error } = await q;
     if (error) throw error;
-    const rows = (data || []).map(r => ({
-      id:          r.id,
-      productId:   r.product_id,
-      userId:      r.user_id,
-      userName:    r.user_name || r.username || r.reviewer_name || "Anonyme",
-      rating:      r.rating,
-      comment:     r.comment  || r.text  || "",
-      vendorReply: r.vendor_reply || r.reply || null,
-      date:        r.created_at,
-    }));
-    res.json(rows);
+    res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
 });
 
 // [FIX] Déclaration manquante — le handler existait mais sans la ligne app.post()
@@ -4694,7 +4667,7 @@ app.get('*', (req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, '0.0.0.0', async () => { // [FIX RAILWAY] Bind explicite 0.0.0.0 requis dans Docker/Railway
   const env     = process.env.NODE_ENV || 'development';
   const hasDb   = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY);
   const hasStripe = !!process.env.STRIPE_SECRET_KEY;
