@@ -1064,11 +1064,22 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
 
 app.get('/api/auth/me', verifyToken, async (req, res) => {
   try {
-    const { data: user, error } = await supabase.from('profiles').select('id, email, name, role, status, avatar, shop_name, shop_category, commission_rate, phone, bio, last_login, payout_method, payout_destination, onboarding_complete, github_id, github_login, github_avatar').eq('id', req.user.id).single();
-    if (error || !user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    // [FIX] maybeSingle() évite le 404 quand le profil n'existe pas encore (nouvel utilisateur OAuth).
+    // Fallback : on renvoie req.user (données issues du token) pour ne pas bloquer la session.
+    const { data: user } = await supabase
+      .from('profiles')
+      .select('id, email, name, role, status, avatar, shop_name, shop_category, commission_rate, phone, bio, last_login, payout_method, payout_destination, onboarding_complete, github_id, github_login, github_avatar')
+      .eq('id', req.user.id)
+      .maybeSingle();
+    if (!user) {
+      // Profil absent — renvoyer les claims du token plutôt que 404
+      const { password_hash: _ph, ...safeReqUser } = req.user;
+      return res.json(safeReqUser);
+    }
     const { password_hash, ...safeUser } = user;
     res.json(safeUser);
   } catch (e) {
+    Logger.error('auth', 'me.error', e.message, { userId: req.user && req.user.id });
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -1077,8 +1088,8 @@ app.get('/api/auth/me', verifyToken, async (req, res) => {
 // On le redirige vers la même logique pour ne pas casser la compatibilité
 app.get('/api/profiles/me', verifyToken, async (req, res) => {
   try {
-    const { data: user, error } = await supabase.from('profiles').select('id, email, name, role, status, avatar, shop_name, shop_category, commission_rate, phone, bio, last_login, payout_method, payout_destination, onboarding_complete, github_id, github_login, github_avatar').eq('id', req.user.id).single();
-    if (error || !user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    const { data: user } = await supabase.from('profiles').select('id, email, name, role, status, avatar, shop_name, shop_category, commission_rate, phone, bio, last_login, payout_method, payout_destination, onboarding_complete, github_id, github_login, github_avatar').eq('id', req.user.id).maybeSingle();
+    if (!user) { const { password_hash: _ph, ...fb } = req.user; return res.json(fb); }
     const { password_hash, ...safeUser } = user;
     // Normaliser les champs snake_case → camelCase pour le VendorDashboard
     res.json({
