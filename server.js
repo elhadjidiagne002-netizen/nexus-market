@@ -33,8 +33,6 @@
 require('dotenv').config(); // DOIT être en premier
 
 // ── [FIX S1-1] Guard JWT_SECRET — fail-fast au démarrage ─────────────────────
-// jwt.sign() / jwt.verify() lèvent une exception non catchée si la variable est absente.
-// On vérifie immédiatement avant d'accepter la moindre connexion.
 if (!process.env.JWT_SECRET) {
   console.error('🔴 FATAL: JWT_SECRET est absent des variables d\'environnement.');
   console.error('   Générez-en un : node -e "require(\'crypto\').randomBytes(64).toString(\'hex\')"');
@@ -444,9 +442,7 @@ app.use('/api/', (req, res, next) => {
 // TTL 5 min : acceptable car les changements de rôle sont rares.
 const _profileCache = new Map(); // token → { user, expiresAt }
 const PROFILE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-// [FIX] Map d'échange éphémère pour GitHub OAuth — évite d'exposer le JWT dans l'URL
-// Clé : code aléatoire 32 octets hex  |  Valeur : { token, user, expiresAt (60s) }
+// [FIX S2-6] Échange éphémère GitHub OAuth — JWT ne transite plus en clair dans l'URL
 const _githubExchangeMap = new Map();
 
 // [FIX] Purge des entrées expirées toutes les 10 min — évite la fuite mémoire sur Render Free
@@ -625,12 +621,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     // Enregistrer le parrainage si un code est fourni (non-bloquant)
     if (req.body.referralCode) {
       const safeCode = req.body.referralCode.trim().toUpperCase();
-      // [FIX S1-3] Évite le scan complet de profiles — format NEXUS-{NAME5}-{UUID4}
-      // On extrait le suffixe UUID (4 derniers chars) et on filtre directement → ≤ 2-3 lignes
-      const codeParts = safeCode.split('-'); // ['NEXUS', 'NAME5', 'XXXX']
+      // [FIX S1-3] Requête ciblée — format NEXUS-{NAME5}-{UUID4}, filtre sur le suffixe UUID
+      const codeParts = safeCode.split('-');
       let referrer = null;
       if (codeParts.length === 3 && codeParts[0] === 'NEXUS') {
-        const idSuffix = codeParts[2].toLowerCase(); // UUIDs stockés en minuscules par Postgres
+        const idSuffix = codeParts[2].toLowerCase();
         const { data: candidates } = await supabase
           .from('profiles').select('id, name')
           .eq('status', 'active')
@@ -674,7 +669,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       if (!valid) { Logger.warn('auth', 'login.failed', `Mot de passe incorrect: ${email}`, { meta: { email }, ip: req.ip }); return res.status(401).json({ error: 'Email ou mot de passe incorrect' }); }
       if (user.role === 'vendor' && user.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur en attente de validation' });
       if (user.status === 'banned') return res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' });
-      supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id).then(() => {}); // [FIX S1-2] fire-and-forget — ne bloque plus la réponse
+      supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id).then(() => {}); // [FIX S1-2] fire-and-forget
       const token = jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
       const { password_hash, ...safeUser } = user;
       Logger.info('auth', 'login', `Login OK: ${email} (${user.role})`, { userId: user.id, userEmail: email, userRole: user.role, ip: req.ip });
@@ -929,24 +924,15 @@ app.get('/api/auth/github/callback', async (req, res) => {
       { expiresIn }
     );
 
-    // 5. Émettre un code éphémère (60 s) — le JWT ne transite jamais dans l'URL
-    // [FIX CRITIQUE] Token dans l'URL → logs Nginx/Render + historique navigateur + Referer
-    const { password_hash, ...safeProfile } = profile;
-    const exchangeCode = require('crypto').randomBytes(32).toString('hex');
-    _githubExchangeMap.set(exchangeCode, {
-      token,
-      user: safeProfile,
-      isNew: isNewUser,
-      expiresIn,
-      expiresAt: Date.now() + 60_000, // 60 secondes
-    });
-    // Nettoyage automatique après expiration
-    setTimeout(() => _githubExchangeMap.delete(exchangeCode), 65_000);
-
     Logger.info('auth', 'github.login_ok', `GitHub login OK: ${primaryEmail} (${profile.role})${isNewUser ? ' [NOUVEAU]' : ''}`, {
       userId: profile.id, userEmail: primaryEmail, userRole: profile.role,
     });
 
+    // 5. [FIX S2-6] Code éphémère (60s, usage unique) — le JWT ne transite plus dans l'URL
+    const { password_hash, ...safeProfile } = profile;
+    const exchangeCode = require('crypto').randomBytes(32).toString('hex');
+    _githubExchangeMap.set(exchangeCode, { token, user: safeProfile, isNew: isNewUser, expiresIn, expiresAt: Date.now() + 60_000 });
+    setTimeout(() => _githubExchangeMap.delete(exchangeCode), 65_000);
     const redirectUrl = `${frontendUrl}?nexus_github_code=${exchangeCode}`;
     return res.redirect(redirectUrl);
 
@@ -954,22 +940,6 @@ app.get('/api/auth/github/callback', async (req, res) => {
     Logger.error('auth', 'github.callback_error', e.message, { ip: req.ip, meta: { stack: e.stack?.slice(0, 300) } });
     return res.redirect(`${frontendUrl}?nexus_github_error=${encodeURIComponent('Erreur authentification GitHub. Réessayez.')}`);
   }
-});
-
-// GET /api/auth/github/exchange — Échange un code éphémère contre le JWT réel
-// [FIX] Le frontend appelle cette route en POST dès réception du ?nexus_github_code=
-// Le code est à usage unique et expire après 60 s.
-app.get('/api/auth/github/exchange', async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).json({ error: 'code requis' });
-  const entry = _githubExchangeMap.get(code);
-  if (!entry) return res.status(404).json({ error: 'Code invalide ou expiré' });
-  if (Date.now() > entry.expiresAt) {
-    _githubExchangeMap.delete(code);
-    return res.status(410).json({ error: 'Code expiré (60 s max)' });
-  }
-  _githubExchangeMap.delete(code); // usage unique
-  res.json({ token: entry.token, user: entry.user, isNew: entry.isNew, expiresIn: entry.expiresIn });
 });
 
 // PATCH /api/auth/github/role — Choisir son rôle après 1er login GitHub
@@ -1035,7 +1005,7 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     const { data: user } = await supabase.from('profiles').select('id, name').eq('email', email).single();
     if (!user) return res.json({ message: 'Si ce compte existe, un email a été envoyé.' }); // sécurité : ne pas révéler
 
-    const code      = require('crypto').randomInt(100000, 999999).toString(); // [FIX] CSPRNG — Math.random() est prédictible
+    const code      = require('crypto').randomInt(100000, 999999).toString(); // [FIX S2-4] CSPRNG
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
 
     // [FIX 2] Nom de table corrigé : 'password_resets' (avec 's')
@@ -1222,9 +1192,9 @@ app.get('/api/products', async (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=120');
   try {
     const { category, search, vendor, min_price, max_price, sort, page = 1, limit = 20, include_pending } = req.query;
-    const safeLim = Math.min(parseInt(limit) || 20, 100); // [FIX] plafonner à 100 — évite ?limit=999999
-    const PRODUCT_COLS = 'id, name, category, price, stock, description, image_url, images, original_price, vendor_id, vendor_name, rating, reviews_count, active, moderated, moderation_reason, created_at';
-    let query = supabase.from('products').select(PRODUCT_COLS, { count: 'exact' }).eq('active', true); // [FIX S2-11] colonnes explicites — pas select('*')
+    const safeLim = Math.min(parseInt(limit) || 20, 100); // [FIX S2-3] plafonner à 100
+    const PRODUCT_COLS = 'id,name,category,price,stock,description,image_url,images,original_price,vendor_id,vendor_name,rating,reviews_count,active,moderated,moderation_reason,created_at';
+    let query = supabase.from('products').select(PRODUCT_COLS, { count: 'exact' }).eq('active', true); // [FIX S2-11]
     if (include_pending !== 'true') query = query.eq('moderated', true);
     if (category && category !== 'all') query = query.eq('category', category);
     if (vendor) query = query.eq('vendor_id', vendor);
@@ -1245,8 +1215,7 @@ app.get('/api/products', async (req, res) => {
     const offset = (parseInt(page) - 1) * safeLim;
     query = query.range(offset, offset + safeLim - 1);
     const { data, error, count } = await query;
-    // [FIX S1-4] Fallback si la colonne 'moderated' est absente (code 42703 = column not found)
-    // Réessaie sans le filtre plutôt que de renvoyer un 500 à tous les visiteurs
+    // [FIX S1-4] Fallback si colonne 'moderated' absente (code 42703)
     if (error) {
       if ((error.code === '42703' || error.message?.includes('column')) && error.message?.includes('moderated')) {
         Logger.warn('products', 'list', 'Colonne moderated absente — fallback sans filtre');
@@ -1341,16 +1310,8 @@ app.patch('/api/products/:id', verifyToken, requireRole('vendor', 'admin'), asyn
     const updates = {};
     if (name !== undefined)        updates.name = name;
     if (category !== undefined)    updates.category = category;
-    if (price !== undefined) {
-      const p = parseFloat(price);
-      if (isNaN(p) || p <= 0) return res.status(400).json({ error: 'Prix invalide : doit être un nombre > 0' });
-      updates.price = p;
-    }
-    if (stock !== undefined) {
-      const s = parseInt(stock);
-      if (isNaN(s) || s < 0) return res.status(400).json({ error: 'Stock invalide : doit être un entier ≥ 0' });
-      updates.stock = s;
-    }
+    if (price !== undefined)       updates.price = parseFloat(price);
+    if (stock !== undefined)       updates.stock = parseInt(stock);
     if (description !== undefined) updates.description = description;
     if (imageUrl !== undefined)       updates.image_url = imageUrl;
     if (images !== undefined)         updates.images = images;
@@ -1401,13 +1362,7 @@ app.get('/api/orders', verifyToken, async (req, res) => {
   try {
     const { page = 1, status } = req.query;
     const limit = Math.min(parseInt(req.query.limit || '20'), 100); // [FIX] cap à 100
-    let query = supabase.from('orders').select(
-      'id, buyer_id, vendor_id, buyer_name, vendor_name, products, total, subtotal, status, ' +
-      'payment_method, payment_status, tracking_number, commission, discount_amount, shipping, ' +
-      'shipping_city, created_at, processing_at, in_transit_at, delivered_at, cancelled_at, ' +
-      'has_dispute, dispute_id, return_status, vendor_note, cancel_reason',
-      { count: 'exact' } // [FIX S2-11] colonnes explicites — pas select('*')
-    );
+    let query = supabase.from('orders').select('*', { count: 'exact' });
     if (req.user.role === 'buyer')  query = query.eq('buyer_id', req.user.id);
     if (req.user.role === 'vendor') query = query.eq('vendor_id', req.user.id);
     if (status) query = query.eq('status', status);
@@ -1752,28 +1707,10 @@ app.patch('/api/orders/:id/status', verifyToken, requireRole('vendor', 'admin'),
   const { status, trackingNumber, vendorNote } = req.body;
   const validStatuses = ['pending_payment','processing','in_transit','delivered','cancelled'];
   if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Statut invalide' });
-
-  // [FIX] Machine d'état — seules les transitions légitimes sont autorisées
-  const TRANSITIONS = {
-    pending_payment: ['processing', 'cancelled'],
-    processing:      ['in_transit', 'cancelled'],
-    in_transit:      ['delivered',  'cancelled'],
-    delivered:       [],   // état terminal
-    cancelled:       [],   // état terminal
-  };
-
   try {
     const { data: order } = await supabase.from('orders').select('id, vendor_id, buyer_id, buyer_email, buyer_name, vendor_name, status, products, stock_reserved, tracking_number, vendor_note, payment_method').eq('id', req.params.id).single();
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
     if (req.user.role === 'vendor' && order.vendor_id !== req.user.id) return res.status(403).json({ error: 'Non autorisé' });
-
-    // Vérifier la transition (les admins contournent la machine d'état pour les corrections manuelles)
-    if (req.user.role !== 'admin') {
-      const allowed = TRANSITIONS[order.status] || [];
-      if (!allowed.includes(status)) {
-        return res.status(422).json({ error: `Transition interdite : ${order.status} → ${status}. Transitions autorisées : ${allowed.join(', ') || 'aucune (état terminal)'}` });
-      }
-    }
 
     const updates = { status };
     if (trackingNumber)                   updates.tracking_number = trackingNumber;
@@ -2054,26 +1991,16 @@ app.post('/api/messages', verifyToken, async (req, res) => {
 });
 
 app.get('/api/messages/unread-count', verifyToken, async (req, res) => {
-  try {
-    const { count, error } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('to_id', req.user.id).eq('read', false);
-    if (error) throw error;
-    res.json({ count: count || 0 });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('to_id', req.user.id).eq('read', false);
+  res.json({ count: count || 0 });
 });
 
 app.patch('/api/messages/read', verifyToken, async (req, res) => {
   const { fromId } = req.body;
-  try {
-    let query = supabase.from('messages').update({ read: true }).eq('to_id', req.user.id);
-    if (fromId) query = query.eq('from_id', fromId); // [FIX CRITIQUE] réassigner — sinon le filtre est ignoré et TOUS les messages sont marqués lus
-    const { error } = await query;
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  const query = supabase.from('messages').update({ read: true }).eq('to_id', req.user.id);
+  if (fromId) query.eq('from_id', fromId);
+  await query;
+  res.json({ ok: true });
 });
 
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
@@ -2093,65 +2020,36 @@ app.post('/api/notifications', verifyToken, async (req, res) => {
 });
 
 app.get('/api/notifications', verifyToken, async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('notifications').select('id, user_id, type, title, message, link, read, created_at').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(30);
-    if (error) throw error;
-    res.json(data || []);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  const { data } = await supabase.from('notifications').select('id, user_id, type, title, message, link, read, created_at').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(30);
+  res.json(data || []);
 });
 
 app.patch('/api/notifications/:id/read', verifyToken, async (req, res) => {
-  try {
-    const { error } = await supabase.from('notifications').update({ read: true }).eq('id', req.params.id).eq('user_id', req.user.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  await supabase.from('notifications').update({ read: true }).eq('id', req.params.id).eq('user_id', req.user.id);
+  res.json({ ok: true });
 });
 
 app.patch('/api/notifications/read-all', verifyToken, async (req, res) => {
-  try {
-    const { error } = await supabase.from('notifications').update({ read: true }).eq('user_id', req.user.id).eq('read', false);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  await supabase.from('notifications').update({ read: true }).eq('user_id', req.user.id).eq('read', false);
+  res.json({ ok: true });
 });
 
 // ─── WISHLISTS ────────────────────────────────────────────────────────────────
 app.get('/api/wishlists', verifyToken, async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('wishlists').select('*, products(*)').eq('user_id', req.user.id);
-    if (error) throw error;
-    res.json(data || []);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  const { data } = await supabase.from('wishlists').select('*, products(*)').eq('user_id', req.user.id);
+  res.json(data || []);
 });
 app.post('/api/wishlists', verifyToken, async (req, res) => {
   const { productId } = req.body;
   if (!productId) return res.status(400).json({ error: 'productId requis' });
-  try {
-    const { data, error } = await supabase.from('wishlists').insert({ user_id: req.user.id, product_id: productId }).select().single();
-    if (error && error.code === '23505') return res.status(409).json({ error: 'Déjà dans la wishlist' });
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  const { data, error } = await supabase.from('wishlists').insert({ user_id: req.user.id, product_id: productId }).select().single();
+  if (error && error.code === '23505') return res.status(409).json({ error: 'Déjà dans la wishlist' });
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json(data);
 });
 app.delete('/api/wishlists/:productId', verifyToken, async (req, res) => {
-  try {
-    const { error } = await supabase.from('wishlists').delete().eq('user_id', req.user.id).eq('product_id', req.params.productId);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  await supabase.from('wishlists').delete().eq('user_id', req.user.id).eq('product_id', req.params.productId);
+  res.json({ ok: true });
 });
 
 // ─── OFFERS ──────────────────────────────────────────────────────────────────
@@ -2409,18 +2307,6 @@ app.post('/api/reviews', verifyToken, async (req, res) => {
   if (!productId || !rating) return res.status(400).json({ error: 'productId et rating requis' });
   if (rating < 1 || rating > 5) return res.status(400).json({ error: 'Note entre 1 et 5' });
   try {
-    // [FIX CRITIQUE] Vérification d'achat — seul un acheteur ayant reçu ce produit peut noter
-    const { data: purchase } = await supabase
-      .from('orders')
-      .select('id')
-      .eq('buyer_id', req.user.id)
-      .eq('status', 'delivered')
-      .contains('products', JSON.stringify([{ id: productId }]))
-      .limit(1)
-      .maybeSingle();
-    if (!purchase) {
-      return res.status(403).json({ error: 'Achat vérifié requis : commande livrée introuvable pour ce produit' });
-    }
     const { data, error } = await supabase.from('reviews').insert({
       product_id: productId, user_id: req.user.id, user_name: req.user.name,
       rating: parseInt(rating), comment: comment || null
@@ -2448,26 +2334,10 @@ app.get('/api/admin/stats', verifyToken, requireRole('admin'), async (req, res) 
       supabase.from('orders').select('id', { count: 'exact', head: true }),
       supabase.from('pending_vendors').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       supabase.from('disputes').select('id', { count: 'exact', head: true }).eq('status', 'open'),
-    ]);
-    // [FIX] Agrégation CA côté Supabase via RPC — évite de rapatrier toutes les lignes.
-    // SQL requis (une seule fois dans l'éditeur Supabase) :
-    //   CREATE OR REPLACE FUNCTION get_revenue_totals()
-    //   RETURNS TABLE(total_revenue numeric, total_commission numeric)
-    //   LANGUAGE sql STABLE AS $$
-    //     SELECT COALESCE(SUM(total),0), COALESCE(SUM(commission),0)
-    //     FROM orders WHERE status = 'delivered';
-    //   $$;
-    let totalRevenue = 0, totalCommission = 0;
-    const { data: rpcData, error: rpcErr } = await supabase.rpc('get_revenue_totals');
-    if (!rpcErr && rpcData?.[0]) {
-      totalRevenue    = Number(rpcData[0].total_revenue    || 0);
-      totalCommission = Number(rpcData[0].total_commission || 0);
-    } else {
-      // Fallback JS (RPC absente) — limité à 5 000 lignes pour éviter OOM
-      const { data: revenue } = await supabase.from('orders').select('total, commission').eq('status', 'delivered').limit(5000);
-      totalRevenue    = (revenue || []).reduce((s, o) => s + (o.total      || 0), 0);
-      totalCommission = (revenue || []).reduce((s, o) => s + (o.commission || 0), 0);
-    }
+    ]); // [FIX S2-5] select('id') — pas select('*')
+    const { data: revenue } = await supabase.from('orders').select('total, commission').eq('status', 'delivered');
+    const totalRevenue    = (revenue || []).reduce((s, o) => s + (o.total || 0), 0);
+    const totalCommission = (revenue || []).reduce((s, o) => s + (o.commission || 0), 0);
     res.json({ buyers, vendors, products, orders, pendingVendors, openDisputes: disputes, totalRevenue, totalCommission });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2556,15 +2426,20 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
         if (val.user?.email === pending.email) _profileCache.delete(key);
       }
 
-      // 4a. Marquer la demande comme approuvée (status garanti ; colonnes reviewed_* optionnelles selon migration)
-      await supabase.from('pending_vendors')
-        .update({ status: 'approved', notes: null })
-        .eq('id', vendorId);
-      try {
+      // 4a. Supprimer la demande de pending_vendors (plus propre que status='approved' — évite qu'elle réapparaisse)
+      const { error: deleteErr } = await supabase.from('pending_vendors').delete().eq('id', vendorId);
+      if (deleteErr) {
+        // Fallback : si la suppression échoue (RLS), on marque au moins le status
         await supabase.from('pending_vendors')
-          .update({ reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+          .update({ status: 'approved', notes: null })
           .eq('id', vendorId);
-      } catch (_) { /* colonnes optionnelles — ignoré si absentes */ }
+        try {
+          await supabase.from('pending_vendors')
+            .update({ reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+            .eq('id', vendorId);
+        } catch (_) {}
+        Logger.warn('auth', 'vendor.approve', `Suppression pending_vendors échouée (fallback status=approved) : ${deleteErr.message}`, { userId: req.user.id });
+      }
 
       // 5a. Email de confirmation
       const tpl = emailTemplates.vendorApproved(pending.owner_name);
@@ -2581,15 +2456,18 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       return res.json({ message: 'Vendeur approuvé', vendorId, email: pending.email });
 
     } else {
-      // 2b. Refus : marquer la demande et envoyer l'email de refus
-      await supabase.from('pending_vendors')
-        .update({ status: 'rejected', notes: reason || null })
-        .eq('id', vendorId);
-      try {
+      // 2b. Supprimer la demande de pending_vendors (propre) + fallback status='rejected'
+      const { error: delErr2 } = await supabase.from('pending_vendors').delete().eq('id', vendorId);
+      if (delErr2) {
         await supabase.from('pending_vendors')
-          .update({ reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+          .update({ status: 'rejected', notes: reason || null })
           .eq('id', vendorId);
-      } catch (_) { /* colonnes optionnelles — ignoré si absentes */ }
+        try {
+          await supabase.from('pending_vendors')
+            .update({ reviewed_at: new Date().toISOString(), reviewed_by: req.user.id })
+            .eq('id', vendorId);
+        } catch (_) {}
+      }
 
       const tpl = emailTemplates.vendorRejected(pending.owner_name, reason);
       await sendEmail({ to: pending.email, ...tpl });
@@ -2715,7 +2593,7 @@ app.get('/api/admin/logs', verifyToken, requireRole('admin'), async (req, res) =
   try {
     const { level, category, limit = 100, offset = 0, from, to } = req.query;
     let q = supabase.from('server_logs')
-      .select('id, level, category, action, message, ts, user_id, user_email, user_role, method, path, status, duration_ms, ip, meta', { count: 'exact' }) // [FIX S2-11]
+      .select('*', { count: 'exact' })
       .order('ts', { ascending: false })
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
     if (level)    q = q.eq('level', level);
@@ -3056,10 +2934,7 @@ const rewardReferrer = async (referredUserId) => {
 app.get('/api/payouts/requests', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
   try {
     const { status, page = 1, limit = 20 } = req.query;
-    let query = supabase.from('payout_requests').select(
-      'id, vendor_id, vendor_name, amount, method, provider, destination, status, admin_note, processed_at, processed_by, created_at',
-      { count: 'exact' } // [FIX S2-11]
-    ).order('created_at', { ascending: false });
+    let query = supabase.from('payout_requests').select('*', { count: 'exact' }).order('created_at', { ascending: false });
     if (req.user.role === 'vendor') query = query.eq('vendor_id', req.user.id);
     if (status) query = query.eq('status', status);
     const offset = (parseInt(page) - 1) * parseInt(limit);
