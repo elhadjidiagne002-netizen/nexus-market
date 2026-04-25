@@ -1856,10 +1856,11 @@ const DataService = {
           localStorage.setItem("nexus_jwt",   json.token); localStorage.setItem("nexus_jwt_exp",   expTs);
           this._token = json.token;
         }
-        // [FIX 3] Tentative de connexion Supabase pour les appels directs (notifications, etc.)
-        // Silencieux : échoue sans bloquer si l'utilisateur n'existe pas dans Supabase Auth
-        if (this._sb) {
-          await this._sb.auth.signInWithPassword({
+        // [FIX] Tentative de connexion Supabase UNIQUEMENT si le backend indique que
+        // l'utilisateur a un compte Supabase Auth (champ supabase_user dans la réponse).
+        // Pour les utilisateurs bcrypt-only, on saute ce call → évite le 400 en console.
+        if (this._sb && json.supabase_user) {
+          this._sb.auth.signInWithPassword({
             email: email.trim().toLowerCase(), password
           }).catch(() => {});
         }
