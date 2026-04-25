@@ -1635,11 +1635,13 @@ const DataService = {
     })();
     if (NEXUS_CONFIG.apiUrl && _cachedRole === "admin") {
       try {
-        const res = await this.apiFetch("/api/admin/export/users").catch(() => null);
+        // [FIX] Utiliser /api/admin/users (JSON) et non /api/admin/export/users (CSV).
+        // L'endpoint export retourne du CSV pour téléchargement — pas parseable en JSON.
+        const res = await this.apiFetch("/api/admin/users").catch(() => null);
         if (res && res.ok) {
           const data = await res.json();
           const map = {};
-          (data || []).forEach(u => { const n = normalizeUser(u); map[n.id] = n; });
+          (Array.isArray(data) ? data : []).forEach(u => { const n = normalizeUser(u); map[n.id] = n; });
           storage.set("users", map); return map;
         }
       } catch (e) {
