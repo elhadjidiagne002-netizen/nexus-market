@@ -2324,12 +2324,25 @@ app.patch('/api/returns/:id', verifyToken, requireRole('admin'), async (req, res
 app.get('/api/reviews', async (req, res) => {
   try {
     const { productId, vendorId, limit = 50 } = req.query;
-    let q = supabase.from('reviews').select('id, product_id, user_id, user_name, rating, comment, vendor_reply, created_at').order('created_at', { ascending: false }).limit(Number(limit));
+    // [FIX] select('*') — évite le 500 si certaines colonnes n'existent pas encore
+    // (ex: user_name, vendor_reply peuvent être absentes selon la migration Supabase)
+    let q = supabase.from('reviews').select('*').order('created_at', { ascending: false }).limit(Number(limit));
     if (productId) q = q.eq('product_id', productId);
     if (vendorId)  q = q.eq('vendor_id',  vendorId);
     const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+    // Normalisation défensive — accepte tous les noms de colonnes courants
+    const rows = (data || []).map(r => ({
+      id:          r.id,
+      productId:   r.product_id  || r.productId,
+      userId:      r.user_id     || r.userId,
+      userName:    r.user_name   || r.username || r.reviewer_name || r.author || 'Anonyme',
+      rating:      r.rating,
+      comment:     r.comment     || r.text     || r.content || '',
+      vendorReply: r.vendor_reply|| r.reply    || r.vendor_response || null,
+      date:        r.created_at  || r.date,
+    }));
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2380,24 +2393,26 @@ app.get('/api/admin/stats', verifyToken, requireRole('admin'), async (req, res) 
 
 app.get('/api/admin/vendors/pending', verifyToken, requireRole('admin'), async (req, res) => {
   try {
+    // [FIX] select('*') — évite le 500 causé par des noms de colonnes qui n'existent
+    // pas encore dans la table pending_vendors (owner_name, ninea, password_hash…).
+    // Le mapping ci-dessous accepte tous les noms courants en fallback.
     const { data, error } = await supabase
       .from('pending_vendors')
-      .select('id, name, owner_name, email, category, avatar, phone, ninea, address, status, password_hash, created_at')
-      .eq('status', 'pending')
+      .select('*')
+      .in('status', ['pending', 'en_attente', 'submitted'])  // accepte les variantes de statut
       .order('created_at', { ascending: true });
     if (error) throw error;
-    // Normaliser les champs snake_case → camelCase pour le frontend
     const normalized = (data || []).map(v => ({
       id:        v.id,
-      name:      v.name,
-      ownerName: v.owner_name  || '',          // owner_name → ownerName
+      name:      v.name          || v.shop_name   || v.business_name || '',
+      ownerName: v.owner_name    || v.ownerName   || v.full_name     || v.contact_name || '',
       email:     v.email,
-      category:  v.category    || '',
-      date:      v.created_at  || v.date || new Date().toISOString(), // created_at → date
-      avatar:    v.avatar      || '',
-      phone:     v.phone       || '',
-      ninea:     v.ninea       || '',
-      address:   v.address     || '',
+      category:  v.category      || v.shop_category || '',
+      date:      v.created_at    || v.date         || v.submitted_at || new Date().toISOString(),
+      avatar:    v.avatar        || v.logo         || '',
+      phone:     v.phone         || v.telephone    || '',
+      ninea:     v.ninea         || v.tax_id        || v.registration_number || '',
+      address:   v.address       || v.location      || '',
       status:    v.status,
     }));
     res.json(normalized);
@@ -2547,6 +2562,22 @@ app.patch('/api/admin/users/:id/ban', verifyToken, requireRole('admin'), async (
     await supabase.from('profiles').update({ status: banned ? 'banned' : 'active' }).eq('id', req.params.id);
     if (banned) await sendEmail({ to: user.email, subject: '⚠️ Compte suspendu — NEXUS Market', html: `<p>Bonjour ${user.name},</p><p>Votre compte a été suspendu.${reason ? ' Raison : ' + reason : ''}</p>` });
     res.json({ message: banned ? 'Utilisateur suspendu' : 'Compte réactivé' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// [FIX] Endpoint JSON dédié pour getUsers() côté frontend.
+// /api/admin/export/users retourne du CSV (pour téléchargement) — le frontend
+// ne peut pas le parser comme JSON. Cette route retourne la même donnée en JSON.
+app.get('/api/admin/users', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, name, email, role, status, avatar, created_at, shop_name, shop_category, commission_rate')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
