@@ -458,20 +458,51 @@ const verifyToken = async (req, res, next) => {
   if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token manquant' });
   const token = auth.slice(7);
 
-  // 1. JWT custom (synchrone, < 1ms)
+  // ── 1. JWT custom NEXUS ───────────────────────────────────────────────────────
+  // On vérifie la signature pour extraire l'ID, puis on récupère le profil ACTUEL
+  // depuis la DB (avec cache 5 min) — ainsi les changements de rôle (ex : buyer → admin)
+  // sont pris en compte immédiatement, sans attendre l'expiration du JWT.
+  let decodedId = null;
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    return next();
-  } catch (_) { /* pas un JWT custom → essayer Supabase */ }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    decodedId = decoded.id;
+  } catch (_) { /* pas un JWT custom → continuer vers Supabase */ }
 
-  // 2. Cache mémoire — évite les requêtes Supabase répétées
+  if (decodedId) {
+    const cacheKey = `profile:${decodedId}`;
+    const cached = _profileCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      req.user = cached.user;
+      return next();
+    }
+    // Récupérer le profil le plus récent (rôle actuel, statut actuel…)
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id, email, name, role, status, avatar, shop_name, shop_category, commission_rate')
+        .eq('id', decodedId)
+        .maybeSingle();
+      if (profile) {
+        _profileCache.set(cacheKey, { user: profile, expiresAt: Date.now() + PROFILE_CACHE_TTL });
+        req.user = profile;
+        return next();
+      }
+    } catch (_) {}
+    // Fallback : utiliser les claims du JWT si la requête DB échoue
+    try {
+      req.user = jwt.verify(token, process.env.JWT_SECRET);
+      return next();
+    } catch (_) {}
+  }
+
+  // ── 2. Cache mémoire pour tokens Supabase ────────────────────────────────────
   const cached = _profileCache.get(token);
   if (cached && cached.expiresAt > Date.now()) {
     req.user = cached.user;
     return next();
   }
 
-  // 3. JWT Supabase — au plus 2 requêtes, résultat mis en cache
+  // ── 3. Token Supabase Auth ────────────────────────────────────────────────────
   try {
     const { data: { user }, error } = await supabase.auth.getUser(token);
     if (!error && user) {
@@ -1039,14 +1070,22 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/auth/me', verifyToken, async (req, res) => {
+app.get("/api/auth/me", verifyToken, async (req, res) => {
   try {
-    const { data: user, error } = await supabase.from('profiles').select('id, email, name, role, status, avatar, shop_name, shop_category, commission_rate, phone, bio, last_login, payout_method, payout_destination, onboarding_complete, github_id, github_login, github_avatar').eq('id', req.user.id).single();
-    if (error || !user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    const { data: user } = await supabase
+      .from("profiles")
+      .select("id, email, name, role, status, avatar, shop_name, shop_category, commission_rate, phone, bio, last_login, payout_method, payout_destination, onboarding_complete, github_id, github_login, github_avatar")
+      .eq("id", req.user.id)
+      .maybeSingle();
+    if (!user) {
+      const { password_hash: _ph, ...safeReqUser } = req.user;
+      return res.json(safeReqUser);
+    }
     const { password_hash, ...safeUser } = user;
     res.json(safeUser);
   } catch (e) {
-    res.status(500).json({ error: 'Erreur serveur' });
+    Logger.error("auth", "me.error", e.message, { userId: req.user && req.user.id });
+    res.status(500).json({ error: "Erreur serveur" });
   }
 });
 
@@ -2287,18 +2326,29 @@ app.patch('/api/returns/:id', verifyToken, requireRole('admin'), async (req, res
 
 // ─── REVIEWS ─────────────────────────────────────────────────────────────────
 // [FIX] GET /api/reviews manquant — le frontend lisait localStorage directement
-app.get('/api/reviews', async (req, res) => {
+app.get("/api/reviews", async (req, res) => {
   try {
     const { productId, vendorId, limit = 50 } = req.query;
-    let q = supabase.from('reviews').select('id, product_id, user_id, user_name, rating, comment, vendor_reply, created_at').order('created_at', { ascending: false }).limit(Number(limit));
-    if (productId) q = q.eq('product_id', productId);
-    if (vendorId)  q = q.eq('vendor_id',  vendorId);
+    let q = supabase.from("reviews").select("*").order("created_at", { ascending: false }).limit(Number(limit));
+    if (productId) q = q.eq("product_id", productId);
+    if (vendorId)  q = q.eq("vendor_id",  vendorId);
     const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+    const rows = (data || []).map(r => ({
+      id:          r.id,
+      productId:   r.product_id,
+      userId:      r.user_id,
+      userName:    r.user_name || r.username || r.reviewer_name || "Anonyme",
+      rating:      r.rating,
+      comment:     r.comment  || r.text  || "",
+      vendorReply: r.vendor_reply || r.reply || null,
+      date:        r.created_at,
+    }));
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
 });
 
 // [FIX] Déclaration manquante — le handler existait mais sans la ligne app.post()
