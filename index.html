@@ -8569,6 +8569,54 @@ const AdminB2BPanel = ({ addToast }) => {
 };
 
 const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
+  // [FIX #310] Hooks remontés au niveau du composant — interdit dans les IIFEs conditionnelles
+  const [_buyerCount, _setBuyerCount] = React.useState(
+    Object.values(storage.get("users") || {}).filter(u => u.role === "buyer").length
+  );
+  React.useEffect(() => {
+    DataService.getUsers().then(map => {
+      if (map) _setBuyerCount(Object.values(map).filter(u => u.role === "buyer").length);
+    }).catch(() => {});
+  }, []);
+  const [_adminReviews, _setAdminReviews] = React.useState([]);
+  React.useEffect(() => {
+    DataService.getReviews && DataService.getReviews({}).then(data => {
+      if (data) _setAdminReviews(data);
+    }).catch(() => {});
+  }, []);
+  const [_adminReturns, _setAdminReturns] = React.useState(storage.getArray("return_requests"));
+  React.useEffect(() => {
+    DataService.getReturnRequests && DataService.getReturnRequests().then(data => {
+      if (data) _setAdminReturns(data);
+    }).catch(() => {});
+  }, []);
+  const [_allUsersArr, _setAllUsersArr] = React.useState(Object.values(storage.get("users") || {}));
+  React.useEffect(() => {
+    DataService.getUsers().then(map => { if (map) _setAllUsersArr(Object.values(map)); }).catch(() => {});
+  }, []);
+  const [_payoutReqs, _setPayoutReqs] = React.useState(storage.getArray("payout_requests"));
+  React.useEffect(() => {
+    DataService.apiFetch && DataService.apiFetch("/api/admin/payouts").then(async res => {
+      if (res && res.ok) {
+        const data = await res.json();
+        const list = (data.requests || data || []).map(r => ({
+          id: r.id, vendorId: r.vendor_id, vendorName: r.vendor_name,
+          amount: r.amount, provider: r.provider, destination: r.destination,
+          status: r.status, date: r.created_at || r.date,
+          adminNote: r.admin_note, method: r.method,
+        }));
+        _setPayoutReqs(list);
+      }
+    }).catch(() => {});
+  }, []);
+  const [_flashSales, _setFlashSales] = React.useState(storage.getArray("flash_sales"));
+  React.useEffect(() => {
+    DataService.getFlashSales().then(data => { if (data) _setFlashSales(data); }).catch(() => {});
+  }, []);
+  const [_disputes, _setDisputes] = React.useState(storage.getArray("disputes"));
+  React.useEffect(() => {
+    DataService.getDisputes().then(d => { if (d) _setDisputes(d); }).catch(() => {});
+  }, []);
   const [view, setView] = useState("overview");
   const [stats, setStats] = useState({});
   const [vendors, setVendors] = useState([]);
@@ -8828,12 +8876,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     const allOrders = storage.getArray("orders");
     // [FIX] Utiliser les vendors/users déjà chargés dans le state React (depuis l'API), pas localStorage
     const buyers = vendors ? [] : []; // placeholder — le vrai compte vient de l'API ci-dessous
-    const [buyerCount, setBuyerCount] = React.useState(Object.values(storage.get("users") || {}).filter(u => u.role === "buyer").length);
-    React.useEffect(() => {
-      DataService.getUsers().then(map => {
-        if (map) setBuyerCount(Object.values(map).filter(u => u.role === "buyer").length);
-      }).catch(() => {});
-    }, []);
+    const buyerCount = _buyerCount; // [FIX #310] hook remonté au niveau du composant
     const allReviews = storage.getArray("reviews");
     const delivered = allOrders.filter((o) => o.status === "delivered");
     const avgCart = allOrders.length > 0 ? allOrders.reduce((s, o) => s + o.total, 0) / allOrders.length : 0;
@@ -8859,16 +8902,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     }}, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Relevé mensuel PDF")
   ), /* @__PURE__ */ React.createElement("div", { className: "chart-container" }, salesData.length > 0 && /* @__PURE__ */ React.createElement(SafeLineChart, { data: salesData, dataKey: "ventes", label: "Ventes", color: "#00853E", type: "line" }))), view === "reviews" && (() => {
     // [FIX] Charger les avis depuis GET /api/reviews au lieu du localStorage
-    const [myReviews, setMyReviews] = React.useState(
-      (storage.getArray("reviews")).filter(r => products.map(p => p.id).includes(r.productId))
-    );
-    React.useEffect(() => {
-      DataService.getReviews({ vendorId: currentUser2.id }).then(data => {
-        if (data) setMyReviews(data);
-      }).catch(() => {});
-    }, [view]);
-    const myProductIds = products.map((p) => p.id);
-    const localReviews = myReviews; const setLocalReviews = (updater) => setMyReviews(updater);
+    const myReviews = _adminReviews.length > 0
+      ? _adminReviews.filter(r => products.map(p => p.id).includes(r.productId))
+      : (storage.getArray("reviews")).filter(r => products.map(p => p.id).includes(r.productId));
+    const setLocalReviews = (updater) => _setAdminReviews(updater);
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Avis clients (", myReviews.length, ")"), myReviews.length > 0 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.88rem", color: "var(--text-secondary)" } }, "Note moyenne : ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, (myReviews.reduce((s, r) => s + r.rating, 0) / myReviews.length).toFixed(1), "/5"))), myReviews.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun avis"), /* @__PURE__ */ React.createElement("p", null, "Les avis de vos clients appara\xEEtront ici")) : myReviews.sort((a, b) => new Date(b.date) - new Date(a.date)).map((r) => {
       const prod = products.find((p) => p.id === r.productId);
       return /* @__PURE__ */ React.createElement("div", { key: r.id, style: { padding: "1rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.88rem", marginBottom: "0.2rem" } }, (prod == null ? void 0 : prod.name) || r.productId), /* @__PURE__ */ React.createElement("div", { className: "flex", style: { gap: "0.5rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement(Stars, { rating: r.rating }), /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.85rem" } }, r.userName), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.75rem", color: "var(--text-secondary)" } }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"))), /* @__PURE__ */ React.createElement("div", { className: "flex", style: { gap: "0.3rem" } }, [1, 2, 3, 4, 5].map((s) => /* @__PURE__ */ React.createElement("i", { key: s, className: `fas fa-star`, style: { color: s <= r.rating ? "#FFD700" : "var(--border)", fontSize: "0.85rem" } })))), r.comment && /* @__PURE__ */ React.createElement("p", { style: { marginTop: "0.35rem", fontSize: "0.85rem", color: "var(--text-secondary)" } }, r.comment), /* @__PURE__ */ React.createElement(VendorReviewReply, { review: r, currentUser: null, addToast, onReplied: () => {
@@ -8878,10 +8915,8 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     }));
   })(), view === "returns" && (() => {
     // [FIX] Charger depuis GET /api/returns + handleReturnAction appelle PATCH /api/returns/:id
-    const [returns, setReturns] = React.useState(storage.getArray("return_requests"));
-    React.useEffect(() => {
-      DataService.getReturnRequests().then(data => { if (data) setReturns(data); }).catch(() => {});
-    }, [view]);
+    const returns = _adminReturns;
+    const setReturns = _setAdminReturns;
     const STATUS_RETURN = { pending: { label: "En attente", badge: "warning" }, approved: { label: "Approuv\xE9", badge: "success" }, rejected: { label: "Refus\xE9", badge: "danger" }, refunded: { label: "Rembours\xE9", badge: "success" } };
     const handleReturnAction = async (retId, newStatus) => {
       var _a;
@@ -8941,10 +8976,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-download" }), " Exporter CSV")), /* @__PURE__ */ React.createElement("div", { className: "stats-grid", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave stat-icon" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, "Total \xE0 reverser"), /* @__PURE__ */ React.createElement("div", { className: "stat-value", style: { fontSize: "1.4rem" } }, formatPrice(totalPayout))), /* @__PURE__ */ React.createElement("div", { className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-percent stat-icon" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, "Commissions NEXUS"), /* @__PURE__ */ React.createElement("div", { className: "stat-value", style: { fontSize: "1.4rem" } }, formatPrice(totalCommission))), /* @__PURE__ */ React.createElement("div", { className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-users stat-icon" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, "Vendeurs actifs"), /* @__PURE__ */ React.createElement("div", { className: "stat-value", style: { fontSize: "1.4rem" } }, vendors2.length))), vendors2.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune vente livr\xE9e"), /* @__PURE__ */ React.createElement("p", null, "Les paiements appara\xEEtront ici une fois les commandes livr\xE9es")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Commandes livr\xE9es"), /* @__PURE__ */ React.createElement("th", null, "Chiffre d\\'affaires"), /* @__PURE__ */ React.createElement("th", null, "Commission NEXUS (15%)"), /* @__PURE__ */ React.createElement("th", null, "Montant \xE0 reverser"))), /* @__PURE__ */ React.createElement("tbody", null, vendors2.map((v) => /* @__PURE__ */ React.createElement("tr", { key: v.vendorId }, /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, /* @__PURE__ */ React.createElement("strong", null, v.vendorName)), /* @__PURE__ */ React.createElement("td", { "data-label": "Commandes" }, v.ordersCount), /* @__PURE__ */ React.createElement("td", { "data-label": "CA" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(v.totalSales))), /* @__PURE__ */ React.createElement("td", { "data-label": "Commission", style: { color: "var(--primary)" } }, formatPrice(v.totalCommission)), /* @__PURE__ */ React.createElement("td", { "data-label": "\xC0 reverser" }, /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--success)", fontSize: "1.05rem" } }, formatPrice(v.netPayout)))))), /* @__PURE__ */ React.createElement("tfoot", null, /* @__PURE__ */ React.createElement("tr", { style: { background: "var(--bg-light)", fontWeight: 700 } }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, "TOTAL")), /* @__PURE__ */ React.createElement("td", null, vendors2.reduce((s, v) => s + v.ordersCount, 0)), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, formatPrice(vendors2.reduce((s, v) => s + v.totalSales, 0)))), /* @__PURE__ */ React.createElement("td", { style: { color: "var(--primary)" } }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(totalCommission))), /* @__PURE__ */ React.createElement("td", { style: { color: "var(--success)" } }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(totalPayout))))))));
   })(), view === "users" && (() => {
     // [FIX] Charger les utilisateurs depuis l'API au lieu du localStorage
-    const [allUsersArr, setAllUsersArr] = React.useState(Object.values(storage.get("users") || {}));
-    React.useEffect(() => {
-      DataService.getUsers().then(map => { if (map) setAllUsersArr(Object.values(map)); }).catch(() => {});
-    }, [view]);
+    const allUsersArr = _allUsersArr; const setAllUsersArr = _setAllUsersArr; // [FIX #310]
     const buyers = allUsersArr.filter((u) => u.role === "buyer");
     const handleBan = async (uid, ban) => {
       // [FIX] Appeler PATCH /api/admin/users/:id/ban en priorité
@@ -8981,20 +9013,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     })))));
   })(), view === "payout_requests" && (() => {
     // [FIX] Charger depuis l'API admin en priorité — payout_requests localStorage est vide inter-navigateurs
-    const [reqs, setReqs] = React.useState(storage.getArray("payout_requests"));
-    React.useEffect(() => {
-      DataService.apiFetch("/api/admin/payouts").then(async res => {
-        if (res && res.ok) {
-          const data = await res.json();
-          const list = (data.requests || data || []).map(r => ({
-            id: r.id, vendorId: r.vendor_id, vendorName: r.vendor_name,
-            amount: r.amount, provider: r.provider, destination: r.destination,
-            status: r.status, date: r.created_at || r.date,
-          }));
-          storage.set("payout_requests", list); setReqs(list);
-        }
-      }).catch(() => {});
-    }, [view]);
+    const reqs = _payoutReqs; const setReqs = _setPayoutReqs; // [FIX #310]
     const handlePayout = (id, approved) => {
       const status = approved ? "paid" : "rejected";
       DataService.updatePayout(id, { status, processedAt: new Date().toISOString() }).catch(()=>{});
@@ -9029,10 +9048,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset données"))), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
-    const [flashSales, setFlashSales] = React.useState(storage.getArray("flash_sales"));
-    React.useEffect(() => {
-      DataService.getFlashSales().then(data => { if (data) setFlashSales(data); }).catch(() => {});
-    }, [view]);
+    const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
     const allProds = products;
     const createFlash = () => {
       if (!fs.productId || !fs.discount) return;
@@ -9059,10 +9075,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     }))))));
   })(), view === "disputes" && (() => {
     // [FIX] Lire depuis l'API (via DataService.getDisputes) au lieu du localStorage
-    const [disputes, setDisputes] = React.useState(storage.getArray("disputes"));
-    React.useEffect(() => {
-      DataService.getDisputes().then(d => { if (d) setDisputes(d); }).catch(() => {});
-    }, [view]);
+    const disputes = _disputes; const setDisputes = _setDisputes; // [FIX #310]
     const activeDispute = adminActiveDispute; const setActiveDispute = setAdminActiveDispute;
     const adminMsg = adminDisputeMsg; const setAdminMsg = setAdminDisputeMsg;
     const refundPct = adminRefundPct; const setRefundPct = setAdminRefundPct;
@@ -10243,6 +10256,15 @@ const VendorOnboardingChecklist = ({ currentUser, products, onNavigate, addToast
 };
 
 const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, onDownloadStatement }) => {
+  // [FIX #310] Hooks remontés au niveau du composant — interdit dans les IIFEs conditionnelles
+  const [_myReturns, _setMyReturns] = React.useState(
+    storage.getArray("return_requests").filter((r) => r.vendorId === (currentUser2 && currentUser2.id))
+  );
+  React.useEffect(() => {
+    DataService.getReturnRequests && DataService.getReturnRequests().then(data => {
+      if (data) _setMyReturns(data.filter(r => r.vendorId === (currentUser2 && currentUser2.id)));
+    }).catch(() => {});
+  }, []);
   // Fallback : si onDownloadStatement n'est pas fourni, utilise la fonction globale
   const _downloadStatement = onDownloadStatement || window.__nexusDownloadMonthlyStatement || (() => (window.__nexusToast || alert)("Relevé mensuel : connectez-vous au serveur NEXUS.", "error"));
   const [view, setView] = useState("overview");
@@ -10591,14 +10613,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     }));
   })(), view === "profile" && /* @__PURE__ */ React.createElement(VendorProfileEditor, { currentUser: currentUser2, addToast }), view === "analytics" && /* @__PURE__ */ React.createElement(VendorAnalyticsDashboard, { currentUser: currentUser2, orders, products, salesData, onRequestPayout: () => setShowPayoutModal(true), addToast }), view === "returns" && (() => {
     // [FIX] Charger depuis GET /api/returns (filtré par le token côté serveur)
-    const [myReturns, setMyReturns] = React.useState(
-      (storage.getArray("return_requests")).filter((r) => r.vendorId === currentUser2.id)
-    );
-    React.useEffect(() => {
-      DataService.getReturnRequests().then(data => {
-        if (data) setMyReturns(data.filter(r => r.vendorId === currentUser2.id));
-      }).catch(() => {});
-    }, [view]);
+    const myReturns = _myReturns;
+    const setMyReturns = _setMyReturns;
     const STATUS_R = { pending: { label: "En attente", badge: "warning" }, approved: { label: "Approuv\xE9", badge: "success" }, rejected: { label: "Refus\xE9", badge: "danger" }, refunded: { label: "Rembours\xE9", badge: "success" } };
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retour (", myReturns.length, ")"), myReturns.filter((r) => r.status === "pending").length > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, myReturns.filter((r) => r.status === "pending").length, " en attente")), myReturns.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune demande de retour"), /* @__PURE__ */ React.createElement("p", null, "Les demandes de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { role: "list" }, myReturns.map((r) => {
       var _a, _b;
