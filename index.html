@@ -12520,101 +12520,38 @@ const AppWithUserSync = ({ onUserChange }) => {
   return /* @__PURE__ */ React.createElement(App, { onUserChange });
 };
 ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(Root, null));
-/* SW_DISABLED — en attente du déploiement de /sw.js sur Vercel
+// ── Service Worker — enregistrement via /sw.js (fichier statique Vercel) ───────
+// [FIX] Les blob: URL sont bloquées par Chrome pour les SW depuis Chrome 68.
+// La solution est de servir sw.js comme fichier statique à la racine du projet.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    // ── Service Worker inline via Blob URL ──────────────────────────
-    // Évite le besoin d'un fichier sw.js externe (compatible Vercel/Netlify/GitHub Pages)
-    const SW_VERSION = "nexus-v2";
-    const CACHE_URLS = ["/", "/index.html"];
+    navigator.serviceWorker.register("/sw.js", { scope: "/" })
+      .then(reg => {
+        console.log("[SW] ✅ Service Worker enregistré — scope:", reg.scope);
+        window.__nexusSWReg = reg;
 
-    const swCode = `
-const CACHE = "${SW_VERSION}";
-const PRECACHE = ${JSON.stringify(CACHE_URLS)};
-
-self.addEventListener("install", e => {
-  self.skipWaiting();
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(PRECACHE).catch(()=>{})));
-});
-
-self.addEventListener("activate", e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
-
-self.addEventListener("fetch", e => {
-  if (e.request.method !== "GET") return;
-  const url = new URL(e.request.url);
-  // Ne pas intercepter les requêtes API/EmailJS/Supabase
-  if (["api.anthropic.com","emailjs.com","supabase.co","analytics.google.com","googletagmanager.com"].some(d => url.hostname.includes(d))) return;
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      const net = fetch(e.request).then(res => {
-        if (res && res.status === 200 && url.origin === self.location.origin) {
-          const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
+        // Proposer les notifications après interaction utilisateur
+        if ("Notification" in window && Notification.permission === "default") {
+          window.__nexusRequestNotifPermission = async () => {
+            const perm = await Notification.requestPermission();
+            console.log("[SW] Permission notifications:", perm);
+            return perm;
+          };
         }
-        return res;
-      }).catch(() => cached);
-      return cached || net;
-    })
-  );
-});
 
-// Notifications push
-self.addEventListener("push", e => {
-  const data = e.data ? e.data.json() : {};
-  e.waitUntil(self.registration.showNotification(data.title || "NEXUS Market", {
-    body: data.body || "Vous avez une nouvelle notification.",
-    icon: "https://placehold.co/192x192/00853E/white?text=NX",
-    badge: "https://placehold.co/72x72/00853E/white?text=NX",
-    data: data.url || "/",
-    vibrate: [200, 100, 200],
-    tag: data.tag || "nexus-notif"
-  }));
-});
-
-self.addEventListener("notificationclick", e => {
-  e.notification.close();
-  e.waitUntil(clients.openWindow(e.notification.data || "/"));
-});
-    `;
-
-    try {
-      const blob = new Blob([swCode], { type: "application/javascript" });
-      const swUrl = URL.createObjectURL(blob);
-      navigator.serviceWorker.register(swUrl, { scope: "/" })
-        .then(reg => {
-          console.log("[SW] ✅ Service Worker inline enregistré — scope:", reg.scope);
-          window.__nexusSWReg = reg;
-
-          // Demander permission notifications si pas encore accordée
-          if ("Notification" in window && Notification.permission === "default") {
-            // Ne pas demander immédiatement — attendre une interaction utilisateur
-            window.__nexusRequestNotifPermission = async () => {
-              const perm = await Notification.requestPermission();
-              console.log("[SW] Permission notifications:", perm);
-              return perm;
-            };
+        // Écouter les messages du SW (ex: SW_ACTIVATED à la mise à jour)
+        navigator.serviceWorker.addEventListener("message", evt => {
+          if (evt.data && evt.data.type === "SW_ACTIVATED") {
+            console.log("[SW] Nouvelle version activée :", evt.data.version);
           }
-
-          // Écouter les messages du SW
-          navigator.serviceWorker.addEventListener("message", evt => {
-            if (evt.data && evt.data.type === "SW_ACTIVATED") {
-              console.log("[SW] Nouvelle version activée");
-            }
-          });
-        })
-        .catch(e => console.warn("[SW] Erreur enregistrement:", e));
-    } catch(e) {
-      console.warn("[SW] Blob URL non supporté:", e);
-    }
+        });
+      })
+      .catch(err => {
+        // Échec silencieux — l'app fonctionne sans SW (offline non disponible)
+        console.info("[SW] Non enregistré (mode dégradé acceptable) :", err.message);
+      });
   });
 }
-*/ // fin SW_DISABLED
 
 // ── API notifications push (accessible globalement) ───────────────
 window.nexusPush = {
