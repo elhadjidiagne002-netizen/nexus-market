@@ -1622,8 +1622,18 @@ const DataService = {
     }
   },
   async getUsers() {
-    // [FIX] Utiliser l'export admin si disponible, sinon Supabase direct avec normalizeUser
-    if (NEXUS_CONFIG.apiUrl) {
+    // [FIX] L'endpoint /api/admin/export/users requiert le rôle admin.
+    // On ne l'appelle QUE si le token en cache appartient à un admin,
+    // pour éviter les 403 en cascade sur les dashboards vendeur/acheteur.
+    const _cachedRole = (() => {
+      try {
+        const t = sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
+        if (!t) return null;
+        const payload = JSON.parse(atob(t.split(".")[1]));
+        return payload.role || null;
+      } catch(_) { return null; }
+    })();
+    if (NEXUS_CONFIG.apiUrl && _cachedRole === "admin") {
       try {
         const res = await this.apiFetch("/api/admin/export/users").catch(() => null);
         if (res && res.ok) {
@@ -8569,6 +8579,8 @@ const AdminB2BPanel = ({ addToast }) => {
 };
 
 const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
+  // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
+  const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
   // [FIX #310] Hooks remontés au niveau du composant — interdit dans les IIFEs conditionnelles
   const [_buyerCount, _setBuyerCount] = React.useState(
     Object.values(storage.get("users") || {}).filter(u => u.role === "buyer").length
@@ -8606,6 +8618,9 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           adminNote: r.admin_note, method: r.method,
         }));
         _setPayoutReqs(list);
+      } else if (res && res.status === 403) {
+        // [FIX] 403 = token avec rôle périmé. Silencieux, fallback sur localStorage.
+        console.warn("[admin/payouts] 403 — token rôle périmé. Relancez la session admin.");
       }
     }).catch(() => {});
   }, []);
@@ -8656,10 +8671,12 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     let pendingData = storage.get("pendingVendors") || [];
     if (NEXUS_CONFIG.apiUrl) {
       try {
+        // [FIX] Guard admin — éviter les 403 si le token a un rôle périmé
         const resp = await DataService.apiFetch("/api/admin/vendors/pending").catch(() => null);
         if (resp && resp.ok) {
-          // La route normalise déjà les champs (ownerName, date) côté serveur
           pendingData = await resp.json();
+        } else if (resp && resp.status === 403) {
+          console.warn("[loadData] pendingVendors: token rôle périmé — relancez la session");
         }
       } catch (e) {
         console.warn("[loadData] pendingVendors API error:", e);
@@ -8676,8 +8693,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     let apiStats = {};
     if (NEXUS_CONFIG.apiUrl) {
       try {
+        // [FIX] Guard 403 — si le token a un rôle périmé, on ne plante pas le dashboard
         const sRes = await DataService.apiFetch("/api/admin/stats").catch(() => null);
         if (sRes && sRes.ok) apiStats = await sRes.json();
+        else if (sRes && sRes.status === 403) console.warn("[loadData] stats: token rôle périmé — relancez la session");
       } catch (_) {}
     }
     setStats({
