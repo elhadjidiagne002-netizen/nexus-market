@@ -8731,6 +8731,12 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
       }
     }
+    // [FIX] Retrait immédiat du state local — évite que la ligne reste visible
+    // pendant le rechargement asynchrone de loadData()
+    setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
+    // Nettoyer aussi le localStorage (cas mode offline avec ids "user_TIMESTAMP")
+    const lsPending = storage.get("pendingVendors") || [];
+    storage.set("pendingVendors", lsPending.filter(v => v.id !== vendorId && v.email !== (pendingVendors.find(p => p.id === vendorId) || {}).email));
     DataService.addNotification(vendorId, {
       type: "vendor", title: "🎉 Boutique approuvée !",
       message: "Votre boutique a été validée. Vous pouvez maintenant vendre sur NEXUS Market.",
@@ -8760,6 +8766,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       await DataService._sb.from("pending_vendors").delete().eq("id", vendorId)
         .then(({ error }) => { if (error) console.warn("[rejectVendor delete]", error.message); });
     }
+    // [FIX] Retrait immédiat du state local
+    setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
+    const lsPending2 = storage.get("pendingVendors") || [];
+    storage.set("pendingVendors", lsPending2.filter(v => v.id !== vendorId));
     loadData();
     addToast("Demande refusée. Email envoyé au vendeur.", "info");
   };
