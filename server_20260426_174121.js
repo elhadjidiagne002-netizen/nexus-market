@@ -1,4 +1,3 @@
-// [NEXUS-REALTIME-MSG-SERVER]
 /**
  * NEXUS Market Sénégal — Backend Node.js/Express v3.1.4
  * ====================================================
@@ -14,7 +13,7 @@
  *   STRIPE_PUBLIC_KEY         pk_test_51TGdXe...
  *   STRIPE_WEBHOOK_SECRET     whsec_...
  *   JWT_SECRET                (chaîne aléatoire — ex: node -e "require('crypto').randomBytes(64).toString('hex')")
- *   JWT_EXPIRES_IN            900    (secondes = 15min — access token court, refresh token 30j)
+ *   JWT_EXPIRES_IN            28800  (secondes = 8h)
  *   FRONTEND_URL              https://nexus-market-md360.vercel.app
  *   ADMIN_EMAIL               admin@nexus.sn
  *   EMAILJS_SERVICE_ID        service_84yfkgf
@@ -22,7 +21,6 @@
  *   EMAILJS_PRIVATE_KEY       ...
  *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
  *   LOG_LEVEL                 (optionnel — 'debug' pour logs verbeux, défaut: 'info')
- *   SENTRY_DSN                https://xxx@oXXX.ingest.sentry.io/YYYY (optionnel — monitoring erreurs)
  *
  * CHANGELOG v3.1.2 (correctifs appliqués) :
  *   [FIX 1] BUG CRITIQUE — app.listen() maintenant TOUJOURS appelé (plus conditionné à NODE_ENV)
@@ -33,65 +31,6 @@
  */
 
 require('dotenv').config(); // DOIT être en premier
-
-// [BUG FIX] crypto doit être importé explicitement au niveau module.
-// La route POST /api/auth/refresh utilisait `crypto.randomBytes(48)` sans import,
-// ce qui provoque une TypeError ("crypto.randomBytes is not a function") sur Node ≥ 18
-// où `global.crypto` est l'API Web Crypto (sans randomBytes). Résultat : chaque
-// tentative de refresh de token retournait une 500 et déconnectait l'utilisateur
-// après 15 min, l'empêchant de rester connecté.
-const crypto = require('crypto');
-
-// ══════════════════════════════════════════════════════════════════════════════
-// ── SENTRY — Error tracking (doit être initialisé AVANT tout autre require) ──
-// ══════════════════════════════════════════════════════════════════════════════
-// Obtenir le DSN : https://sentry.io → New Project → Node.js → DSN
-// Ajouter dans .env : SENTRY_DSN=https://xxx@oXXX.ingest.sentry.io/YYYY
-// Sans SENTRY_DSN, Sentry est désactivé silencieusement (mode no-op).
-let Sentry = null;
-(function _initSentry() {
-  if (!process.env.SENTRY_DSN) {
-    console.warn('[Sentry] SENTRY_DSN absent — monitoring désactivé. Ajoutez SENTRY_DSN dans .env pour activer.');
-    return;
-  }
-  try {
-    Sentry = require('@sentry/node');
-    Sentry.init({
-      dsn:              process.env.SENTRY_DSN,
-      environment:      process.env.NODE_ENV || 'development',
-      release:          `nexus-market@${process.env.npm_package_version || '3.2.0'}`,
-      tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
-      // Ignorer les erreurs bénignes connues (réseau instable Sénégal)
-      ignoreErrors: [
-        'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNREFUSED',
-        'AbortError', 'FetchError',
-      ],
-      beforeSend(event, hint) {
-        // Ne pas remonter les 4xx (erreurs client) — uniquement les 5xx et exceptions
-        const status = hint?.originalException?.status ?? hint?.originalException?.statusCode;
-        if (status && status >= 400 && status < 500) return null;
-        return event;
-      },
-    });
-    console.log('[Sentry] ✅ Initialisé — environnement:', process.env.NODE_ENV || 'development');
-  } catch (e) {
-    console.warn('[Sentry] Initialisation échouée (module absent ?):', e.message);
-    console.warn('[Sentry] Exécuter : npm install @sentry/node');
-    Sentry = null;
-  }
-})();
-
-// Helper centralisé : capturer une exception avec contexte utilisateur
-function sentryCapture(err, context = {}) {
-  if (!Sentry) return;
-  Sentry.withScope(scope => {
-    if (context.userId)    scope.setUser({ id: context.userId, email: context.userEmail });
-    if (context.tag)       scope.setTag('feature', context.tag);
-    if (context.extra)     scope.setExtras(context.extra);
-    if (context.level)     scope.setLevel(context.level); // 'warning' | 'error' | 'fatal'
-    Sentry.captureException(err);
-  });
-}
 
 // ── [FIX S1-1] Guard JWT_SECRET — fail-fast au démarrage ─────────────────────
 if (!process.env.JWT_SECRET) {
@@ -151,12 +90,6 @@ const cookieParser = (req, res, next) => {
 // ─── APP ──────────────────────────────────────────────────────────────────────
 const app  = express();
 const PORT = process.env.PORT || 3000;
-
-// ── Sentry request handler — DOIT être le premier middleware ─────────────────
-// Capture automatiquement : route, méthode, user-agent, IP, breadcrumbs
-if (Sentry) app.use(Sentry.Handlers.requestHandler());
-// ── Sentry tracing — performance monitoring (optionnel) ──────────────────────
-if (Sentry) app.use(Sentry.Handlers.tracingHandler());
 
 // ─── SUPABASE (service role — accès complet, bypass RLS côté backend) ─────────
 // [FIX RAILWAY] Validation au démarrage — affiche un avertissement mais ne crashe pas
@@ -454,9 +387,6 @@ const ALLOWED_ORIGIN_PATTERNS = [
   /127\.0\.0\.1/,
   /nexus\.sn$/,
   /nexus-market/,
-  /railway\.app$/,
-  /up\.railway\.app$/,
-  /onrender\.com$/,
 ];
 const corsOptions = {
   origin: (origin, callback) => {
@@ -493,33 +423,6 @@ app.options('*', (req, res) => {
 
 // Webhook Stripe — AVANT json parser (body brut requis)
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
-
-// [NEXUS-F4] web-push VAPID [A]
-// PLACEMENT : après `const PDFDocument = require('pdfkit');`
-// ════════════════════════════════════════════════════════════════════════════════
-
-// Ajout conditionnel de web-push (évite le crash si non installé)
-let webpush = null;
-try {
-  webpush = require('web-push');
-} catch (_) {
-  console.warn('⚠️  web-push non installé — notifications push désactivées. Exécuter : npm install web-push');
-}
-
-// Configuration VAPID (au démarrage, après dotenv)
-if (webpush) {
-  const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
-  const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
-  const vapidSubject = process.env.VAPID_SUBJECT || `mailto:${process.env.ADMIN_EMAIL || 'admin@nexus.sn'}`;
-
-  if (vapidPublic && vapidPrivate) {
-    webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
-    console.log('   VAPID    : ✅ Push notifications configurées');
-  } else {
-    console.warn('   VAPID    : ⚠️  VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY manquants — push désactivées');
-    webpush = null; // désactiver pour éviter les erreurs silencieuses
-  }
-}
 
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser); // Requis pour le state anti-CSRF du GitHub OAuth
@@ -574,11 +477,7 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 const verifyToken = async (req, res, next) => {
-  // [REALTIME-MSG] Fallback token via query string pour EventSource SSE
-  const auth = req.headers.authorization ||
-    (req.path === '/api/messages/stream' && req.query.t
-      ? `Bearer ${req.query.t}`
-      : undefined);
+  const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Token manquant' });
   const token = auth.slice(7);
 
@@ -626,238 +525,16 @@ const requireRole = (...roles) => (req, res, next) => {
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const formatFCFA = (eur) => `${Math.round(eur * 655.957).toLocaleString('fr-FR')} FCFA`;
 
-// ── [JWT-REFRESH] Helper centralisé — génère et persiste un refresh token ─────
-// Appelé dans toutes les routes de login pour émettre un RT opaque (30 jours).
-// Nécessite la table `refresh_tokens` dans Supabase (voir SQL en fin de fichier).
-const RT_DURATION_SECONDS = 30 * 24 * 3600; // 30 jours
-async function _createRefreshToken(userId, req) {
-  try {
-    const token     = require('crypto').randomBytes(48).toString('hex');
-    const expiresAt = new Date(Date.now() + RT_DURATION_SECONDS * 1000).toISOString();
-    const { error } = await supabase.from('refresh_tokens').insert({
-      user_id:    userId,
-      token,
-      expires_at: expiresAt,
-      ip:         req?.ip || null,
-      user_agent: req?.headers?.['user-agent']?.slice(0, 255) || null,
-    });
-    if (error) {
-      if (error.code === '42P01') {
-        // Table absente → login fonctionne quand même, sans refresh token
-        Logger.warn('auth', 'refresh_token.table_missing',
-          'Table refresh_tokens absente — créez-la via le SQL Editor Supabase.');
-        return null;
-      }
-      throw error;
-    }
-    return { refreshToken: token, refreshExpiresIn: RT_DURATION_SECONDS };
-  } catch (e) {
-    Logger.warn('auth', 'refresh_token.create_failed', e.message);
-    return null;
-  }
-}
-
-// [NEXUS-F4] web-push VAPID [C]
-// PLACEMENT : remplace entièrement la fonction pushNotification() existante
-//             (lignes 564-573 de server.js)
-// ════════════════════════════════════════════════════════════════════════════════
-
-/**
- * Envoie une notification à un utilisateur :
- *   1. In-app  : insère dans la table `notifications` (Supabase Realtime)
- *   2. Web Push : livre via web-push à tous les abonnements push de l'utilisateur
- */
 const pushNotification = async (userId, { type, title, message, link }) => {
   if (!userId) return;
-
-  // ── 1. Notification in-app (Realtime Supabase) — toujours envoyée ───────────
   try {
     await supabase.from('notifications').insert({
-      user_id: userId, type, title, message, link: link || null, read: false,
+      user_id: userId, type, title, message, link: link || null, read: false
     });
   } catch (e) {
-    Logger.warn('notification', 'inapp.error', e.message, { meta: { userId, type } });
-  }
-
-  // ── 2. Web Push — uniquement si web-push est configuré ──────────────────────
-  if (!webpush) return;
-
-  try {
-    const { data: subs } = await supabase
-      .from('push_subscriptions')
-      .select('endpoint, p256dh, auth')
-      .eq('user_id', userId);
-
-    if (!subs || subs.length === 0) return;
-
-    const payload = JSON.stringify({
-      title,
-      body:  message,
-      icon:  'https://placehold.co/192x192/00853E/white?text=NX',
-      badge: 'https://placehold.co/72x72/00853E/white?text=NX',
-      data:  { url: link || '/', type },
-      tag:   type, // regrouper les notifications du même type
-    });
-
-    // Livrer à tous les appareils de l'utilisateur (en parallèle)
-    await Promise.allSettled(
-      subs.map(async (sub) => {
-        const subscription = {
-          endpoint: sub.endpoint,
-          keys:     { p256dh: sub.p256dh, auth: sub.auth },
-        };
-        try {
-          await webpush.sendNotification(subscription, payload);
-        } catch (pushErr) {
-          // 410 Gone = l'abonnement n'est plus valide → supprimer de la DB
-          if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
-            await supabase.from('push_subscriptions')
-              .delete()
-              .eq('user_id', userId)
-              .eq('endpoint', sub.endpoint)
-              .catch(() => {});
-            Logger.info('push', 'sub.expired', `Abonnement expiré supprimé pour ${userId}`, { meta: { endpoint: sub.endpoint.slice(0, 60) } });
-          } else {
-            Logger.warn('push', 'delivery.error', pushErr.message, { meta: { userId, type, statusCode: pushErr.statusCode } });
-          }
-        }
-      })
-    );
-  } catch (e) {
-    Logger.warn('notification', 'webpush.error', e.message, { meta: { userId, type } });
+    Logger.warn('notification', 'push.error', e.message, { meta: { userId, type } });
   }
 };
-
-
-// [NEXUS-F4] web-push VAPID [B]
-// PLACEMENT : après la déclaration de pushNotification (~ ligne 573 de server.js)
-// ════════════════════════════════════════════════════════════════════════════════
-
-// POST /api/push/subscribe — Enregistrer ou renouveler un abonnement push
-app.post('/api/push/subscribe', verifyToken, async (req, res) => {
-  const { subscription } = req.body;
-  // subscription = { endpoint, keys: { p256dh, auth } }
-  if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
-    return res.status(400).json({ error: 'Abonnement push invalide (endpoint ou clés manquants)' });
-  }
-
-  if (!webpush) {
-    return res.status(503).json({ error: 'Notifications push non configurées sur ce serveur (VAPID manquant)' });
-  }
-
-  const userAgent = req.headers['user-agent']?.slice(0, 255) || null;
-
-  try {
-    // Upsert : si l'endpoint existe déjà pour cet utilisateur, on met à jour les clés
-    const { error } = await supabase.from('push_subscriptions').upsert({
-      user_id:    req.user.id,
-      endpoint:   subscription.endpoint,
-      p256dh:     subscription.keys.p256dh,
-      auth:       subscription.keys.auth,
-      user_agent: userAgent,
-    }, { onConflict: 'user_id,endpoint' });
-
-    if (error) throw error;
-
-    // Envoyer une notification de confirmation (test de livraison)
-    const testPayload = JSON.stringify({
-      title:   '✅ Notifications activées',
-      body:    'Vous recevrez désormais les alertes NEXUS Market en temps réel.',
-      icon:    'https://placehold.co/192x192/00853E/white?text=NX',
-      data:    { url: '/' },
-    });
-
-    await webpush.sendNotification(subscription, testPayload).catch((pushErr) => {
-      // Non bloquant — l'abonnement est sauvegardé même si le test échoue
-      Logger.warn('push', 'subscribe.test.error', pushErr.message, { meta: { userId: req.user.id } });
-    });
-
-    Logger.info('push', 'subscribed', `User ${req.user.id} abonné aux push`, { userId: req.user.id, meta: { endpoint: subscription.endpoint.slice(0, 60) } });
-    res.json({ ok: true, message: 'Abonnement push enregistré' });
-
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// DELETE /api/push/subscribe — Se désabonner des notifications push
-app.delete('/api/push/subscribe', verifyToken, async (req, res) => {
-  const { endpoint } = req.body;
-  if (!endpoint) return res.status(400).json({ error: 'Endpoint requis' });
-  try {
-    await supabase.from('push_subscriptions')
-      .delete()
-      .eq('user_id', req.user.id)
-      .eq('endpoint', endpoint);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/push/vapid-key — Exposer la clé publique VAPID au frontend
-app.get('/api/push/vapid-key', (req, res) => {
-  const key = process.env.VAPID_PUBLIC_KEY;
-  if (!key) return res.status(503).json({ error: 'VAPID non configuré' });
-  res.json({ publicKey: key });
-});
-
-// [NEXUS-F2] LoyaltyWidget + awardLoyaltyPoints [A]
-// PLACEMENT : après la fonction pushNotification (~ ligne 573 de server.js)
-// ════════════════════════════════════════════════════════════════════════════════
-
-/**
- * Attribue des points de fidélité à un acheteur après une commande réussie.
- * @param {string} userId      - UUID de l'acheteur
- * @param {number} orderTotal  - Montant total de la commande EN EUROS (HT, hors livraison)
- * @param {string} orderId     - UUID de la commande (pour les logs)
- */
-async function awardLoyaltyPoints(userId, orderTotal, orderId) {
-  if (!userId || !orderTotal || orderTotal <= 0) return;
-
-  // 10 points par euro commandé (arrondi à l'entier inférieur)
-  const POINTS_PER_EUR = 10;
-  const delta = Math.floor(orderTotal * POINTS_PER_EUR);
-  if (delta <= 0) return;
-
-  try {
-    const { data: existing } = await supabase
-      .from('loyalty_points')
-      .select('user_id, points, total_earned, total_redeemed')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (existing) {
-      await supabase.from('loyalty_points').update({
-        points:        existing.points + delta,
-        total_earned:  (existing.total_earned  || 0) + delta,
-        updated_at:    new Date().toISOString(),
-      }).eq('user_id', userId);
-    } else {
-      await supabase.from('loyalty_points').insert({
-        user_id:       userId,
-        points:        delta,
-        total_earned:  delta,
-        total_redeemed: 0,
-      });
-    }
-
-    // Notification in-app
-    await pushNotification(userId, {
-      type:    'system',
-      title:   `⭐ +${delta.toLocaleString('fr-FR')} points de fidélité`,
-      message: `Merci pour votre commande ! Vous avez gagné ${delta} pts.`,
-      link:    '/loyalty',
-    });
-
-    Logger.info('loyalty', 'auto-award', `+${delta} pts pour user ${userId} (commande ${orderId})`, {
-      meta: { userId, delta, orderTotal, orderId },
-    });
-  } catch (err) {
-    // Non bloquant — la commande est déjà enregistrée
-    Logger.warn('loyalty', 'auto-award.error', err.message, { meta: { userId, orderId } });
-  }
-}
 
 // ─── SOCIAL AUTH ROUTE ───────────────────────────────────────────────────────
 // GitHub OAuth est géré entièrement par Supabase côté client.
@@ -918,126 +595,39 @@ app.post('/api/email/test', verifyToken, requireRole('admin'), async (req, res) 
   res.json({ ok: sent, to: target, provider });
 });
 
-// GET /api/email/logs — Journaux emails depuis server_logs Supabase (admin)
-// Remplace la lecture localStorage côté frontend : toutes les données sont en DB.
-app.get('/api/email/logs', verifyToken, requireRole('admin'), async (req, res) => {
-  try {
-    const { limit = 100, offset = 0, from, to } = req.query;
-    let q = supabase
-      .from('server_logs')
-      .select('*', { count: 'exact' })
-      .eq('category', 'email')
-      .order('ts', { ascending: false })
-      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1);
-    if (from) q = q.gte('ts', from);
-    if (to)   q = q.lte('ts', to);
-    const { data, error, count } = await q;
-    if (error) throw error;
-    // Normalise au format attendu par le frontend (champs id, to, subject, templateId, sentAt, status, provider)
-    const logs = (data || []).map(l => ({
-      id:         l.id || l.ts,
-      to:         l.meta?.to || l.user_email || '—',
-      subject:    l.meta?.subject || l.message?.replace(/^Email (envoyé|non envoyé)[^à]*à[^:]*: ?/i, '') || l.message || '—',
-      templateId: l.action?.replace(/^(sent\.|smtp\.|resend\.)/, '') || l.action || '—',
-      sentAt:     l.ts,
-      status:     l.level === 'error' ? 'error' : l.action === 'not_sent' ? 'simulation' : 'sent',
-      provider:   l.action?.includes('resend') ? 'resend' : l.action?.includes('smtp') ? 'smtp' : 'simulation',
-    }));
-    res.json({ logs, total: count || 0 });
-  } catch (e) {
-    Logger.error('email', 'logs.error', e.message, { userId: req.user?.id });
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
 // ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
 app.post('/api/auth/register', authLimiter, async (req, res) => {
-  const {
-    name, email, password, role,
-    // Champs vendeur basiques
-    shopName, shopCategory, phone,
-    // Champs vendeur étendus (formulaire multi-étapes)
-    owner_name, ninea, rc, address, structure_type,
-    payment_method, orange_phone, wave_phone, iban, bank_name, shop_desc,
-  } = req.body;
+  const { name, email, password, role, shopName, shopCategory, phone } = req.body;
   if (!name || !email || !password) return res.status(400).json({ error: 'Champs requis manquants' });
   if (password.length < 6) return res.status(400).json({ error: 'Mot de passe trop court (min 6 caractères)' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Email invalide' });
 
   try {
-    // Vérifier dans profiles ET pending_vendors
-    const [{ data: existingProfile }, { data: existingPending }] = await Promise.all([
-      supabase.from('profiles').select('id').eq('email', email).maybeSingle(),
-      supabase.from('pending_vendors').select('id').eq('email', email).maybeSingle(),
-    ]);
-    if (existingProfile) return res.status(409).json({ error: 'Cet email est déjà utilisé' });
-    if (existingPending) return res.status(409).json({ error: 'Une demande est déjà en attente pour cet email' });
+    const { data: existing } = await supabase.from('profiles').select('id').eq('email', email).maybeSingle();
+    if (existing) return res.status(409).json({ error: 'Cet email est déjà utilisé' });
 
     const hashedPw = await bcrypt.hash(password, 10);
-    const resolvedName = owner_name || name;
-    const resolvedShop = shopName || name;
-    const avatar = resolvedName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+    const avatar   = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 
     if (role === 'vendor') {
-      if (!resolvedShop) return res.status(400).json({ error: 'Nom de boutique requis' });
-
-      // Construire le payload en acceptant tous les champs du formulaire multi-étapes
-      const vendorPayload = {
-        name:           resolvedShop,
-        owner_name:     resolvedName,
-        email,
-        password_hash:  hashedPw,
-        category:       shopCategory || 'Général',
-        avatar,
-        status:         'pending',
-        // Champs étendus (peuvent être null si non fournis)
-        phone:          phone          || null,
-        ninea:          ninea          || null,
-        rc:             rc             || null,
-        address:        address        || null,
-        structure_type: structure_type || null,
-        payment_method: payment_method || null,
-        orange_phone:   orange_phone   || null,
-        wave_phone:     wave_phone     || null,
-        iban:           iban           || null,
-        bank_name:      bank_name      || null,
-        shop_desc:      shop_desc      || null,
-      };
-
-      const { data, error } = await supabase.from('pending_vendors')
-        .insert(vendorPayload).select().single();
-
+      if (!shopName) return res.status(400).json({ error: 'Nom de boutique requis' });
+      const { data, error } = await supabase.from('pending_vendors').insert({
+        name: shopName, owner_name: name, email,
+        password_hash: hashedPw,
+        category: shopCategory || 'Général',
+        avatar, status: 'pending',
+      }).select().single();
       if (error) {
         Logger.warn('auth', 'register.vendor.error', error.message, { meta: { email }, ip: req.ip });
         if (error.code === '23505') return res.status(409).json({ error: 'Cet email est déjà en attente' });
-        // Si la table ne contient pas tous les champs, réessayer avec le payload minimal
-        const minimalPayload = {
-          name: resolvedShop, owner_name: resolvedName, email,
-          password_hash: hashedPw, category: shopCategory || 'Général',
-          avatar, status: 'pending',
-          phone: phone || null,
-        };
-        const { data: data2, error: error2 } = await supabase.from('pending_vendors')
-          .insert(minimalPayload).select().single();
-        if (error2) {
-          if (error2.code === '23505') return res.status(409).json({ error: 'Cet email est déjà en attente' });
-          throw error2;
-        }
-        Logger.info('auth', 'register.vendor', `Inscription vendeur (payload minimal) : ${resolvedShop}`, { userId: data2.id, ip: req.ip });
-        const { data: admins2 } = await supabase.from('profiles').select('id').eq('role', 'admin');
-        for (const admin of (admins2 || [])) {
-          await pushNotification(admin.id, { type: 'vendor', title: '🏪 Nouvelle demande vendeur', message: `${resolvedShop} (${resolvedName})`, link: '/admin/vendors' }).catch(() => {});
-        }
-        return res.json({ message: 'Demande envoyée — validation sous 48h', pending: true, id: data2.id });
+        throw error;
       }
-
-      Logger.info('auth', 'register.vendor', `Inscription vendeur : ${resolvedShop}`, { userId: data.id, ip: req.ip });
       const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
       for (const admin of (admins || [])) {
-        await pushNotification(admin.id, { type: 'vendor', title: '🏪 Nouvelle demande vendeur', message: `${resolvedShop} (${resolvedName})`, link: '/admin/vendors' }).catch(() => {});
+        await pushNotification(admin.id, { type: 'vendor', title: '🏪 Nouvelle demande vendeur', message: `${shopName} (${name})`, link: '/admin/vendors' });
       }
-      return res.json({ message: 'Demande envoyée — validation sous 48h', pending: true, id: data.id });
+      return res.json({ message: 'Demande envoyée — validation sous 48h', pending: true });
     }
 
     // Gestion buyer_pro via route dédiée /api/b2b/register
@@ -1079,19 +669,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       }
     }
 
-    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
     const token = jwt.sign({ id: data.id, role: 'buyer', name, email }, process.env.JWT_SECRET, {
-      expiresIn
+      expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') // 7 jours par défaut
     });
     const { password_hash, ...safeUser } = data;
-    // [JWT-REFRESH] Créer et retourner un refresh token
-    let refreshToken = null, refreshExpiresIn = null;
-    try {
-      const rt = await _createRefreshToken(data.id, req);
-      refreshToken = rt?.refreshToken ?? null;
-      refreshExpiresIn = rt?.refreshExpiresIn ?? null;
-    } catch (_) {}
-    res.json({ token, accessToken: token, user: safeUser, expiresIn, refreshToken, refreshExpiresIn });
+    res.json({ token, user: safeUser });
   } catch (e) {
     Logger.error('auth', 'register.error', e.message, { meta: { email }, ip: req.ip });
     res.status(500).json({ error: 'Erreur serveur' });
@@ -1111,18 +693,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       if (user.role === 'vendor' && user.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur en attente de validation' });
       if (user.status === 'banned') return res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' });
       supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id).then(() => {}); // [FIX S1-2] fire-and-forget
-      const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
-      const token = jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn });
+      const token = jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
       const { password_hash, ...safeUser } = user;
-      // [JWT-REFRESH] Créer et retourner un refresh token
-      let refreshToken = null, refreshExpiresIn = null;
-      try {
-        const rt = await _createRefreshToken(user.id, req);
-        refreshToken = rt?.refreshToken ?? null;
-        refreshExpiresIn = rt?.refreshExpiresIn ?? null;
-      } catch (_) {}
       Logger.info('auth', 'login', `Login OK: ${email} (${user.role})`, { userId: user.id, userEmail: email, userRole: user.role, ip: req.ip });
-      return res.json({ token, accessToken: token, user: safeUser, expiresIn, refreshToken, refreshExpiresIn });
+      return res.json({ token, user: safeUser, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
     }
 
     // Chemin 1b : vendeur en attente de validation
@@ -1152,18 +726,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
     if (profile.status === 'banned') return res.status(403).json({ error: 'Compte suspendu' });
     supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).then(() => {}); // [FIX S1-2] fire-and-forget
-    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
-    const token = jwt.sign({ id: profile.id, role: profile.role, name: profile.name, email: profile.email }, process.env.JWT_SECRET, { expiresIn });
+    const token = jwt.sign({ id: profile.id, role: profile.role, name: profile.name, email: profile.email }, process.env.JWT_SECRET, { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
     const { password_hash: _ph, ...safeProfile } = profile;
-    // [JWT-REFRESH] Créer et retourner un refresh token
-    let refreshToken = null, refreshExpiresIn = null;
-    try {
-      const rt = await _createRefreshToken(profile.id, req);
-      refreshToken = rt?.refreshToken ?? null;
-      refreshExpiresIn = rt?.refreshExpiresIn ?? null;
-    } catch (_) {}
     Logger.info('auth', 'login.supabase_fallback', `Login Supabase OK: ${email} (${profile.role})`, { userId: profile.id, userEmail: email, userRole: profile.role, ip: req.ip });
-    return res.json({ token, accessToken: token, user: safeProfile, expiresIn, refreshToken, refreshExpiresIn, supabase_user: true });
+    return res.json({ token, user: safeProfile, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800'), supabase_user: true }); // [FIX] indique au frontend que Supabase Auth peut être utilisé directement
 
   } catch (e) {
     Logger.error('auth', 'login.error', e.message, { meta: { email }, ip: req.ip });
@@ -1353,16 +919,13 @@ app.get('/api/auth/github/callback', async (req, res) => {
         profile = created;
 
         // Notification admin pour nouveau compte GitHub
-        const { data: ghAdmins } = await supabase.from('profiles').select('id').eq('role', 'admin');
-        for (const admin of (ghAdmins || [])) {
-          await supabase.from('notifications').insert({
-            user_id: admin.id,
-            type: 'system',
-            title: '🐙 Nouveau membre via GitHub',
-            message: `${ghName} (${primaryEmail}) vient de créer un compte via GitHub OAuth.`,
-            read: false,
-          }).catch(() => {});
-        }
+        await supabase.from('notifications').insert({
+          user_id: 'admin',
+          type: 'system',
+          title: '🐙 Nouveau membre via GitHub',
+          message: `${ghName} (${primaryEmail}) vient de créer un compte via GitHub OAuth.`,
+          read: false,
+        });
       }
     }
 
@@ -1376,8 +939,8 @@ app.get('/api/auth/github/callback', async (req, res) => {
       try { await supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id); } catch(_) {}
     }
 
-    // 4. Émettre JWT NEXUS + Refresh Token
-    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
+    // 4. Émettre JWT NEXUS
+    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800');
     const token = jwt.sign(
       { id: profile.id, role: profile.role, name: profile.name, email: profile.email, github: true },
       process.env.JWT_SECRET,
@@ -1390,15 +953,8 @@ app.get('/api/auth/github/callback', async (req, res) => {
 
     // 5. [FIX S2-6] Code éphémère (60s, usage unique) — le JWT ne transite plus dans l'URL
     const { password_hash, ...safeProfile } = profile;
-    // [JWT-REFRESH] Créer un refresh token pour GitHub OAuth
-    let githubRt = null, githubRtExp = null;
-    try {
-      const rt = await _createRefreshToken(profile.id, req);
-      githubRt = rt?.refreshToken ?? null;
-      githubRtExp = rt.refreshExpiresIn;
-    } catch (_) {}
     const exchangeCode = require('crypto').randomBytes(32).toString('hex');
-    _githubExchangeMap.set(exchangeCode, { token, user: safeProfile, isNew: isNewUser, expiresIn, refreshToken: githubRt, refreshExpiresIn: githubRtExp, expiresAt: Date.now() + 60_000 });
+    _githubExchangeMap.set(exchangeCode, { token, user: safeProfile, isNew: isNewUser, expiresIn, expiresAt: Date.now() + 60_000 });
     setTimeout(() => _githubExchangeMap.delete(exchangeCode), 65_000);
     const redirectUrl = `${frontendUrl}?nexus_github_code=${exchangeCode}`;
     return res.redirect(redirectUrl);
@@ -1439,34 +995,25 @@ app.patch('/api/auth/github/role', verifyToken, async (req, res) => {
         }, { onConflict: 'id' });
       } catch(_) {}
 
-      const { data: ghVendorAdmins } = await supabase.from('profiles').select('id').eq('role', 'admin');
-      for (const admin of (ghVendorAdmins || [])) {
-        await supabase.from('notifications').insert({
-          user_id: admin.id,
-          type: 'system',
-          title: '🏪 Demande vendeur (GitHub)',
-          message: `${data.name} (${data.email}) souhaite devenir vendeur. Compte créé via GitHub OAuth.`,
-          read: false,
-        }).catch(() => {});
-      }
+      await supabase.from('notifications').insert({
+        user_id: 'admin',
+        type: 'system',
+        title: '🏪 Demande vendeur (GitHub)',
+        message: `${data.name} (${data.email}) souhaite devenir vendeur. Compte créé via GitHub OAuth.`,
+        read: false,
+      });
     }
 
-    // Émettre un nouveau JWT avec le bon rôle + [JWT-REFRESH] refresh token
-    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
+    // Émettre un nouveau JWT avec le bon rôle
+    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800');
     const newToken = jwt.sign(
       { id: data.id, role: data.role, name: data.name, email: data.email, github: true },
       process.env.JWT_SECRET,
       { expiresIn }
     );
-    let refreshToken = null, refreshExpiresIn = null;
-    try {
-      const rt = await _createRefreshToken(data.id, req);
-      refreshToken = rt?.refreshToken ?? null;
-      refreshExpiresIn = rt?.refreshExpiresIn ?? null;
-    } catch (_) {}
 
     Logger.info('auth', 'github.role_set', `Rôle GitHub user défini: ${data.role}`, { userId: data.id });
-    res.json({ ok: true, token: newToken, accessToken: newToken, user: data, expiresIn, refreshToken, refreshExpiresIn });
+    res.json({ ok: true, token: newToken, user: data, expiresIn });
 
   } catch (e) {
     Logger.error('auth', 'github.role_error', e.message, { userId: req.user.id });
@@ -1575,20 +1122,11 @@ app.post('/api/auth/sync-profile', verifyToken, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
-// POST /api/auth/logout — invalide le cache profil + révoque le refresh token en base
+// POST /api/auth/logout — invalide le cache profil pour ce token
 app.post('/api/auth/logout', async (req, res) => {
   const auth = req.headers.authorization;
   if (auth?.startsWith('Bearer ')) {
     _profileCache.delete(auth.slice(7));
-  }
-  // [JWT-REFRESH] Révoquer le refresh token côté serveur pour invalider la session
-  const { refreshToken } = req.body || {};
-  if (refreshToken) {
-    await supabase
-      .from('refresh_tokens')
-      .update({ revoked_at: new Date().toISOString() })
-      .eq('token', refreshToken)
-      .catch((e) => Logger.warn('auth', 'logout.revoke.error', e.message));
   }
   res.json({ message: 'Déconnecté' });
 });
@@ -2068,7 +1606,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       // Discount calculé côté serveur — le client ne peut pas gonfler la remise
       serverDiscount = Math.round(parseFloat(subtotal || total) * (coupon.discount / 100) * 100) / 100;
       // Incrémenter used_count (non-bloquant)
-      supabase.from('coupons').rpc('increment_coupon_usage', { coupon_id: coupon.id })
+      supabase.from('coupons').update({ used_count: (coupon.used_count || 0) + 1 })
         .eq('id', coupon.id);
     }
 
@@ -2144,15 +1682,7 @@ app.post('/api/orders', verifyToken, async (req, res) => {
       throw orderErr;
     }
 
-    
-    // [NEXUS-F2] LoyaltyWidget + awardLoyaltyPoints [C]
-    // Attribution automatique des points de fidélité
-    if (order && req.user.id) {
-      awardLoyaltyPoints(req.user.id, total).catch(
-        e => Logger.warn('loyalty', 'award.error', e.message)
-      );
-    }
-// ── Étape 3 : Notifications ───────────────────────────────────────────
+    // ── Étape 3 : Notifications ───────────────────────────────────────────
     Logger.info('order', 'created',
       `Commande #${order.id} créée — ${formatFCFA(total)} (stock réservé)`,
       { userId: req.user.id, userEmail: req.user.email, meta: { orderId: order.id, total, vendorId } }
@@ -2203,124 +1733,39 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     Logger.error('order', 'create.error', e.message, {
       userId: req.user.id, meta: { vendorId, total }
     });
-    sentryCapture(e, { tag: 'order-create', userId: req.user.id, level: 'error', extra: { vendorId, total } });
     res.status(500).json({ error: 'Erreur lors de la création de la commande' });
   }
 });
 
 app.patch('/api/orders/:id/status', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
-  const { status, trackingNumber, vendorNote, cancelReason } = req.body;
+  const { status, trackingNumber, vendorNote } = req.body;
   const validStatuses = ['pending_payment','processing','in_transit','delivered','cancelled'];
   if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Statut invalide' });
   try {
-    const { data: order } = await supabase
-      .from('orders')
-      .select('id, vendor_id, buyer_id, buyer_email, buyer_name, vendor_name, status, products, stock_reserved, tracking_number, vendor_note, payment_method, stripe_payment_id, total, refund_status')
-      .eq('id', req.params.id).single();
+    const { data: order } = await supabase.from('orders').select('id, vendor_id, buyer_id, buyer_email, buyer_name, vendor_name, status, products, stock_reserved, tracking_number, vendor_note, payment_method').eq('id', req.params.id).single();
     if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    if (req.user.role === 'vendor' && order.vendor_id !== req.user.id)
-      return res.status(403).json({ error: 'Non autorisé' });
+    if (req.user.role === 'vendor' && order.vendor_id !== req.user.id) return res.status(403).json({ error: 'Non autorisé' });
 
     const updates = { status };
-    if (trackingNumber)        updates.tracking_number = trackingNumber;
-    if (vendorNote)            updates.vendor_note     = vendorNote;
-    if (status === 'processing') updates.processing_at = new Date().toISOString();
-    if (status === 'in_transit') updates.in_transit_at = new Date().toISOString();
-    if (status === 'delivered')  updates.delivered_at  = new Date().toISOString();
-    if (status === 'cancelled')  updates.cancelled_at  = new Date().toISOString();
-    if (cancelReason)            updates.cancel_reason = cancelReason;
-
-    // ── Remboursement Stripe automatique sur annulation ──────────────────────
-    let stripeRefundResult = null;
-    if (status === 'cancelled' && order.stripe_payment_id && order.refund_status !== 'refunded') {
-      try {
-        stripeRefundResult = await stripe.refunds.create({
-          payment_intent: order.stripe_payment_id,
-          reason:         'requested_by_customer',
-          metadata: {
-            order_id:     order.id,
-            cancelled_by: req.user.id,
-            source:       'admin_cancel',
-          },
-        });
-        updates.refund_status    = 'refunded';
-        updates.refund_id        = stripeRefundResult.id;
-        updates.refund_amount    = stripeRefundResult.amount / 100; // centimes → euros
-        updates.refunded_at      = new Date().toISOString();
-        Logger.info('refund', 'stripe.success',
-          `Remboursement Stripe ${stripeRefundResult.id} — ${order.total}€ — commande ${order.id}`,
-          { userId: req.user.id, meta: { refundId: stripeRefundResult.id, orderId: order.id } }
-        );
-      } catch (stripeErr) {
-        // Ne pas bloquer l'annulation si Stripe échoue — noter l'erreur
-        updates.refund_status = 'failed';
-        updates.refund_error  = stripeErr.message;
-        Logger.error('refund', 'stripe.error', stripeErr.message,
-          { userId: req.user.id, meta: { orderId: order.id, stripePaymentId: order.stripe_payment_id } }
-        );
-      }
-    } else if (status === 'cancelled' && !order.stripe_payment_id) {
-      // Paiement Mobile Money ou espèces — remboursement manuel
-      updates.refund_status = 'manual_pending';
-    }
-
-    // ── Re-crédit du stock sur annulation ─────────────────────────────────────
-    if (status === 'cancelled' && order.stock_reserved) {
-      const stockItems = (order.products || []).map(p => ({
-        product_id: p.id, qty: p.quantity || p.qty || 1,
-      }));
-      if (stockItems.length > 0) {
-        await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) })
-          .catch(e => Logger.warn('order', 'cancel.stock_release', e.message));
-        await supabase.from('orders').update({ stock_reserved: false }).eq('id', order.id);
-      }
-    }
+    if (trackingNumber)                   updates.tracking_number = trackingNumber;
+    if (vendorNote)                        updates.vendor_note = vendorNote;
+    if (status === 'processing')           updates.processing_at = new Date().toISOString();
+    if (status === 'in_transit')           updates.in_transit_at = new Date().toISOString();
+    if (status === 'delivered')            updates.delivered_at  = new Date().toISOString();
 
     const { data, error } = await supabase.from('orders').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
 
-    const statusLabels = {
-      processing: '⚙️ Commande en préparation',
-      in_transit: '🚚 Commande en livraison',
-      delivered:  '📦 Commande livrée',
-      cancelled:  '❌ Commande annulée',
-    };
-    Logger.info('order', 'status.updated', `Commande #${req.params.id} → ${status}`,
-      { userId: req.user.id, userRole: req.user.role, meta: { orderId: req.params.id, status } }
-    );
+    const statusLabels = { processing: '⚙️ Commande en préparation', in_transit: '🚚 Commande en livraison', delivered: '📦 Commande livrée', cancelled: '❌ Commande annulée' };
+    Logger.info('order', 'status.updated', `Commande #${req.params.id} → ${status}`, { userId: req.user.id, userRole: req.user.role, meta: { orderId: req.params.id, status } });
     if (statusLabels[status]) {
-      const notifMsg = status === 'cancelled' && stripeRefundResult
-        ? `Commande #${order.id.slice(-6)} annulée. Remboursement de ${order.total}€ initié (3-5 jours ouvrés).`
-        : status === 'cancelled' && updates.refund_status === 'manual_pending'
-          ? `Commande #${order.id.slice(-6)} annulée. Remboursement manuel à traiter (Mobile Money / espèces).`
-          : `Commande #${order.id.slice(-6)}`;
-      await pushNotification(order.buyer_id, {
-        type: 'order', title: statusLabels[status], message: notifMsg, link: `/orders/${order.id}`,
-      });
+      await pushNotification(order.buyer_id, { type: 'order', title: statusLabels[status], message: `Commande #${order.id.slice(-6)}`, link: `/orders/${order.id}` });
       if (status === 'delivered') {
         const { subject, html } = emailTemplates.orderConfirmation({ ...order, tracking_number: trackingNumber });
         await sendEmail({ to: order.buyer_email, subject, html });
       }
-      if (status === 'cancelled' && stripeRefundResult) {
-        await sendEmail({
-          to: order.buyer_email,
-          subject: `[NEXUS] Remboursement initié pour la commande #${order.id.slice(-6)}`,
-          html: `<p>Bonjour ${order.buyer_name},</p>
-                 <p>Votre commande <strong>#${order.id.slice(-6)}</strong> a été annulée.</p>
-                 <p>Un remboursement de <strong>${order.total}€</strong> a été initié sur votre moyen de paiement original.
-                    Il apparaîtra sous <strong>3 à 5 jours ouvrés</strong> selon votre banque.</p>
-                 <p>Référence remboursement : <code>${stripeRefundResult.id}</code></p>
-                 <p>L'équipe NEXUS</p>`,
-        }).catch(() => {});
-      }
     }
-
-    res.json({
-      ...data,
-      _refund: stripeRefundResult
-        ? { id: stripeRefundResult.id, amount: stripeRefundResult.amount / 100, status: stripeRefundResult.status }
-        : null,
-    });
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2540,707 +1985,57 @@ async function handleStripeWebhook(req, res) {
     res.json({ received: true });
   } catch (e) {
     Logger.error('payment', 'webhook.processing_error', e.message, { meta: { stack: e.stack?.slice(0,200) } });
-    sentryCapture(e, { tag: 'stripe-webhook', level: 'error', extra: { eventType: event?.type } });
     res.status(500).json({ error: 'Erreur traitement webhook' });
   }
 }
 
 // ─── MESSAGES ────────────────────────────────────────────────────────────────
-
-// [NEXUS-MSG-v4] Routes messages v4.0.0
-// ══════════════════════════════════════════════════════════════════════════════
-// NEXUS Market — Messagerie Backend v4.0.0
-// Routes Express à ajouter dans server.js
-//
-// INTÉGRATION :
-//   Remplacer les routes /api/messages existantes (lignes ~1993-2038) par ce fichier.
-//   Coller le contenu entre les routes existantes et ─── NOTIFICATIONS ───
-//
-// SQL SUPABASE À EXÉCUTER (une seule fois) :
-//   → Voir section "SQL MIGRATION" en bas de ce fichier
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ══════════════════════════════════════════════════════════════════════════════
-// STORE DE FRAPPE (in-memory, sans base de données)
-// Stocke l'état "en train d'écrire" avec TTL de 4 secondes.
-// Sur Render/Railway avec multiple instances, utiliser Redis à la place.
-// Pour usage mono-instance (recommandé), cette approche est suffisante.
-// ══════════════════════════════════════════════════════════════════════════════
-const _typingStore = new Map(); // convId → { userId, userName, updatedAt }
-const TYPING_TTL_MS = 4000;
-
-// Nettoyage périodique des entrées expirées (toutes les 10 secondes)
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, val] of _typingStore.entries()) {
-    if (now - val.updatedAt > TYPING_TTL_MS * 2) _typingStore.delete(key);
-  }
-}, 10000);
-
-// ══════════════════════════════════════════════════════════════════════════════
-// GET /api/messages/conversations
-// Retourne toutes les conversations de l'utilisateur avec métadonnées :
-//   - Dernier message
-//   - Compte de messages non lus
-//   - Profil de l'interlocuteur
-// Optimisé : une seule requête Supabase via GROUP BY (RPC Postgres)
-// ══════════════════════════════════════════════════════════════════════════════
-// Map<userId, Set<Response>> — un user peut avoir plusieurs onglets connectés
-const _sseClients = new Map();
-
-function _sseSend(userId, event, payload) {
-  const clients = _sseClients.get(userId);
-  if (!clients || clients.size === 0) return 0;
-  const data = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
-  let sent = 0;
-  for (const res of clients) {
-    try {
-      res.write(data);
-      sent++;
-    } catch {
-      clients.delete(res);
-    }
-  }
-  return sent;
-}
-
-function _sseRegister(userId, res) {
-  if (!_sseClients.has(userId)) _sseClients.set(userId, new Set());
-  _sseClients.get(userId).add(res);
-}
-
-function _sseUnregister(userId, res) {
-  const clients = _sseClients.get(userId);
-  if (clients) {
-    clients.delete(res);
-    if (clients.size === 0) _sseClients.delete(userId);
-  }
-}
-
-// ── [REALTIME-MSG] GET /api/messages/stream ───────────────────────────────────
-// Connexion SSE persistante. Le client l'ouvre une fois à la connexion et reçoit
-// les nouveaux messages en temps réel sans polling.
-//
-// Réponse : text/event-stream (connexion maintenue ouverte)
-// Events émis :
-//   event: connected          — confirmation de connexion (avec userId)
-//   event: new_message        — nouveau message reçu (payload = objet message complet)
-//   event: message_read       — messages marqués lus (payload = { fromId, readAt })
-//   event: typing             — indicateur frappe (payload = { convId, userId, isTyping })
-//   event: heartbeat          — keep-alive toutes les 25s
-//
-// Sécurité :
-//   - Authentification JWT via verifyToken (identique aux autres routes)
-//   - Filtre : chaque connexion ne reçoit que les messages adressés à son userId
-//   - Timeout : fermeture propre si le client déconnecte (req.on('close'))
-//   - Max 10 connexions simultanées par userId (anti-abus)
-//
-// ── [SUPABASE REALTIME] SQL requis pour postgres_changes (<100ms latence) ─────
-// 1. Dashboard Supabase → Database → Replication → cocher la table 'messages'
-//    OU via SQL Editor :
-//      ALTER PUBLICATION supabase_realtime ADD TABLE messages;
-//
-// 2. RLS obligatoire pour que Realtime filtre par utilisateur :
-//      ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
-//      CREATE POLICY "realtime_messages_select" ON messages
-//        FOR SELECT USING (auth.uid() = to_id OR auth.uid() = from_id);
-//
-// 3. Même chose pour typing_status si la table existe :
-//      ALTER PUBLICATION supabase_realtime ADD TABLE typing_status;
-// ─────────────────────────────────────────────────────────────────────────────
-app.get('/api/messages/stream', verifyToken, (req, res) => {
-  const userId = req.user.id;
-
-  // Limite de connexions par user (anti-abus / fuites mémoire)
-  const existing = _sseClients.get(userId);
-  if (existing && existing.size >= 10) {
-    return res.status(429).json({ error: 'Trop de connexions SSE simultanées' });
-  }
-
-  // Headers SSE standards + désactivation des buffers intermediaires
-  res.set({
-    'Content-Type':  'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    'Connection':    'keep-alive',
-    'X-Accel-Buffering': 'no',     // Nginx : ne pas bufferiser
-    'Access-Control-Allow-Origin': req.headers.origin || '*',
-  });
-  res.flushHeaders();
-
-  // Confirmer la connexion
-  res.write(`event: connected\ndata: ${JSON.stringify({ userId, ts: Date.now() })}\n\n`);
-
-  // Enregistrer le client
-  _sseRegister(userId, res);
-  Logger.info('sse', 'connect', `SSE client connecté : ${req.user.name}`, { userId });
-
-  // Heartbeat toutes les 25s (évite les timeouts proxy/CDN à 30s)
-  const heartbeatTimer = setInterval(() => {
-    try {
-      res.write(`event: heartbeat\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
-    } catch {
-      clearInterval(heartbeatTimer);
-    }
-  }, 25000);
-
-  // Nettoyage à la déconnexion du client
-  req.on('close', () => {
-    clearInterval(heartbeatTimer);
-    _sseUnregister(userId, res);
-    Logger.info('sse', 'disconnect', `SSE client déconnecté : ${req.user.name}`, { userId });
-  });
-});
-
-app.get('/api/messages/conversations', verifyToken, async (req, res) => {
-  try {
-    const uid = req.user.id;
-
-    // Récupérer tous les messages impliquant l'utilisateur
-    const { data: msgs, error } = await supabase
-      .from('messages')
-      .select('id, from_id, from_name, to_id, to_name, text, read, read_at, created_at')
-      .or(`from_id.eq.${uid},to_id.eq.${uid}`)
-      .is('deleted_for', null) // Exclure les messages supprimés globalement
-      .order('created_at', { ascending: false })
-      .limit(500);
-
-    if (error) throw error;
-
-    // Construire la carte des conversations côté serveur
-    const convMap = new Map();
-    const partnerIds = new Set();
-
-    for (const m of (msgs || [])) {
-      const otherId   = m.from_id === uid ? m.to_id   : m.from_id;
-      const otherName = m.from_id === uid ? m.to_name : m.from_name;
-      const cid = [uid, otherId].sort().join('::');
-
-      if (!convMap.has(cid)) {
-        convMap.set(cid, { id: cid, otherId, otherName, lastMessage: m, unread: 0 });
-        partnerIds.add(otherId);
-      }
-
-      // Compter les non-lus reçus
-      if (m.to_id === uid && !m.read) {
-        convMap.get(cid).unread++;
-      }
-    }
-
-    // Récupérer les profils des interlocuteurs en une seule requête
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, name, email, role, avatar')
-      .in('id', [...partnerIds]);
-
-    const profileMap = {};
-    (profiles || []).forEach(p => { profileMap[p.id] = p; });
-
-    const conversations = [...convMap.values()]
-      .sort((a, b) => new Date(b.lastMessage.created_at) - new Date(a.lastMessage.created_at))
-      .map(c => ({ ...c, profile: profileMap[c.otherId] || null }));
-
-    res.json(conversations);
-  } catch (e) {
-    Logger.error('messages', 'conversations.error', e.message, { userId: req.user.id });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// GET /api/messages
-// Récupère les messages d'une conversation (avec pagination par curseur).
-//
-// Query params :
-//   with   (string) : userId de l'interlocuteur pour filtrer par conversation
-//   after  (ISO)    : Curseur — ne charger que les messages après cette date
-//   before (ISO)    : Curseur inverse — pour charger l'historique paginé
-//   limit  (int)    : Nombre de messages max (défaut: 50, max: 100)
-// ══════════════════════════════════════════════════════════════════════════════
 app.get('/api/messages', verifyToken, async (req, res) => {
   try {
-    const uid = req.user.id;
-    const { with: withUser, after, before, limit: rawLimit } = req.query;
-    const limit = Math.min(parseInt(rawLimit) || 50, 100);
-
-    let query = supabase
-      .from('messages')
-      .select(`
-        id, from_id, from_name, to_id, to_name, text, read, read_at,
-        reply_to_id, reply_to_text, attachments, reactions, deleted_for, created_at
-      `);
-
-    // Filtrer par conversation ou par utilisateur
+    const { with: withUser } = req.query;
+    let query = supabase.from('messages').select('id, from_id, from_name, to_id, to_name, text, read, created_at');
     if (withUser) {
-      query = query.or(
-        `and(from_id.eq.${uid},to_id.eq.${withUser}),` +
-        `and(from_id.eq.${withUser},to_id.eq.${uid})`
-      );
+      query = query.or(`and(from_id.eq.${req.user.id},to_id.eq.${withUser}),and(from_id.eq.${withUser},to_id.eq.${req.user.id})`);
     } else {
-      query = query.or(`from_id.eq.${uid},to_id.eq.${uid}`);
+      query = query.or(`from_id.eq.${req.user.id},to_id.eq.${req.user.id}`);
     }
-
-    // Curseur temporel
-    if (after) {
-      query = query.gt('created_at', after);
-      query = query.order('created_at', { ascending: true });
-    } else if (before) {
-      query = query.lt('created_at', before);
-      query = query.order('created_at', { ascending: false }); // tri inversé pour obtenir les N plus récents avant "before"
-    } else {
-      query = query.order('created_at', { ascending: true });
-    }
-
-    query = query.limit(limit);
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    // Filtrer les messages supprimés pour cet utilisateur
-    const result = (data || [])
-      .filter(m => !(m.deleted_for || []).includes(uid))
-      .map(m => ({
-        ...m,
-        deleted_for: undefined, // Ne pas exposer la liste complète
-        _deleted_for_me: (m.deleted_for || []).includes(uid)
-      }));
-
-    // Si before → réinverser pour retourner en ordre chronologique
-    if (before) result.reverse();
-
-    res.json(result);
-  } catch (e) {
-    Logger.error('messages', 'list.error', e.message, { userId: req.user.id });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// POST /api/messages
-// Envoyer un nouveau message.
-//
-// Body :
-//   toId         (string, requis)  : ID du destinataire
-//   text         (string, requis)  : Contenu du message
-//   replyToId    (string, optionnel): ID du message auquel on répond
-//   replyToText  (string, optionnel): Texte cité (dénormalisé pour perf)
-//   attachment   (object, optionnel): { type:'image', url, name }
-// ══════════════════════════════════════════════════════════════════════════════
-app.post('/api/messages', verifyToken, async (req, res) => {
-  const { toId, text, replyToId, replyToText, attachment } = req.body;
-
-  if (!toId)   return res.status(400).json({ error: 'toId requis' });
-  if (!text && !attachment) return res.status(400).json({ error: 'text ou attachment requis' });
-  if (text && text.length > 4000) return res.status(400).json({ error: 'Message trop long (max 4000 caractères)' });
-
-  // Validation de l'attachment
-  if (attachment) {
-    if (!['image', 'file'].includes(attachment.type))
-      return res.status(400).json({ error: 'Type de pièce jointe invalide' });
-    if (!attachment.url || typeof attachment.url !== 'string')
-      return res.status(400).json({ error: 'URL de pièce jointe requise' });
-  }
-
-  try {
-    // Vérifier que le destinataire existe
-    const { data: recipient, error: recipErr } = await supabase
-      .from('profiles')
-      .select('id, name, email, role')
-      .eq('id', toId)
-      .single();
-
-    if (recipErr || !recipient)
-      return res.status(404).json({ error: 'Destinataire introuvable' });
-
-    const row = {
-      from_id:       req.user.id,
-      from_name:     req.user.name,
-      to_id:         toId,
-      to_name:       recipient.name,
-      text:          text ? text.trim() : '',
-      read:          false,
-      read_at:       null,
-      reply_to_id:   replyToId   || null,
-      reply_to_text: replyToText || null,
-      attachments:   attachment ? [attachment] : null,
-      reactions:     null,
-      deleted_for:   null,
-    };
-
-    const { data, error } = await supabase
-      .from('messages')
-      .insert(row)
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    // Notifications en parallèle (non bloquant)
-    Promise.all([
-      pushNotification(toId, {
-        type:    'message',
-        title:   `💬 Message de ${req.user.name}`,
-        message: (text || '').slice(0, 100) || '📎 Pièce jointe',
-        link:    `/messages/${req.user.id}`,
-      }),
-      sendEmail({
-        to:      recipient.email,
-        ...emailTemplates.newMessage(req.user.name, text || '(Pièce jointe)')
-      }).catch(() => {}),
-    ]).catch(e => Logger.warn('messages', 'notify.error', e.message));
-
-    Logger.info('messages', 'sent', `Message ${req.user.name} → ${recipient.name}`, {
-      userId: req.user.id, meta: { toId, hasAttachment: !!attachment, hasReply: !!replyToId }
-    });
-
-    // Si le destinataire est connecté via SSE, il reçoit le message en <50ms
-    // sans attendre le prochain cycle de polling.
-    const sseSent = _sseSend(toId, 'new_message', data);
-    if (sseSent > 0) {
-      Logger.info('sse', 'push', `Message poussé via SSE à ${recipient.name} (${sseSent} onglet(s))`, {
-        userId: req.user.id, meta: { toId }
-      });
-    }
-
-    // ── Push SSE "lu" côté expéditeur quand le destinataire lit ──────────────
-    // (Cette partie est déjà gérée via le polling côté expéditeur.
-    //  Un push explicite peut être ajouté dans PATCH /api/messages/read
-    //  en appelant : _sseSend(fromId, 'message_read', { fromId: uid, readAt: now }))
-  } catch (e) {
-    Logger.error('messages', 'send.error', e.message, { userId: req.user.id });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// GET /api/messages/unread-count
-// Retourne le nombre total de messages non lus pour l'utilisateur.
-// ══════════════════════════════════════════════════════════════════════════════
-app.get('/api/messages/unread-count', verifyToken, async (req, res) => {
-  try {
-    const { count, error } = await supabase
-      .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('to_id', req.user.id)
-      .eq('read', false);
-
-    if (error) throw error;
-    res.json({ count: count || 0, userId: req.user.id });
-  } catch (e) {
-    res.status(500).json({ error: e.message, count: 0 });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PATCH /api/messages/read
-// Marquer tous les messages d'un expéditeur comme lus.
-//
-// Body :
-//   fromId (string, optionnel) : Si fourni, marque uniquement les messages de cet expéditeur
-//                                Sinon, marque TOUS les messages reçus non lus
-// ══════════════════════════════════════════════════════════════════════════════
-app.patch('/api/messages/read', verifyToken, async (req, res) => {
-  try {
-    const { fromId } = req.body;
-    const now = new Date().toISOString();
-
-    let query = supabase
-      .from('messages')
-      .update({ read: true, read_at: now })
-      .eq('to_id', req.user.id)
-      .eq('read', false);
-
-    if (fromId) query = query.eq('from_id', fromId);
-
-    await query;
-
-    res.json({ ok: true, markedAt: now });
-
-    // [REALTIME-MSG] Notifier l'expéditeur que ses messages ont été lus
-    if (fromId) {
-      _sseSend(fromId, 'message_read', {
-        fromId: fromId,
-        toId:   req.user.id,
-        readAt: now,
-      });
-    }
-  } catch (e) {
-    Logger.error('messages', 'read.error', e.message, { userId: req.user.id });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PATCH /api/messages/:id/react
-// Ajouter ou retirer une réaction emoji sur un message.
-// Toggle : si la réaction existe déjà pour cet utilisateur, elle est retirée.
-//
-// Body :
-//   emoji (string, requis) : L'emoji de la réaction
-// ══════════════════════════════════════════════════════════════════════════════
-app.patch('/api/messages/:id/react', verifyToken, async (req, res) => {
-  const { emoji } = req.body;
-  if (!emoji || typeof emoji !== 'string' || emoji.length > 8)
-    return res.status(400).json({ error: 'Emoji invalide' });
-
-  try {
-    const { data: msg, error: fetchErr } = await supabase
-      .from('messages')
-      .select('id, from_id, to_id, reactions')
-      .eq('id', req.params.id)
-      .single();
-
-    if (fetchErr || !msg)
-      return res.status(404).json({ error: 'Message introuvable' });
-
-    // Vérifier que l'utilisateur est participant à ce message
-    if (msg.from_id !== req.user.id && msg.to_id !== req.user.id)
-      return res.status(403).json({ error: 'Non autorisé' });
-
-    const reactions = { ...(msg.reactions || {}) };
-    if (!reactions[emoji]) reactions[emoji] = [];
-
-    const idx = reactions[emoji].indexOf(req.user.id);
-    if (idx >= 0) {
-      reactions[emoji].splice(idx, 1); // Retirer
-      if (reactions[emoji].length === 0) delete reactions[emoji];
-    } else {
-      reactions[emoji].push(req.user.id); // Ajouter
-    }
-
-    const { data, error } = await supabase
-      .from('messages')
-      .update({ reactions: Object.keys(reactions).length > 0 ? reactions : null })
-      .eq('id', req.params.id)
-      .select('id, reactions')
-      .single();
-
+    const { data, error } = await query.order('created_at', { ascending: true }).limit(100);
     if (error) throw error;
     res.json(data);
   } catch (e) {
-    Logger.error('messages', 'react.error', e.message, { userId: req.user.id });
     res.status(500).json({ error: e.message });
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// PATCH /api/messages/:id/delete
-// Suppression douce d'un message pour l'utilisateur courant uniquement.
-// Le message reste visible pour l'autre participant.
-//
-// Body :
-//   userId (string) : L'ID de l'utilisateur qui supprime (doit être req.user.id)
-// ══════════════════════════════════════════════════════════════════════════════
-app.patch('/api/messages/:id/delete', verifyToken, async (req, res) => {
+app.post('/api/messages', verifyToken, async (req, res) => {
+  const { toId, text } = req.body;
+  if (!toId || !text) return res.status(400).json({ error: 'toId et text requis' });
   try {
-    const { data: msg, error: fetchErr } = await supabase
-      .from('messages')
-      .select('id, from_id, to_id, deleted_for')
-      .eq('id', req.params.id)
-      .single();
-
-    if (fetchErr || !msg)
-      return res.status(404).json({ error: 'Message introuvable' });
-
-    if (msg.from_id !== req.user.id && msg.to_id !== req.user.id)
-      return res.status(403).json({ error: 'Non autorisé' });
-
-    const deletedFor = [...(msg.deleted_for || [])];
-    if (!deletedFor.includes(req.user.id)) deletedFor.push(req.user.id);
-
-    const { error } = await supabase
-      .from('messages')
-      .update({ deleted_for: deletedFor })
-      .eq('id', req.params.id);
-
+    const { data: recipient } = await supabase.from('profiles').select('name, email').eq('id', toId).single();
+    const { data, error } = await supabase.from('messages').insert({
+      from_id: req.user.id, from_name: req.user.name, to_id: toId, to_name: recipient?.name || 'Utilisateur', text, read: false
+    }).select().single();
     if (error) throw error;
-    res.json({ ok: true, deletedFor });
-  } catch (e) {
-    Logger.error('messages', 'delete.error', e.message, { userId: req.user.id });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// POST /api/messages/typing
-// Signaler que l'utilisateur est en train d'écrire dans une conversation.
-// Le client doit appeler cet endpoint toutes les ~3s tant qu'il écrit.
-// Le signal expire automatiquement après TYPING_TTL_MS (4s).
-//
-// Body :
-//   convId (string, requis) : ID de la conversation (format: "userId1::userId2" trié)
-// ══════════════════════════════════════════════════════════════════════════════
-app.post('/api/messages/typing', verifyToken, async (req, res) => {
-  const { convId } = req.body;
-  if (!convId || typeof convId !== 'string')
-    return res.status(400).json({ error: 'convId requis' });
-
-  // Vérifier que l'utilisateur est bien participant à cette conversation
-  const parts = convId.split('::');
-  if (!parts.includes(req.user.id))
-    return res.status(403).json({ error: 'Non autorisé' });
-
-  const { toId: _typingToId } = req.body;
-
-  _typingStore.set(convId, {
-    userId:    req.user.id,
-    userName:  req.user.name,
-    updatedAt: Date.now(),
-  });
-
-  res.json({ ok: true, expiresIn: TYPING_TTL_MS });
-
-  // [REALTIME-MSG] Push SSE indicateur de frappe au destinataire
-  if (_typingToId) {
-    _sseSend(_typingToId, 'typing', {
-      convId:   convId || null,
-      userId:   req.user.id,
-      userName: req.user.name,
-      isTyping: true,
-      ts:       Date.now(),
-    });
-
-    // [FIX] Envoyer automatiquement isTyping: false après TYPING_TTL_MS
-    // pour que l'indicateur disparaisse sans nécessiter un appel explicite "stop"
-    setTimeout(() => {
-      const current = _typingStore.get(convId);
-      // N'envoyer le stop que si le même utilisateur est encore marqué
-      if (current && current.userId === req.user.id) {
-        _sseSend(_typingToId, 'typing', {
-          convId:   convId,
-          userId:   req.user.id,
-          userName: req.user.name,
-          isTyping: false,
-          ts:       Date.now(),
-        });
-      }
-    }, TYPING_TTL_MS);
-  }
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// GET /api/messages/typing/:convId
-// Vérifier si l"autre participant d'une conversation est en train d"écrire.
-// Le client devrait appeler cet endpoint toutes les 1.5-2s pendant une conversation active.
-//
-// Réponse :
-//   { isTyping: bool, userId: string|null, userName: string|null, updatedAt: number|null }
-// ══════════════════════════════════════════════════════════════════════════════
-app.get('/api/messages/typing/:convId', verifyToken, async (req, res) => {
-  const { convId } = req.params;
-  const parts = convId.split('::');
-
-  // Vérifier que l'utilisateur est bien participant
-  if (!parts.includes(req.user.id))
-    return res.status(403).json({ error: 'Non autorisé' });
-
-  const entry = _typingStore.get(convId);
-
-  // Retourner le statut de FRAPPE uniquement si c'est l'autre participant
-  if (!entry || entry.userId === req.user.id) {
-    return res.json({ isTyping: false, userId: null, userName: null, updatedAt: null });
-  }
-
-  const isStillTyping = Date.now() - entry.updatedAt < TYPING_TTL_MS;
-  if (!isStillTyping) _typingStore.delete(convId);
-
-  res.json({
-    isTyping:  isStillTyping,
-    userId:    entry.userId,
-    userName:  entry.userName,
-    updatedAt: entry.updatedAt,
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// GET /api/messages/search
-// Rechercher dans tous les messages de l'utilisateur.
-//
-// Query params :
-//   q      (string, requis) : Terme de recherche (min 2 caractères)
-//   withId (string, optionnel) : Limiter la recherche à une conversation
-//   limit  (int) : Résultats max (défaut: 20)
-// ══════════════════════════════════════════════════════════════════════════════
-app.get('/api/messages/search', verifyToken, async (req, res) => {
-  const { q, withId, limit: rawLimit } = req.query;
-  if (!q || q.length < 2)
-    return res.status(400).json({ error: 'Terme de recherche trop court (min 2 caractères)' });
-
-  const limit = Math.min(parseInt(rawLimit) || 20, 50);
-
-  try {
-    let query = supabase
-      .from('messages')
-      .select('id, from_id, from_name, to_id, to_name, text, read, created_at')
-      .or(`from_id.eq.${req.user.id},to_id.eq.${req.user.id}`)
-      .ilike('text', `%${q}%`)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (withId) {
-      query = query.or(
-        `and(from_id.eq.${req.user.id},to_id.eq.${withId}),` +
-        `and(from_id.eq.${withId},to_id.eq.${req.user.id})`
-      );
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-    res.json(data || []);
+    await pushNotification(toId, { type: 'message', title: `💬 Message de ${req.user.name}`, message: text.slice(0, 100), link: `/messages/${req.user.id}` });
+    if (recipient?.email) await sendEmail({ to: recipient.email, ...emailTemplates.newMessage(req.user.name, text) });
+    res.status(201).json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SQL MIGRATION — À exécuter dans l'éditeur SQL Supabase (une seule fois)
-// ══════════════════════════════════════════════════════════════════════════════
-//
-// -- Nouvelles colonnes sur la table messages existante
-// ALTER TABLE messages
-//   ADD COLUMN IF NOT EXISTS reply_to_id    uuid REFERENCES messages(id) ON DELETE SET NULL,
-//   ADD COLUMN IF NOT EXISTS reply_to_text  text,
-//   ADD COLUMN IF NOT EXISTS attachments    jsonb,
-//   ADD COLUMN IF NOT EXISTS reactions      jsonb,
-//   ADD COLUMN IF NOT EXISTS deleted_for    uuid[],
-//   ADD COLUMN IF NOT EXISTS read_at        timestamptz;
-//
-// -- Index de performance
-// CREATE INDEX IF NOT EXISTS idx_messages_from_to
-//   ON messages(from_id, to_id, created_at DESC);
-//
-// CREATE INDEX IF NOT EXISTS idx_messages_to_unread
-//   ON messages(to_id, read) WHERE read = false;
-//
-// CREATE INDEX IF NOT EXISTS idx_messages_text_search
-//   ON messages USING gin(to_tsvector('french', text));
-//
-// -- Politique RLS : chaque utilisateur ne voit que SES messages
-// -- (Si RLS pas encore configurée sur messages)
-// ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
-//
-// CREATE POLICY "messages_select_own" ON messages
-//   FOR SELECT USING (auth.uid() = from_id OR auth.uid() = to_id);
-//
-// CREATE POLICY "messages_insert_own" ON messages
-//   FOR INSERT WITH CHECK (auth.uid() = from_id);
-//
-// CREATE POLICY "messages_update_own" ON messages
-//   FOR UPDATE USING (auth.uid() = from_id OR auth.uid() = to_id);
-//
-// -- Fonction pour compter les conversations (optionnel, pour analytics)
-// CREATE OR REPLACE FUNCTION count_user_conversations(p_user_id uuid)
-// RETURNS integer AS $$
-//   SELECT COUNT(DISTINCT
-//     CASE
-//       WHEN from_id = p_user_id THEN to_id
-//       ELSE from_id
-//     END
-//   )
-//   FROM messages
-//   WHERE from_id = p_user_id OR to_id = p_user_id;
-// $$ LANGUAGE sql STABLE;
-//
-// ── FIN DU FICHIER ──────────────────────────────────────────────────────────
+app.get('/api/messages/unread-count', verifyToken, async (req, res) => {
+  const { count } = await supabase.from('messages').select('*', { count: 'exact', head: true }).eq('to_id', req.user.id).eq('read', false);
+  res.json({ count: count || 0 });
+});
+
+app.patch('/api/messages/read', verifyToken, async (req, res) => {
+  const { fromId } = req.body;
+  const query = supabase.from('messages').update({ read: true }).eq('to_id', req.user.id);
+  if (fromId) query.eq('from_id', fromId);
+  await query;
+  res.json({ ok: true });
+});
 
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
 // POST /api/notifications — Créer une notification (appelé par addNotification frontend)
@@ -3368,139 +2163,16 @@ app.post('/api/disputes', verifyToken, requireRole('buyer'), async (req, res) =>
   }
 });
 app.patch('/api/disputes/:id', verifyToken, requireRole('admin'), async (req, res) => {
-  const { status, resolution, adminNotes, refundPercent } = req.body;
-
-  // Validation du pourcentage
-  const pct = refundPercent != null ? parseFloat(refundPercent) : null;
-  if (pct != null && (isNaN(pct) || pct < 0 || pct > 100))
-    return res.status(400).json({ error: 'refundPercent doit être entre 0 et 100' });
-
-  try {
-    const { data: dispute, error: fetchErr } = await supabase
-      .from('disputes')
-      .select('id, order_id, buyer_id, buyer_name, buyer_email, vendor_id, vendor_name, vendor_email, order_total, status')
-      .eq('id', req.params.id).single();
-    if (fetchErr || !dispute) return res.status(404).json({ error: 'Litige introuvable' });
-
-    const updates = { status };
-    if (resolution) updates.resolution  = resolution;
-    if (adminNotes) updates.admin_notes = adminNotes;
-    if (status === 'investigating') updates.investigating_at = new Date().toISOString();
-    if (status === 'resolved')      updates.resolved_at      = new Date().toISOString();
-    if (status === 'closed')        updates.closed_at        = new Date().toISOString();
-
-    // ── Remboursement Stripe partiel sur résolution ────────────────────────────
-    let stripeRefundResult = null;
-    if (status === 'resolved' && pct != null && pct > 0 && dispute.order_id) {
-      // Récupérer la commande pour obtenir le stripe_payment_id
-      const { data: order } = await supabase
-        .from('orders')
-        .select('id, stripe_payment_id, total, refund_status, payment_method')
-        .eq('id', dispute.order_id).single();
-
-      if (order?.stripe_payment_id && order.refund_status !== 'refunded') {
-        const refundAmountCents = Math.round(((order.total * pct) / 100) * 100);
-        try {
-          stripeRefundResult = await stripe.refunds.create({
-            payment_intent: order.stripe_payment_id,
-            amount:         refundAmountCents,
-            reason:         'fraudulent',  // litige = reason fraudulent/duplicate/requested_by_customer
-            metadata: {
-              dispute_id:   dispute.id,
-              order_id:     order.id,
-              refund_pct:   String(pct),
-              resolved_by:  req.user.id,
-              source:       'dispute_resolution',
-            },
-          });
-
-          // Mettre à jour la commande avec le statut de remboursement
-          const refundStatus = pct >= 100 ? 'refunded' : 'partial_refund';
-          await supabase.from('orders').update({
-            refund_status:  refundStatus,
-            refund_id:      stripeRefundResult.id,
-            refund_amount:  refundAmountCents / 100,
-            refund_percent: pct,
-            refunded_at:    new Date().toISOString(),
-          }).eq('id', order.id);
-
-          updates.refund_id      = stripeRefundResult.id;
-          updates.refund_amount  = refundAmountCents / 100;
-          updates.refund_percent = pct;
-
-          Logger.info('refund', 'dispute.stripe.success',
-            `Remboursement litige ${dispute.id} — ${pct}% (${refundAmountCents/100}€) — refund ${stripeRefundResult.id}`,
-            { userId: req.user.id, meta: { disputeId: dispute.id, refundId: stripeRefundResult.id } }
-          );
-        } catch (stripeErr) {
-          updates.refund_status = 'failed';
-          updates.refund_error  = stripeErr.message;
-          Logger.error('refund', 'dispute.stripe.error', stripeErr.message,
-            { userId: req.user.id, meta: { disputeId: dispute.id, orderId: order.id } }
-          );
-          // Ne pas bloquer la résolution du litige si Stripe échoue
-        }
-      } else if (order && !order.stripe_payment_id) {
-        // Mobile Money — remboursement manuel requis
-        updates.refund_status  = 'manual_pending';
-        updates.refund_percent = pct;
-        await supabase.from('orders').update({
-          refund_status: 'manual_pending', refund_percent: pct,
-        }).eq('id', order.id);
-      }
-    }
-
-    const { data, error } = await supabase
-      .from('disputes').update(updates).eq('id', req.params.id).select().single();
-    if (error) throw error;
-
-    // ── Notifications acheteur & vendeur ────────────────────────────────────
-    if (status === 'resolved' && resolution) {
-      const refundTxt = stripeRefundResult
-        ? ` Remboursement de ${updates.refund_amount}€ (${pct}%) initié — 3 à 5 jours ouvrés.`
-        : updates.refund_status === 'manual_pending'
-          ? ` Remboursement manuel de ${pct}% à traiter.`
-          : '';
-
-      const buyerFavored = pct > 0;
-      const buyerMsg = buyerFavored
-        ? `✅ Litige #${dispute.id} résolu en votre faveur.${refundTxt}`
-        : `ℹ️ Litige #${dispute.id} résolu. Décision : ${resolution}`;
-      const vendorMsg = !buyerFavored
-        ? `✅ Litige #${dispute.id} résolu en votre faveur. La commande est validée.`
-        : `ℹ️ Litige #${dispute.id} résolu. Décision : ${resolution}`;
-
-      await Promise.all([
-        pushNotification(dispute.buyer_id,  { type: 'system', title: 'Litige résolu', message: buyerMsg,  link: '/orders' }),
-        pushNotification(dispute.vendor_id, { type: 'system', title: 'Litige résolu', message: vendorMsg, link: '/dashboard' }),
-        stripeRefundResult && sendEmail({
-          to: dispute.buyer_email || '',
-          subject: `[NEXUS] Remboursement litige #${dispute.id}`,
-          html: `<p>Bonjour ${dispute.buyer_name},</p>
-                 <p>Votre litige <strong>#${dispute.id}</strong> a été résolu.</p>
-                 <p>Un remboursement de <strong>${updates.refund_amount}€ (${pct}%)</strong> a été initié.
-                    Référence : <code>${stripeRefundResult.id}</code></p>
-                 <p>Il apparaîtra sous 3 à 5 jours ouvrés selon votre banque.</p>
-                 <p>L'équipe NEXUS</p>`,
-        }).catch(() => {}),
-      ].filter(Boolean));
-    }
-
-    Logger.info('disputes', 'resolved',
-      `Litige ${req.params.id} → ${status}${pct != null ? ` (remb. ${pct}%)` : ''}`,
-      { userId: req.user.id }
-    );
-
-    res.json({
-      ...data,
-      _refund: stripeRefundResult
-        ? { id: stripeRefundResult.id, amount: stripeRefundResult.amount / 100, status: stripeRefundResult.status }
-        : null,
-    });
-  } catch (e) {
-    Logger.error('disputes', 'resolve.error', e.message, { userId: req.user.id });
-    res.status(500).json({ error: e.message });
-  }
+  const { status, resolution, adminNotes } = req.body;
+  const updates = { status };
+  if (resolution)  updates.resolution   = resolution;
+  if (adminNotes)  updates.admin_notes  = adminNotes;
+  if (status === 'investigating') updates.investigating_at = new Date().toISOString();
+  if (status === 'resolved')      updates.resolved_at      = new Date().toISOString();
+  if (status === 'closed')        updates.closed_at        = new Date().toISOString();
+  const { data, error } = await supabase.from('disputes').update(updates).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
 // ─── RETURNS ─────────────────────────────────────────────────────────────────
@@ -3627,69 +2299,10 @@ app.patch('/api/returns/:id', verifyToken, requireRole('admin'), async (req, res
     await supabase.from('orders').update({ return_status: status }).eq('id', existing.order_id);
 
     // Notifier l'acheteur
-    // ── Remboursement Stripe automatique quand status → 'refunded' ────────────
-    let stripeRefundResult = null;
-    if (status === 'refunded' && existing.order_id) {
-      const { data: order } = await supabase
-        .from('orders')
-        .select('id, stripe_payment_id, total, payment_method, buyer_email, buyer_name, refund_status')
-        .eq('id', existing.order_id).single();
-
-      if (order?.stripe_payment_id && order.refund_status !== 'refunded') {
-        try {
-          stripeRefundResult = await stripe.refunds.create({
-            payment_intent: order.stripe_payment_id,
-            reason:         'requested_by_customer',
-            metadata: {
-              return_id:    existing.id,
-              order_id:     order.id,
-              refunded_by:  req.user.id,
-              source:       'return_request',
-            },
-          });
-
-          await supabase.from('orders').update({
-            refund_status: 'refunded',
-            refund_id:     stripeRefundResult.id,
-            refund_amount: stripeRefundResult.amount / 100,
-            refunded_at:   new Date().toISOString(),
-          }).eq('id', order.id);
-
-          Logger.info('refund', 'return.stripe.success',
-            `Remboursement retour ${existing.id} — ${order.total}€ — refund ${stripeRefundResult.id}`,
-            { userId: req.user.id, meta: { returnId: existing.id, refundId: stripeRefundResult.id } }
-          );
-
-          // Email de confirmation du remboursement
-          await sendEmail({
-            to: order.buyer_email || '',
-            subject: `[NEXUS] Remboursement effectué pour votre retour`,
-            html: `<p>Bonjour ${order.buyer_name},</p>
-                   <p>Votre remboursement de <strong>${order.total}€</strong> a été initié.</p>
-                   <p>Il apparaîtra sous <strong>3 à 5 jours ouvrés</strong> selon votre banque.</p>
-                   <p>Référence : <code>${stripeRefundResult.id}</code></p>
-                   <p>L'équipe NEXUS</p>`,
-          }).catch(() => {});
-        } catch (stripeErr) {
-          Logger.error('refund', 'return.stripe.error', stripeErr.message,
-            { userId: req.user.id, meta: { returnId: existing.id, orderId: order.id } }
-          );
-          // Marquer le remboursement comme échoué sans bloquer la mise à jour du retour
-          await supabase.from('orders').update({ refund_status: 'failed', refund_error: stripeErr.message })
-            .eq('id', order.id).catch(() => {});
-        }
-      } else if (order && !order.stripe_payment_id) {
-        // Mobile Money — remboursement manuel requis
-        await supabase.from('orders').update({ refund_status: 'manual_pending' }).eq('id', order.id);
-      }
-    }
-
     const MSG = {
       approved: '✅ Votre demande de retour a été approuvée. Vous serez remboursé sous 5-7 jours ouvrés.',
       rejected: '❌ Votre demande de retour a été refusée.' + (adminNotes ? ` Motif : ${adminNotes}` : ''),
-      refunded: stripeRefundResult
-        ? `💰 Votre remboursement de ${stripeRefundResult.amount / 100}€ a été initié (3-5 jours ouvrés). Réf : ${stripeRefundResult.id}`
-        : '💰 Votre remboursement a été traité.',
+      refunded: '💰 Votre remboursement a été effectué.',
     };
     await pushNotification(existing.buyer_id, {
       type:    'system',
@@ -3699,12 +2312,7 @@ app.patch('/api/returns/:id', verifyToken, requireRole('admin'), async (req, res
     });
 
     Logger.info('returns', 'updated', `Retour ${req.params.id} → ${status}`, { userId: req.user.id });
-    res.json({
-      ...data,
-      _refund: stripeRefundResult
-        ? { id: stripeRefundResult.id, amount: stripeRefundResult.amount / 100, status: stripeRefundResult.status }
-        : null,
-    });
+    res.json(data);
   } catch (e) {
     Logger.error('returns', 'update.error', e.message, { userId: req.user.id });
     res.status(500).json({ error: e.message });
@@ -4016,14 +2624,9 @@ app.get('/api/health', async (req, res) => {
   const start = Date.now();
   let dbStatus = 'unknown';
   try {
-    // Timeout 3s pour éviter que le healthcheck Railway expire (fenêtre de 10s)
-    const dbCheck = supabase.from('profiles').select('id', { head: true, count: 'exact' });
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000));
-    await Promise.race([dbCheck, timeout]);
+    await supabase.from('profiles').select('id', { head: true, count: 'exact' });
     dbStatus = 'ok';
-  } catch (e) {
-    dbStatus = e.message === 'timeout' ? 'timeout' : 'error';
-  }
+  } catch { dbStatus = 'error'; }
 
   const stripePub    = process.env.STRIPE_PUBLIC_KEY || '';
   const stripeSecret = process.env.STRIPE_SECRET_KEY || '';
@@ -4212,50 +2815,13 @@ app.delete('/api/coupons/:id', verifyToken, requireRole('admin'), async (req, re
 // ════════════════════════════════════════════════════════════════════════════════
 
 // GET /api/loyalty — solde de points de l'utilisateur connecté
-
-// [NEXUS-F2] LoyaltyWidget + awardLoyaltyPoints [B]
-// PLACEMENT : remplace app.get('/api/loyalty', ...) existant (lignes 2854-2864)
-// ════════════════════════════════════════════════════════════════════════════════
-
 app.get('/api/loyalty', verifyToken, async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('loyalty_points')
-      .select('points, total_earned, total_redeemed')
-      .eq('user_id', req.user.id)
-      .maybeSingle();
+      .from('loyalty_points').select('points, total_earned, total_redeemed')
+      .eq('user_id', req.user.id).maybeSingle();
     if (error) throw error;
-
-    const points        = data?.points        || 0;
-    const totalEarned   = data?.total_earned  || 0;
-    const totalRedeemed = data?.total_redeemed || 0;
-
-    // ── Calcul du palier ──────────────────────────────────────────────────────
-    // Bronze : 0–999 pts | Argent : 1 000–4 999 pts | Or : ≥ 5 000 pts
-    const TIERS = [
-      { name: 'Bronze',  min: 0,    max: 999,  next: 1000, color: '#CD7F32', icon: '🥉' },
-      { name: 'Argent',  min: 1000, max: 4999, next: 5000, color: '#C0C0C0', icon: '🥈' },
-      { name: 'Or',      min: 5000, max: null, next: null,  color: '#FFD700', icon: '🥇' },
-    ];
-    const tier = TIERS.find(t => t.max === null ? points >= t.min : points <= t.max) || TIERS[0];
-
-    // Points minimum requis pour utiliser les points en paiement
-    const MIN_REDEEM = 500;
-
-    res.json({
-      points,
-      totalEarned,
-      totalRedeemed,
-      canRedeem:   points >= MIN_REDEEM,
-      minRedeem:   MIN_REDEEM,
-      tier: {
-        name:     tier.name,
-        icon:     tier.icon,
-        color:    tier.color,
-        progress: tier.next ? Math.min(100, Math.round(((points - tier.min) / (tier.next - tier.min)) * 100)) : 100,
-        nextTier: tier.next ? `${tier.next.toLocaleString('fr-FR')} pts pour le palier suivant` : null,
-      },
-    });
+    res.json({ points: data?.points || 0, totalEarned: data?.total_earned || 0, totalRedeemed: data?.total_redeemed || 0 });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -4641,22 +3207,12 @@ app.post('/api/b2b/register', authLimiter, async (req, res) => {
       throw b2bErr;
     }
 
-    // JWT — durée cohérente avec les autres routes (900s = 15min)
-    const b2bExpiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
+    // JWT
     const token = jwt.sign(
       { id: profile.id, role: 'buyer_pro', name, email: profile.email, company },
       process.env.JWT_SECRET,
-      { expiresIn: b2bExpiresIn }
+      { expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') }
     );
-    // [JWT-REFRESH] Créer un refresh token pour le compte B2B
-    let b2bRefreshToken = null, b2bRefreshExpiresIn = null;
-    try {
-      const rt = await _createRefreshToken(profile.id, req);
-      b2bRefreshToken      = rt?.refreshToken    ?? null;
-      // [BUG FIX] rt peut être null si la table refresh_tokens n'existe pas encore.
-      // `rt.refreshExpiresIn` plantait avec TypeError ; utiliser l'opérateur ?. pour sécuriser.
-      b2bRefreshExpiresIn  = rt?.refreshExpiresIn ?? null;
-    } catch (_) {}
 
     // Notifier les admins pour vérification NINEA
     const { data: admins } = await supabase.from('profiles').select('id').eq('role', 'admin');
@@ -4671,7 +3227,7 @@ app.post('/api/b2b/register', authLimiter, async (req, res) => {
 
     Logger.info('auth', 'register.b2b', `Inscription B2B: ${email} — ${company}`, { userId: profile.id, meta: { company, ninea: nineaClean } });
     const { password_hash, ...safeUser } = profile;
-    res.status(201).json({ token, accessToken: token, user: { ...safeUser, company, jobTitle }, expiresIn: b2bExpiresIn, refreshToken: b2bRefreshToken, refreshExpiresIn: b2bRefreshExpiresIn });
+    res.status(201).json({ token, user: { ...safeUser, company, jobTitle }, expiresIn: parseInt(process.env.JWT_EXPIRES_IN || '604800') });
   } catch (e) {
     Logger.error('auth', 'register.b2b.error', e.message, { meta: { email } });
     res.status(500).json({ error: "Erreur lors de l'inscription. Veuillez réessayer." });
@@ -4977,7 +3533,7 @@ app.get('/api/flash-sales', async (req, res) => {
 });
 
 // POST /api/flash-sales — créer une vente flash (admin seulement)
-app.post('/api/flash-sales', verifyToken, requireRole('admin','vendor'), async (req, res) => {
+app.post('/api/flash-sales', verifyToken, requireRole('admin'), async (req, res) => {
   const { productId, discount, endsAt } = req.body;
   if (!productId) return res.status(400).json({ error: 'productId requis' });
   if (!discount || discount <= 0 || discount > 100)
@@ -5013,7 +3569,7 @@ app.post('/api/flash-sales', verifyToken, requireRole('admin','vendor'), async (
 });
 
 // DELETE /api/flash-sales/:id — supprimer une vente flash (admin)
-app.delete('/api/flash-sales/:id', verifyToken, requireRole('admin','vendor'), async (req, res) => {
+app.delete('/api/flash-sales/:id', verifyToken, requireRole('admin'), async (req, res) => {
   try {
     const { error } = await supabase.from('flash_sales')
       .update({ active: false }).eq('id', req.params.id);
@@ -6116,396 +4672,10 @@ app.patch('/api/invoices/:id/status', verifyToken, requireRole('admin'), async (
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// ── FEATURE ROUTERS (montés AVANT les handlers 404/erreurs) ──────────────────
-// ══════════════════════════════════════════════════════════════════════════════
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-// ── FEATURES INLINE (jwt-refresh · vendor-stats · delivery-tracking · fts) ──
-// ══════════════════════════════════════════════════════════════════════════════
-
-// ══════════════════════════════════════════════════════════════════════════════
-// ── JWT REFRESH — Routes inline (/api/auth/refresh · /api/auth/sessions)  ──
-// ══════════════════════════════════════════════════════════════════════════════
-//   POST   /api/auth/refresh        — Rotation du refresh token (30 j)
-//   GET    /api/auth/sessions       — Liste les sessions actives
-//   DELETE /api/auth/sessions/:id   — Révoque une session spécifique
-//
-// Sécurité : rotation automatique + détection de réutilisation
-// (RT révoqué présenté → toute la famille est révoquée)
-//
-// SQL requis (Supabase) :
-//   CREATE TABLE IF NOT EXISTS refresh_tokens (
-//     id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-//     user_id     uuid        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-//     token       text        UNIQUE NOT NULL,
-//     expires_at  timestamptz NOT NULL,
-//     revoked_at  timestamptz,
-//     replaced_by text,
-//     ip          text,
-//     user_agent  text,
-//     created_at  timestamptz DEFAULT now()
-//   );
-//   CREATE INDEX IF NOT EXISTS idx_rt_token   ON refresh_tokens(token);
-//   CREATE INDEX IF NOT EXISTS idx_rt_user_id ON refresh_tokens(user_id);
-// ══════════════════════════════════════════════════════════════════════════════
-const _jwtRefreshRouter = express.Router();
-const _AT_DURATION = parseInt(process.env.JWT_EXPIRES_IN || '900');
-const _RT_DURATION = 30 * 24 * 3600; // 30 jours
-
-// POST /api/auth/refresh
-_jwtRefreshRouter.post('/refresh', async (req, res) => {
-  const { refreshToken } = req.body || {};
-  if (!refreshToken) {
-    return res.status(400).json({ error: 'refreshToken manquant', code: 'REFRESH_TOKEN_MISSING' });
-  }
-  try {
-    const { data: rt, error: rtErr } = await supabase
-      .from('refresh_tokens')
-      .select('id, user_id, expires_at, revoked_at')
-      .eq('token', refreshToken)
-      .maybeSingle();
-    if (rtErr) throw rtErr;
-    if (!rt) return res.status(401).json({ error: 'Refresh token invalide', code: 'REFRESH_TOKEN_INVALID' });
-
-    // Détection de réutilisation : RT déjà révoqué → attaque possible
-    if (rt.revoked_at) {
-      await supabase.from('refresh_tokens')
-        .update({ revoked_at: new Date().toISOString() })
-        .eq('user_id', rt.user_id).is('revoked_at', null);
-      Logger.warn('auth', 'refresh.reuse_detected', `RT réutilisé — user ${rt.user_id} — toutes sessions révoquées`);
-      return res.status(401).json({ error: 'Token réutilisé — toutes vos sessions ont été fermées par sécurité', code: 'REFRESH_TOKEN_REUSE_DETECTED' });
-    }
-
-    if (new Date(rt.expires_at) < new Date()) {
-      return res.status(401).json({ error: 'Refresh token expiré', code: 'REFRESH_TOKEN_EXPIRED' });
-    }
-
-    const { data: profile } = await supabase.from('profiles')
-      .select('id, email, name, role, status').eq('id', rt.user_id).maybeSingle();
-    if (!profile) return res.status(401).json({ error: 'Utilisateur introuvable', code: 'USER_NOT_FOUND' });
-    if (profile.status === 'banned') return res.status(403).json({ error: 'Compte suspendu', code: 'ACCOUNT_BANNED' });
-
-    // Rotation : révoquer l'ancien RT, émettre le nouveau
-    const newRtToken = crypto.randomBytes(48).toString('hex');
-    const newExpires = new Date(Date.now() + _RT_DURATION * 1000).toISOString();
-
-    await supabase.from('refresh_tokens')
-      .update({ revoked_at: new Date().toISOString(), replaced_by: newRtToken }).eq('id', rt.id);
-    await supabase.from('refresh_tokens').insert({
-      user_id: profile.id, token: newRtToken, expires_at: newExpires,
-      ip: req.ip || null, user_agent: req.headers?.['user-agent']?.slice(0, 255) || null,
-    });
-
-    const accessToken = jwt.sign(
-      { id: profile.id, role: profile.role, name: profile.name, email: profile.email },
-      process.env.JWT_SECRET, { expiresIn: _AT_DURATION }
-    );
-    Logger.info('auth', 'token.refreshed', `Token rafraîchi — ${profile.email}`, { userId: profile.id });
-    return res.json({ accessToken, token: accessToken, refreshToken: newRtToken, expiresIn: _AT_DURATION, refreshExpiresIn: _RT_DURATION });
-  } catch (e) {
-    Logger.error('auth', 'refresh.error', e.message);
-    return res.status(500).json({ error: 'Erreur serveur lors du refresh' });
-  }
-});
-
-// GET /api/auth/sessions
-_jwtRefreshRouter.get('/sessions', verifyToken, async (req, res) => {
-  try {
-    const { data: sessions, error } = await supabase.from('refresh_tokens')
-      .select('id, created_at, expires_at, ip, user_agent')
-      .eq('user_id', req.user.id).is('revoked_at', null)
-      .gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false });
-    if (error) throw error;
-    res.json({ sessions: sessions || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// DELETE /api/auth/sessions/:id
-_jwtRefreshRouter.delete('/sessions/:id', verifyToken, async (req, res) => {
-  try {
-    const { error } = await supabase.from('refresh_tokens')
-      .update({ revoked_at: new Date().toISOString() })
-      .eq('id', req.params.id).eq('user_id', req.user.id);
-    if (error) throw error;
-    res.json({ ok: true, message: 'Session révoquée' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.use('/api/auth', _jwtRefreshRouter);
-
-// ══════════════════════════════════════════════════════════════════════════════
-// ── VENDOR STATS — Routes inline (/api/vendor/stats)                      ──
-// ══════════════════════════════════════════════════════════════════════════════
-//   GET /api/vendor/stats           — Dashboard chiffres clés
-//   GET /api/vendor/stats/products  — Classement produits par ventes
-//   GET /api/vendor/stats/orders    — Historique commandes agrégé
-// ══════════════════════════════════════════════════════════════════════════════
-const _vendorStatsRouter = express.Router();
-
-_vendorStatsRouter.get('/stats', verifyToken, async (req, res) => {
-  if (!['vendor', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Accès réservé aux vendeurs' });
-  const vendorId = req.user.id;
-  const period   = req.query.period || '30';
-  const since    = new Date(Date.now() - Number(period) * 24 * 3600 * 1000).toISOString();
-  try {
-    const [{ data: orders }, { data: products }] = await Promise.all([
-      supabase.from('orders').select('id, total, status, created_at').eq('vendor_id', vendorId).gte('created_at', since),
-      supabase.from('products').select('id, name, price, stock, active').eq('vendor_id', vendorId),
-    ]);
-    const completed = (orders || []).filter(o => ['delivered','completed'].includes(o.status));
-    const revenue   = completed.reduce((s, o) => s + (o.total || 0), 0);
-    res.json({
-      period: Number(period), total_orders: (orders || []).length,
-      completed_orders: completed.length, revenue_eur: revenue,
-      revenue_fcfa: Math.round(revenue * 655.957),
-      total_products: (products || []).length,
-      active_products: (products || []).filter(p => p.active).length,
-      low_stock: (products || []).filter(p => p.stock < 5).length,
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-_vendorStatsRouter.get('/stats/products', verifyToken, async (req, res) => {
-  if (!['vendor', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Accès réservé aux vendeurs' });
-  try {
-    const { data, error } = await supabase.from('products')
-      .select('id, name, price, stock, rating, reviews_count, active')
-      .eq('vendor_id', req.user.id).order('reviews_count', { ascending: false }).limit(20);
-    if (error) throw error;
-    res.json({ products: data || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-_vendorStatsRouter.get('/stats/orders', verifyToken, async (req, res) => {
-  if (!['vendor', 'admin'].includes(req.user.role)) return res.status(403).json({ error: 'Accès réservé aux vendeurs' });
-  const limit = Math.min(Number(req.query.limit || 50), 200);
-  try {
-    const { data, error } = await supabase.from('orders')
-      .select('id, total, status, created_at, buyer_name, tracking_number')
-      .eq('vendor_id', req.user.id).order('created_at', { ascending: false }).limit(limit);
-    if (error) throw error;
-    res.json({ orders: data || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.use('/api/vendor', _vendorStatsRouter);
-
-// ══════════════════════════════════════════════════════════════════════════════
-// ── DELIVERY TRACKING — Routes inline (/api/delivery)                     ──
-// ══════════════════════════════════════════════════════════════════════════════
-//   GET  /api/delivery/:orderId          — Statut complet + journal
-//   POST /api/delivery/:orderId/status   — Mise à jour (vendeur/admin)
-//   GET  /api/delivery/:orderId/events   — Journal d'événements seul
-//
-// SQL requis :
-//   CREATE TABLE IF NOT EXISTS delivery_events (
-//     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-//     order_id uuid NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-//     status text NOT NULL, location text, note text,
-//     actor_id uuid, created_at timestamptz DEFAULT now()
-//   );
-//   ALTER TABLE orders ADD COLUMN IF NOT EXISTS carrier text;
-//   ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_delivery date;
-// ══════════════════════════════════════════════════════════════════════════════
-const _deliveryRouter = express.Router();
-const _DELIVERY_STATUSES = {
-  pending:'En attente', processing:'En préparation', ready_to_ship:'Prêt à expédier',
-  shipped:'Expédié', in_transit:'En transit', out_for_delivery:'En cours de livraison',
-  delivered:'Livré', failed_attempt:'Tentative échouée', returned:'Retour en cours', cancelled:'Annulé',
-};
-
-_deliveryRouter.get('/:orderId', verifyToken, async (req, res) => {
-  const { orderId } = req.params;
-  try {
-    const { data: order, error } = await supabase.from('orders')
-      .select('id, status, tracking_number, carrier, buyer_id, vendor_id, created_at, updated_at, estimated_delivery')
-      .eq('id', orderId).maybeSingle();
-    if (error) throw error;
-    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    const canView = req.user.role === 'admin' || order.buyer_id === req.user.id || order.vendor_id === req.user.id;
-    if (!canView) return res.status(403).json({ error: 'Accès non autorisé' });
-    const { data: events } = await supabase.from('delivery_events')
-      .select('id, status, location, note, created_at').eq('order_id', orderId)
-      .order('created_at', { ascending: false });
-    res.json({ order_id: order.id, status: order.status, status_label: _DELIVERY_STATUSES[order.status] || order.status,
-      tracking_number: order.tracking_number, carrier: order.carrier,
-      estimated_delivery: order.estimated_delivery, created_at: order.created_at,
-      updated_at: order.updated_at, events: events || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-_deliveryRouter.post('/:orderId/status', verifyToken, async (req, res) => {
-  const { orderId } = req.params;
-  const { status, location, note, tracking } = req.body || {};
-  if (!status || !_DELIVERY_STATUSES[status]) {
-    return res.status(400).json({ error: 'Statut invalide', valid_statuses: Object.keys(_DELIVERY_STATUSES) });
-  }
-  try {
-    const { data: order, error: fetchErr } = await supabase.from('orders')
-      .select('id, vendor_id, buyer_id, status').eq('id', orderId).maybeSingle();
-    if (fetchErr) throw fetchErr;
-    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    if (req.user.role !== 'admin' && order.vendor_id !== req.user.id)
-      return res.status(403).json({ error: 'Seul le vendeur ou un admin peut mettre à jour la livraison' });
-    const updates = { status, updated_at: new Date().toISOString() };
-    if (tracking) updates.tracking_number = tracking;
-    await supabase.from('orders').update(updates).eq('id', orderId);
-    await supabase.from('delivery_events').insert({
-      order_id: orderId, status, location: location || null, note: note || null,
-      actor_id: req.user.id, created_at: new Date().toISOString(),
-    });
-    if (order.buyer_id) {
-      await supabase.from('notifications').insert({
-        user_id: order.buyer_id, type: 'order',
-        title: `📦 Commande ${status === 'delivered' ? 'livrée !' : 'mise à jour'}`,
-        message: `Commande #${orderId.slice(0,8)} : ${_DELIVERY_STATUSES[status]}${location ? ` — ${location}` : ''}`,
-        link: `/orders/${orderId}`, read: false,
-      }).catch(() => {});
-    }
-    Logger.info('delivery', 'status_updated', `${orderId} → ${status}`, { userId: req.user.id });
-    res.json({ ok: true, status, status_label: _DELIVERY_STATUSES[status] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-_deliveryRouter.get('/:orderId/events', verifyToken, async (req, res) => {
-  const { orderId } = req.params;
-  try {
-    const { data: order } = await supabase.from('orders')
-      .select('buyer_id, vendor_id').eq('id', orderId).maybeSingle();
-    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    if (req.user.role !== 'admin' && order.buyer_id !== req.user.id && order.vendor_id !== req.user.id)
-      return res.status(403).json({ error: 'Accès non autorisé' });
-    const { data: events, error } = await supabase.from('delivery_events')
-      .select('id, status, location, note, created_at').eq('order_id', orderId)
-      .order('created_at', { ascending: true });
-    if (error) throw error;
-    res.json({ order_id: orderId, events: events || [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.use('/api/delivery', _deliveryRouter);
-
-// ══════════════════════════════════════════════════════════════════════════════
-// ── FULL-TEXT SEARCH — Routes inline (/api/search)                        ──
-// ══════════════════════════════════════════════════════════════════════════════
-//   GET /api/search            — Recherche full-text (tsvector PostgreSQL)
-//   GET /api/search/suggest    — Suggestions/autocomplete par préfixe
-//   GET /api/search/popular    — Termes populaires (cache 5 min)
-//
-// SQL requis :
-//   ALTER TABLE products ADD COLUMN IF NOT EXISTS search_vector tsvector;
-//   CREATE INDEX IF NOT EXISTS idx_products_fts ON products USING gin(search_vector);
-//   -- (voir features/search-fulltext.js pour le trigger et la fonction RPC complète)
-// ══════════════════════════════════════════════════════════════════════════════
-const _ftsRouter = express.Router();
-let _ftsPopularCache = null, _ftsPopularCacheAt = 0;
-
-function _ftsSanitize(raw) {
-  if (!raw || typeof raw !== 'string') return '';
-  return raw.replace(/[^a-zA-ZÀ-ÿ0-9\s'\-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
-}
-function _ftsToTsQuery(q) {
-  return q.split(/\s+/).filter(Boolean).map(w => `${w}:*`).join(' & ');
-}
-
-_ftsRouter.get('/', async (req, res) => {
-  const q        = _ftsSanitize(req.query.q || '');
-  const page     = Math.max(1, parseInt(req.query.page   || '1',  10));
-  const limit    = Math.min(40, Math.max(1, parseInt(req.query.limit || '20', 10)));
-  const category = req.query.category || null;
-  const minPrice = parseFloat(req.query.min_price) || null;
-  const maxPrice = parseFloat(req.query.max_price) || null;
-  const sortBy   = ['relevance','price_asc','price_desc','rating','newest'].includes(req.query.sort) ? req.query.sort : 'relevance';
-  if (!q || q.length < 2) return res.status(400).json({ error: 'Requête trop courte (min 2 caractères)', results: [] });
-  try {
-    const { data, error, count } = await supabase.rpc('search_products', {
-      query_text: _ftsToTsQuery(q), p_category: category, p_min: minPrice,
-      p_max: maxPrice, p_sort: sortBy, p_limit: limit, p_offset: (page-1)*limit,
-    }, { count: 'exact' });
-    if (error) {
-      if (error.code === 'PGRST202' || error.message?.includes('does not exist')) {
-        // Fallback ILIKE si la fonction RPC n'est pas encore créée en base
-        let fbq = supabase.from('products')
-          .select('id, name, description, price, images, category, rating, reviews_count, vendor_id, active', { count: 'exact' })
-          .eq('active', true).or(`name.ilike.%${q}%,description.ilike.%${q}%`)
-          .order('rating', { ascending: false }).range((page-1)*limit, page*limit-1);
-        if (category) fbq = fbq.eq('category', category);
-        if (minPrice)  fbq = fbq.gte('price', minPrice);
-        if (maxPrice)  fbq = fbq.lte('price', maxPrice);
-        const { data: fd, error: fe, count: fc } = await fbq;
-        if (fe) throw fe;
-        return res.json({ q, page, limit, total: fc||0, results: fd||[], fallback: true });
-      }
-      throw error;
-    }
-    supabase.rpc('upsert_search_log', { p_term: q.toLowerCase() }).catch(() => {});
-    res.json({ q, page, limit, total: count ?? data?.length ?? 0, results: data || [] });
-  } catch (e) {
-    Logger.error('search', 'fts.error', e.message);
-    res.status(500).json({ error: 'Erreur lors de la recherche', results: [] });
-  }
-});
-
-_ftsRouter.get('/suggest', async (req, res) => {
-  const q = _ftsSanitize(req.query.q || '');
-  if (!q || q.length < 2) return res.json({ suggestions: [] });
-  try {
-    const { data } = await supabase.from('products').select('name, category')
-      .eq('active', true).ilike('name', `${q}%`).order('rating', { ascending: false }).limit(8);
-    res.json({ suggestions: [...new Set((data||[]).map(p => p.name))].slice(0,6) });
-  } catch (_) { res.json({ suggestions: [] }); }
-});
-
-_ftsRouter.get('/popular', async (req, res) => {
-  if (_ftsPopularCache && Date.now() - _ftsPopularCacheAt < 5 * 60 * 1000)
-    return res.json({ terms: _ftsPopularCache });
-  try {
-    const { data } = await supabase.from('search_logs').select('term, count')
-      .order('count', { ascending: false }).limit(10);
-    _ftsPopularCache = (data||[]).map(r => r.term);
-    _ftsPopularCacheAt = Date.now();
-    res.json({ terms: _ftsPopularCache });
-  } catch (_) { res.json({ terms: [] }); }
-});
-
-app.use('/api/search', _ftsRouter);
-// ─── 404 & ERROR HANDLER ─────────────────────────────────────────────────────
-// [FIX] Fallback SPA — toutes les routes non-API renvoient index.html
-// Injecte le DSN Sentry dans un meta tag pour que le frontend puisse l'utiliser
-// sans exposer la valeur en dur dans le HTML source versionné.
-app.get('*', async (req, res) => {
-  if (req.path.startsWith('/api')) {
-    return res.status(404).json({ error: 'Route non trouvée' });
-  }
-  const fs   = require('fs');
-  const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8');
-  const sentryDsn = process.env.SENTRY_DSN_PUBLIC || process.env.SENTRY_DSN || '';
-  // Injecter le meta tag juste après <head> si un DSN public est configuré
-  const injected = sentryDsn
-    ? html.replace('<head>', `<head>\n    <meta name="sentry-dsn" content="${sentryDsn}">`)
-    : html;
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(injected);
-});
+// ─── 404 & ERROR HANDLER ──────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: `Route introuvable: ${req.method} ${req.path}` }));
-
-// ── Sentry error handler — DOIT être avant le handler Express générique ───────
-// Capture toutes les exceptions Express (throw dans un middleware/route) avec
-// contexte complet : stack trace, user, request, breadcrumbs.
-if (Sentry) app.use(Sentry.Handlers.errorHandler({
-  shouldHandleError(err) {
-    // Remonter uniquement les erreurs 5xx et les exceptions non-HTTP
-    return !err.status || err.status >= 500;
-  },
-}));
-
 app.use((err, req, res, _next) => {
-  // Capturer aussi dans Logger pour la traçabilité base de données
   Logger.error('system', 'unhandled_error', err.message, { path: req.path, method: req.method, meta: { stack: err.stack?.slice(0, 300) } });
-  // Si Sentry n'est pas configuré, capturer manuellement
-  sentryCapture(err, { tag: 'express-error-handler', extra: { path: req.path, method: req.method } });
   res.status(500).json({ error: 'Erreur interne du serveur' });
 });
 
@@ -6522,243 +4692,28 @@ app.use((err, req, res, _next) => {
 // [FIX] Évite que le process Node.js crash sur une promesse non gérée (ex: Supabase timeout)
 process.on('unhandledRejection', (reason, promise) => {
   Logger.error('system', 'unhandledRejection', String(reason), { meta: { promise: String(promise) } });
-  sentryCapture(reason instanceof Error ? reason : new Error(String(reason)), {
-    tag: 'unhandled-rejection', level: 'error',
-  });
 });
 process.on('uncaughtException', (err) => {
   Logger.error('system', 'uncaughtException', err.message, { meta: { stack: err.stack?.slice(0, 300) } });
-  sentryCapture(err, { tag: 'uncaught-exception', level: 'fatal' });
   // Ne pas quitter le process pour les erreurs non critiques
   if (err.code === 'ECONNRESET' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT') return;
-  // Laisser Sentry flusher avant de quitter
-  if (Sentry) {
-    Sentry.flush(2000).finally(() => process.exit(1));
+  process.exit(1); // Quitter sur les erreurs vraiment fatales
+});
+
+// [FIX] Fallback SPA — toutes les routes non-API renvoient index.html
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(__dirname, 'index.html'));
   } else {
-    process.exit(1);
+    res.status(404).json({ error: 'Route non trouvée' });
   }
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// POST /api/orders/:id/cancel  — Annulation acheteur + remboursement Stripe auto
-// Conditions : commande appartient à l'acheteur + statut = processing (pas expédié)
-// ═══════════════════════════════════════════════════════════════════════════════
-app.post('/api/orders/:id/cancel', verifyToken, async (req, res) => {
-  const { reason } = req.body;
-  if (!reason || reason.trim().length < 3)
-    return res.status(400).json({ error: "Motif d'annulation requis (min 3 caractères)" });
-
-  try {
-    const { data: order, error: fetchErr } = await supabase
-      .from('orders')
-      .select('id, buyer_id, buyer_email, buyer_name, vendor_id, vendor_name, status, total, products, stock_reserved, stripe_payment_id, payment_method, refund_status')
-      .eq('id', req.params.id).single();
-
-    if (fetchErr || !order) return res.status(404).json({ error: 'Commande introuvable' });
-    if (order.buyer_id !== req.user.id)
-      return res.status(403).json({ error: 'Non autorisé — commande appartient à un autre acheteur' });
-    if (!['processing', 'pending_payment'].includes(order.status))
-      return res.status(400).json({
-        error: `Annulation impossible : statut "${order.status}". Seules les commandes en cours de traitement peuvent être annulées.`,
-        code: 'CANCELLATION_NOT_ALLOWED',
-      });
-
-    const now = new Date().toISOString();
-    const updates = {
-      status:       'cancelled',
-      cancel_reason: reason.trim(),
-      cancelled_at: now,
-      cancelled_by: 'buyer',
-    };
-
-    // ── Remboursement Stripe automatique ────────────────────────────────────────
-    let stripeRefundResult = null;
-    if (order.stripe_payment_id && order.refund_status !== 'refunded') {
-      try {
-        stripeRefundResult = await stripe.refunds.create({
-          payment_intent: order.stripe_payment_id,
-          reason:         'requested_by_customer',
-          metadata: {
-            order_id:     order.id,
-            cancelled_by: req.user.id,
-            cancel_reason: reason.trim(),
-            source:       'buyer_cancel',
-          },
-        });
-        updates.refund_status = 'refunded';
-        updates.refund_id     = stripeRefundResult.id;
-        updates.refund_amount = stripeRefundResult.amount / 100;
-        updates.refunded_at   = now;
-        Logger.info('refund', 'buyer_cancel.success',
-          `Remboursement acheteur ${stripeRefundResult.id} — ${order.total}€ — commande ${order.id}`,
-          { userId: req.user.id, meta: { refundId: stripeRefundResult.id, orderId: order.id } }
-        );
-      } catch (stripeErr) {
-        updates.refund_status = 'failed';
-        updates.refund_error  = stripeErr.message;
-        Logger.error('refund', 'buyer_cancel.stripe_error', stripeErr.message,
-          { userId: req.user.id, meta: { orderId: order.id } }
-        );
-        // L'annulation continue même si Stripe échoue — admin devra rembourser manuellement
-      }
-    } else if (!order.stripe_payment_id) {
-      updates.refund_status = 'manual_pending'; // Mobile Money / espèces
-    }
-
-    // ── Re-crédit du stock ────────────────────────────────────────────────────
-    if (order.stock_reserved) {
-      const stockItems = (order.products || []).map(p => ({ product_id: p.id, qty: p.quantity || 1 }));
-      if (stockItems.length > 0) {
-        await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) })
-          .catch(e => Logger.warn('order', 'cancel.stock_release', e.message));
-        updates.stock_reserved = false;
-      }
-    }
-
-    const { data, error } = await supabase.from('orders').update(updates).eq('id', order.id).select().single();
-    if (error) throw error;
-
-    // ── Notifications ─────────────────────────────────────────────────────────
-    const refundTxt = stripeRefundResult
-      ? ` Remboursement de ${order.total}€ initié (3-5 jours ouvrés). Réf : ${stripeRefundResult.id}`
-      : updates.refund_status === 'manual_pending'
-        ? ' Remboursement Mobile Money à traiter par notre équipe.'
-        : '';
-
-    await Promise.all([
-      pushNotification(order.vendor_id, {
-        type: 'order', title: "❌ Commande annulée par l'acheteur",
-        message: `Commande #${order.id.slice(-6)} — ${reason.trim()}`, link: '/dashboard',
-      }),
-      sendEmail({
-        to: order.buyer_email,
-        subject: `[NEXUS] Confirmation d'annulation — commande #${order.id.slice(-6)}`,
-        html: `<p>Bonjour ${order.buyer_name},</p>
-               <p>Votre commande <strong>#${order.id.slice(-6)}</strong> a bien été annulée.</p>
-               ${stripeRefundResult
-                 ? `<p>Un remboursement de <strong>${order.total}€</strong> a été initié.
-                    Il apparaîtra sous <strong>3 à 5 jours ouvrés</strong>.<br>
-                    Référence : <code>${stripeRefundResult.id}</code></p>`
-                 : updates.refund_status === 'manual_pending'
-                   ? '<p>Votre remboursement Mobile Money sera traité par notre équipe dans les 48h.</p>'
-                   : ''}
-               <p>L'équipe NEXUS</p>`,
-      }).catch(() => {}),
-    ]);
-
-    Logger.info('order', 'buyer.cancelled',
-      `Commande ${order.id} annulée par acheteur ${req.user.id}${refundTxt}`,
-      { userId: req.user.id }
-    );
-
-    res.json({
-      ...data,
-      _refund: stripeRefundResult
-        ? { id: stripeRefundResult.id, amount: stripeRefundResult.amount / 100, status: stripeRefundResult.status }
-        : null,
-    });
-  } catch (e) {
-    Logger.error('order', 'buyer_cancel.error', e.message, { userId: req.user.id });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// POST /api/refunds  — Remboursement Stripe direct (admin seulement)
-// Utile pour les cas manuels : paiement Mobile Money converti, correction, etc.
-// ═══════════════════════════════════════════════════════════════════════════════
-app.post('/api/refunds', verifyToken, requireRole('admin'), async (req, res) => {
-  const { orderId, percent, reason, notes } = req.body;
-  if (!orderId) return res.status(400).json({ error: 'orderId requis' });
-  const pct = parseFloat(percent ?? 100);
-  if (isNaN(pct) || pct <= 0 || pct > 100)
-    return res.status(400).json({ error: 'percent doit être entre 1 et 100' });
-
-  try {
-    const { data: order } = await supabase
-      .from('orders')
-      .select('id, buyer_id, buyer_email, buyer_name, total, stripe_payment_id, refund_status, payment_method')
-      .eq('id', orderId).single();
-    if (!order) return res.status(404).json({ error: 'Commande introuvable' });
-    if (!order.stripe_payment_id)
-      return res.status(400).json({ error: 'Aucun paiement Stripe associé à cette commande', code: 'NO_STRIPE_PAYMENT' });
-    if (order.refund_status === 'refunded')
-      return res.status(409).json({ error: 'Commande déjà remboursée à 100%', code: 'ALREADY_REFUNDED' });
-
-    const amountCents = Math.round(((order.total * pct) / 100) * 100);
-    const refund = await stripe.refunds.create({
-      payment_intent: order.stripe_payment_id,
-      amount:         amountCents,
-      reason:         reason || 'requested_by_customer',
-      metadata: {
-        order_id:    order.id,
-        admin_id:    req.user.id,
-        percent:     String(pct),
-        source:      'admin_manual',
-        notes:       notes || '',
-      },
-    });
-
-    const refundStatus = pct >= 100 ? 'refunded' : 'partial_refund';
-    await supabase.from('orders').update({
-      refund_status:  refundStatus,
-      refund_id:      refund.id,
-      refund_amount:  amountCents / 100,
-      refund_percent: pct,
-      refunded_at:    new Date().toISOString(),
-    }).eq('id', orderId);
-
-    await Promise.all([
-      pushNotification(order.buyer_id, {
-        type: 'system', title: '💰 Remboursement initié',
-        message: `${amountCents / 100}€ (${pct}%) remboursé pour la commande #${orderId.slice(-6)}`,
-        link: '/orders',
-      }),
-      sendEmail({
-        to: order.buyer_email,
-        subject: `[NEXUS] Remboursement de ${amountCents / 100}€`,
-        html: `<p>Bonjour ${order.buyer_name},</p>
-               <p>Un remboursement de <strong>${amountCents / 100}€ (${pct}%)</strong> a été initié.</p>
-               <p>Référence : <code>${refund.id}</code></p>
-               <p>Il apparaîtra sous 3 à 5 jours ouvrés selon votre banque.</p>
-               ${notes ? `<p>Note : ${notes}</p>` : ''}
-               <p>L'équipe NEXUS</p>`,
-      }).catch(() => {}),
-    ]);
-
-    Logger.info('refund', 'admin.manual',
-      `Remboursement admin ${refund.id} — ${pct}% (${amountCents/100}€) — commande ${orderId}`,
-      { userId: req.user.id }
-    );
-
-    res.status(201).json({
-      refundId:  refund.id,
-      amount:    amountCents / 100,
-      percent:   pct,
-      status:    refund.status,
-      currency:  refund.currency,
-      createdAt: new Date(refund.created * 1000).toISOString(),
-    });
-  } catch (e) {
-    if (e.type === 'StripeInvalidRequestError') {
-      Logger.error('refund', 'stripe.invalid', e.message, { userId: req.user.id });
-      return res.status(400).json({ error: `Stripe : ${e.message}`, code: e.code });
-    }
-    Logger.error('refund', 'admin.error', e.message, { userId: req.user.id });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// ── Healthcheck rapide (sans DB) — utilisé par Railway si /api/health est trop lent ──
-app.get('/ping', (_req, res) => res.json({ ok: true, ts: Date.now() }));
-
 
 app.listen(PORT, '0.0.0.0', async () => { // [FIX RAILWAY] Bind explicite 0.0.0.0 requis dans Docker/Railway
   const env     = process.env.NODE_ENV || 'development';
   const hasDb   = !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY);
   const hasStripe = !!process.env.STRIPE_SECRET_KEY;
-  const hasEmail  = !!(process.env.RESEND_API_KEY || process.env.SMTP_USER);
+  const hasEmail  = !!process.env.SMTP_USER;
   const hasWebhook= !!process.env.STRIPE_WEBHOOK_SECRET;
 
   console.log(`\n🚀 NEXUS Market API v3.2.0 — port ${PORT} (${env})`);
@@ -6865,22 +4820,6 @@ app.listen(PORT, '0.0.0.0', async () => { // [FIX RAILWAY] Bind explicite 0.0.0.
 // ════════════════════════════════════════════════════════════════════════════════
 // SQL SUPABASE — Tables requises pour les nouvelles fonctionnalités (v3.2.0)
 // Exécuter dans l'éditeur SQL de Supabase avant déploiement :
-//
-// -- [JWT-REFRESH] Refresh tokens (requis pour features/jwt-refresh.js)
-// CREATE TABLE IF NOT EXISTS refresh_tokens (
-//   id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-//   user_id     uuid        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-//   token       text        UNIQUE NOT NULL,
-//   expires_at  timestamptz NOT NULL,
-//   revoked_at  timestamptz,
-//   replaced_by text,
-//   ip          text,
-//   user_agent  text,
-//   created_at  timestamptz DEFAULT now()
-// );
-// CREATE INDEX IF NOT EXISTS idx_rt_token   ON refresh_tokens(token);
-// CREATE INDEX IF NOT EXISTS idx_rt_user_id ON refresh_tokens(user_id);
-// CREATE INDEX IF NOT EXISTS idx_rt_expires ON refresh_tokens(expires_at);
 //
 // -- Coupons
 // CREATE TABLE IF NOT EXISTS coupons (
