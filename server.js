@@ -1079,7 +1079,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       }
     }
 
-    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
+    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800'); // [FIX] 7 jours par défaut (était 900s = 15min)
     const token = jwt.sign({ id: data.id, role: 'buyer', name, email }, process.env.JWT_SECRET, {
       expiresIn
     });
@@ -1127,10 +1127,19 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         // (un compte bcrypt ne doit jamais être authentifiable par un autre système)
         return res.status(401).json({ error: 'Email ou mot de passe incorrect', code: 'WRONG_PASSWORD' });
       }
-      if (user.role === 'vendor' && user.status !== 'approved') return res.status(403).json({ error: 'Compte vendeur en attente de validation' });
+      // [FIX] Re-vérifier le statut vendeur en base (le cache peut être périmé après approbation admin)
+      if (user.role === 'vendor' && user.status !== 'approved') {
+        const { data: freshVendor } = await supabase
+          .from('profiles').select('status').eq('id', user.id).maybeSingle();
+        if (freshVendor?.status === 'approved') {
+          user.status = 'approved';
+        } else {
+          return res.status(403).json({ error: 'Compte vendeur en attente de validation admin' });
+        }
+      }
       if (user.status === 'banned') return res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' });
       supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', user.id).then(() => {});
-      const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
+      const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800'); // [FIX] 7 jours par défaut (était 900s = 15min)
       const token = jwt.sign({ id: user.id, role: user.role, name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn });
       const { password_hash, ...safeUser } = user;
       let refreshToken = null, refreshExpiresIn = null;
@@ -1166,7 +1175,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
     if (profile.status === 'banned') return res.status(403).json({ error: 'Compte suspendu' });
     supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).then(() => {});
-    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
+    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800'); // [FIX] 7 jours par défaut (était 900s = 15min)
     const token = jwt.sign({ id: profile.id, role: profile.role, name: profile.name, email: profile.email }, process.env.JWT_SECRET, { expiresIn });
     const { password_hash: _ph, ...safeProfile } = profile;
     let refreshToken = null, refreshExpiresIn = null;
@@ -1386,7 +1395,7 @@ app.get('/api/auth/github/callback', async (req, res) => {
     }
 
     // 4. Émettre JWT NEXUS + Refresh Token
-    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
+    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800'); // [FIX] 7 jours par défaut (était 900s = 15min)
     const token = jwt.sign(
       { id: profile.id, role: profile.role, name: profile.name, email: profile.email, github: true },
       process.env.JWT_SECRET,
@@ -1431,7 +1440,7 @@ app.patch('/api/auth/github/role', verifyToken, async (req, res) => {
     const newStatus = role === 'vendor' ? 'pending' : 'active';
     const { data, error } = await supabase
       .from('profiles')
-      .update({ role, status: newStatus, updated_at: new Date().toISOString() })
+      .update({ role, status: newStatus })
       .eq('id', req.user.id)
       .select('id, name, email, role, status, avatar, github_id, github_login, github_avatar')
       .single();
@@ -1461,7 +1470,7 @@ app.patch('/api/auth/github/role', verifyToken, async (req, res) => {
     }
 
     // Émettre un nouveau JWT avec le bon rôle + [JWT-REFRESH] refresh token
-    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '900');
+    const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800'); // [FIX] 7 jours par défaut (était 900s = 15min)
     const newToken = jwt.sign(
       { id: data.id, role: data.role, name: data.name, email: data.email, github: true },
       process.env.JWT_SECRET,
@@ -3830,7 +3839,34 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
     // 1. Récupérer le dossier vendeur en attente
     const { data: pending, error: pendingErr } = await supabase
       .from('pending_vendors').select('id, name, owner_name, email, category, avatar, phone, ninea, address, status, password_hash, created_at').eq('id', vendorId).single();
-    if (pendingErr || !pending) return res.status(404).json({ error: 'Demande introuvable' });
+    if (pendingErr || !pending) {
+      // [FIX] Le vendeur peut exister dans profiles sans entrée dans pending_vendors
+      // (inscription directe Supabase Auth). On tente une approbation directe par ID de profil.
+      if (approved !== false) {
+        const { data: directProfile, error: dpErr } = await supabase
+          .from('profiles')
+          .select('id, email, name, role, status, shop_name')
+          .eq('id', vendorId)
+          .maybeSingle();
+        if (directProfile) {
+          // Approuver ou rejeter directement dans profiles
+          const newStatus = approved ? 'approved' : 'rejected';
+          const { error: dpUpdateErr } = await supabase
+            .from('profiles')
+            .update({ status: newStatus, role: 'vendor' })
+            .eq('id', vendorId);
+          if (dpUpdateErr) return res.status(500).json({ error: dpUpdateErr.message });
+          // Invalider cache
+          for (const [key, val] of _profileCache.entries()) {
+            if (val.user?.id === vendorId) _profileCache.delete(key);
+          }
+          const msg = approved ? 'Vendeur approuvé (profil direct)' : 'Vendeur refusé (profil direct)';
+          Logger.info('auth', 'vendor.direct_approve', msg, { vendorId, adminId: req.user.id });
+          return res.json({ message: msg, vendorId, email: directProfile.email, direct: true });
+        }
+      }
+      return res.status(404).json({ error: 'Demande introuvable dans pending_vendors et profiles' });
+    }
 
     if (approved) {
       // 2a. Approbation : créer ou mettre à jour le profil dans profiles
@@ -4021,6 +4057,21 @@ app.get('/api/admin/export/:type', verifyToken, requireRole('admin'), async (req
 });
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
+// [FIX] Service Worker — Vercel single-file deploy ne peut pas servir sw.js statiquement
+// On le sert via le backend Render pour que le SW soit disponible depuis /sw.js
+// Note: le domaine du SW doit correspondre au scope, donc cette route est un bonus
+// La vraie solution est de mettre sw.js dans le repo Vercel (déjà fourni séparément)
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.setHeader('Cache-Control', 'no-cache');
+  // Renvoie un SW minimal si le fichier n'est pas trouvé localement
+  const swContent = `self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => { if (e.request.method !== 'GET') return; e.respondWith(fetch(e.request).catch(() => caches.match(e.request))); });`;
+  res.send(swContent);
+});
+
 app.get('/api/health', async (req, res) => {
   const start = Date.now();
   let dbStatus = 'unknown';
