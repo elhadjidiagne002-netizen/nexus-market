@@ -1954,7 +1954,16 @@ const DataService = {
         if (res.status === 429 || res.status >= 500) {
           throw new Error(json.error || json.message || "Erreur serveur. Réessayez dans quelques instants.");
         }
-        // 401 / 403 / 404 → mémoriser et tenter les fallbacks
+        // [FIX CRITIQUE] WRONG_PASSWORD = compte bcrypt confirmé, mauvais mot de passe.
+        // Ne PAS tenter Supabase Auth — ce serait un bypass de sécurité.
+        if (res.status === 401 && (json.code === 'WRONG_PASSWORD' || json.code === 'INVALID_CREDENTIALS')) {
+          throw new Error(json.error || "Email ou mot de passe incorrect.");
+        }
+        // CONFIG_ERROR (503) → pas de fallback possible
+        if (res.status === 503) throw new Error(json.error || "Serveur temporairement indisponible.");
+        // 403 (vendeur en attente/banni) → pas de fallback
+        if (res.status === 403) throw new Error(json.error || "Accès refusé.");
+        // 401 sans code explicite → mémoriser et tenter Supabase Auth en fallback
         _backendError = new Error(json.error || json.message || "Email ou mot de passe incorrect");
       }
       // res === null OU erreur 401/403/404 → fallback Supabase ci-dessous
@@ -2233,9 +2242,14 @@ async signOut() {
       ...(options.headers || {})
     };
     try {
+      // [FIX CRITIQUE] reqHeaders (Authorization: Bearer <token>) doit être passé explicitement.
+      // Avant ce fix : seul ...options était spreadé → le token était perdu → 401 sur chaque appel initial → boucle refresh infinie.
+      // signal: controller.signal est aussi ajouté (le timeout AbortController était créé mais non utilisé).
       const res = await fetch(_fullUrl, {
         ...options,
-        mode: _apiBase ? "cors" : "same-origin",
+        mode:    _apiBase ? "cors" : "same-origin",
+        signal:  controller.signal,
+        headers: reqHeaders,
       });
       clearTimeout(timeoutId);
 // [JWT-REFRESH] Sur 401 : tenter un refresh silencieux avant de déconnecter.
@@ -9532,7 +9546,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     setStats({
       totalRevenue, totalCommissions, todayOrders,
       totalOrders:    ordersData.length,
-      totalVendors:   vendorsList.length,
+      totalVendors:   vendors.length,
       totalProducts:  productsData.length,
       pendingVendors: pendingData.length,
       openDisputes:   apiStats.openDisputes   ?? (storage.getArray("disputes")).filter(d => d.status === "open").length,
@@ -9553,78 +9567,39 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   };
   const approveVendor = async (vendorId) => {
     const vendor = pendingVendors.find((v) => v.id === vendorId);
-    let success = false;
 
-    if (NEXUS_CONFIG.apiUrl) {
-      try {
-        const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
-          method: "PATCH",
-          body: JSON.stringify({ approved: true }),
-        });
-        if (resp && resp.ok) {
-          success = true;
-        } else {
-          const err = await resp?.json().catch(() => ({}));
-          // Si le vendeur n'est pas trouvé par l'API (id local ou UUID manquant), tenter Supabase direct
-          if (resp?.status === 404 && vendor) {
-            console.warn("[approveVendor] 404 → tentative Supabase direct");
-          } else {
-            addToast(err?.error || "Erreur lors de l'approbation. Réessayez.", "danger");
-            return;
-          }
+    // [FIX] Seul le backend (service_role) peut écrire dans profiles — la clé anon est bloquée par RLS.
+    // Le fallback Supabase direct a été supprimé : il retournait toujours 401 "permission denied for table profiles".
+    // Toutes les opérations d'approbation passent exclusivement par PATCH /api/admin/vendors/:id/approve.
+    if (!NEXUS_CONFIG.apiUrl) {
+      addToast("API non configurée (NEXUS_CONFIG.apiUrl vide). Vérifiez la configuration.", "danger");
+      return;
+    }
+    try {
+      const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
+        method: "PATCH",
+        body: JSON.stringify({ approved: true }),
+      });
+      if (!resp || !resp.ok) {
+        const err = await resp?.json().catch(() => ({}));
+        // 404 = vendeur introuvable dans pending_vendors (peut-être déjà approuvé ou ID incorrect)
+        if (resp?.status === 404) {
+          addToast("Vendeur introuvable dans la base (peut-être déjà approuvé). Rafraîchissez la liste.", "warning");
+          loadData();
+          return;
         }
-      } catch (e) {
-        console.warn("[approveVendor]", e);
-        addToast("Erreur réseau lors de l'approbation.", "danger");
+        addToast(err?.error || "Erreur lors de l'approbation. Réessayez.", "danger");
         return;
       }
-    }
-
-    // Fallback Supabase direct (si API échoue ou vendorId est un UUID local)
-    if (!success && DataService._sb && vendor) {
-      try {
-        // 1. Créer ou mettre à jour le profil
-        const { data: existingProf } = await DataService._sb
-          .from("profiles").select("id").eq("email", vendor.email).maybeSingle();
-        if (!existingProf) {
-          const { error: insErr } = await DataService._sb.from("profiles").insert({
-            name: vendor.ownerName || vendor.name, email: vendor.email,
-            role: "vendor", status: "approved",
-            shop_name: vendor.name, shop_category: vendor.category,
-            phone: vendor.phone || null, address: vendor.address || null,
-            avatar: vendor.avatar || (vendor.ownerName || "VE").slice(0, 2).toUpperCase(),
-            ninea: vendor.ninea || null,
-          });
-          if (insErr) { addToast("Erreur Supabase: " + insErr.message, "danger"); return; }
-        } else {
-          await DataService._sb.from("profiles").update({
-            role: "vendor", status: "approved",
-            shop_name: vendor.name, shop_category: vendor.category,
-          }).eq("id", existingProf.id);
-        }
-        // 2. Supprimer ou marquer la demande
-        const { error: delErr } = await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
-        if (delErr) {
-          await DataService._sb.from("pending_vendors").update({ status: "approved" }).eq("id", vendorId);
-        }
-        success = true;
-      } catch (sbEx) {
-        addToast("Erreur Supabase direct: " + sbEx.message, "danger");
-        return;
-      }
-    }
-
-    if (!success) {
-      addToast("Impossible d'approuver ce vendeur. Vérifiez la connexion.", "danger");
+    } catch (e) {
+      console.warn("[approveVendor]", e);
+      addToast("Erreur réseau lors de l'approbation.", "danger");
       return;
     }
 
-    // Mise à jour locale immédiate
+    // Mise à jour locale immédiate après succès API
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
-    const lsPending = storage.get("pendingVendors") || [];
-    storage.set("pendingVendors", lsPending.filter(v =>
-      v.id !== vendorId && v.email !== (vendor?.email || "")
-    ));
+    storage.set("pendingVendors", (storage.get("pendingVendors") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
     if (vendor) {
       DataService.addNotification(vendorId, {
         type: "vendor", title: "🎉 Boutique approuvée !",
@@ -9636,47 +9611,36 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   };
   const rejectVendor = async (vendorId) => {
     const vendor = pendingVendors.find((v) => v.id === vendorId);
-    let success = false;
 
-    if (NEXUS_CONFIG.apiUrl) {
-      try {
-        const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
-          method: "PATCH",
-          body: JSON.stringify({ approved: false }),
-        });
-        if (resp && resp.ok) {
-          success = true;
-        } else if (resp?.status === 404) {
-          // ID local non trouvé en base — on supprime quand même localement
-          success = true;
-        } else {
-          const err = await resp?.json().catch(() => ({}));
-          addToast(err?.error || "Erreur lors du refus. Réessayez.", "danger");
+    if (!NEXUS_CONFIG.apiUrl) {
+      addToast("API non configurée. Vérifiez la configuration.", "danger");
+      return;
+    }
+    try {
+      const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
+        method: "PATCH",
+        body: JSON.stringify({ approved: false }),
+      });
+      if (!resp || !resp.ok) {
+        if (resp?.status === 404) {
+          // 404 = déjà supprimé — on nettoie localement
+          setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
+          loadData();
+          addToast("Demande déjà traitée, liste rafraîchie.", "info");
           return;
         }
-      } catch (e) {
-        console.warn("[rejectVendor]", e);
-        addToast("Erreur réseau lors du refus.", "danger");
+        const err = await resp?.json().catch(() => ({}));
+        addToast(err?.error || "Erreur lors du refus. Réessayez.", "danger");
         return;
       }
-    }
-
-    if (!success && DataService._sb) {
-      try {
-        const { error: delErr } = await DataService._sb.from("pending_vendors").delete().eq("id", vendorId);
-        if (delErr) {
-          await DataService._sb.from("pending_vendors").update({ status: "rejected" }).eq("id", vendorId);
-        }
-        success = true;
-      } catch (sbEx) {
-        console.warn("[rejectVendor Supabase]", sbEx.message);
-        success = true; // On retire quand même localement
-      }
+    } catch (e) {
+      console.warn("[rejectVendor]", e);
+      addToast("Erreur réseau lors du refus.", "danger");
+      return;
     }
 
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
-    const lsPending2 = storage.get("pendingVendors") || [];
-    storage.set("pendingVendors", lsPending2.filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
+    storage.set("pendingVendors", (storage.get("pendingVendors") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
     loadData();
     addToast(`Demande de ${vendor?.name || "ce vendeur"} refusée.`, "info");
   };
