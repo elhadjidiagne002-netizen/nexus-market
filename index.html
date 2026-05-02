@@ -6629,9 +6629,16 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
     }
     try {
       const user = await DataService.signIn(email, password);
-      // [FIX] Admin peut toujours se connecter quel que soit le targetRole
-      if (user.role !== "admin" && targetRole && user.role !== targetRole && !(targetRole === "vendor" && user.role === "vendor") && !(targetRole === "buyer" && user.role === "buyer_pro")) {
-        setError(`Ce compte n'est pas un compte ${targetRole === "admin" ? "administrateur" : "vendeur"}`);
+      // [FIX v2] Seule la séparation admin/non-admin est stricte.
+      // Un vendeur peut se connecter via le formulaire acheteur (targetRole="buyer")
+      // et sera redirigé vers son dashboard vendeur automatiquement.
+      // Cas bloqués :
+      //   • non-admin qui essaie le portail admin  → bloqué
+      //   • admin qui utilise un formulaire non-admin → laissé passer (role=admin prend le dessus)
+      const isAdminPortal = targetRole === "admin";
+      const isAdminUser   = user.role === "admin";
+      if (isAdminPortal && !isAdminUser) {
+        setError("Ce compte n'est pas un compte administrateur");
         return;
       }
       if (user.role === "vendor" && user.status !== "approved") {
