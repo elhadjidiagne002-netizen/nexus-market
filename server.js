@@ -3882,6 +3882,7 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
       return res.status(404).json({ error: 'Demande introuvable — le vendeur est peut-être déjà approuvé ou la page est obsolète. Rafraîchissez la liste.' });
     }
 
+    if (approved) {
       // [FIX v2] Normaliser l'email pour éviter les problèmes de casse (majuscules)
       const pendingEmailNorm = (pending.email || '').trim().toLowerCase();
 
