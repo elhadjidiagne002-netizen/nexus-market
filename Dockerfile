@@ -12,7 +12,9 @@ COPY . .
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+# [FIX RAILWAY] Utiliser ${PORT:-3000} car Railway injecte son propre PORT
+# Si PORT=8080 est injecté par Railway, le healthcheck sonde le bon port
+HEALTHCHECK --interval=15s --timeout=8s --start-period=20s --retries=3 \
+  CMD wget -qO- http://localhost:${PORT:-3000}/ping || exit 1
 
 CMD ["node", "server.js"]
