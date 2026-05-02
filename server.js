@@ -1127,13 +1127,25 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         // (un compte bcrypt ne doit jamais être authentifiable par un autre système)
         return res.status(401).json({ error: 'Email ou mot de passe incorrect', code: 'WRONG_PASSWORD' });
       }
-      // [FIX] Re-vérifier le statut vendeur en base (le cache peut être périmé après approbation admin)
+      // [FIX v2] Re-vérifier le statut vendeur en base (double vérification id + email normalisé)
       if (user.role === 'vendor' && user.status !== 'approved') {
-        const { data: freshVendor } = await supabase
-          .from('profiles').select('status').eq('id', user.id).maybeSingle();
-        if (freshVendor?.status === 'approved') {
+        // Tentative 1 : par id
+        const { data: freshById } = await supabase
+          .from('profiles').select('id, status').eq('id', user.id).maybeSingle();
+        // Tentative 2 : par email normalisé (cas où email stocké avait des majuscules)
+        const { data: freshByEmail } = await supabase
+          .from('profiles').select('id, status').eq('email', emailNorm).maybeSingle();
+        const freshStatus = freshById?.status || freshByEmail?.status;
+        if (freshStatus === 'approved') {
           user.status = 'approved';
+          // Corriger l'email stocké si nécessaire
+          if (freshByEmail && freshByEmail.id === user.id) {
+            supabase.from('profiles').update({ email: emailNorm }).eq('id', user.id).then(() => {});
+          }
         } else {
+          Logger.warn('auth', 'login.vendor_not_approved',
+            `Statut vendeur en base: ${freshStatus || 'inconnu'} pour ${emailNorm}`,
+            { userId: user.id, ip: req.ip });
           return res.status(403).json({ error: 'Compte vendeur en attente de validation admin' });
         }
       }
@@ -3840,16 +3852,18 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
     const { data: pending, error: pendingErr } = await supabase
       .from('pending_vendors').select('id, name, owner_name, email, category, avatar, phone, ninea, address, status, password_hash, created_at').eq('id', vendorId).single();
     if (pendingErr || !pending) {
-      // [FIX] Le vendeur peut exister dans profiles sans entrée dans pending_vendors
-      // (inscription directe Supabase Auth). On tente une approbation directe par ID de profil.
+      // [FIX v2] Chercher dans profiles par cet ID (profil direct sans pending_vendors)
       if (approved !== false) {
-        const { data: directProfile, error: dpErr } = await supabase
+        const { data: directProfile } = await supabase
           .from('profiles')
           .select('id, email, name, role, status, shop_name')
           .eq('id', vendorId)
           .maybeSingle();
         if (directProfile) {
-          // Approuver ou rejeter directement dans profiles
+          if (directProfile.status === 'approved' && directProfile.role === 'vendor') {
+            // Déjà approuvé — répondre OK plutôt que 404
+            return res.json({ message: 'Vendeur déjà approuvé', vendorId, email: directProfile.email, alreadyApproved: true });
+          }
           const newStatus = approved ? 'approved' : 'rejected';
           const { error: dpUpdateErr } = await supabase
             .from('profiles')
@@ -3865,20 +3879,21 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
           return res.json({ message: msg, vendorId, email: directProfile.email, direct: true });
         }
       }
-      return res.status(404).json({ error: 'Demande introuvable dans pending_vendors et profiles' });
+      return res.status(404).json({ error: 'Demande introuvable — le vendeur est peut-être déjà approuvé ou la page est obsolète. Rafraîchissez la liste.' });
     }
 
-    if (approved) {
+      // [FIX v2] Normaliser l'email pour éviter les problèmes de casse (majuscules)
+      const pendingEmailNorm = (pending.email || '').trim().toLowerCase();
+
       // 2a. Approbation : créer ou mettre à jour le profil dans profiles
-      // [FIX] Utiliser .maybeSingle() pour éviter l'erreur silencieuse sur existingProfile.data
       const { data: existingProfile } = await supabase
-        .from('profiles').select('id, password_hash').eq('email', pending.email).maybeSingle();
+        .from('profiles').select('id, password_hash, status').eq('email', pendingEmailNorm).maybeSingle();
 
       if (!existingProfile) {
         // Nouveau compte — insérer un profil complet
         const { error: insertErr } = await supabase.from('profiles').insert({
           name:          pending.owner_name,
-          email:         pending.email,
+          email:         pendingEmailNorm,
           password_hash: pending.password_hash || null,
           role:          'vendor',
           status:        'approved',
@@ -3902,14 +3917,18 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
         if (!existingProfile.password_hash && pending.password_hash) {
           updatePayload.password_hash = pending.password_hash;
         }
-        const { error: updateErr } = await supabase
-          .from('profiles').update(updatePayload).eq('id', existingProfile.id);
+        const { error: updateErr, count: updateCount } = await supabase
+          .from('profiles').update(updatePayload).eq('id', existingProfile.id).select('id', { count: 'exact' });
         if (updateErr) throw new Error(`Mise à jour profil : ${updateErr.message}`);
+        // Vérifier que la mise à jour a bien affecté une ligne
+        if (updateCount === 0) {
+          Logger.warn('auth', 'vendor.approve_warning', `Update profiles a affecté 0 ligne pour id=${existingProfile.id}`, { adminId: req.user.id });
+        }
       }
 
-      // 3a. Invalider le cache token pour ce vendeur
+      // 3a. Invalider le cache token pour ce vendeur (par id ET par email)
       for (const [key, val] of _profileCache.entries()) {
-        if (val.user?.email === pending.email) _profileCache.delete(key);
+        if (val.user?.email === pendingEmailNorm || val.user?.id === existingProfile?.id) _profileCache.delete(key);
       }
 
       // 4a. Supprimer la demande de pending_vendors (plus propre que status='approved' — évite qu'elle réapparaisse)
