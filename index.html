@@ -103,6 +103,9 @@
          forçant une 2e initialisation plus tard → 2 clients en conflit → lock "nexus-auth-token" volé. -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"
             onerror="console.warn('[NEXUS] Supabase SDK non chargé')"></script>
+    <!-- Migration localStorage → Supabase (one-shot, doit être chargé avant l'app) -->
+    <script defer src="nexus_migrate.js"></script>
+    <script defer src="nexus_storage_supabase.js"></script>
     <!-- Stripe — non bloquant (facultatif, pas de race condition) -->
     <script>
     (function(){
@@ -5409,6 +5412,10 @@ const storage = {
     }
   }
 };
+// ── PATCH : storage → SupabaseStorage (écriture Supabase en arrière-plan) ──
+// Le patch est appliqué automatiquement par nexus_storage_supabase.js
+// lors de l'événement 'nexus-user-logged-in' (avec _userId correctement initialisé).
+// Un patch prématuré ici (avant login) n'a aucun effet utile car _userId est null.
 // hashPassword et verifyPassword supprimées — tous les comptes sont dans Supabase/backend.
 // Le hachage est effectué côté serveur (bcrypt dans server.js / Supabase Auth).
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -13788,6 +13795,7 @@ const App = ({ onUserChange }) => {
 
     setCurrentUser(user);
     window.__nexusCurrentUser = user;
+    document.dispatchEvent(new CustomEvent('nexus-user-logged-in', { detail: { user: user } }));
     if (onUserChange) onUserChange(user);
     setShowAuth(false);
     setLoginTarget(null);
@@ -13815,6 +13823,7 @@ const App = ({ onUserChange }) => {
     // [FIX] Déconnecter l'UI IMMÉDIATEMENT — sans attendre l'API (cold start Render ~30s)
     setCurrentUser(null);
     window.__nexusCurrentUser = null;
+    document.dispatchEvent(new CustomEvent('nexus-user-logged-out'));
     if (onUserChange) onUserChange(null);
     setSidebarOpen(false);
     // Nettoyage session en arrière-plan (non bloquant)
@@ -13826,6 +13835,7 @@ const App = ({ onUserChange }) => {
     const onExpired = () => {
       setCurrentUser(null);
       if (onUserChange) onUserChange(null);
+      document.dispatchEvent(new CustomEvent('nexus-user-logged-out'));
       addToast("⏰ Session expirée. Veuillez vous reconnecter.", "error");
     };
     window.addEventListener("nexus:session-expired", onExpired);
