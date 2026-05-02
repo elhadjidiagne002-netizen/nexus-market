@@ -1127,7 +1127,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         // (un compte bcrypt ne doit jamais être authentifiable par un autre système)
         return res.status(401).json({ error: 'Email ou mot de passe incorrect', code: 'WRONG_PASSWORD' });
       }
-      // [FIX v2] Re-vérifier le statut vendeur en base (double vérification id + email normalisé)
+      // [FIX v3] Re-vérifier le statut vendeur en base (double vérification id + email normalisé)
       if (user.role === 'vendor' && user.status !== 'approved') {
         // Tentative 1 : par id
         const { data: freshById } = await supabase
@@ -1143,10 +1143,20 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
             supabase.from('profiles').update({ email: emailNorm }).eq('id', user.id).then(() => {});
           }
         } else {
-          Logger.warn('auth', 'login.vendor_not_approved',
-            `Statut vendeur en base: ${freshStatus || 'inconnu'} pour ${emailNorm}`,
-            { userId: user.id, ip: req.ip });
-          return res.status(403).json({ error: 'Compte vendeur en attente de validation admin' });
+          // [FIX v3] Vérifier si une demande pending_vendors est déjà traitée (status=approved)
+          // mais le profil n'a pas encore été mis à jour (race condition)
+          const { data: pv } = await supabase
+            .from('pending_vendors').select('id, status').eq('email', emailNorm).maybeSingle();
+          if (pv?.status === 'approved') {
+            // La demande est approuvée côté pending_vendors mais profiles pas encore mis à jour → corriger
+            await supabase.from('profiles').update({ status: 'approved', role: 'vendor' }).eq('id', user.id);
+            user.status = 'approved';
+          } else {
+            Logger.warn('auth', 'login.vendor_not_approved',
+              `Statut vendeur en base: ${freshStatus || 'inconnu'} pour ${emailNorm}`,
+              { userId: user.id, ip: req.ip });
+            return res.status(403).json({ error: 'Compte vendeur en attente de validation admin' });
+          }
         }
       }
       if (user.status === 'banned') return res.status(403).json({ error: 'Compte suspendu — contactez support@nexus.sn' });
@@ -1186,6 +1196,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       profile = np || { id: sbData.user.id, email: emailNorm, name, role: meta.role || 'buyer', status: 'active' };
     }
     if (profile.status === 'banned') return res.status(403).json({ error: 'Compte suspendu' });
+    // [FIX v3] Bloquer les vendeurs non approuvés même via Supabase Auth
+    if (profile.role === 'vendor' && profile.status !== 'approved') {
+      return res.status(403).json({ error: 'Compte vendeur en attente de validation admin' });
+    }
     supabase.from('profiles').update({ last_login: new Date().toISOString() }).eq('id', profile.id).then(() => {});
     const expiresIn = parseInt(process.env.JWT_EXPIRES_IN || '604800'); // [FIX] 7 jours par défaut (était 900s = 15min)
     const token = jwt.sign({ id: profile.id, role: profile.role, name: profile.name, email: profile.email }, process.env.JWT_SECRET, { expiresIn });
@@ -3849,16 +3863,31 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
 
   try {
     // 1. Récupérer le dossier vendeur en attente
+    // [FIX v3] .maybeSingle() — évite PGRST116 quand 0 lignes (plus propre que .single())
     const { data: pending, error: pendingErr } = await supabase
-      .from('pending_vendors').select('id, name, owner_name, email, category, avatar, phone, ninea, address, status, password_hash, created_at').eq('id', vendorId).single();
+      .from('pending_vendors').select('id, name, owner_name, email, category, avatar, phone, ninea, address, status, password_hash, created_at').eq('id', vendorId).maybeSingle();
     if (pendingErr || !pending) {
-      // [FIX v2] Chercher dans profiles par cet ID (profil direct sans pending_vendors)
+      // [FIX v3] Chercher dans profiles par cet ID OU par email via vendor_approval_ref
       if (approved !== false) {
-        const { data: directProfile } = await supabase
+        // Tentative 1 : profil dont l'id correspond directement (cas GitHub OAuth)
+        let { data: directProfile } = await supabase
           .from('profiles')
           .select('id, email, name, role, status, shop_name')
           .eq('id', vendorId)
           .maybeSingle();
+
+        // [FIX v3] Tentative 2 : le profil a un UUID différent du pending_vendors.id
+        // (cas où l'insert n'avait pas précisé id= → Supabase génère un nouveau UUID)
+        // On cherche via vendor_approval_ref (colonne optionnelle) ou via status='pending'+role='vendor'
+        if (!directProfile) {
+          const { data: profileByRef } = await supabase
+            .from('profiles')
+            .select('id, email, name, role, status, shop_name')
+            .eq('vendor_approval_ref', vendorId)
+            .maybeSingle();
+          directProfile = profileByRef || null;
+        }
+
         if (directProfile) {
           if (directProfile.status === 'approved' && directProfile.role === 'vendor') {
             // Déjà approuvé — répondre OK plutôt que 404
@@ -3868,18 +3897,25 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
           const { error: dpUpdateErr } = await supabase
             .from('profiles')
             .update({ status: newStatus, role: 'vendor' })
-            .eq('id', vendorId);
+            .eq('id', directProfile.id);
           if (dpUpdateErr) return res.status(500).json({ error: dpUpdateErr.message });
-          // Invalider cache
+          // Invalider cache (par id réel du profil, pas vendorId)
           for (const [key, val] of _profileCache.entries()) {
-            if (val.user?.id === vendorId) _profileCache.delete(key);
+            if (val.user?.id === directProfile.id || val.user?.id === vendorId) _profileCache.delete(key);
           }
           const msg = approved ? 'Vendeur approuvé (profil direct)' : 'Vendeur refusé (profil direct)';
-          Logger.info('auth', 'vendor.direct_approve', msg, { vendorId, adminId: req.user.id });
-          return res.json({ message: msg, vendorId, email: directProfile.email, direct: true });
+          Logger.info('auth', 'vendor.direct_approve', msg, { vendorId, profileId: directProfile.id, adminId: req.user.id });
+          return res.json({ message: msg, vendorId, profileId: directProfile.id, email: directProfile.email, direct: true });
         }
       }
-      return res.status(404).json({ error: 'Demande introuvable — le vendeur est peut-être déjà approuvé ou la page est obsolète. Rafraîchissez la liste.' });
+      // [FIX v3] Message d'erreur amélioré avec instructions pour l'admin
+      Logger.warn('auth', 'vendor.approve_not_found', `Vendeur introuvable pour approbation: vendorId=${vendorId}`, { adminId: req.user.id });
+      return res.status(404).json({
+        error: 'Demande introuvable dans pending_vendors et profiles.',
+        hint: 'Si le vendeur est visible dans Supabase (table profiles), exécutez manuellement : UPDATE profiles SET status=\'approved\', role=\'vendor\' WHERE email=\'email_du_vendeur\';',
+        vendorId,
+        alreadyApproved: false,
+      });
     }
 
     if (approved) {
@@ -3892,7 +3928,11 @@ app.patch('/api/admin/vendors/:id/approve', verifyToken, requireRole('admin'), a
 
       if (!existingProfile) {
         // Nouveau compte — insérer un profil complet
+        // [FIX v3] CRITIQUE : spécifier id=pending.id pour que l'UUID du profil
+        // corresponde à celui de pending_vendors. Sans ça, Supabase génère un nouveau UUID
+        // et le fallback profiles.eq('id', vendorId) ne trouve plus rien lors de re-tentatives.
         const { error: insertErr } = await supabase.from('profiles').insert({
+          id:            pending.id,   // ← FIX : même UUID que pending_vendors
           name:          pending.owner_name,
           email:         pendingEmailNorm,
           password_hash: pending.password_hash || null,
