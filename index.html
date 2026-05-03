@@ -1102,7 +1102,7 @@ var __spreadValues = (a, b) => {
 var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 const { useState, useEffect, useRef, createContext, useContext, useCallback, useMemo, useReducer } = React;
 const NEXUS_CONFIG = {
-  apiUrl: "https://nexus-market-api.onrender.com", // ✅ Backend Render connecté
+  apiUrl: "", // ⚠️  Mettre ici l'URL Railway : https://xxxx.up.railway.app
   // BUG FIX: nexus-confirm.html n'existe pas dans le déploiement single-file Vercel.
   // La confirmation Supabase redirige vers cette URL avec le token dans le hash #access_token=...
   // Le SDK Supabase JS le lit automatiquement si on pointe vers la même page (index.html).
@@ -1166,6 +1166,54 @@ try {
     // confirmUrl est maintenant un getter dynamique basé sur window.location.pathname.
   }
 } catch(e) {}
+
+// ── [FIX] Auto-détection URL backend ─────────────────────────────────────────
+// Ordre de priorité :
+//   1. Valeur hardcodée dans NEXUS_CONFIG.apiUrl (si non vide)
+//   2. Dernière URL fonctionnelle sauvegardée en localStorage
+//   3. Guess Railway basé sur le nom du projet
+// Cela évite que l'app soit bloquée si l'URL backend change.
+(function _autoDetectBackend() {
+  if (NEXUS_CONFIG.apiUrl) return; // URL déjà configurée → rien à faire
+
+  const candidates = [
+    // Lire la dernière URL qui avait fonctionné (survit aux rechargements)
+    (function(){ try { return localStorage.getItem('nexus_last_working_api'); } catch(_){ return null; } })(),
+    // Essayer les patterns Railway courants pour ce projet
+    'https://nexus-market-api.up.railway.app',
+    'https://nexus-market-api-production.up.railway.app',
+  ].filter(Boolean);
+
+  let found = false;
+  const tryNext = (i) => {
+    if (found || i >= candidates.length) {
+      if (!found) {
+        console.warn('[NEXUS] ⚠️  Aucun backend détecté. Configurez apiUrl dans NEXUS_CONFIG (index.html ligne 1105) ou via le panneau Admin → Configuration → URL Backend.');
+        window.__nexusBackendReady = true;
+        window.dispatchEvent(new Event('nexus:backend-ready'));
+      }
+      return;
+    }
+    const url = candidates[i];
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 4000);
+    fetch(url + '/api/health', { signal: ctrl.signal, cache: 'no-store' })
+      .then(r => {
+        clearTimeout(tid);
+        if (r.ok || r.status < 500) {
+          found = true;
+          NEXUS_CONFIG.apiUrl = url;
+          try { localStorage.setItem('nexus_last_working_api', url); } catch(_) {}
+          console.log('[NEXUS] Backend auto-détecté :', url);
+          window.__nexusBackendReady = true;
+          window.dispatchEvent(new Event('nexus:backend-ready'));
+        } else { tryNext(i + 1); }
+      })
+      .catch(() => { clearTimeout(tid); tryNext(i + 1); });
+  };
+  tryNext(0);
+})();
+
 // Fonctions dynamiques — relisent NEXUS_CONFIG à chaque appel
 const isSupabaseConfigured = () => !!(NEXUS_CONFIG.supabase.url && NEXUS_CONFIG.supabase.anonKey);
 const IS_SUPABASE_CONFIGURED = isSupabaseConfigured();
@@ -2613,13 +2661,13 @@ async signOut() {
 
   // ── MESSAGES ──────────────────────────────────────────────────────
   async getMessages(userId) {
-    // [FIX] API en priorité + order("date") inexistant → created_at
+    // [FIX D] apiFetch() retourne déjà le JSON parsé (pas un Response) — res.ok n'existe pas.
+    // Avant ce fix : la condition `res.ok` était toujours false → fallback Supabase systématique → 401 en boucle.
     if (NEXUS_CONFIG.apiUrl) {
       try {
-        const res = await this.apiFetch("/api/messages").catch(() => null);
-        if (res && res.ok) {
-          const data = await res.json();
-          const mapped = (data || []).map(r => ({
+        const data = await this.apiFetch("/api/messages").catch(() => null);
+        if (Array.isArray(data)) {
+          const mapped = data.map(r => ({
             id: r.id, from: r.from_id, fromName: r.from_name,
             to: r.to_id, toName: r.to_name,
             text: r.text, date: r.created_at, read: r.read, deleted: r.deleted
@@ -2628,19 +2676,23 @@ async signOut() {
         }
       } catch (e) { console.warn("[getMessages] fallback Supabase:", e.message); }
     }
+    // Fallback Supabase — uniquement si session active (évite les 401 RLS avec clé anon)
     if (this._sb) {
-      const { data, error } = await this._sb.from("messages")
-        .select("*")
-        .or(`from_id.eq.${userId},to_id.eq.${userId}`)
-        .eq("deleted", false)
-        .order("created_at", { ascending: true }); // [FIX] created_at
-      if (!error && data) {
-        const mapped = data.map(r => ({
-          id: r.id, from: r.from_id, fromName: r.from_name,
-          to: r.to_id, toName: r.to_name,
-          text: r.text, date: r.created_at, read: r.read
-        }));
-        storage.set("messages", mapped); return mapped;
+      const { data: { session } } = await this._sb.auth.getSession().catch(() => ({ data: { session: null } }));
+      if (session) {
+        const { data, error } = await this._sb.from("messages")
+          .select("*")
+          .or(`from_id.eq.${userId},to_id.eq.${userId}`)
+          .eq("deleted", false)
+          .order("created_at", { ascending: true });
+        if (!error && data) {
+          const mapped = data.map(r => ({
+            id: r.id, from: r.from_id, fromName: r.from_name,
+            to: r.to_id, toName: r.to_name,
+            text: r.text, date: r.created_at, read: r.read
+          }));
+          storage.set("messages", mapped); return mapped;
+        }
       }
     }
     return storage.getArray("messages");
@@ -2653,9 +2705,9 @@ async signOut() {
           method: "POST",
           body: JSON.stringify({ toId: msg.to, text: msg.text }),
         });
-        if (res && res.ok) {
-          const data = await res.json();
-          const saved = { ...msg, id: data.id, date: data.created_at || msg.date };
+        // [FIX E] apiFetch retourne le JSON parsé directement (pas un Response)
+        if (res && res.id) {
+          const saved = { ...msg, id: res.id, date: res.created_at || msg.date };
           const all = storage.getArray("messages"); all.push(saved); storage.set("messages", all);
           return saved;
         }
@@ -15094,17 +15146,20 @@ function useMessaging(currentUser) {
       if (res && Array.isArray(res)) {
         fresh = res;
       } else {
-        // Fallback Supabase direct
+        // [FIX F] Fallback Supabase direct — uniquement si session active (évite les 401 RLS)
         const sb = DataService._sb;
         if (sb) {
-          let q = sb.from('messages')
-            .select('id, from_id, from_name, to_id, to_name, text, read, read_at, reply_to_id, reply_to_text, attachments, reactions, deleted_for, created_at')
-            .or(`from_id.eq.${currentUser.id},to_id.eq.${currentUser.id}`)
-            .order('created_at', { ascending: true })
-            .limit(200);
-          if (lastFetchRef.current) q = q.gt('created_at', lastFetchRef.current);
-          const { data } = await q;
-          fresh = data || [];
+          const { data: { session: _sess } } = await sb.auth.getSession().catch(() => ({ data: { session: null } }));
+          if (_sess) {
+            let q = sb.from('messages')
+              .select('id, from_id, from_name, to_id, to_name, text, read, read_at, reply_to_id, reply_to_text, attachments, reactions, deleted_for, created_at')
+              .or(`from_id.eq.${currentUser.id},to_id.eq.${currentUser.id}`)
+              .order('created_at', { ascending: true })
+              .limit(200);
+            if (lastFetchRef.current) q = q.gt('created_at', lastFetchRef.current);
+            const { data } = await q;
+            fresh = data || [];
+          }
         } else {
           // Fallback localStorage
           fresh = (storage.getArray('messages')).map(m => ({
@@ -16231,8 +16286,16 @@ const NewConversationModal = ({ currentUser, onStartConv, onClose, addToast }) =
     if (!q || q.length < 2) { setResults([]); return; }
     setLoading(true);
     try {
+      // [FIX] Utiliser le backend API (évite les 500 RLS du client Supabase anon)
+      if (NEXUS_CONFIG.apiUrl) {
+        const res = await DataService.apiFetch(`/api/users/search?q=${encodeURIComponent(q)}&limit=8`).catch(() => null);
+        if (res && Array.isArray(res)) { setResults(res); return; }
+      }
+      // Fallback Supabase direct — seulement si session active (évite les 500 RLS)
       const sb = DataService._sb;
       if (sb) {
+        const { data: { session } } = await sb.auth.getSession().catch(() => ({ data: { session: null } }));
+        if (!session) { setResults([]); return; }
         const { data } = await sb.from('profiles')
           .select('id, name, email, role')
           .neq('id', currentUser.id)
