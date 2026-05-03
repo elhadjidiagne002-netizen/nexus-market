@@ -2118,6 +2118,12 @@ app.post('/api/orders/split', verifyToken, async (req, res) => {
     userId: req.user.id, meta: { orderIds: createdOrders.map(o => o.id) }
   });
 
+  // Email de confirmation — envoyé une seule fois pour la 1ère sous-commande
+  if (createdOrders.length > 0 && createdOrders[0].buyer_email) {
+    sendEmail({ to: createdOrders[0].buyer_email, ...emailTemplates.orderConfirmation(createdOrders[0]) })
+      .catch(e => Logger.warn('order', 'split.email.error', e.message));
+  }
+
   res.status(201).json({ ok: true, orders: createdOrders });
 });
 
@@ -2297,6 +2303,12 @@ app.post('/api/orders', verifyToken, async (req, res) => {
     rewardReferrer(req.user.id).catch(e =>
       Logger.warn('order', 'referral.error', e.message, { userId: req.user.id })
     );
+
+    // ── Étape 6 : Email de confirmation commande ──────────────────────────
+    if (order.buyer_email) {
+      sendEmail({ to: order.buyer_email, ...emailTemplates.orderConfirmation(order) })
+        .catch(e => Logger.warn('order', 'email.confirm.error', e.message, { meta: { orderId: order.id } }));
+    }
 
     res.status(201).json({ ...order, earnedPoints });
 
