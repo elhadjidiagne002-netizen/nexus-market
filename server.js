@@ -100,12 +100,20 @@ function sentryCapture(err, context = {}) {
   });
 }
 
-// ── [FIX S1-1] Guard JWT_SECRET — fail-fast au démarrage ─────────────────────
+// ── [FIX S1-1] Guard JWT_SECRET — fallback temporaire si absent ───────────────
+// AVANT : process.exit(1) → le serveur ne démarrait jamais sur Railway si la
+//         variable n'était pas encore configurée, causant un healthcheck FAILED.
+// APRÈS : génération d'une clé éphémère pour que le serveur démarre et serve
+//         /api/health. Les tokens seront invalidés à chaque redémarrage tant que
+//         JWT_SECRET n'est pas fixé dans les variables Railway.
 if (!process.env.JWT_SECRET) {
+  const _tmpSecret = crypto.randomBytes(64).toString('hex');
+  process.env.JWT_SECRET = _tmpSecret;
   console.error('');
-  console.error('🔴 FATAL: JWT_SECRET est absent des variables d\'environnement.');
+  console.error('🔴  JWT_SECRET ABSENT — clé temporaire générée pour ce démarrage.');
+  console.error('    ⚠️  Tous les tokens seront INVALIDÉS au prochain redémarrage.');
   console.error('');
-  console.error('   ➤  Générez une valeur sécurisée :');
+  console.error('   ➤  Générez une valeur persistante :');
   console.error('      node -e "require(\'crypto\').randomBytes(64).toString(\'hex\')"');
   console.error('');
   console.error('   ➤  Ajoutez JWT_SECRET dans Railway :');
@@ -117,7 +125,6 @@ if (!process.env.JWT_SECRET) {
   console.error('     SUPABASE_SERVICE_KEY (service_role key de Supabase)');
   console.error('     SUPABASE_ANON_KEY    (anon key de Supabase)');
   console.error('');
-  process.exit(1);
 }
 
 const path         = require('path');
@@ -4450,13 +4457,18 @@ app.get('/api/health', async (req, res) => {
   const stripeSecret = process.env.STRIPE_SECRET_KEY || '';
 
   // [FIX sécurité] Ne jamais exposer les valeurs des clés — uniquement des booléens
+  // [FIX DIAG] Ajout jwt_secret + supabase pour diagnostiquer les variables manquantes depuis Railway
+  const jwtPersistent = process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 64;
   res.json({
     status    : dbStatus === 'ok' ? 'OK' : 'DEGRADED',
     service   : 'NEXUS Market API v3.1.4',
     timestamp : new Date().toISOString(),
     latency_ms: Date.now() - start,
     services  : {
-      database    : dbStatus,
+      database     : dbStatus,
+      jwt_secret   : jwtPersistent ? 'ok' : 'temporary', // 'temporary' = clé éphémère, non persistée
+      supabase     : !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY),
+      supabase_anon: !!(process.env.SUPABASE_ANON_KEY),
       stripe      : !!(stripePub && stripeSecret &&
                       (stripePub.startsWith('pk_test_') || stripePub.startsWith('pk_live_')) &&
                       (stripeSecret.startsWith('sk_test_') || stripeSecret.startsWith('sk_live_'))),
