@@ -472,6 +472,16 @@ const ALLOWED_ORIGIN_PATTERNS = [
   /up\.railway\.app$/,
   /onrender\.com$/,
 ];
+// [FIX CORS] Ajouter dynamiquement FRONTEND_URL comme origine explicitement autorisée
+// Cela couvre les domaines Vercel personnalisés (ex: nexus-market-md360.vercel.app)
+if (process.env.FRONTEND_URL) {
+  try {
+    const _feHost = new URL(process.env.FRONTEND_URL).host;
+    if (_feHost && !ALLOWED_ORIGIN_PATTERNS.some(p => p.test(_feHost))) {
+      ALLOWED_ORIGIN_PATTERNS.push(new RegExp('^https?://' + _feHost.replace(/\./g, '\\.') + '$'));
+    }
+  } catch (_) {}
+}
 const corsOptions = {
   origin: (origin, callback) => {
     // Requêtes sans Origin (curl, Postman, cron-job.org) → toujours autorisé
@@ -482,6 +492,8 @@ const corsOptions = {
     }
     // En mode development, tout accepter
     if (process.env.NODE_ENV !== 'production') return callback(null, origin);
+    // [FIX] Logguer les origines refusées pour faciliter le debug
+    console.warn('[CORS] Origine refusée :', origin);
     callback(null, false);
   },
   credentials: true,
