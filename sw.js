@@ -1,4 +1,4 @@
-// ── NEXUS Market — Service Worker v4 ─────────────────────────────────────────
+// ── NEXUS Market — Service Worker v5 ─────────────────────────────────────────
 // Déployer à la racine du projet (même niveau qu'index.html et server.js).
 //
 // Changements v4 :
@@ -7,25 +7,38 @@
 //   - Background Sync : file d'attente des actions offline (panier, commandes)
 //   - Message handler : rechargement de cache à la demande depuis l'app
 //   - PRECACHE étendu : /sw.js lui-même pour les mises à jour propres
+//
+// Changements v5 :
+//   - [FIX CRITIQUE] "vercel.app" supprimé de BYPASS_HOSTS — l'app est sur Vercel,
+//     ce pattern empêchait le SW de mettre en cache index.html et les assets.
+//     Les routes API (/api/*) restent exclues via BYPASS_PATHS.
+//   - imgbb.com, sentry.io ajoutés aux BYPASS_HOSTS
+//   - up.railway.app ajouté explicitement
 
-const CACHE_NAME   = "nexus-v4";
+const CACHE_NAME   = "nexus-v5"; // [FIX] Incrémenté pour forcer le rechargement (correction BYPASS_HOSTS)
 const PRECACHE     = ["/", "/index.html", "/sw.js"];
 
-// Domaines à ne JAMAIS intercepter (API, analytics, CDN externes)
+// Domaines à ne JAMAIS intercepter (APIs et CDN externes uniquement)
+// [FIX v5] "vercel.app" SUPPRIMÉ de cette liste : l'app elle-même est hébergée
+// sur Vercel, donc interdire vercel.app empêchait le SW de mettre en cache
+// index.html, les scripts et les assets → le mode offline ne fonctionnait jamais.
+// Les routes API Vercel (/api/*) sont déjà exclues par BYPASS_PATHS ci-dessous.
 const BYPASS_HOSTS = [
-  "supabase.co",
-  "onrender.com",           // [v4] API NEXUS sur Render
-  "railway.app",
-  "vercel.app",
-  "emailjs.com",
-  "stripe.com",
-  "googleapis.com",
-  "googletagmanager.com",
-  "analytics.google.com",
-  "cdnjs.cloudflare.com",
-  "cdn.jsdelivr.net",       // [v4] Supabase SDK, EmailJS
-  "unpkg.com",
-  "placehold.co",
+  "supabase.co",            // Supabase REST + Auth + Realtime
+  "onrender.com",           // API NEXUS sur Render (legacy)
+  "railway.app",            // API NEXUS sur Railway
+  "up.railway.app",         // Railway preview URLs
+  "emailjs.com",            // EmailJS
+  "stripe.com",             // Stripe
+  "googleapis.com",         // Google APIs
+  "googletagmanager.com",   // GTM
+  "analytics.google.com",   // GA4
+  "cdnjs.cloudflare.com",   // CDN JS (React, etc.)
+  "cdn.jsdelivr.net",       // Supabase SDK, EmailJS
+  "unpkg.com",              // CDN
+  "placehold.co",           // Images placeholder
+  "imgbb.com",              // ImgBB uploads
+  "sentry.io",              // Sentry monitoring
 ];
 
 // Routes API à ne jamais mettre en cache (données temps-réel)
@@ -224,3 +237,7 @@ self.addEventListener("notificationclick", event => {
 
 // [NEXUS-F4] web-push VAPID [SW]
 // sw.js déjà configuré avec handlers push natifs — aucune modification requise.
+
+// [v5] Note : après déploiement, vider le cache navigateur ou attendre que le SW
+// v5 remplace le v4. Le nouveau SW sera automatiquement activé à la prochaine
+// visite (skipWaiting est déjà configuré).
