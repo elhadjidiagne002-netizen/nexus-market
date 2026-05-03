@@ -9532,6 +9532,13 @@ const AdminLogsViewer = ({ addToast }) => {
   );
 };
 
+// [FIX #310] VFlashCountdown extrait au niveau module — défini dans le render causait l'erreur #310
+const VFlashCountdown = ({ endsAt }) => {
+  const [rem, setRem] = React.useState("");
+  React.useEffect(() => { const tick = () => { const d = new Date(endsAt) - Date.now(); if (d <= 0) { setRem("Expir\xE9e"); return; } const h = Math.floor(d/3600000), m = Math.floor((d%3600000)/60000), s = Math.floor((d%60000)/1000); setRem(`${h}h ${m}m ${s}s`); }; tick(); const t = setInterval(tick, 1000); return () => clearInterval(t); }, [endsAt]);
+  return /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "monospace", fontSize: "0.85rem", color: "var(--danger)", fontWeight: 700 } }, rem);
+};
+
 const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -9601,8 +9608,33 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const [adminActiveDispute, setAdminActiveDispute] = React.useState(null);
   const [adminDisputeMsg, setAdminDisputeMsg] = React.useState("");
   const [adminRefundPct, setAdminRefundPct] = React.useState(100);
+  // [FIX #310] États hissés depuis l'IIFE "flash_sales_vendor"
+  const [vFlashSales, setVFlashSales] = React.useState([]);
+  const [vFlashForm, setVFlashForm] = React.useState({ productId: "", discount: "20", hours: "24" });
+  // [FIX #310] États hissés depuis l'IIFE "logs"
+  const [_logs, _setLogs] = React.useState([]);
+  const [_logLoad, _setLogLoad] = React.useState(true);
+  // [FIX #310] États hissés depuis l'IIFE "emails"
+  const [emailLogs, setEmailLogs] = React.useState([]);
+  const [emailLoading, setEmailLoading] = React.useState(true);
+  const [emailTotal, setEmailTotal] = React.useState(0);
   useEffect(() => {
     loadData();
+  }, []);
+  // [FIX #310] useEffects hissés depuis les IIFEs
+  React.useEffect(() => {
+    _setLogLoad(true);
+    DataService.apiFetch("/api/admin/logs").then(r => r && r.ok ? r.json() : null)
+      .then(d => { if (d) _setLogs(Array.isArray(d) ? d : (d.logs || [])); _setLogLoad(false); })
+      .catch(() => _setLogLoad(false));
+  }, []);
+  React.useEffect(() => {
+    setEmailLoading(true);
+    DataService.apiFetch('/api/email/logs?limit=100')
+      .then(r => r.json())
+      .then(d => { setEmailLogs(d.logs || []); setEmailTotal(d.total || 0); })
+      .catch(() => {})
+      .finally(() => setEmailLoading(false));
   }, []);
   // [PERF] debounce 80ms — évite les lectures répétées en cascade lors d'actions multiples
   const _loadDataTimer = React.useRef(null);
@@ -9939,9 +9971,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       _downloadStatement(month);
     }}, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Relevé mensuel PDF")
   ), /* @__PURE__ */ React.createElement("div", { className: "chart-container" }, salesData.length > 0 && /* @__PURE__ */ React.createElement(SafeLineChart, { data: salesData, dataKey: "ventes", label: "Ventes", color: "#00853E", type: "line" }))), view === "flash_sales_vendor" && (() => {
-    const [vFlashSales, setVFlashSales] = React.useState([]);
-    const [vFlashForm, setVFlashForm] = React.useState({ productId: "", discount: "20", hours: "24" });
-    React.useEffect(() => { DataService.getFlashSales().then(d => { if (d) setVFlashSales(d.filter(s => { const p = products.find(x => x.id === s.productId); return p && p.vendor === currentUser2.id; })); }).catch(() => {}); }, []);
+    // [FIX #310] États hissés au niveau AdminDashboard (vFlashSales, vFlashForm)
     const createVFlash = async () => {
       if (!vFlashForm.productId || !vFlashForm.discount) return;
       const endsAt = new Date(Date.now() + parseFloat(vFlashForm.hours) * 3600000).toISOString();
@@ -9953,11 +9983,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     };
     const removeVFlash = async (id) => { await DataService.deleteFlashSale(id).catch(() => {}); setVFlashSales(prev => prev.filter(s => s.id !== id)); addToast("Vente flash supprim\xE9e", "info"); };
     const myProds = products.filter(p => p.vendor === currentUser2.id && p.active);
-    const VFlashCountdown = ({ endsAt }) => {
-      const [rem, setRem] = React.useState("");
-      React.useEffect(() => { const tick = () => { const d = new Date(endsAt) - Date.now(); if (d <= 0) { setRem("Expir\xE9e"); return; } const h = Math.floor(d/3600000), m = Math.floor((d%3600000)/60000), s = Math.floor((d%60000)/1000); setRem(`${h}h ${m}m ${s}s`); }; tick(); const t = setInterval(tick, 1000); return () => clearInterval(t); }, [endsAt]);
-      return /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "monospace", fontSize: "0.85rem", color: "var(--danger)", fontWeight: 700 } }, rem);
-    };
+    // [FIX #310] VFlashCountdown est maintenant défini au niveau module (avant AdminDashboard)
     return /* @__PURE__ */ React.createElement("div", null,
       /* @__PURE__ */ React.createElement("div", { className: "card", style: { marginBottom: "1.5rem" } },
         /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "\u26A1 Lancer une vente flash")),
@@ -10048,14 +10074,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       return /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, r.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, r.buyerName, /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, r.buyerEmail)), /* @__PURE__ */ React.createElement("td", { "data-label": "Commande" }, /* @__PURE__ */ React.createElement("strong", null, r.orderId)), /* @__PURE__ */ React.createElement("td", { "data-label": "Motif", style: { maxWidth: "160px", fontSize: "0.82rem" } }, r.categoryLabel), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(r.orderTotal || 0))), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${((_a = STATUS_RETURN[r.status]) == null ? void 0 : _a.badge) || "warning"}` }, ((_b = STATUS_RETURN[r.status]) == null ? void 0 : _b.label) || r.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, r.status === "pending" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleReturnAction(r.id, "approved") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleReturnAction(r.id, "rejected") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser")), r.status === "approved" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => handleReturnAction(r.id, "refunded") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }), " Marquer rembours\xE9"), ["refunded", "rejected"].includes(r.status) && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--text-secondary)", fontSize: "0.82rem" } }, "Trait\xE9")));
     })))));
   })(), view === "logs" && (() => {
-    const [_logs, _setLogs] = React.useState([]);
-    const [_logLoad, _setLogLoad] = React.useState(true);
-    React.useEffect(() => {
-      _setLogLoad(true);
-      DataService.apiFetch("/api/admin/logs").then(r => r && r.ok ? r.json() : null)
-        .then(d => { if (d) _setLogs(Array.isArray(d) ? d : (d.logs || [])); _setLogLoad(false); })
-        .catch(() => _setLogLoad(false));
-    }, []);
+    // [FIX #310] États hissés au niveau AdminDashboard (_logs, _logLoad)
     return React.createElement("div", { className: "card" },
       React.createElement("div", { className: "card-header" },
         React.createElement("h2", { className: "card-title" }, React.createElement("i", { className: "fas fa-history" }), " Journal (", _logs.length, ")"),
@@ -10558,17 +10577,7 @@ Vous avez re\xE7u un message de TechZone S\xE9n\xE9gal :
       /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", fontWeight: selectedTpl.id === t.id ? 700 : 400 } }, t.label)
     )), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", padding: "0.75rem", background: IS_EMAILJS_CONFIGURED ? "rgba(0,133,62,0.07)" : "rgba(245,158,11,0.07)", borderRadius: "8px", fontSize: "0.75rem", color: IS_EMAILJS_CONFIGURED ? "var(--success)" : "var(--warning)" } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${IS_EMAILJS_CONFIGURED ? "check-circle" : "exclamation-triangle"}` }), "\xA0", IS_EMAILJS_CONFIGURED ? "EmailJS actif \u2014 envoi r\xE9el" : "Mode simulation \u2014 configurer EmailJS")), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1rem", padding: "0.75rem 1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginBottom: "0.2rem" } }, "Sujet :"), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.9rem" } }, selectedTpl.subject)), /* @__PURE__ */ React.createElement("div", { style: { background: "white", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", fontFamily: "monospace", fontSize: "0.85rem", lineHeight: 1.8, whiteSpace: "pre-wrap", color: "var(--text-primary)", minHeight: "200px" } }, selectedTpl.preview), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", fontSize: "0.78rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), "\xA0 Pour personnaliser ce template, configurez les templates dans votre compte EmailJS (", /* @__PURE__ */ React.createElement("a", { href: "https://www.emailjs.com", target: "_blank", style: { color: "var(--primary)" } }, "emailjs.com"), ") avec les variables correspondantes.")));
   })(), view === "emails" && (() => {
-    const [emailLogs, setEmailLogs] = React.useState([]);
-    const [emailLoading, setEmailLoading] = React.useState(true);
-    const [emailTotal, setEmailTotal] = React.useState(0);
-    React.useEffect(() => {
-      setEmailLoading(true);
-      DataService.apiFetch('/api/email/logs?limit=100')
-        .then(r => r.json())
-        .then(d => { setEmailLogs(d.logs || []); setEmailTotal(d.total || 0); })
-        .catch(() => {})
-        .finally(() => setEmailLoading(false));
-    }, []);
+    // [FIX #310] États hissés au niveau AdminDashboard (emailLogs, emailLoading, emailTotal)
     const logs = emailLogs;
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Journaux Emails (", emailLoading ? "…" : emailTotal, ")"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_EMAILJS_CONFIGURED ? /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" }), " EmailJS actif") : /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), " Mode simulation"))), !IS_EMAILJS_CONFIGURED && /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Pour activer l\\'envoi r\xE9el, configurez EmailJS dans ", /* @__PURE__ */ React.createElement("code", null, "NEXUS_CONFIG.emailjs"), " en haut du fichier HTML.")), emailLoading ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }), /* @__PURE__ */ React.createElement("p", null, "Chargement\u2026")) : logs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun email enregistr\xE9")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Destinataire"), /* @__PURE__ */ React.createElement("th", null, "Sujet"), /* @__PURE__ */ React.createElement("th", null, "Fournisseur"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Date/Heure"))), /* @__PURE__ */ React.createElement("tbody", null, logs.map((e) => /* @__PURE__ */ React.createElement("tr", { key: e.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Destinataire" }, /* @__PURE__ */ React.createElement("strong", null, e.to)), /* @__PURE__ */ React.createElement("td", { "data-label": "Sujet", style: { fontSize: "0.85rem" } }, e.subject), /* @__PURE__ */ React.createElement("td", { "data-label": "Fournisseur" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, e.provider)), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${e.status === 'sent' ? 'success' : e.status === 'error' ? 'danger' : 'warning'}` }, e.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(e.sentAt).toLocaleString("fr-FR"))))))));
   })());
