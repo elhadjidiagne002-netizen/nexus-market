@@ -1571,7 +1571,15 @@ const DataService = {
   async getOrders(filters = {}) {
     const { buyer, vendor, page = 1, limit = 20, status } = filters;
     if (NEXUS_CONFIG.apiUrl) {
-      const params = new URLSearchParams({ page, limit, ...(status ? { status } : {}) });
+      // [FIX] Inclure buyer et vendor dans les params API — sans eux le backend retourne
+      // toutes les commandes (rôle admin) et si ce call échoue, le fallback Supabase
+      // tente un select* sans filtre → 401 RLS.
+      const params = new URLSearchParams({
+        page, limit,
+        ...(buyer  ? { buyer }  : {}),
+        ...(vendor ? { vendor } : {}),
+        ...(status ? { status } : {})
+      });
       const res = await this.apiFetch(`/api/orders?${params}`).catch(() => null);
       if (res && res.ok) {
         const json = await res.json();
@@ -3517,6 +3525,15 @@ const EmailService = {
     // Le HTML complet est dans html_body (triple accolades dans le template).
     const universalTpl = NEXUS_CONFIG.emailjs.universalTemplateId;
 
+    // [FIX] Init lazy : le SDK emailjs est chargé en `defer`, il peut ne pas être
+    // disponible au premier appel de EmailService.init() au démarrage de l'app.
+    // On tente une ré-initialisation ici si ce n'est pas encore fait.
+    if (!this._initialized && window.emailjs && isEmailjsConfigured()) {
+      window.emailjs.init({ publicKey: NEXUS_CONFIG.emailjs.publicKey });
+      this._initialized = true;
+      console.log("[EmailJS] Service initialisé (lazy)");
+    }
+
     if (isEmailjsConfigured() && this._initialized && universalTpl) {
       try {
         const templateParams = {
@@ -3544,6 +3561,8 @@ const EmailService = {
         if (status === 422 || (e && e.text && e.text.includes('422'))) {
           console.error("[EmailJS] Erreur 422 — Vérifiez : (1) Service ID correct, (2) Template ID correct, (3) \"To Email\" = {{to_email}}, (4) Body HTML = {{{html_body}}} (triple accolades), (5) Service email connecté.");
         } else { console.warn("[EmailJS] Erreur envoi:", e); }
+        // [FIX] Ne pas tomber dans la simulation si EmailJS est configuré mais a échoué —
+        // on tente le fallback backend avant de capituler.
       }
     }
     console.log("[EmailService] Simulation \u2014 email à", to, ":", subject);
@@ -3556,7 +3575,13 @@ const EmailService = {
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_fbToken}` },
           body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>` })
         });
-        if (resp.ok) { const r = await resp.json(); if (r.ok) { console.log("[EmailService] \u2705 Email envoyé via backend à", to); return true; } }
+        if (resp.ok) {
+          const r = await resp.json();
+          if (r.ok) { console.log("[EmailService] \u2705 Email envoyé via backend à", to); return true; }
+          else { console.error("[EmailService] \u274C Backend ok=false:", r); }
+        } else {
+          console.error("[EmailService] \u274C Backend HTTP", resp.status, "pour", to);
+        }
       } catch(e) { console.warn("[EmailService] Fallback backend échoué:", e.message); }
     }
     return true;
@@ -16188,7 +16213,7 @@ const ConversationThread = ({
         return React.createElement(React.Fragment, { key: m.id },
           showDate && React.createElement(DateSeparator, { date: m.created_at }),
           React.createElement(MessageBubble, {
-            msg, currentUserId: currentUser.id,
+            msg: m, currentUserId: currentUser.id,
             onReply: setReplyTo, onReact, onDelete,
             onImgClick: setLightboxUrl,
             searchQuery: searchQuery || null
