@@ -1858,7 +1858,7 @@ const DataService = {
         commission_rate: user.commission || user.commission_rate || null,
       };
       Object.keys(row).forEach(k => row[k] === null && delete row[k]);
-      await this._sb.from("profiles").upsert(row);
+      await this._sb.from("profiles").upsert(row, { onConflict: 'id' });
       return;
     }
     // Sans Supabase ni backend configuré — pas de persistance possible
@@ -1991,7 +1991,7 @@ const DataService = {
       const fullProfile = { id: uid, email, role: profile.role || 'buyer', avatar, ...profile };
       delete fullProfile.password;
       // CORRECTION : Pas de .catch() direct sur l'appel Supabase
-      const { error: upsertError } = await this._sb.from('profiles').upsert(fullProfile);
+      const { error: upsertError } = await this._sb.from('profiles').upsert(fullProfile, { onConflict: 'id' });
       if (upsertError) {
         console.warn('[signUp] profiles upsert error:', upsertError.message);
       }
@@ -2087,7 +2087,7 @@ const DataService = {
           prof = this._buildProfileFromAuthUser(data.user);
           // [FIX] Supabase v2 PostgrestFilterBuilder n'est pas une Promise native → .catch() n'existe pas.
           // On utilise try/catch + onConflict sans ignoreDuplicates pour gérer le 409.
-          try { await this._sb.from('profiles').upsert(prof, { onConflict: 'id' }); } catch (_ignoreConflict) {}
+          try { await this._sb.from('profiles').upsert(prof, { onConflict: 'id', ignoreDuplicates: true }); } catch (_ignoreConflict) {}
         }
         return prof;
       }
