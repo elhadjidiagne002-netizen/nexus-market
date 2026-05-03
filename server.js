@@ -6930,6 +6930,51 @@ app.listen(PORT, '0.0.0.0', async () => { // [FIX RAILWAY] Bind explicite 0.0.0.
   Logger.info('system', 'startup', `API démarrée sur le port ${PORT}`, {
     meta: { env, hasDb, hasStripe, hasEmail, hasWebhook, version: 'v3.2.0' }
   });
+
+  // ── KEEP-ALIVE : empêche Render Free Tier d'endormir le service ─────────────
+  // Render endort un service après 15 min d'inactivité (plan gratuit).
+  // Ce self-ping envoie une requête GET /api/health toutes les 14 min,
+  // ce qui compte comme activité et maintient le service éveillé en permanence.
+  //
+  // ⚠️  Limitations :
+  //   - Le self-ping consomme vos heures gratuites Render (750h/mois).
+  //   - Pour une solution sans consommation d'heures, utilisez un service externe
+  //     comme cron-job.org ou UptimeRobot (voir commentaire ci-dessous).
+  //
+  // Alternative recommandée (service externe gratuit) :
+  //   → https://cron-job.org  : créez un cron toutes les 10 min sur /api/health
+  //   → https://uptimerobot.com : monitor HTTP(s) avec intervalle 5 min (gratuit)
+  //
+  if (process.env.NODE_ENV !== 'test') {
+    const SELF_PING_INTERVAL_MS = 14 * 60 * 1000; // 14 min
+    const selfPing = async () => {
+      const selfUrl = process.env.API_URL
+        ? `${process.env.API_URL}/api/health`
+        : `http://localhost:${PORT}/api/health`;
+      try {
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 10000);
+        // Utilise fetch natif (Node 18+) ou https selon la version Node
+        const res = await fetch(selfUrl, { method: 'GET', signal: ctrl.signal });
+        clearTimeout(tid);
+        if (res.ok) {
+          console.log(`[NEXUS] Self-ping ✓ backend actif (${new Date().toISOString().slice(11,19)})`);
+        } else {
+          console.warn(`[NEXUS] Self-ping → HTTP ${res.status}`);
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          console.warn('[NEXUS] Self-ping échoué:', e.message);
+        }
+      }
+    };
+    // Premier ping après 5 min (laisser le temps au démarrage complet)
+    setTimeout(() => {
+      selfPing();
+      setInterval(selfPing, SELF_PING_INTERVAL_MS);
+    }, 5 * 60 * 1000);
+    console.log('[NEXUS] Keep-alive self-ping activé — intervalle : 14 min');
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
