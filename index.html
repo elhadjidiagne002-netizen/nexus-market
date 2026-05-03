@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="NEXUS Market Sénégal - Achetez et vendez en toute confiance avec des moyens de paiement locaux">
     <title>NEXUS Market Sénégal</title>
+    <!-- [FIX] Favicon inline — évite le 404 /favicon.ico -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%232563eb'/><text x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-size='18' font-family='sans-serif' fill='white'>N</text></svg>">
     <!-- PERF FIX: preconnect CDNs & fonts early -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,7 +21,7 @@
          ══════════════════════════════════════════════════════════════════════ -->
     <script src="https://browser.sentry-cdn.com/7.99.0/bundle.tracing.replay.min.js"
             crossorigin="anonymous"
-            onerror="console.warn('[NEXUS] Sentry SDK non chargé')"></script>
+            onerror="console.info('[NEXUS] Sentry SDK non chargé (bloqué par extension ou réseau) — monitoring désactivé')"></script>
     <script>
     (function _initSentryBrowser() {
       if (typeof Sentry === 'undefined') return;
@@ -1172,36 +1174,68 @@ const IS_STRIPE_CONFIGURED  = isStripeConfigured();
 const isEmailjsConfigured   = () => !!(NEXUS_CONFIG.emailjs.publicKey && NEXUS_CONFIG.emailjs.serviceId);
 const IS_EMAILJS_CONFIGURED = isEmailjsConfigured(); // valeur initiale (compatibilité)
 
-// [FIX] Wake-up backend avec retry exponentiel — cold start Render peut prendre 30-50s.
-// window.__nexusBackendReady = true dès que le backend répond, ce qui permet à signIn
-// d'attendre la disponibilité plutôt que de tomber prématurément en fallback Supabase.
+// ── NEXUS Backend Keep-Alive ────────────────────────────────────────────────
+// Phase 1 : réveil avec retry exponentiel (cold start Render ~30-50s)
+// Phase 2 : ping permanent toutes les 14 min pour empêcher l'endormissement
+//           (Render endort après 15 min d'inactivité sur le plan gratuit)
 window.__nexusBackendReady = false;
 if (NEXUS_CONFIG.apiUrl) {
-  (function wakeUpBackend() {
-    const delays = [0, 5000, 12000, 25000, 45000]; // tentatives à 0s, 5s, 12s, 25s, 45s
+  (function nexusKeepAlive() {
+    const KEEPALIVE_INTERVAL_MS = 14 * 60 * 1000; // 14 min (< seuil Render 15 min)
+    const WAKE_DELAYS = [0, 5000, 12000, 25000, 45000]; // retry cold start
     let attempt = 0;
-    const ping = () => {
-      if (window.__nexusBackendReady) return;
+    let _keepAliveTimer = null;
+
+    const ping = (silent) => {
       const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), 6000);
-      fetch(NEXUS_CONFIG.apiUrl + '/api/health', { signal: ctrl.signal, method: 'GET' })
+      const tid = setTimeout(() => ctrl.abort(), 8000);
+      return fetch(NEXUS_CONFIG.apiUrl + '/api/health', {
+        signal: ctrl.signal,
+        method: 'GET',
+        cache:  'no-store',
+      })
         .then(r => {
           clearTimeout(tid);
-          if (r.ok || r.status === 401 || r.status === 404) {
-            // 401/404 = backend vivant mais route non authentifiée → OK
-            window.__nexusBackendReady = true;
-            window.dispatchEvent(new Event('nexus:backend-ready'));
-            console.log('[NEXUS] Backend réveillé ✓ (tentative ' + (attempt + 1) + ')');
-          } else { scheduleNext(); }
+          const alive = r.ok || r.status === 401 || r.status === 403 || r.status === 404;
+          if (alive) {
+            if (!window.__nexusBackendReady) {
+              window.__nexusBackendReady = true;
+              window.__nexusBackendTimeoutWarned = false;
+              window.dispatchEvent(new Event('nexus:backend-ready'));
+              console.log('[NEXUS] Backend réveillé ✓ (tentative ' + (attempt + 1) + ')');
+            } else if (!silent) {
+              console.debug('[NEXUS] Keep-alive ✓ Backend actif');
+            }
+            return true;
+          }
+          return false;
         })
-        .catch(() => { clearTimeout(tid); scheduleNext(); });
+        .catch(() => { clearTimeout(tid); return false; });
     };
-    const scheduleNext = () => {
-      attempt++;
-      if (attempt < delays.length) setTimeout(ping, delays[attempt]);
-      else console.log('[NEXUS] Backend indisponible — mode Supabase/localStorage');
+
+    // Phase 1 : réveil initial avec backoff exponentiel
+    const wakeUp = async () => {
+      const alive = await ping(false);
+      if (!alive) {
+        attempt++;
+        if (attempt < WAKE_DELAYS.length) {
+          setTimeout(wakeUp, WAKE_DELAYS[attempt]);
+        } else {
+          console.log('[NEXUS] Backend indisponible — mode Supabase/localStorage');
+          // Réessayer toutes les 5 min même après échec
+          _keepAliveTimer = setTimeout(wakeUp, 5 * 60 * 1000);
+        }
+      } else {
+        // Phase 2 : keep-alive permanent toutes les 14 min
+        _keepAliveTimer = setInterval(() => ping(true), KEEPALIVE_INTERVAL_MS);
+      }
     };
-    ping();
+    wakeUp();
+
+    // Ping immédiat au retour sur l'onglet
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && window.__nexusBackendReady) ping(true);
+    });
   })();
 }
 const EUR_TO_FCFA = 655.957;
@@ -2317,7 +2351,11 @@ async signOut() {
     } catch (err) {
       clearTimeout(timeoutId);
       if (err.name === 'AbortError') {
-        console.warn('[NEXUS] Backend timeout (>12s) — fallback Supabase/localStorage');
+        // [FIX] N'afficher l'avertissement qu'une seule fois par session
+        if (!window.__nexusBackendTimeoutWarned) {
+          console.warn('[NEXUS] Backend timeout (>12s) — fallback Supabase/localStorage');
+          window.__nexusBackendTimeoutWarned = true;
+        }
         return null;
       }
       // TypeError "Failed to fetch" = CORS / réseau — fallback silencieux
@@ -4585,7 +4623,7 @@ const BulkImportModal = ({ currentUser: currentUser2, onImported, onClose, addTo
   const [errors, setErrors] = useState([]);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
-  const TEMPLATE_CSV = 'nom,categorie,prix_eur,stock,description,url_image\nSmartphone Samsung,\xC9lectronique,150,30,Smartphone 4G \xE9cran 6.6",https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?w=400&h=280&fit=crop&auto=format&q=80\nTissu Wax imprim\xE9,Tissus & Wax,25,50,Tissu wax authentique 6 yards,https://images.unsplash.com/photo-1580552833989-5e5eb7c45e5c?w=400&h=280&fit=crop&auto=format&q=80\nOrdinateur HP,Informatique,450,10,Intel i5 8Go RAM SSD 256Go,';
+  const TEMPLATE_CSV = 'nom,categorie,prix_eur,stock,description,url_image\nSmartphone Samsung,\xC9lectronique,150,30,Smartphone 4G \xE9cran 6.6",https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?w=400&h=280&fit=crop&auto=format&q=80\nTissu Wax imprim\xE9,Tissus & Wax,25,50,Tissu wax authentique 6 yards,https://images.unsplash.com/photo-1528360983277-13d401cdc186?w=400&h=280&fit=crop&auto=format&q=80\nOrdinateur HP,Informatique,450,10,Intel i5 8Go RAM SSD 256Go,';
   const downloadTemplate = () => {
     const a = document.createElement("a");
     a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(TEMPLATE_CSV);
@@ -5476,7 +5514,7 @@ const CATEGORY_IMAGES = {
   "Livres":           "https://images.unsplash.com/photo-1481627834876-b7833e8f5570?w=400&h=280&fit=crop&auto=format&q=80",
   "Jouets":           "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&h=280&fit=crop&auto=format&q=80",
   "Alimentation":     "https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=400&h=280&fit=crop&auto=format&q=80",
-  "Tissus & Wax":     "https://images.unsplash.com/photo-1580552833989-5e5eb7c45e5c?w=400&h=280&fit=crop&auto=format&q=80",
+  "Tissus & Wax":     "https://images.unsplash.com/photo-1528360983277-13d401cdc186?w=400&h=280&fit=crop&auto=format&q=80",
   "Artisanat":        "https://images.unsplash.com/photo-1567225557594-88d73e55f2cb?w=400&h=280&fit=crop&auto=format&q=80",
   "Produits locaux":  "https://images.unsplash.com/photo-1471193945509-9ad0617afabf?w=400&h=280&fit=crop&auto=format&q=80",
 };
@@ -5517,7 +5555,7 @@ const initializeData = () => {
     { id: "prod1",  name: "Smartphone Samsung Galaxy A13", category: "\xC9lectronique",   price: 150, vendor: "", vendorName: "NEXUS Market", description: 'Smartphone 4G, \xE9cran 6.6", 5000mAh',          stock: 45,  rating: 4.7, reviewsCount: 234, imageUrl: "https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?w=400&h=280&fit=crop&auto=format&q=80" },
     { id: "prod2",  name: "Ordinateur Portable HP",        category: "Informatique",       price: 450, vendor: "", vendorName: "NEXUS Market", description: "Intel i5, 8Go RAM, SSD 256Go",                  stock: 18,  rating: 4.9, reviewsCount: 89,  imageUrl: "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=400&h=280&fit=crop&auto=format&q=80" },
     { id: "prod3",  name: "Montre Connect\xE9e",           category: "\xC9lectronique",   price: 80,  vendor: "", vendorName: "NEXUS Market", description: "Smartwatch avec suivi sant\xE9",                  stock: 67,  rating: 4.5, reviewsCount: 312, imageUrl: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&h=280&fit=crop&auto=format&q=80" },
-    { id: "prod4",  name: "Tissu Wax imprim\xE9 (6 yards)",category: "Tissus & Wax",      price: 25,  vendor: "", vendorName: "NEXUS Market", description: "Tissu wax authentique, motif traditionnel",       stock: 29,  rating: 4.8, reviewsCount: 156, imageUrl: "https://images.unsplash.com/photo-1580552833989-5e5eb7c45e5c?w=400&h=280&fit=crop&auto=format&q=80" },
+    { id: "prod4",  name: "Tissu Wax imprim\xE9 (6 yards)",category: "Tissus & Wax",      price: 25,  vendor: "", vendorName: "NEXUS Market", description: "Tissu wax authentique, motif traditionnel",       stock: 29,  rating: 4.8, reviewsCount: 156, imageUrl: "https://images.unsplash.com/photo-1528360983277-13d401cdc186?w=400&h=280&fit=crop&auto=format&q=80" },
     { id: "prod5",  name: "Statue en bois (artisanat)",    category: "Artisanat",          price: 35,  vendor: "", vendorName: "NEXUS Market", description: "Sculpture faite main, bois local",               stock: 12,  rating: 4.6, reviewsCount: 78,  imageUrl: "https://images.unsplash.com/photo-1567225557594-88d73e55f2cb?w=400&h=280&fit=crop&auto=format&q=80" },
     { id: "prod6",  name: "Huile de coco bio (500ml)",     category: "Produits locaux",    price: 8,   vendor: "", vendorName: "NEXUS Market", description: "Huile de coco press\xE9e \xE0 froid",             stock: 55,  rating: 4.4, reviewsCount: 423, imageUrl: "https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=400&h=280&fit=crop&auto=format&q=80" },
     { id: "prod7",  name: "Drone 4K",                      category: "\xC9lectronique",   price: 400, vendor: "", vendorName: "NEXUS Market", description: "Drone avec cam\xE9ra 4K",                         stock: 8,   rating: 4.7, reviewsCount: 45,  imageUrl: "https://images.unsplash.com/photo-1507582020474-9a35b7d455d9?w=400&h=280&fit=crop&auto=format&q=80" },
@@ -16354,13 +16392,22 @@ const MessagingBadge = ({ currentUser, onClick }) => {
     if (!currentUser?.id) return;
     const check = async () => {
       try {
-        const res = await DataService.apiFetch('/api/messages/unread-count').catch(() => null);
-        if (res && typeof res.count === 'number') setUnread(res.count);
-        else {
-          // Fallback localStorage
+        // [FIX] Ne pas appeler l'API si le backend n'est pas encore réveillé
+        // — évite le flood de timeouts (12s × polling 2s) dans la console.
+        if (!window.__nexusBackendReady) {
           const msgs = storage.getArray('messages');
           setUnread(msgs.filter(m => m.to === currentUser.id && !m.read).length);
+          return;
         }
+        const res = await DataService.apiFetch('/api/messages/unread-count').catch(() => null);
+        // [FIX] apiFetch retourne un objet Response — il faut parser le JSON avant de lire .count
+        if (res && res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data && typeof data.count === 'number') { setUnread(data.count); return; }
+        }
+        // Fallback localStorage
+        const msgs = storage.getArray('messages');
+        setUnread(msgs.filter(m => m.to === currentUser.id && !m.read).length);
       } catch (_) {}
     };
     NexusPollingService.subscribe('msg-badge', check, 10);
@@ -16397,6 +16444,16 @@ window.MessageComposeModal = function({ currentUser, recipientId, recipientName,
 };
 
 console.info('[NEXUS] MessagingCenter v4.0.0 chargé — Polling adaptatif actif');
+
+// [FIX] Supprimer les erreurs "A listener indicated an asynchronous response by returning true,
+// but the message channel closed before a response was received" générées par les extensions
+// Chrome (pas du code applicatif). On filtre uniquement ce message connu.
+window.addEventListener('unhandledrejection', function(event) {
+  const msg = event?.reason?.message || '';
+  if (msg.includes('message channel closed') || msg.includes('listener indicated an asynchronous response')) {
+    event.preventDefault(); // Empêche l'affichage dans la console
+  }
+});
 </script>
 </body>
 </html>
