@@ -15183,11 +15183,13 @@ function useMessaging(currentUser) {
       let url = '/api/messages';
       if (lastFetchRef.current) url += `?after=${encodeURIComponent(lastFetchRef.current)}`;
 
+      // [FIX] apiFetch retourne un Response — appeler .json() pour obtenir le tableau
       const res = await DataService.apiFetch(url).catch(() => null);
       let fresh = [];
 
-      if (res && Array.isArray(res)) {
-        fresh = res;
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        fresh = Array.isArray(data) ? data : [];
       } else {
         // [FIX F] Fallback Supabase direct — uniquement si session active (évite les 401 RLS)
         const sb = DataService._sb;
@@ -15255,9 +15257,11 @@ function useMessaging(currentUser) {
   const fetchTyping = useCallback(async (convId, otherId) => {
     if (!convId || !otherId) return;
     try {
+      // [FIX] apiFetch retourne un Response — appeler .json()
       const res = await DataService.apiFetch(`/api/messages/typing/${convId}`).catch(() => null);
-      if (res) {
-        setTypingMap(prev => ({ ...prev, [convId]: res.isTyping && res.userId !== currentUser.id }));
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data) setTypingMap(prev => ({ ...prev, [convId]: data.isTyping && data.userId !== currentUser.id }));
       }
     } catch (_) { /* silencieux */ }
   }, [currentUser?.id]);
@@ -15589,11 +15593,15 @@ function useMessaging(currentUser) {
     try {
       const body = { toId, text: text.trim(), replyToId, replyToText };
       if (attachment) body.attachment = attachment;
-      const saved = await DataService.apiFetch('/api/messages', { method: 'POST', body: JSON.stringify(body) })
+      // [FIX] apiFetch retourne un Response — appeler .json() pour obtenir le message sauvegardé
+      const res = await DataService.apiFetch('/api/messages', { method: 'POST', body: JSON.stringify(body) })
         .catch(() => null);
-      if (saved) {
-        setAllMessages(prev => prev.map(m => m.id === optimistic.id ? { ...saved, read: false } : m));
-        lastFetchRef.current = saved.created_at;
+      if (res && res.ok) {
+        const saved = await res.json().catch(() => null);
+        if (saved) {
+          setAllMessages(prev => prev.map(m => m.id === optimistic.id ? { ...saved, read: false } : m));
+          lastFetchRef.current = saved.created_at;
+        }
       }
       NexusPollingService.forceNow(); // Sync immédiat
     } catch (e) {
@@ -16044,7 +16052,7 @@ const ConversationThread = ({
   // ── Recherche dans le fil ─────────────────────────────────────────────────
   useEffect(() => {
     if (!searchQuery) { setSearchResults([]); return; }
-    // [FIX #12] Appel GET /api/messages/search?q=... en priorite, fallback local
+    // [FIX] apiFetch retourne un Response — appeler .json()
     const q = searchQuery.toLowerCase();
     if (NEXUS_CONFIG.apiUrl) {
       DataService.apiFetch(`/api/messages/search?q=${encodeURIComponent(searchQuery)}`)
@@ -16329,10 +16337,14 @@ const NewConversationModal = ({ currentUser, onStartConv, onClose, addToast }) =
     if (!q || q.length < 2) { setResults([]); return; }
     setLoading(true);
     try {
-      // [FIX] Utiliser le backend API (évite les 500 RLS du client Supabase anon)
+      // [FIX] apiFetch retourne un Response — il faut appeler .json() pour obtenir les données
       if (NEXUS_CONFIG.apiUrl) {
         const res = await DataService.apiFetch(`/api/users/search?q=${encodeURIComponent(q)}&limit=8`).catch(() => null);
-        if (res && Array.isArray(res)) { setResults(res); return; }
+        if (res && res.ok) {
+          const data = await res.json();
+          setResults(Array.isArray(data) ? data : (data.users || []));
+          return;
+        }
       }
       // Fallback Supabase direct — seulement si session active (évite les 500 RLS)
       const sb = DataService._sb;
