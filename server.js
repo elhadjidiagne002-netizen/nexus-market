@@ -24,6 +24,13 @@
  *   LOG_LEVEL                 (optionnel — 'debug' pour logs verbeux, défaut: 'info')
  *   SENTRY_DSN                https://xxx@oXXX.ingest.sentry.io/YYYY (optionnel — monitoring erreurs)
  *
+ * ── PAYTECH SÉNÉGAL (paiement Mobile Money réel) ─────────────────────────────
+ *   Inscription : https://paytech.sn
+ *   PAYTECH_API_KEY           (clé API — tableau de bord PayTech)
+ *   PAYTECH_SECRET_KEY        (clé secrète — tableau de bord PayTech)
+ *   PAYTECH_ENV               prod | test  (défaut : test)
+ *   API_URL                   https://votre-api.onrender.com
+ *
  * CHANGELOG v3.1.2 (correctifs appliqués) :
  *   [FIX 1] BUG CRITIQUE — app.listen() maintenant TOUJOURS appelé (plus conditionné à NODE_ENV)
  *           Avant : if (process.env.NODE_ENV !== 'production') { app.listen(...) }
@@ -2492,31 +2499,325 @@ app.post('/api/payments/create-intent', verifyToken, paymentLimiter, async (req,
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════════
+// ── PAYTECH SÉNÉGAL — Paiement Mobile Money réel ────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// PayTech est le principal agrégateur de paiement sénégalais.
+// Il couvre : Orange Money, Wave, Free Money, carte bancaire, virement.
+//
+// Inscription : https://paytech.sn → Créer un compte marchand → API Keys
+//
+// Flux :
+//  1. POST /api/payments/mobile-money  → crée une session PayTech → retourne redirect_url
+//  2. Frontend redirige vers redirect_url (page PayTech sécurisée)
+//  3. Client paie sur la page PayTech (Orange, Wave, Free Money…)
+//  4. PayTech appelle POST /api/payments/paytech/ipn (webhook IPN)
+//  5. Le serveur valide le hash, confirme la commande, envoie les emails
+//  6. PayTech redirige le client vers success_url ou cancel_url
+//  7. Frontend détecte le retour via les params ?payment=success&orderId=xxx
+//
+// Variables .env à ajouter dans Railway :
+//   PAYTECH_API_KEY     → Dashboard PayTech → Paramètres → Clé API
+//   PAYTECH_SECRET_KEY  → Dashboard PayTech → Paramètres → Clé Secrète
+//   PAYTECH_ENV         → "test" (sandbox) ou "prod" (production)
+//   API_URL             → URL publique de ce serveur (ex: https://nexus-api.onrender.com)
+
+// ── Helper : vérification IPN PayTech ────────────────────────────────────────
+// PayTech envoie un params_hash = sha256(sha256(API_KEY) + sha256(API_SECRET))
+// Ce hash est statique par paire de clés — on le calcule une fois au démarrage.
+const _paytechHash = (() => {
+  const apiKey    = process.env.PAYTECH_API_KEY    || '';
+  const secretKey = process.env.PAYTECH_SECRET_KEY || '';
+  if (!apiKey || !secretKey) return null;
+  const h1 = crypto.createHash('sha256').update(apiKey).digest('hex');
+  const h2 = crypto.createHash('sha256').update(secretKey).digest('hex');
+  return crypto.createHash('sha256').update(h1 + h2).digest('hex');
+})();
+
+const _isPaytechConfigured = () =>
+  !!(process.env.PAYTECH_API_KEY && process.env.PAYTECH_SECRET_KEY);
+
+// ── POST /api/payments/mobile-money ─────────────────────────────────────────
+// Crée une session de paiement PayTech et retourne l'URL de redirection.
 app.post('/api/payments/mobile-money', verifyToken, paymentLimiter, async (req, res) => {
   try {
-    const { orderId, provider, phone, amount } = req.body;
-    if (!orderId || !provider || !phone) return res.status(400).json({ error: 'orderId, provider et phone requis' });
+    const { orderId, amount } = req.body;
+    if (!orderId || !amount) {
+      return res.status(400).json({ error: 'orderId et amount requis' });
+    }
 
-    // Simulation Orange Money / Wave (intégrer l'API réelle ici)
-    const ref = `${provider.toUpperCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+    // ── Fallback simulation si PayTech non configuré (dev/test sans clés) ──
+    if (!_isPaytechConfigured()) {
+      Logger.warn('payment', 'paytech.not_configured',
+        'PAYTECH_API_KEY / PAYTECH_SECRET_KEY absents — mode simulation activé');
+      const ref = `SIM-${Date.now()}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
+      await supabase.from('orders').update({
+        payment_status: 'paid', status: 'processing',
+        mobile_money_ref: ref, payment_method: 'mobile',
+        processing_at: new Date().toISOString(),
+      }).eq('id', orderId);
+      const { data: order } = await supabase.from('orders')
+        .select('id, vendor_id, buyer_id, buyer_email, buyer_name, vendor_name, status, products, stock_reserved, tracking_number, vendor_note, payment_method')
+        .eq('id', orderId).single();
+      if (order) {
+        await sendEmail({ to: order.buyer_email, ...emailTemplates.orderConfirmation(order) });
+        await pushNotification(order.vendor_id, {
+          type: 'order', title: '💰 Paiement reçu (simulation)',
+          message: `Commande #${orderId.slice(-6)} — ${formatFCFA(amount)}`,
+          link: `/orders/${orderId}`,
+        });
+      }
+      return res.json({
+        simulation: true,
+        success: true,
+        reference: ref,
+        message: 'Paiement simulé (configurer PAYTECH_API_KEY pour le mode réel)',
+      });
+    }
+
+    // ── Vérifier que la commande appartient bien à cet utilisateur ──────────
+    const { data: existingOrder, error: orderErr } = await supabase
+      .from('orders')
+      .select('id, buyer_id, total, payment_status, buyer_name, buyer_email')
+      .eq('id', orderId)
+      .single();
+    if (orderErr || !existingOrder) {
+      return res.status(404).json({ error: 'Commande introuvable' });
+    }
+    if (existingOrder.buyer_id !== req.user.id) {
+      return res.status(403).json({ error: 'Accès refusé' });
+    }
+    if (existingOrder.payment_status === 'paid') {
+      return res.status(409).json({ error: 'Cette commande est déjà payée' });
+    }
+
+    // ── Montant en FCFA (PayTech n'accepte pas EUR) ──────────────────────────
+    const EUR_TO_FCFA = 655.957;
+    const amountFCFA  = Math.round(amount * EUR_TO_FCFA);
+    const frontendUrl = process.env.FRONTEND_URL || 'https://nexus.sn';
+    const apiUrl      = process.env.API_URL       || `http://localhost:${process.env.PORT || 3000}`;
+    const paytechEnv  = process.env.PAYTECH_ENV   || 'test';
+
+    // ── Appel API PayTech ────────────────────────────────────────────────────
+    const paytechRes = await fetch('https://paytech.sn/api/payment/request-payment', {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'API_KEY':        process.env.PAYTECH_API_KEY,
+        'API_SECRET':     process.env.PAYTECH_SECRET_KEY,
+      },
+      body: JSON.stringify({
+        item_name:    `Commande NEXUS #${orderId.slice(-8)}`,
+        item_price:   amountFCFA,
+        currency:     'XOF',
+        ref_command:  orderId,          // notre orderId = référence unique
+        ipn_url:      `${apiUrl}/api/payments/paytech/ipn`,
+        success_url:  `${frontendUrl}/?payment=success&orderId=${orderId}`,
+        cancel_url:   `${frontendUrl}/?payment=cancel&orderId=${orderId}`,
+        custom_field: JSON.stringify({ orderId, userId: req.user.id, amountEur: amount }),
+        env:          paytechEnv,
+        payment_method: 'mobile_money', // préselectionne Mobile Money sur la page PayTech
+      }),
+    });
+
+    if (!paytechRes.ok) {
+      const errText = await paytechRes.text().catch(() => '');
+      Logger.error('payment', 'paytech.request_failed', `PayTech HTTP ${paytechRes.status}: ${errText}`, {
+        userId: req.user.id, meta: { orderId, amountFCFA },
+      });
+      return res.status(502).json({ error: 'PayTech indisponible. Réessayez dans quelques instants.' });
+    }
+
+    const paytechData = await paytechRes.json();
+
+    // PayTech retourne { success: 1, token: "...", redirect_url: "https://paytech.sn/..." }
+    // En cas d'erreur : { success: 0, error: ["message"] }
+    if (!paytechData.success || paytechData.success === 0) {
+      const errMsg = Array.isArray(paytechData.error)
+        ? paytechData.error.join(', ')
+        : (paytechData.message || 'Erreur PayTech inconnue');
+      Logger.error('payment', 'paytech.api_error', errMsg, {
+        userId: req.user.id, meta: { orderId, paytechData },
+      });
+      return res.status(400).json({ error: errMsg });
+    }
+
+    // ── Stocker le token PayTech sur la commande pour retrouver l'IPN ────────
     await supabase.from('orders').update({
-      payment_status: 'paid',
-      status: 'processing',
-      mobile_money_ref: ref,
-      payment_method: 'mobile',
-      processing_at: new Date().toISOString(),
+      payment_status:   'pending',
+      mobile_money_ref: paytechData.token,  // token = ref PayTech
     }).eq('id', orderId);
 
-    const { data: order } = await supabase.from('orders').select('id, vendor_id, buyer_id, buyer_email, buyer_name, vendor_name, status, products, stock_reserved, tracking_number, vendor_note, payment_method').eq('id', orderId).single();
-    if (order) {
-      await sendEmail({ to: order.buyer_email, ...emailTemplates.orderConfirmation(order) });
-      await pushNotification(order.vendor_id, { type: 'order', title: '💰 Paiement reçu', message: `Commande #${orderId.slice(-6)} — ${formatFCFA(amount)}`, link: `/orders/${orderId}` });
-    }
-    res.json({ success: true, reference: ref, message: `Paiement ${provider} confirmé` });
+    Logger.info('payment', 'paytech.session_created',
+      `Session PayTech créée — token: ${paytechData.token}`, {
+        userId: req.user.id, meta: { orderId, amountFCFA, token: paytechData.token },
+      });
+
+    res.json({
+      success:       true,
+      redirect_url:  paytechData.redirect_url,
+      token:         paytechData.token,
+      amount_fcfa:   amountFCFA,
+    });
+
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    Logger.error('payment', 'paytech.unexpected', e.message, { meta: { stack: e.stack } });
+    res.status(500).json({ error: 'Erreur serveur inattendue lors du paiement' });
   }
 });
+
+// ── POST /api/payments/paytech/ipn ───────────────────────────────────────────
+// Webhook IPN PayTech — appelé par PayTech quand un paiement est confirmé.
+// PayTech envoie un params_hash pour prouver l'authenticité de la requête.
+// ⚠️  Cette route ne doit PAS être protégée par verifyToken (PayTech ne connait pas nos JWT).
+app.post('/api/payments/paytech/ipn', async (req, res) => {
+  try {
+    const {
+      type_event,    // "sale_complete" | "sale_canceled"
+      ref_command,   // = orderId (notre référence)
+      item_price,    // montant en FCFA (string)
+      currency,      // "XOF"
+      payment_method,// "orange_money" | "wave" | "free_money" | "card" …
+      mobile_num,    // numéro du payeur
+      token,         // token PayTech
+      params_hash,   // hash d'authenticité
+      env,           // "prod" | "test"
+      custom_field,  // JSON stringifié qu'on a envoyé
+    } = req.body;
+
+    // ── 1. Vérification du hash PayTech (anti-forgery) ──────────────────────
+    if (!_paytechHash || params_hash !== _paytechHash) {
+      Logger.warn('payment', 'paytech.ipn.invalid_hash',
+        `Hash IPN invalide — reçu: ${params_hash}`, { ip: req.ip });
+      // PayTech attend un 200 même en cas de rejet (sinon il réessaie en boucle)
+      return res.status(200).json({ error: 'Hash invalide' });
+    }
+
+    const orderId = ref_command;
+    if (!orderId) {
+      Logger.warn('payment', 'paytech.ipn.no_ref', 'IPN sans ref_command');
+      return res.status(200).json({ error: 'ref_command manquant' });
+    }
+
+    Logger.info('payment', 'paytech.ipn.received',
+      `IPN PayTech — event: ${type_event}, order: ${orderId}, méthode: ${payment_method}`, {
+        meta: { type_event, orderId, item_price, payment_method, mobile_num, env },
+      });
+
+    // ── 2. Vérifier que la commande existe et n'est pas déjà traitée ────────
+    const { data: order, error: orderErr } = await supabase
+      .from('orders')
+      .select('id, buyer_id, vendor_id, buyer_email, buyer_name, vendor_name, total, payment_status, status, products, stock_reserved, tracking_number, vendor_note, payment_method')
+      .eq('id', orderId)
+      .single();
+
+    if (orderErr || !order) {
+      Logger.error('payment', 'paytech.ipn.order_not_found', `Commande ${orderId} introuvable`);
+      return res.status(200).json({ error: 'Commande introuvable' });
+    }
+
+    // ── 3a. Paiement confirmé ────────────────────────────────────────────────
+    if (type_event === 'sale_complete') {
+      if (order.payment_status === 'paid') {
+        // Idempotence : déjà traité (PayTech peut ré-envoyer l'IPN)
+        Logger.info('payment', 'paytech.ipn.already_paid', `Commande ${orderId} déjà payée — IPN ignoré`);
+        return res.status(200).json({ message: 'Déjà traité' });
+      }
+
+      // Mettre à jour la commande
+      await supabase.from('orders').update({
+        payment_status:   'paid',
+        status:           'processing',
+        mobile_money_ref: token || payment_method,
+        payment_method:   'mobile',
+        processing_at:    new Date().toISOString(),
+      }).eq('id', orderId);
+
+      // Email de confirmation acheteur
+      await sendEmail({ to: order.buyer_email, ...emailTemplates.orderConfirmation(order) })
+        .catch(e => Logger.warn('payment', 'paytech.ipn.email_failed', e.message));
+
+      // Notification push vendeur
+      await pushNotification(order.vendor_id, {
+        type:    'order',
+        title:   '💰 Paiement Mobile Money reçu',
+        message: `Commande #${orderId.slice(-6)} — ${formatFCFA(order.total)}`,
+        link:    `/orders/${orderId}`,
+      }).catch(() => {});
+
+      Logger.info('payment', 'paytech.ipn.success',
+        `Paiement ${payment_method} confirmé pour commande ${orderId}`, {
+          meta: { orderId, amountFCFA: item_price, payment_method, mobile_num },
+        });
+
+      return res.status(200).json({ message: 'Paiement traité avec succès' });
+    }
+
+    // ── 3b. Paiement annulé ──────────────────────────────────────────────────
+    if (type_event === 'sale_canceled') {
+      if (['cancelled', 'failed'].includes(order.status)) {
+        return res.status(200).json({ message: 'Déjà annulé' });
+      }
+
+      await supabase.from('orders').update({
+        payment_status: 'failed',
+        status:         'cancelled',
+        cancelled_at:   new Date().toISOString(),
+        cancel_reason:  'Paiement PayTech annulé par le client',
+      }).eq('id', orderId);
+
+      // Re-créditer le stock si réservé
+      if (order.stock_reserved) {
+        const stockItems = (order.products || []).map(p => ({
+          product_id: p.id || p.productId,
+          quantity:   p.quantity,
+        })).filter(i => i.product_id && i.quantity > 0);
+
+        if (stockItems.length > 0) {
+          await supabase.rpc('release_stock', { p_items: JSON.stringify(stockItems) })
+            .catch(e => Logger.error('payment', 'paytech.ipn.release_stock_failed', e.message));
+          await supabase.from('orders').update({ stock_reserved: false }).eq('id', orderId);
+        }
+      }
+
+      Logger.info('payment', 'paytech.ipn.cancelled', `Paiement annulé — commande ${orderId}`);
+      return res.status(200).json({ message: 'Annulation traitée' });
+    }
+
+    // Événement inconnu — on répond 200 pour éviter les retry PayTech
+    Logger.warn('payment', 'paytech.ipn.unknown_event', `Événement IPN inconnu: ${type_event}`);
+    return res.status(200).json({ message: 'Événement ignoré' });
+
+  } catch (e) {
+    Logger.error('payment', 'paytech.ipn.error', e.message, { meta: { stack: e.stack } });
+    // Toujours répondre 200 — sinon PayTech réessaie pendant 24h
+    return res.status(200).json({ error: 'Erreur interne' });
+  }
+});
+
+// ── GET /api/payments/mobile-money/status/:orderId ────────────────────────────
+// Le frontend peut poller cet endpoint pour savoir si le paiement est confirmé
+// après que l'utilisateur revient de la page PayTech.
+app.get('/api/payments/mobile-money/status/:orderId', verifyToken, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { data: order, error } = await supabase
+      .from('orders')
+      .select('id, payment_status, status, mobile_money_ref')
+      .eq('id', orderId)
+      .eq('buyer_id', req.user.id) // sécurité : seulement ses propres commandes
+      .single();
+
+    if (error || !order) return res.status(404).json({ error: 'Commande introuvable' });
+
+    res.json({
+      orderId:       order.id,
+      paymentStatus: order.payment_status,
+      orderStatus:   order.status,
+      ref:           order.mobile_money_ref,
+      paid:          order.payment_status === 'paid',
+    });
 
 // ─── STRIPE WEBHOOK ──────────────────────────────────────────────────────────
 async function handleStripeWebhook(req, res) {
@@ -6930,51 +7231,6 @@ app.listen(PORT, '0.0.0.0', async () => { // [FIX RAILWAY] Bind explicite 0.0.0.
   Logger.info('system', 'startup', `API démarrée sur le port ${PORT}`, {
     meta: { env, hasDb, hasStripe, hasEmail, hasWebhook, version: 'v3.2.0' }
   });
-
-  // ── KEEP-ALIVE : empêche Render Free Tier d'endormir le service ─────────────
-  // Render endort un service après 15 min d'inactivité (plan gratuit).
-  // Ce self-ping envoie une requête GET /api/health toutes les 14 min,
-  // ce qui compte comme activité et maintient le service éveillé en permanence.
-  //
-  // ⚠️  Limitations :
-  //   - Le self-ping consomme vos heures gratuites Render (750h/mois).
-  //   - Pour une solution sans consommation d'heures, utilisez un service externe
-  //     comme cron-job.org ou UptimeRobot (voir commentaire ci-dessous).
-  //
-  // Alternative recommandée (service externe gratuit) :
-  //   → https://cron-job.org  : créez un cron toutes les 10 min sur /api/health
-  //   → https://uptimerobot.com : monitor HTTP(s) avec intervalle 5 min (gratuit)
-  //
-  if (process.env.NODE_ENV !== 'test') {
-    const SELF_PING_INTERVAL_MS = 14 * 60 * 1000; // 14 min
-    const selfPing = async () => {
-      const selfUrl = process.env.API_URL
-        ? `${process.env.API_URL}/api/health`
-        : `http://localhost:${PORT}/api/health`;
-      try {
-        const ctrl = new AbortController();
-        const tid = setTimeout(() => ctrl.abort(), 10000);
-        // Utilise fetch natif (Node 18+) ou https selon la version Node
-        const res = await fetch(selfUrl, { method: 'GET', signal: ctrl.signal });
-        clearTimeout(tid);
-        if (res.ok) {
-          console.log(`[NEXUS] Self-ping ✓ backend actif (${new Date().toISOString().slice(11,19)})`);
-        } else {
-          console.warn(`[NEXUS] Self-ping → HTTP ${res.status}`);
-        }
-      } catch (e) {
-        if (e.name !== 'AbortError') {
-          console.warn('[NEXUS] Self-ping échoué:', e.message);
-        }
-      }
-    };
-    // Premier ping après 5 min (laisser le temps au démarrage complet)
-    setTimeout(() => {
-      selfPing();
-      setInterval(selfPing, SELF_PING_INTERVAL_MS);
-    }, 5 * 60 * 1000);
-    console.log('[NEXUS] Keep-alive self-ping activé — intervalle : 14 min');
-  }
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
