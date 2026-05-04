@@ -4914,25 +4914,13 @@ const LiveChat = ({ currentUser: currentUser2 }) => {
     // 1) Tenter Claude API (si clé configurée)
     if (useAI) {
       try {
-        const context = `Tu es l\u2019assistant IA de NEXUS Market S\xE9n\xE9gal, une marketplace B2B/B2C. Tu r\xE9ponds UNIQUEMENT en fran\xE7ais, de mani\xE8re concise (2-4 phrases max). Informations cl\xE9s sur NEXUS\u00a0:
-- Paiement\u00a0: Orange Money, Wave, Free Money, Visa/Mastercard
-- Livraison\u00a0: 1-3 jours Dakar, 3-7 jours r\xE9gions. Gratuit d\xE8s 20\u00a0000 FCFA
-- Retours\u00a0: 30 jours, remboursement sous 3 jours ouvrables
-- Devenir vendeur\u00a0: inscription + validation 24h, commission 15%
-- Contact\u00a0: contact@nexus.sn, WhatsApp +221 33 123 45 67
-- Litiges\u00a0: ouvrir depuis la commande, traitement 48h
-- Parrainage\u00a0: 5% de cr\xE9dit par ami inscrit
-Si la question sort du cadre NEXUS Market, dis poliment que tu n\u2019as pas cette information et propose de contacter le support.`;
-
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
+// Appel via le backend NEXUS proxy (clé Groq sécurisée côté serveur)
+        const response = await fetch("/api/ai/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 200,
-            system: context,
             messages: [
-              ...messages.filter(m => m.from !== "support" || !m.quick).slice(-6).map(m => ({
+              ...messages.filter(m => m.from !== "support" || !m.quick).slice(-8).map(m => ({
                 role: m.from === "user" ? "user" : "assistant",
                 content: m.text
               })),
@@ -4942,7 +4930,7 @@ Si la question sort du cadre NEXUS Market, dis poliment que tu n\u2019as pas cet
         });
         if (response.ok) {
           const data = await response.json();
-          const aiText = data.content && data.content[0] && data.content[0].text;
+          const aiText = data.reply;
           if (aiText) {
             setMessages(m => [...m, { from: "support", text: aiText, time: new Date().toISOString(), ai: true }]);
             setTyping(false);
@@ -4986,7 +4974,7 @@ Si la question sort du cadre NEXUS Market, dis poliment que tu n\u2019as pas cet
         React.createElement("div", { style: { width: "32px", height: "32px", borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem" } }, "\uD83E\uDD16"),
         React.createElement("div", { style: { flex: 1 } },
           React.createElement("div", { style: { fontWeight: 700, fontSize: "0.9rem" } }, "Assistant NEXUS"),
-          React.createElement("div", { style: { fontSize: "0.72rem", opacity: 0.85 } }, useAI ? "\u26A1 IA Claude — R\xE9ponses intelligentes" : "\uD83D\uDCAC Support scriptés")
+          React.createElement("div", { style: { fontSize: "0.72rem", opacity: 0.85 } }, useAI ? "\u26A1 IA Groq (Llama 3.3) — R\xE9ponses intelligentes" : "\uD83D\uDCAC Support scriptés")
         )
       ),
       React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: "0.85rem", display: "flex", flexDirection: "column", gap: "0.6rem", minHeight: "180px" } },
@@ -12742,73 +12730,20 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
   const requestPush = async () => {
     setSubLoading(true);
     try {
-      // 1. Vérifier le support navigateur
-      if (!("PushManager" in window)) {
-        addToast("Notifications push non supportées par ce navigateur", "error");
-        setSubLoading(false); return;
-      }
-      if (!("serviceWorker" in navigator)) {
-        addToast("Service Worker non supporté sur ce navigateur", "error");
-        setSubLoading(false); return;
-      }
-
-      // 2. Demander la permission
       const perm = await Notification.requestPermission();
       setPermission(perm);
-      if (perm !== "granted") {
-        addToast("Permission notifications refusée", "warning");
-        setSubLoading(false); return;
-      }
-
-      // 3. [FIX VAPID] Récupérer la clé publique VAPID depuis le serveur
-      //    applicationServerKey: null provoquait un DOMException côté navigateur
-      const apiBase = NEXUS_CONFIG.apiUrl || "";
-      const token   = sessionStorage.getItem("nexus_jwt") || "";
-      const vapidRes = await fetch(apiBase + "/api/push/vapid-key", {
-        headers: token ? { "Authorization": "Bearer " + token } : {},
-      }).catch(() => null);
-
-      if (!vapidRes || !vapidRes.ok) {
-        addToast("Clé VAPID indisponible — push non configuré sur le serveur", "error");
-        setSubLoading(false); return;
-      }
-      const { publicKey } = await vapidRes.json();
-      if (!publicKey) {
-        addToast("Clé VAPID manquante — contactez l\'administrateur", "error");
-        setSubLoading(false); return;
-      }
-
-      // 4. S\'abonner aux push avec la vraie applicationServerKey
+      if (perm !== "granted") { addToast("Permission notifications refusée", "warning"); setSubLoading(false); return; }
+      if (!("serviceWorker" in navigator)) { addToast("Service Worker non supporté sur ce navigateur", "error"); setSubLoading(false); return; }
       const reg = await navigator.serviceWorker.ready;
-      let sub = await reg.pushManager.getSubscription();
-      if (!sub) {
-        sub = await reg.pushManager.subscribe({
-          userVisibleOnly:      true,
-          applicationServerKey: publicKey,
-        });
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: null }).catch(() => null);
+      if (sub && NEXUS_CONFIG.apiUrl) {
+        await fetch(NEXUS_CONFIG.apiUrl + "/api/push/subscribe", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscription: sub, preferences: prefs }),
+        }).catch(() => {});
       }
-
-      // 5. Envoyer l\'abonnement au backend avec le token JWT
-      if (sub && apiBase) {
-        const regRes = await fetch(apiBase + "/api/push/subscribe", {
-          method:  "POST",
-          headers: {
-            "Content-Type":  "application/json",
-            ...(token ? { "Authorization": "Bearer " + token } : {}),
-          },
-          body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
-        }).catch(() => null);
-
-        if (!regRes || !regRes.ok) {
-          addToast("Erreur enregistrement push — réessayez", "error");
-          setSubLoading(false); return;
-        }
-      }
-
       addToast("Notifications push activées ✓", "success");
-    } catch(e) {
-      addToast("Erreur activation push : " + e.message, "error");
-    }
+    } catch(e) { addToast("Erreur activation push : " + e.message, "error"); }
     setSubLoading(false);
   };
 
@@ -14082,30 +14017,6 @@ const App = ({ onUserChange }) => {
       setOnboardingRole(user.role);
       setShowOnboarding(true);
     }
-
-    // ── [VAPID v2] Auto-subscribe push après login ────────────────────────────
-    // Déclenché uniquement si la permission n\'a pas déjà été refusée.
-    // Différé de 3s pour ne pas surcharger le thread principal au moment du login.
-    if (typeof Notification !== "undefined" && Notification.permission !== "denied") {
-      const _jwt = sessionStorage.getItem("nexus_jwt") || "";
-      if (_jwt) {
-        const _doSubscribe = () => {
-          if (window.__nexusSWReg && window.nexusPush?.subscribe) {
-            window.nexusPush.subscribe(_jwt).catch(() => {});
-          }
-        };
-        if (window.__nexusSWReg) {
-          setTimeout(_doSubscribe, 3000);
-        } else {
-          // SW pas encore prêt — attendre l\'événement de registration
-          const _onSwReady = () => {
-            setTimeout(_doSubscribe, 1000);
-            window.removeEventListener("nexus-sw-ready", _onSwReady);
-          };
-          window.addEventListener("nexus-sw-ready", _onSwReady, { once: true });
-        }
-      }
-    }
   };
   const handleLogout = () => {
     // [FIX] Déconnecter l'UI IMMÉDIATEMENT — sans attendre l'API (cold start Render ~30s)
@@ -14309,9 +14220,6 @@ if ("serviceWorker" in navigator) {
         console.log("[SW] ✅ Service Worker enregistré — scope:", reg.scope);
         window.__nexusSWReg = reg;
 
-        // Notifier l\'app que le SW est prêt (déclenche l\'auto-subscribe push)
-        window.dispatchEvent(new CustomEvent("nexus-sw-ready"));
-
         // Proposer les notifications après interaction utilisateur
         if ("Notification" in window && Notification.permission === "default") {
           window.__nexusRequestNotifPermission = async () => {
@@ -14321,36 +14229,10 @@ if ("serviceWorker" in navigator) {
           };
         }
 
-        // Écouter les messages du SW
+        // Écouter les messages du SW (ex: SW_ACTIVATED à la mise à jour)
         navigator.serviceWorker.addEventListener("message", evt => {
-          if (!evt.data) return;
-
-          // SW mis à jour
-          if (evt.data.type === "SW_ACTIVATED") {
+          if (evt.data && evt.data.type === "SW_ACTIVATED") {
             console.log("[SW] Nouvelle version activée :", evt.data.version);
-          }
-
-          // Navigation depuis un clic de notification push
-          if (evt.data.type === "PUSH_NAVIGATE" && evt.data.url) {
-            const url = evt.data.url;
-            // Utiliser le routeur React si dispo, sinon navigation native
-            if (typeof window.nexusNavigate === "function") {
-              window.nexusNavigate(url);
-            } else {
-              window.location.href = url;
-            }
-          }
-
-          // Renouvellement automatique d\'abonnement push
-          if (evt.data.type === "PUSH_SUBSCRIPTION_RENEWED" && evt.data.subscription) {
-            const jwt = sessionStorage.getItem("nexus_jwt") || "";
-            if (jwt && NEXUS_CONFIG.apiUrl) {
-              fetch(NEXUS_CONFIG.apiUrl + "/api/push/subscribe", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "Authorization": "Bearer " + jwt },
-                body: JSON.stringify({ subscription: evt.data.subscription }),
-              }).catch(() => {});
-            }
           }
         });
       })
