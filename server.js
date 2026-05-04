@@ -1796,9 +1796,9 @@ app.get('/api/products', async (req, res) => {
     if (category && category !== 'all') query = query.eq('category', category);
     if (vendor) query = query.eq('vendor_id', vendor);
     if (search) {
-      // [FIX] Échapper les caractères spéciaux LIKE avant interpolation
-      const safeSearch = search.replace(/[%_\\]/g, '\\$&').slice(0, 100);
-      query = query.or(`name.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%,category.ilike.%${safeSearch}%`);
+      // [FTS v2.0] textSearch(tsvector) — fallback ILIKE auto si colonne absente (code 42703)
+      const safeSearch = _ftsSanitize(search);
+      query = query.textSearch('search_vector', safeSearch, { type: 'websearch', config: 'french' });
     }
     if (min_price) query = query.gte('price', parseFloat(min_price));
     if (max_price) query = query.lte('price', parseFloat(max_price));
@@ -6882,86 +6882,195 @@ _deliveryRouter.get('/:orderId/events', verifyToken, async (req, res) => {
 app.use('/api/delivery', _deliveryRouter);
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ── FULL-TEXT SEARCH — Routes inline (/api/search)                        ──
-// ══════════════════════════════════════════════════════════════════════════════
-//   GET /api/search            — Recherche full-text (tsvector PostgreSQL)
-//   GET /api/search/suggest    — Suggestions/autocomplete par préfixe
-//   GET /api/search/popular    — Termes populaires (cache 5 min)
+// ════════════════════════════════════════════════════════════════════════════════
+// [FTS v2.0] FULL-TEXT SEARCH — tsvector / tsquery PostgreSQL
+// ════════════════════════════════════════════════════════════════════════════════
+//   GET /api/search            — Recherche FTS principale (RPC search_products)
+//   GET /api/search/suggest    — Autocomplete rapide (RPC search_suggest / trigram)
+//   GET /api/search/popular    — Termes populaires (cache mémoire 5 min)
+//   GET /api/search/health     — Diagnostic : RPC présente / mode fallback
 //
-// SQL requis :
+// SQL requis (exécuter supabase_fts_migration.sql) :
 //   ALTER TABLE products ADD COLUMN IF NOT EXISTS search_vector tsvector;
-//   CREATE INDEX IF NOT EXISTS idx_products_fts ON products USING gin(search_vector);
-//   -- (voir features/search-fulltext.js pour le trigger et la fonction RPC complète)
-// ══════════════════════════════════════════════════════════════════════════════
-const _ftsRouter = express.Router();
-let _ftsPopularCache = null, _ftsPopularCacheAt = 0;
+//   CREATE INDEX idx_products_fts ON products USING gin(search_vector);
+//   CREATE TRIGGER trig_products_search_vector ...  (mise à jour automatique)
+//   CREATE FUNCTION search_products(...)            (RPC principale)
+//   CREATE TABLE search_logs + FUNCTION upsert_search_log(p_term)
+//   CREATE FUNCTION search_suggest(p_prefix, p_limit) (autocomplete trigram)
+// ════════════════════════════════════════════════════════════════════════════════
 
+const _ftsRouter = express.Router();
+
+// Cache mémoire pour les termes populaires (TTL 5 min)
+let _ftsPopularCache   = null;
+let _ftsPopularCacheAt = 0;
+const FTS_POPULAR_TTL  = 5 * 60 * 1000;
+
+// Colonnes communes aux deux chemins (RPC + fallback ILIKE)
+const FTS_COLS = 'id,name,description,category,price,original_price,stock,image_url,images,vendor_id,vendor_name,rating,reviews_count,active,created_at';
+
+/**
+ * Sanitize : conserve uniquement les caractères sûrs pour tsquery et ILIKE.
+ */
 function _ftsSanitize(raw) {
   if (!raw || typeof raw !== 'string') return '';
-  return raw.replace(/[^a-zA-ZÀ-ÿ0-9\s'\-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
-}
-function _ftsToTsQuery(q) {
-  return q.split(/\s+/).filter(Boolean).map(w => `${w}:*`).join(' & ');
+  return raw
+    .replace(/[^a-zA-ZÀ-ÿ0-9\s'\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
 }
 
+/**
+ * Construit un tsquery PostgreSQL pour to_tsquery() :
+ *   "iphone pro" → "iphone:* & pro:*"
+ * Le suffixe :* active la recherche par préfixe (ex: "télé" trouve "téléphone").
+ * Les mots de moins de 2 caractères sont ignorés (stop-words JS).
+ */
+function _ftsToTsQuery(q) {
+  const tokens = q.split(/\s+/).filter(w => w.length >= 2);
+  if (tokens.length === 0) return q + ':*';
+  return tokens.map(w => `${w}:*`).join(' & ');
+}
+
+/**
+ * Fallback ILIKE — utilisé si la RPC n'est pas encore déployée en base.
+ */
+async function _ftsFallback(res, { q, page, limit, offset, category, minPrice, maxPrice, sortBy }) {
+  let fbq = supabase
+    .from('products')
+    .select(FTS_COLS, { count: 'exact' })
+    .eq('active', true)
+    .or(`name.ilike.%${q}%,description.ilike.%${q}%,category.ilike.%${q}%`);
+  if (category) fbq = fbq.eq('category', category);
+  if (minPrice) fbq = fbq.gte('price', minPrice);
+  if (maxPrice) fbq = fbq.lte('price', maxPrice);
+  switch (sortBy) {
+    case 'price_asc':  fbq = fbq.order('price',        { ascending: true  }); break;
+    case 'price_desc': fbq = fbq.order('price',        { ascending: false }); break;
+    case 'rating':     fbq = fbq.order('rating',       { ascending: false }); break;
+    case 'newest':     fbq = fbq.order('created_at',   { ascending: false }); break;
+    default:           fbq = fbq.order('reviews_count', { ascending: false });
+  }
+  fbq = fbq.range(offset, offset + limit - 1);
+  const { data: fd, error: fe, count: fc } = await fbq;
+  if (fe) throw fe;
+  const total = fc ?? 0;
+  return res.json({ q, page, limit, total, pages: Math.ceil(total / limit), results: fd || [], fallback: true });
+}
+
+// ── GET /api/search ──────────────────────────────────────────────────────────
 _ftsRouter.get('/', async (req, res) => {
   const q        = _ftsSanitize(req.query.q || '');
   const page     = Math.max(1, parseInt(req.query.page   || '1',  10));
   const limit    = Math.min(40, Math.max(1, parseInt(req.query.limit || '20', 10)));
-  const category = req.query.category || null;
+  const offset   = (page - 1) * limit;
+  const category = _ftsSanitize(req.query.category || '') || null;
   const minPrice = parseFloat(req.query.min_price) || null;
   const maxPrice = parseFloat(req.query.max_price) || null;
-  const sortBy   = ['relevance','price_asc','price_desc','rating','newest'].includes(req.query.sort) ? req.query.sort : 'relevance';
-  if (!q || q.length < 2) return res.status(400).json({ error: 'Requête trop courte (min 2 caractères)', results: [] });
+  const VALID_SORTS = ['relevance', 'price_asc', 'price_desc', 'rating', 'newest'];
+  const sortBy = VALID_SORTS.includes(req.query.sort) ? req.query.sort : 'relevance';
+
+  if (!q || q.length < 2)
+    return res.status(400).json({ error: 'Requête trop courte — minimum 2 caractères', results: [] });
+
   try {
-    const { data, error, count } = await supabase.rpc('search_products', {
-      query_text: _ftsToTsQuery(q), p_category: category, p_min: minPrice,
-      p_max: maxPrice, p_sort: sortBy, p_limit: limit, p_offset: (page-1)*limit,
-    }, { count: 'exact' });
+    // ── Chemin principal : RPC tsvector / tsquery ─────────────────────────
+    const { data, error, count } = await supabase.rpc(
+      'search_products',
+      {
+        query_text: _ftsToTsQuery(q),
+        p_category: category,
+        p_min:      minPrice,
+        p_max:      maxPrice,
+        p_sort:     sortBy,
+        p_limit:    limit,
+        p_offset:   offset,
+      },
+      { count: 'exact' }
+    );
+
     if (error) {
-      if (error.code === 'PGRST202' || error.message?.includes('does not exist')) {
-        // Fallback ILIKE si la fonction RPC n'est pas encore créée en base
-        let fbq = supabase.from('products')
-          .select('id, name, description, price, images, category, rating, reviews_count, vendor_id, active', { count: 'exact' })
-          .eq('active', true).or(`name.ilike.%${q}%,description.ilike.%${q}%`)
-          .order('rating', { ascending: false }).range((page-1)*limit, page*limit-1);
-        if (category) fbq = fbq.eq('category', category);
-        if (minPrice)  fbq = fbq.gte('price', minPrice);
-        if (maxPrice)  fbq = fbq.lte('price', maxPrice);
-        const { data: fd, error: fe, count: fc } = await fbq;
-        if (fe) throw fe;
-        return res.json({ q, page, limit, total: fc||0, results: fd||[], fallback: true });
+      // RPC absente → fallback ILIKE transparent
+      if (error.code === 'PGRST202' || error.code === '42883' ||
+          error.message?.includes('does not exist') || error.message?.includes('search_vector')) {
+        Logger.warn('search', 'fts.rpc_missing', 'RPC absente — mode ILIKE actif', { meta: { code: error.code } });
+        return _ftsFallback(res, { q, page, limit, offset, category, minPrice, maxPrice, sortBy });
       }
       throw error;
     }
+
+    // Log asynchrone non bloquant
     supabase.rpc('upsert_search_log', { p_term: q.toLowerCase() }).catch(() => {});
-    res.json({ q, page, limit, total: count ?? data?.length ?? 0, results: data || [] });
+
+    const total = count ?? data?.length ?? 0;
+    return res.json({ q, page, limit, total, pages: Math.ceil(total / limit), results: data || [] });
+
   } catch (e) {
-    Logger.error('search', 'fts.error', e.message);
-    res.status(500).json({ error: 'Erreur lors de la recherche', results: [] });
+    Logger.error('search', 'fts.error', e.message, { meta: { q } });
+    try {
+      return _ftsFallback(res, { q, page, limit, offset, category, minPrice, maxPrice, sortBy });
+    } catch (_) {
+      return res.status(500).json({ error: 'Erreur lors de la recherche', results: [] });
+    }
   }
 });
 
+// ── GET /api/search/suggest ──────────────────────────────────────────────────
 _ftsRouter.get('/suggest', async (req, res) => {
-  const q = _ftsSanitize(req.query.q || '');
+  const q     = _ftsSanitize(req.query.q || '');
+  const limit = Math.min(10, Math.max(1, parseInt(req.query.limit || '6', 10)));
   if (!q || q.length < 2) return res.json({ suggestions: [] });
   try {
-    const { data } = await supabase.from('products').select('name, category')
-      .eq('active', true).ilike('name', `${q}%`).order('rating', { ascending: false }).limit(8);
-    res.json({ suggestions: [...new Set((data||[]).map(p => p.name))].slice(0,6) });
-  } catch (_) { res.json({ suggestions: [] }); }
+    // RPC search_suggest utilise un index trigram GIN — plus pertinent qu'ILIKE simple
+    const { data, error } = await supabase.rpc('search_suggest', { p_prefix: q, p_limit: limit });
+    if (error) throw error;
+    const suggestions = [...new Set((data || []).map(r => r.suggestion))]
+      .slice(0, limit)
+      .map(name => ({ name, category: (data || []).find(r => r.suggestion === name)?.category || null }));
+    return res.json({ suggestions });
+  } catch (_) {
+    // Fallback ILIKE
+    try {
+      const { data } = await supabase.from('products').select('name, category')
+        .eq('active', true).ilike('name', `${q}%`).order('reviews_count', { ascending: false }).limit(limit);
+      const suggestions = [...new Set((data || []).map(p => p.name))].slice(0, limit)
+        .map(name => ({ name, category: (data || []).find(p => p.name === name)?.category || null }));
+      return res.json({ suggestions });
+    } catch (e2) { return res.json({ suggestions: [] }); }
+  }
 });
 
+// ── GET /api/search/popular ──────────────────────────────────────────────────
 _ftsRouter.get('/popular', async (req, res) => {
-  if (_ftsPopularCache && Date.now() - _ftsPopularCacheAt < 5 * 60 * 1000)
-    return res.json({ terms: _ftsPopularCache });
+  if (_ftsPopularCache && Date.now() - _ftsPopularCacheAt < FTS_POPULAR_TTL)
+    return res.json({ terms: _ftsPopularCache, cached_at: new Date(_ftsPopularCacheAt).toISOString() });
   try {
-    const { data } = await supabase.from('search_logs').select('term, count')
-      .order('count', { ascending: false }).limit(10);
-    _ftsPopularCache = (data||[]).map(r => r.term);
+    const { data, error } = await supabase.from('search_logs')
+      .select('term, count').order('count', { ascending: false }).limit(12);
+    if (error) throw error;
+    _ftsPopularCache   = (data || []).map(r => r.term);
     _ftsPopularCacheAt = Date.now();
-    res.json({ terms: _ftsPopularCache });
-  } catch (_) { res.json({ terms: [] }); }
+    return res.json({ terms: _ftsPopularCache, cached_at: new Date(_ftsPopularCacheAt).toISOString() });
+  } catch (_) { return res.json({ terms: _ftsPopularCache || [] }); }
+});
+
+// ── GET /api/search/health ───────────────────────────────────────────────────
+_ftsRouter.get('/health', async (req, res) => {
+  try {
+    const { error } = await supabase.rpc('search_products', { query_text: 'test:*', p_limit: 1, p_offset: 0 });
+    const ftsAvailable = !error || (error.code !== 'PGRST202' && error.code !== '42883');
+    return res.json({
+      status:          ftsAvailable ? 'ok' : 'degraded',
+      fts_available:   ftsAvailable,
+      fallback_active: !ftsAvailable,
+      message:         ftsAvailable
+        ? 'RPC search_products opérationnelle — index GIN actif'
+        : 'RPC manquante — mode ILIKE (exécuter supabase_fts_migration.sql)',
+    });
+  } catch (e) {
+    return res.status(500).json({ status: 'error', fts_available: false, error: e.message });
+  }
 });
 
 app.use('/api/search', _ftsRouter);
