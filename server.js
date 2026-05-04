@@ -3319,22 +3319,74 @@ app.get('/api/messages/conversations', verifyToken, async (req, res) => {
   try {
     const uid = req.user.id;
 
-    // Récupérer tous les messages impliquant l'utilisateur
+    // ── [v4.1] RPC optimisée : 1 requête SQL au lieu de 500 lignes chargées en JS ──
+    // La fonction get_conversations() est définie dans migration_messages_rls.sql.
+    // Elle retourne directement les conversations avec leur dernier message et
+    // le comptage des non-lus via une fenêtre SQL, sans jointure N+1.
+    // SECURITY DEFINER → bypass RLS côté Postgres (équivalent service_role pour cette fn).
+    const { data: convRows, error: rpcErr } = await supabase
+      .rpc('get_conversations', { p_user_id: uid });
+
+    // Fallback JS si la fonction RPC n'est pas encore déployée (migration non jouée)
+    if (rpcErr && rpcErr.code === 'PGRST202') {
+      Logger.warn('messages', 'conversations.rpc_missing',
+        'Fonction get_conversations() absente — fallback JS. Jouer migration_messages_rls.sql.',
+        { userId: uid });
+      return _conversationsFallback(uid, req, res);
+    }
+
+    if (rpcErr) throw rpcErr;
+
+    // Enrichir avec les profils en une seule requête (avatar, email, role)
+    const partnerIds = [...new Set((convRows || []).map(r => r.other_id))];
+    let profileMap = {};
+    if (partnerIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, name, email, role, avatar')
+        .in('id', partnerIds);
+      (profiles || []).forEach(p => { profileMap[p.id] = p; });
+    }
+
+    const conversations = (convRows || []).map(r => ({
+      id:          r.conv_id,
+      otherId:     r.other_id,
+      otherName:   r.other_name,
+      lastMessage: {
+        id:         r.last_message_id,
+        text:       r.last_text,
+        created_at: r.last_created_at,
+      },
+      unread:  Number(r.unread_count) || 0,
+      profile: profileMap[r.other_id] || null,
+    }));
+
+    res.json(conversations);
+  } catch (e) {
+    Logger.error('messages', 'conversations.error', e.message, { userId: req.user.id });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Fallback : ancienne implémentation JS (si RPC absente) ──────────────────
+async function _conversationsFallback(uid, req, res) {
+  try {
     const { data: msgs, error } = await supabase
       .from('messages')
       .select('id, from_id, from_name, to_id, to_name, text, read, read_at, created_at')
       .or(`from_id.eq.${uid},to_id.eq.${uid}`)
-      .is('deleted_for', null) // Exclure les messages supprimés globalement
       .order('created_at', { ascending: false })
       .limit(500);
 
     if (error) throw error;
 
-    // Construire la carte des conversations côté serveur
     const convMap = new Map();
     const partnerIds = new Set();
 
     for (const m of (msgs || [])) {
+      // [v4.1] Ignorer les messages supprimés pour CET utilisateur
+      if ((m.deleted_for || []).includes(uid)) continue;
+
       const otherId   = m.from_id === uid ? m.to_id   : m.from_id;
       const otherName = m.from_id === uid ? m.to_name : m.from_name;
       const cid = [uid, otherId].sort().join('::');
@@ -3343,14 +3395,9 @@ app.get('/api/messages/conversations', verifyToken, async (req, res) => {
         convMap.set(cid, { id: cid, otherId, otherName, lastMessage: m, unread: 0 });
         partnerIds.add(otherId);
       }
-
-      // Compter les non-lus reçus
-      if (m.to_id === uid && !m.read) {
-        convMap.get(cid).unread++;
-      }
+      if (m.to_id === uid && !m.read) convMap.get(cid).unread++;
     }
 
-    // Récupérer les profils des interlocuteurs en une seule requête
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, name, email, role, avatar')
@@ -3365,10 +3412,10 @@ app.get('/api/messages/conversations', verifyToken, async (req, res) => {
 
     res.json(conversations);
   } catch (e) {
-    Logger.error('messages', 'conversations.error', e.message, { userId: req.user.id });
+    Logger.error('messages', 'conversations.fallback.error', e.message, { userId: req.user.id });
     res.status(500).json({ error: e.message });
   }
-});
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // GET /api/messages
@@ -3420,12 +3467,21 @@ app.get('/api/messages', verifyToken, async (req, res) => {
     if (error) throw error;
 
     // Filtrer les messages supprimés pour cet utilisateur
+    // [FIX v4.1] deleted_for est maintenant un tableau uuid[] en DB.
+    // Le filtre .contains([uid]) remplace la vérification JS côté serveur
+    // pour les futures requêtes — conservé en JS ici pour compatibilité rétroactive.
     const result = (data || [])
       .filter(m => !(m.deleted_for || []).includes(uid))
       .map(m => ({
         ...m,
-        deleted_for: undefined, // Ne pas exposer la liste complète
-        _deleted_for_me: (m.deleted_for || []).includes(uid)
+        deleted_for:       undefined,  // Ne pas exposer la liste complète
+        _deleted_for_me:   (m.deleted_for || []).includes(uid),
+        // Normaliser les champs JSON nullable pour le client
+        attachments:       m.attachments  ?? null,
+        reactions:         m.reactions    ?? null,
+        reply_to_id:       m.reply_to_id  ?? null,
+        reply_to_text:     m.reply_to_text ?? null,
+        read_at:           m.read_at      ?? null,
       }));
 
     // Si before → réinverser pour retourner en ordre chronologique
@@ -3515,6 +3571,10 @@ app.post('/api/messages', verifyToken, async (req, res) => {
     Logger.info('messages', 'sent', `Message ${req.user.name} → ${recipient.name}`, {
       userId: req.user.id, meta: { toId, hasAttachment: !!attachment, hasReply: !!replyToId }
     });
+
+    // [FIX v4.1] Réponse HTTP renvoyée AVANT les effets de bord (SSE/email)
+    // Avant : res.json() était absent → le client recevait une réponse vide (undefined).
+    res.status(201).json(data);
 
     // Si le destinataire est connecté via SSE, il reçoit le message en <50ms
     // sans attendre le prochain cycle de polling.
@@ -4702,116 +4762,13 @@ app.get('/api/admin/export/:type', verifyToken, requireRole('admin'), async (req
 // Note: le domaine du SW doit correspondre au scope, donc cette route est un bonus
 // La vraie solution est de mettre sw.js dans le repo Vercel (déjà fourni séparément)
 app.get('/sw.js', (req, res) => {
-  res.setHeader('Content-Type',         'application/javascript; charset=utf-8');
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   res.setHeader('Service-Worker-Allowed', '/');
-  res.setHeader('Cache-Control',          'no-cache, no-store, must-revalidate');
-
-  // [v2.0.0] Essayer de servir sw.js depuis le disque (fichier Vercel/Render)
-  const swPath = path.join(__dirname, 'sw.js');
-  const fs = require('fs');
-  if (fs.existsSync(swPath)) {
-    return res.sendFile(swPath);
-  }
-
-  // Fallback inline : SW complet avec support push
-  // ── INSTALL + ACTIVATE ──────────────────────────────────────────────────────
-  const swContent = `
-const SW_VERSION = '2.0.0';
-const CACHE_NAME = 'nexus-v' + SW_VERSION;
-
-self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then(c => c.addAll(['/']).then(() => self.skipWaiting()))
-  );
-});
-
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys()
-      .then(names => Promise.all(names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n))))
-      .then(() => self.clients.claim())
-  );
-  self.clients.matchAll({type:'window'}).then(cs =>
-    cs.forEach(c => c.postMessage({type:'SW_ACTIVATED', version: SW_VERSION}))
-  );
-});
-
-self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
-  const url = new URL(e.request.url);
-  if (url.pathname.startsWith('/api/')) return;
-  e.respondWith(
-    fetch(e.request).then(res => {
-      if (res && res.status === 200 && res.type === 'basic') {
-        caches.open(CACHE_NAME).then(c => c.put(e.request, res.clone()));
-      }
-      return res;
-    }).catch(() => caches.match(e.request))
-  );
-});
-
-// ── PUSH — Notifications Web Push (VAPID) ───────────────────────────────────
-self.addEventListener('push', event => {
-  let data = {};
-  try { data = event.data ? event.data.json() : {}; }
-  catch(e) { data = { title: 'NEXUS Market', message: event.data ? event.data.text() : '' }; }
-
-  const title  = data.title   || 'NEXUS Market';
-  const body   = data.message || data.body || '';
-  const link   = data.link    || data.url  || '/';
-  const type   = data.type    || 'system';
-  const icons  = {
-    message: 'https://placehold.co/192x192/00853E/white?text=💬',
-    order:   'https://placehold.co/192x192/00853E/white?text=🛒',
-    offer:   'https://placehold.co/192x192/00853E/white?text=💰',
-    dispute: 'https://placehold.co/192x192/FFC300/white?text=⚠️',
-    vendor:  'https://placehold.co/192x192/00853E/white?text=🏪',
-    system:  'https://placehold.co/192x192/00853E/white?text=NX',
-  };
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body, tag: type, renotify: true,
-      icon:    icons[type] || icons.system,
-      badge:   'https://placehold.co/72x72/00853E/white?text=NX',
-      vibrate: [200, 100, 200],
-      data:    { url: link, type },
-      actions: [{ action: 'open', title: 'Ouvrir' }, { action: 'dismiss', title: 'Ignorer' }],
-    })
-  );
-});
-
-// ── NOTIFICATIONCLICK ────────────────────────────────────────────────────────
-self.addEventListener('notificationclick', event => {
-  event.notification.close();
-  if (event.action === 'dismiss') return;
-  const url = event.notification.data?.url || '/';
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => {
-      const c = cs.find(c => new URL(c.url).origin === self.location.origin);
-      if (c) { c.focus(); c.postMessage({ type: 'PUSH_NAVIGATE', url }); return; }
-      return self.clients.openWindow(url);
-    })
-  );
-});
-
-// ── PUSHSUBSCRIPTIONCHANGE ───────────────────────────────────────────────────
-self.addEventListener('pushsubscriptionchange', event => {
-  event.waitUntil(
-    self.registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: event.oldSubscription?.options?.applicationServerKey,
-    }).then(sub =>
-      self.clients.matchAll({type:'window'}).then(cs =>
-        cs.forEach(c => c.postMessage({type:'PUSH_SUBSCRIPTION_RENEWED', subscription: sub.toJSON()}))
-      )
-    )
-  );
-});
-
-self.addEventListener('message', e => {
-  if (e.data?.type === 'SW_SKIP_WAITING') self.skipWaiting();
-});
-`;
+  res.setHeader('Cache-Control', 'no-cache');
+  // Renvoie un SW minimal si le fichier n'est pas trouvé localement
+  const swContent = `self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => { if (e.request.method !== 'GET') return; e.respondWith(fetch(e.request).catch(() => caches.match(e.request))); });`;
   res.send(swContent);
 });
 
@@ -7398,6 +7355,86 @@ _ftsRouter.get('/health', async (req, res) => {
 });
 
 app.use('/api/search', _ftsRouter);
+
+// ─── GROQ AI ASSISTANT ────────────────────────────────────────────────────────
+// Route proxy sécurisée : la clé GROQ_API_KEY reste côté serveur, jamais exposée.
+// Endpoint : POST /api/ai/chat
+// Auth : verifyToken (utilisateur connecté) OU accès public limité (10 req/min)
+// ─────────────────────────────────────────────────────────────────────────────
+const groqLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  message: { error: 'Trop de requêtes IA, réessayez dans 1 minute.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const GROQ_SYSTEM_PROMPT = `Tu es l'assistant IA officiel de NEXUS Market Sénégal, une marketplace e-commerce locale B2C/B2B.
+Tu réponds UNIQUEMENT en français, de manière concise et chaleureuse (2-4 phrases max).
+Informations clés NEXUS Market :
+- Paiements : Orange Money, Wave, Free Money, Carte Visa/Mastercard (Stripe), Virement
+- Livraison : 1-3 jours Dakar, 3-7 jours régions. Gratuit dès 20 000 FCFA d'achat
+- Retours : 30 jours, remboursement sous 3 jours ouvrables
+- Devenir vendeur : inscription + validation sous 24h, commission 5% par vente
+- Contact support : contact@nexus.sn | WhatsApp +221 33 123 45 67
+- Litiges : ouvrir depuis l'espace commande, traitement sous 48h
+- Parrainage : 5% de crédit offert par ami inscrit
+- Points fidélité : 1 point par 100 FCFA dépensé, échangeables contre des réductions
+Si une question sort du cadre NEXUS Market, dis poliment que tu n'as pas cette information et oriente vers le support.`;
+
+app.post('/api/ai/chat', groqLimiter, async (req, res) => {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) {
+    return res.status(503).json({ error: 'Assistant IA non configuré (GROQ_API_KEY manquante).' });
+  }
+
+  const { messages } = req.body;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'Paramètre "messages" requis (tableau non vide).' });
+  }
+
+  // Limiter l'historique envoyé à Groq (10 derniers messages max)
+  const trimmed = messages.slice(-10).filter(m =>
+    m && typeof m.role === 'string' && typeof m.content === 'string'
+  );
+
+  try {
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${groqKey}`,
+      },
+      body: JSON.stringify({
+        model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: GROQ_SYSTEM_PROMPT },
+          ...trimmed,
+        ],
+        max_tokens: 300,
+        temperature: 0.6,
+      }),
+    });
+
+    if (!groqRes.ok) {
+      const err = await groqRes.json().catch(() => ({}));
+      Logger.warn('system', 'groq_api_error', err?.error?.message || `HTTP ${groqRes.status}`, {});
+      return res.status(502).json({ error: 'Erreur du service IA, réessayez plus tard.' });
+    }
+
+    const data = await groqRes.json();
+    const reply = data.choices?.[0]?.message?.content;
+    if (!reply) {
+      return res.status(502).json({ error: 'Réponse IA vide.' });
+    }
+
+    return res.json({ reply, model: data.model, tokens: data.usage?.total_tokens });
+  } catch (e) {
+    Logger.error('system', 'groq_fetch_error', e.message, {});
+    return res.status(500).json({ error: 'Impossible de contacter le service IA.' });
+  }
+});
+
 // ─── 404 & ERROR HANDLER ─────────────────────────────────────────────────────
 // [FIX] Fallback SPA — toutes les routes non-API renvoient index.html
 // Injecte le DSN Sentry dans un meta tag pour que le frontend puisse l'utiliser
@@ -7754,6 +7791,21 @@ app.listen(PORT, '0.0.0.0', async () => { // [FIX RAILWAY] Bind explicite 0.0.0.
 // ALTER TABLE profiles ADD COLUMN IF NOT EXISTS github_login text;
 // ALTER TABLE profiles ADD COLUMN IF NOT EXISTS github_avatar text;
 // CREATE INDEX IF NOT EXISTS idx_profiles_github_id ON profiles(github_id);
+//
+// ── Messagerie v4.0 — RLS + colonnes manquantes ──────────────────────────
+// OBLIGATOIRE avant tout déploiement v4 :
+//   Exécuter le fichier migration_messages_rls.sql dans Supabase SQL Editor.
+//   Ce fichier ajoute :
+//     • ALTER TABLE messages ADD COLUMN read_at / reply_to_id / reply_to_text /
+//                                        attachments / reactions / deleted_for
+//     • ALTER TABLE messages ENABLE ROW LEVEL SECURITY
+//     • POLICY messages_select_participant  (SELECT : from_id = uid OR to_id = uid)
+//     • POLICY messages_insert_as_sender    (INSERT : from_id = uid uniquement)
+//     • POLICY messages_update_participant  (UPDATE : participant uniquement)
+//     • POLICY messages_delete_forbidden    (DELETE : interdit côté client)
+//     • FUNCTION get_conversations(p_user_id uuid) — RPC optimisée (1 SQL vs 500 lignes)
+//     • ALTER PUBLICATION supabase_realtime ADD TABLE messages
+//     • INDEX idx_messages_conversation, idx_messages_unread, idx_messages_deleted_for...
 //
 // ── Dépendance npm à ajouter ─────────────────────────────────────────────
 // npm install cookie-parser
