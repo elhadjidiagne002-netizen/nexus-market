@@ -599,6 +599,132 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
+// ════════════════════════════════════════════════════════════════════════════════
+// ── PRÉSENCE EN LIGNE (last_seen) ────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+// Architecture :
+//   • _presenceStore (in-memory) : mis à jour sur chaque requête authentifiée
+//     → zéro latence, zéro requête Supabase par ping
+//   • Flush DB en batch toutes les PRESENCE_FLUSH_INTERVAL_MS
+//     → max 1 requête DB par 60s quel que soit le nombre d'utilisateurs actifs
+//   • Push SSE event 'presence_update' aux clients connectés :
+//     → à la connexion / déconnexion SSE (transitions online ↔ offline)
+//   • Seuil "en ligne" : activité dans les PRESENCE_ONLINE_THRESHOLD_MS (60s)
+//   • Seuil "récent"  : activité dans les PRESENCE_RECENT_THRESHOLD_MS  (10 min)
+//
+// SQL requis (exécuter dans Supabase SQL Editor) :
+//   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS last_seen timestamptz;
+//   CREATE INDEX IF NOT EXISTS idx_profiles_last_seen ON profiles(last_seen);
+// ════════════════════════════════════════════════════════════════════════════════
+
+const PRESENCE_ONLINE_THRESHOLD_MS  = 60  * 1000;   // 60s  → "en ligne"
+const PRESENCE_RECENT_THRESHOLD_MS  = 10  * 60 * 1000; // 10 min → "vu il y a X min"
+const PRESENCE_FLUSH_INTERVAL_MS    = 60  * 1000;   // flush DB toutes les 60s
+const PRESENCE_OFFLINE_GRACE_MS     = 90  * 1000;   // 90s après déco SSE → offline
+
+// Map<userId, { lastSeen: number (ms), dirty: bool }>
+// dirty = true → sera écrit en DB au prochain flush
+const _presenceStore = new Map();
+// Map<userId, TimeoutId> — timers de transition offline après déco SSE
+const _presenceOfflineTimers = new Map();
+
+/**
+ * Met à jour last_seen en mémoire pour un userId.
+ * Appelée sur chaque requête authentifiée (middleware) + connexion SSE.
+ * N'écrit PAS en DB — le flush périodique s'en charge.
+ */
+function _presenceTouch(userId) {
+  if (!userId) return;
+  const now = Date.now();
+  const existing = _presenceStore.get(userId);
+  // Marquer dirty seulement si le dernier touch date de plus de 15s
+  // (évite de marquer dirty à chaque requête dans un burst)
+  const shouldDirty = !existing || (now - existing.lastSeen) > 15_000;
+  _presenceStore.set(userId, { lastSeen: now, dirty: shouldDirty || existing?.dirty });
+}
+
+/**
+ * Retourne un objet de présence formaté pour l'API.
+ * { online, last_seen (ISO), label, seconds_ago }
+ */
+function _presenceFormat(userId) {
+  const entry = _presenceStore.get(userId);
+  if (!entry) return { online: false, last_seen: null, label: 'Hors ligne', seconds_ago: null };
+  const secondsAgo = Math.floor((Date.now() - entry.lastSeen) / 1000);
+  const online = secondsAgo < (PRESENCE_ONLINE_THRESHOLD_MS / 1000);
+  let label;
+  if (online) {
+    label = 'En ligne';
+  } else if (secondsAgo < 60) {
+    label = `Vu il y a ${secondsAgo}s`;
+  } else if (secondsAgo < 3600) {
+    const m = Math.floor(secondsAgo / 60);
+    label = `Vu il y a ${m} min`;
+  } else if (secondsAgo < 86400) {
+    const h = Math.floor(secondsAgo / 3600);
+    label = `Vu il y a ${h}h`;
+  } else {
+    const d = Math.floor(secondsAgo / 86400);
+    label = `Vu il y a ${d}j`;
+  }
+  return {
+    online,
+    last_seen:   new Date(entry.lastSeen).toISOString(),
+    label,
+    seconds_ago: secondsAgo,
+  };
+}
+
+/**
+ * Flush périodique — écrit les entrées "dirty" dans profiles.last_seen.
+ * Batch UPDATE via Supabase upsert pour minimiser les requêtes.
+ */
+async function _presenceFlush() {
+  const dirty = [];
+  for (const [userId, entry] of _presenceStore.entries()) {
+    if (entry.dirty) {
+      dirty.push({ id: userId, last_seen: new Date(entry.lastSeen).toISOString() });
+      entry.dirty = false; // reset flag avant l'await pour ne pas rater les updates intermédiaires
+    }
+  }
+  if (dirty.length === 0) return;
+  try {
+    await supabase
+      .from('profiles')
+      .upsert(dirty, { onConflict: 'id', ignoreDuplicates: false });
+  } catch (e) {
+    // Ré-marquer dirty en cas d'échec pour retry au prochain flush
+    for (const { id } of dirty) {
+      const entry = _presenceStore.get(id);
+      if (entry) entry.dirty = true;
+    }
+    Logger.warn('presence', 'flush.error', e.message);
+  }
+}
+
+setInterval(_presenceFlush, PRESENCE_FLUSH_INTERVAL_MS);
+
+/**
+ * Pousse un event SSE 'presence_update' à tous les clients connectés.
+ * Chaque client filtre côté frontend selon ses conversations actives.
+ * payload : { userId, online, last_seen, label }
+ */
+function _presenceBroadcast(userId, status) {
+  // Diffuser à tous les clients SSE connectés sauf le user lui-même
+  for (const [clientId] of _sseClients?.entries?.() ?? []) {
+    if (clientId !== userId) {
+      _sseSend(clientId, 'presence_update', { userId, ...status });
+    }
+  }
+}
+
+// ─── Middleware présence — branché sur chaque requête authentifiée ────────────
+// [NOTE] doit être appelé APRÈS verifyToken (req.user est requis)
+const _presenceMiddleware = (req, res, next) => {
+  if (req.user?.id) _presenceTouch(req.user.id);
+  next();
+};
+
 const verifyToken = async (req, res, next) => {
   // [REALTIME-MSG] Fallback token via query string pour EventSource SSE
   const auth = req.headers.authorization ||
@@ -611,6 +737,7 @@ const verifyToken = async (req, res, next) => {
   // 1. JWT custom (synchrone, < 1ms)
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
+    _presenceTouch(req.user.id); // mise à jour présence in-memory
     return next();
   } catch (_) { /* pas un JWT custom → essayer Supabase */ }
 
@@ -618,6 +745,7 @@ const verifyToken = async (req, res, next) => {
   const cached = _profileCache.get(token);
   if (cached && cached.expiresAt > Date.now()) {
     req.user = cached.user;
+    _presenceTouch(req.user.id); // mise à jour présence in-memory
     return next();
   }
 
@@ -637,6 +765,7 @@ const verifyToken = async (req, res, next) => {
       }
       req.user = profile;
       _profileCache.set(token, { user: profile, expiresAt: Date.now() + PROFILE_CACHE_TTL });
+      _presenceTouch(req.user.id); // mise à jour présence in-memory
       return next();
     }
   } catch (_) { /* token invalide */ }
@@ -1710,127 +1839,6 @@ app.patch('/api/auth/profile', verifyToken, async (req, res) => {
   }
 });
 
-// ─── ONBOARDING VENDEUR — Paiement (payout) ──────────────────────────────────
-// [FIX ONBOARDING-1] Synchronisation DB du statut "payout configuré"
-// Avant : le flag était stocké uniquement dans localStorage → perdu si l'utilisateur
-//         change de navigateur, vide son cache, ou se connecte depuis un autre appareil.
-// Après : payout_method, payout_destination et onboarding_complete sont persistés
-//         dans la table profiles (colonnes déjà présentes, voir SQL ci-dessous).
-//
-// SQL requis (exécuter dans l'éditeur SQL Supabase) :
-//   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_method      text;
-//   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_destination text;
-//   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS onboarding_complete boolean DEFAULT false;
-
-// GET /api/vendor/onboarding/status — état complet de l'onboarding depuis la DB
-// Remplace la lecture localStorage : le frontend n'a plus besoin de stocker le flag.
-app.get('/api/vendor/onboarding/status', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
-  try {
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('avatar, shop_name, payout_method, payout_destination, onboarding_complete')
-      .eq('id', req.user.id)
-      .maybeSingle();
-    if (error) throw error;
-    if (!profile) return res.status(404).json({ error: 'Profil vendeur introuvable' });
-
-    // Étape 3 (produits) : vérifier si le vendeur a au moins 1 produit actif
-    const { count: productCount } = await supabase
-      .from('products')
-      .select('id', { count: 'exact', head: true })
-      .eq('vendor_id', req.user.id)
-      .eq('active', true);
-
-    const steps = {
-      profile_complete:   !!(profile.avatar && profile.shop_name),
-      product_added:      (productCount || 0) > 0,
-      payout_configured:  !!(profile.payout_method && profile.payout_destination),
-    };
-    const allDone = Object.values(steps).every(Boolean);
-
-    res.json({
-      steps,
-      onboarding_complete: profile.onboarding_complete || allDone,
-      payout_method:       profile.payout_method       || null,
-      payout_destination:  profile.payout_destination  || null,
-    });
-  } catch (e) {
-    Logger.error('onboarding', 'status.error', e.message, { userId: req.user?.id });
-    res.status(500).json({ error: 'Erreur serveur' });
-  }
-});
-
-// PATCH /api/vendor/onboarding/payout — enregistrer la méthode de paiement en DB
-// Corps attendu : { method: 'mobile'|'bank', provider?: string, destination: string }
-//   mobile → destination = numéro Wave/Orange Money
-//   bank   → destination = IBAN ou RIB
-app.patch('/api/vendor/onboarding/payout', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
-  try {
-    const { method, provider, destination } = req.body;
-
-    if (!method || !['mobile', 'bank'].includes(method))
-      return res.status(400).json({ error: "method doit être 'mobile' ou 'bank'" });
-    if (!destination || typeof destination !== 'string' || destination.trim().length < 3)
-      return res.status(400).json({ error: 'destination requis (numéro ou IBAN)' });
-
-    // Construire la valeur stockée : "mobile:wave:77XXXXXXX" ou "bank:IBAN"
-    const payoutMethod      = method;
-    const payoutDestination = provider
-      ? `${provider.toLowerCase().trim()}:${destination.trim()}`
-      : destination.trim();
-
-    // Vérifier si toutes les autres étapes sont déjà complètes → marquer onboarding terminé
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('avatar, shop_name')
-      .eq('id', req.user.id)
-      .maybeSingle();
-
-    const { count: productCount } = await supabase
-      .from('products')
-      .select('id', { count: 'exact', head: true })
-      .eq('vendor_id', req.user.id)
-      .eq('active', true);
-
-    const profileComplete = !!(profile?.avatar && profile?.shop_name);
-    const productAdded    = (productCount || 0) > 0;
-    const allStepsDone    = profileComplete && productAdded; // + payout qu'on vient de configurer
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .update({
-        payout_method:       payoutMethod,
-        payout_destination:  payoutDestination,
-        onboarding_complete: allStepsDone,  // true seulement si tout le reste est fait
-      })
-      .eq('id', req.user.id)
-      .select('payout_method, payout_destination, onboarding_complete')
-      .single();
-
-    if (error) throw error;
-
-    Logger.info('onboarding', 'payout.configured', `Payout configuré: ${payoutMethod}`, {
-      userId: req.user.id,
-      meta: { method: payoutMethod, onboarding_complete: data.onboarding_complete },
-    });
-
-    res.json({
-      message:             'Méthode de paiement enregistrée',
-      payout_method:       data.payout_method,
-      payout_destination:  data.payout_destination,
-      onboarding_complete: data.onboarding_complete,
-      steps: {
-        profile_complete:  profileComplete,
-        product_added:     productAdded,
-        payout_configured: true,
-      },
-    });
-  } catch (e) {
-    Logger.error('onboarding', 'payout.error', e.message, { userId: req.user?.id });
-    res.status(500).json({ error: 'Erreur serveur lors de l\'enregistrement du payout' });
-  }
-});
-
 app.patch('/api/auth/change-password', verifyToken, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Champs requis' });
@@ -1848,19 +1856,9 @@ app.patch('/api/auth/change-password', verifyToken, async (req, res) => {
 });
 
 // ─── FILE UPLOAD ─────────────────────────────────────────────────────────────
-// [FIX UPLOAD-1] Chaîne de fallback : imgBB (si IMGBB_API_KEY configuré) → Supabase Storage
-// Avant : upload passait uniquement par Supabase Storage. Si le bucket nexus-images
-//         n'existait pas ou si RLS bloquait, l'erreur retournée était générique.
-// Après :
-//   1. Si IMGBB_API_KEY est défini → tente imgBB (CDN externe, pas de problème RLS)
-//   2. Si imgBB échoue ou absent   → tente Supabase Storage (service-role, bypass RLS)
-//   3. Si les deux échouent        → retourne un message d'erreur diagnostique précis
-//      (distingue: bucket absent, RLS bloquant, quota dépassé, taille dépassée)
-//
-// Variable .env à ajouter (optionnel mais recommandé) :
-//   IMGBB_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-//   → Obtenir sur https://imgbb.com/api (inscription gratuite)
-
+// [FIX] Route /api/upload manquante — le frontend l'appelait mais elle n'existait pas,
+// forçant le fallback Supabase Storage direct (qui peut échouer si RLS bloque).
+// Utilise multer (memoryStorage) + Supabase Storage service-role (bypass RLS).
 const uploadMiddleware = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 }, // 8 Mo max
@@ -1870,101 +1868,21 @@ const uploadMiddleware = multer({
   },
 });
 
-// Helper : upload vers imgBB via l'API REST
-async function _uploadToImgBB(buffer, mimetype, filename) {
-  const apiKey = process.env.IMGBB_API_KEY;
-  if (!apiKey) throw new Error('IMGBB_API_KEY non configuré');
-
-  const base64 = buffer.toString('base64');
-  const form   = new URLSearchParams();
-  form.append('key',   apiKey);
-  form.append('image', base64);
-  form.append('name',  filename);
-
-  const resp = await fetch('https://api.imgbb.com/1/upload', {
-    method: 'POST',
-    body:   form,
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  });
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => '');
-    throw new Error(`imgBB HTTP ${resp.status}: ${txt.slice(0, 200)}`);
-  }
-  const json = await resp.json();
-  if (!json?.data?.url) throw new Error('imgBB: réponse invalide (pas d\'URL)');
-  return { url: json.data.url, display_url: json.data.display_url, delete_url: json.data.delete_url };
-}
-
-// Helper : diagnostic d'erreur Supabase Storage → message lisible
-function _storageErrorMessage(error) {
-  const msg = (error?.message || error?.error || String(error)).toLowerCase();
-  if (msg.includes('bucket') && (msg.includes('not found') || msg.includes('does not exist'))) {
-    return 'Bucket nexus-images introuvable. Créez-le dans Supabase Dashboard → Storage → New Bucket (nom: nexus-images, public: true).';
-  }
-  if (msg.includes('row-level security') || msg.includes('rls') || msg.includes('violates') || msg.includes('policy')) {
-    return 'Accès refusé par RLS Supabase Storage. Vérifiez que la clé SUPABASE_SERVICE_KEY (service_role) est utilisée côté backend — elle bypass les policies RLS.';
-  }
-  if (msg.includes('payload too large') || msg.includes('file size') || msg.includes('413')) {
-    return 'Fichier trop volumineux. Limite : 8 Mo.';
-  }
-  if (msg.includes('invalid') && msg.includes('mime')) {
-    return 'Type MIME non accepté. Formats supportés : JPEG, PNG, WebP, GIF.';
-  }
-  if (msg.includes('quota') || msg.includes('storage limit')) {
-    return 'Quota de stockage Supabase atteint. Vérifiez votre plan Supabase.';
-  }
-  return `Supabase Storage: ${error?.message || 'erreur inconnue'}`;
-}
-
 app.post('/api/upload', verifyToken, uploadMiddleware.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
-    const ext      = req.file.mimetype.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
-    const basename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-    const filename = `products/${req.user.id}/${basename}`;
-
-    // ── Tentative 1 : imgBB (CDN externe, aucun problème RLS) ───────────────
-    if (process.env.IMGBB_API_KEY) {
-      try {
-        const result = await _uploadToImgBB(req.file.buffer, req.file.mimetype, basename);
-        Logger.info('upload', 'image.uploaded.imgbb', `imgBB: ${basename}`, { userId: req.user.id });
-        return res.json({ url: result.url, filename: basename, provider: 'imgbb', delete_url: result.delete_url });
-      } catch (imgbbErr) {
-        Logger.warn('upload', 'imgbb.failed', imgbbErr.message, {
-          userId: req.user.id,
-          meta: { fallback: 'supabase' },
-        });
-        // imgBB échoue → on continue vers Supabase Storage
-      }
-    }
-
-    // ── Tentative 2 : Supabase Storage (service-role → bypass RLS) ──────────
-    const { error: storageErr } = await supabase.storage
+    const ext      = req.file.mimetype.split('/')[1] || 'jpg';
+    const filename = `products/${req.user.id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error } = await supabase.storage
       .from('nexus-images')
       .upload(filename, req.file.buffer, {
         contentType: req.file.mimetype,
         upsert: true,
       });
-
-    if (storageErr) {
-      const humanMsg = _storageErrorMessage(storageErr);
-      Logger.error('upload', 'image.storage_error', humanMsg, {
-        userId: req.user?.id,
-        meta: { rawError: storageErr?.message, filename },
-      });
-      // [FIX UPLOAD-2] Message d'erreur diagnostique précis au lieu du message Supabase brut
-      return res.status(500).json({
-        error: humanMsg,
-        hint: process.env.IMGBB_API_KEY
-          ? 'imgBB a aussi échoué. Vérifiez IMGBB_API_KEY et la connectivité réseau.'
-          : 'Ajoutez IMGBB_API_KEY dans .env pour activer le CDN externe en fallback.',
-      });
-    }
-
+    if (error) throw error;
     const { data: { publicUrl } } = supabase.storage.from('nexus-images').getPublicUrl(filename);
-    Logger.info('upload', 'image.uploaded.supabase', `Supabase: ${filename}`, { userId: req.user.id });
-    res.json({ url: publicUrl, filename, provider: 'supabase' });
-
+    Logger.info('upload', 'image.uploaded', `Image uploadée: ${filename}`, { userId: req.user.id });
+    res.json({ url: publicUrl, filename });
   } catch (e) {
     Logger.error('upload', 'image.error', e.message, { userId: req.user?.id });
     res.status(500).json({ error: e.message });
@@ -3291,7 +3209,18 @@ app.get('/api/messages/stream', verifyToken, (req, res) => {
   });
   res.flushHeaders();
 
-  // Confirmer la connexion
+  // ── [PRESENCE] Marquer online à la connexion ────────────────────────────────
+  // Annuler le timer de grâce offline s'il était en cours (reconnexion rapide)
+  const pendingOffline = _presenceOfflineTimers.get(userId);
+  if (pendingOffline) {
+    clearTimeout(pendingOffline);
+    _presenceOfflineTimers.delete(userId);
+  }
+  _presenceTouch(userId);
+  // Diffuser le statut online aux clients SSE connectés (conversations actives)
+  setImmediate(() => _presenceBroadcast(userId, _presenceFormat(userId)));
+
+  // Confirmer la connexion (inclut le statut de présence initial)
   res.write(`event: connected\ndata: ${JSON.stringify({ userId, ts: Date.now() })}\n\n`);
 
   // Enregistrer le client
@@ -3299,20 +3228,136 @@ app.get('/api/messages/stream', verifyToken, (req, res) => {
   Logger.info('sse', 'connect', `SSE client connecté : ${req.user.name}`, { userId });
 
   // Heartbeat toutes les 25s (évite les timeouts proxy/CDN à 30s)
+  // Double rôle : keep-alive + mise à jour silencieuse de last_seen
   const heartbeatTimer = setInterval(() => {
     try {
       res.write(`event: heartbeat\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+      // [PRESENCE] Touch silencieux à chaque heartbeat tant que la connexion est ouverte
+      _presenceTouch(userId);
     } catch {
       clearInterval(heartbeatTimer);
     }
   }, 25000);
 
-  // Nettoyage à la déconnexion du client
+  // ── [PRESENCE] Grâce offline à la déconnexion ───────────────────────────────
+  // Attendre 90s avant de marquer offline : couvre les rechargements de page,
+  // la perte réseau temporaire, et la reconnexion depuis un autre onglet.
   req.on('close', () => {
     clearInterval(heartbeatTimer);
     _sseUnregister(userId, res);
     Logger.info('sse', 'disconnect', `SSE client déconnecté : ${req.user.name}`, { userId });
+
+    // Ne programmer offline que si aucun autre onglet n'est connecté
+    if (!_sseClients.has(userId)) {
+      const timer = setTimeout(() => {
+        _presenceOfflineTimers.delete(userId);
+        // Mettre à jour last_seen une dernière fois (cohérence DB)
+        const entry = _presenceStore.get(userId);
+        if (entry) entry.dirty = true;
+        _presenceBroadcast(userId, _presenceFormat(userId));
+      }, PRESENCE_OFFLINE_GRACE_MS);
+      _presenceOfflineTimers.set(userId, timer);
+    }
   });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ── ENDPOINTS PRÉSENCE ───────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════════
+
+// POST /api/presence/ping — battement de cœur explicite pour les pages sans SSE
+// Le client envoie un ping toutes les 30s quand l'onglet est actif (visibilitychange).
+// Retourne le statut de présence de l'appelant pour confirmation.
+//
+// Usage frontend recommandé :
+//   document.addEventListener('visibilitychange', () => {
+//     if (!document.hidden) fetch('/api/presence/ping', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+//   });
+//   setInterval(() => { if (!document.hidden) fetch('/api/presence/ping', { method: 'POST', ... }) }, 30_000);
+app.post('/api/presence/ping', verifyToken, (req, res) => {
+  _presenceTouch(req.user.id);
+  res.json(_presenceFormat(req.user.id));
+});
+
+// GET /api/presence/:userId — statut de présence d'un utilisateur
+// Utilisé à l'ouverture d'une conversation pour afficher l'état initial.
+// Retourne d'abord le cache mémoire (< 1ms), puis charge last_seen depuis la DB
+// si l'utilisateur n'est pas en cache (page rechargée, premier accès, etc.).
+//
+// Réponse :
+//   { userId, online: bool, last_seen: ISO|null, label: string, seconds_ago: number|null }
+app.get('/api/presence/:userId', verifyToken, async (req, res) => {
+  const targetId = req.params.userId;
+  if (!targetId) return res.status(400).json({ error: 'userId requis' });
+
+  // 1. Cache mémoire (utilisateur actif en ce moment)
+  if (_presenceStore.has(targetId)) {
+    return res.json({ userId: targetId, ..._presenceFormat(targetId) });
+  }
+
+  // 2. Fallback DB — last_seen persisté lors du dernier flush
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('last_seen')
+      .eq('id', targetId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.last_seen) {
+      return res.json({ userId: targetId, online: false, last_seen: null, label: 'Hors ligne', seconds_ago: null });
+    }
+
+    // Reconstruire l'entrée de cache depuis la DB pour les prochains appels
+    const lastSeenMs = new Date(data.last_seen).getTime();
+    _presenceStore.set(targetId, { lastSeen: lastSeenMs, dirty: false });
+    return res.json({ userId: targetId, ..._presenceFormat(targetId) });
+
+  } catch (e) {
+    Logger.warn('presence', 'get.error', e.message, { userId: req.user.id, meta: { targetId } });
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET /api/presence?ids=uuid1,uuid2,uuid3 — statuts en batch
+// Utilisé par la liste des conversations pour afficher le statut de tous les interlocuteurs.
+// Max 50 IDs par appel. IDs inconnus sont retournés avec online: false.
+app.get('/api/presence', verifyToken, async (req, res) => {
+  const raw = (req.query.ids || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (raw.length === 0) return res.json({ presence: [] });
+  if (raw.length > 50) return res.status(400).json({ error: 'Maximum 50 IDs par appel' });
+
+  // Séparer IDs en cache vs IDs à charger depuis la DB
+  const inCache   = raw.filter(id => _presenceStore.has(id));
+  const missing   = raw.filter(id => !_presenceStore.has(id));
+
+  // Charger les IDs manquants depuis la DB en une seule requête
+  if (missing.length > 0) {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, last_seen')
+        .in('id', missing);
+      for (const row of (data || [])) {
+        if (row.last_seen) {
+          _presenceStore.set(row.id, {
+            lastSeen: new Date(row.last_seen).getTime(),
+            dirty: false,
+          });
+        }
+      }
+    } catch (e) {
+      Logger.warn('presence', 'batch.db_error', e.message);
+      // On continue avec ce qu'on a en cache
+    }
+  }
+
+  const presence = raw.map(userId => ({
+    userId,
+    ..._presenceFormat(userId),
+  }));
+
+  res.json({ presence });
 });
 
 app.get('/api/messages/conversations', verifyToken, async (req, res) => {
@@ -7101,23 +7146,13 @@ app.use('/api/delivery', _deliveryRouter);
 //   GET /api/search/popular    — Termes populaires (cache mémoire 5 min)
 //   GET /api/search/health     — Diagnostic : RPC présente / mode fallback
 //
-// ── SQL REQUIS : exécuter supabase_fts_migration.sql dans Supabase SQL Editor ──
-// Ce fichier contient (idempotent, sans risque de perte de données) :
-//   - Extensions pg_trgm + unaccent + config french_unaccent
-//   - ALTER TABLE products ADD COLUMN IF NOT EXISTS search_vector tsvector
-//   - CREATE INDEX idx_products_fts ON products USING gin(search_vector)
-//   - CREATE INDEX idx_products_name_trgm (trigram — autocomplete)
-//   - Trigger trig_products_search_vector (mise à jour auto name/vendor/category/description)
-//   - Back-fill : UPDATE products SET search_vector = ... (produits existants)
-//   - CREATE FUNCTION search_products(query_text, p_category, p_min, p_max, p_sort, p_limit, p_offset)
-//   - CREATE TABLE search_logs + FUNCTION upsert_search_log(p_term)
-//   - CREATE FUNCTION search_suggest(p_prefix, p_limit) — autocomplete trigram
-//
-// ── FALLBACK AUTOMATIQUE ────────────────────────────────────────────────────────
-// Si la RPC n'est pas encore déployée (code PGRST202 / 42883), le serveur bascule
-// automatiquement sur un ILIKE multi-colonnes (plus lent mais fonctionnel).
-// Le champ "fallback: true" dans la réponse JSON indique ce mode dégradé.
-// Vérifier l'état : GET /api/search/health
+// SQL requis (exécuter supabase_fts_migration.sql) :
+//   ALTER TABLE products ADD COLUMN IF NOT EXISTS search_vector tsvector;
+//   CREATE INDEX idx_products_fts ON products USING gin(search_vector);
+//   CREATE TRIGGER trig_products_search_vector ...  (mise à jour automatique)
+//   CREATE FUNCTION search_products(...)            (RPC principale)
+//   CREATE TABLE search_logs + FUNCTION upsert_search_log(p_term)
+//   CREATE FUNCTION search_suggest(p_prefix, p_limit) (autocomplete trigram)
 // ════════════════════════════════════════════════════════════════════════════════
 
 const _ftsRouter = express.Router();
@@ -7673,9 +7708,11 @@ app.listen(PORT, '0.0.0.0', async () => { // [FIX RAILWAY] Bind explicite 0.0.0.
 //   • products.length > 0  → table products (existante)
 //   • payout_configured    → localStorage flag (temporaire) OU colonne ci-dessous :
 //
-// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_method text;
+// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_method      text;
 // ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_destination text;
 // ALTER TABLE profiles ADD COLUMN IF NOT EXISTS onboarding_complete boolean DEFAULT false;
+// ALTER TABLE profiles ADD COLUMN IF NOT EXISTS last_seen           timestamptz;
+// CREATE INDEX IF NOT EXISTS idx_profiles_last_seen ON profiles(last_seen);
 //
 // Pour marquer l'onboarding complet côté backend (optionnel) :
 //   PATCH /api/profiles/me  { onboarding_complete: true }
