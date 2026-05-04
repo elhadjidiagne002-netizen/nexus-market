@@ -12742,20 +12742,73 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
   const requestPush = async () => {
     setSubLoading(true);
     try {
+      // 1. Vérifier le support navigateur
+      if (!("PushManager" in window)) {
+        addToast("Notifications push non supportées par ce navigateur", "error");
+        setSubLoading(false); return;
+      }
+      if (!("serviceWorker" in navigator)) {
+        addToast("Service Worker non supporté sur ce navigateur", "error");
+        setSubLoading(false); return;
+      }
+
+      // 2. Demander la permission
       const perm = await Notification.requestPermission();
       setPermission(perm);
-      if (perm !== "granted") { addToast("Permission notifications refusée", "warning"); setSubLoading(false); return; }
-      if (!("serviceWorker" in navigator)) { addToast("Service Worker non supporté sur ce navigateur", "error"); setSubLoading(false); return; }
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: null }).catch(() => null);
-      if (sub && NEXUS_CONFIG.apiUrl) {
-        await fetch(NEXUS_CONFIG.apiUrl + "/api/push/subscribe", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription: sub, preferences: prefs }),
-        }).catch(() => {});
+      if (perm !== "granted") {
+        addToast("Permission notifications refusée", "warning");
+        setSubLoading(false); return;
       }
+
+      // 3. [FIX VAPID] Récupérer la clé publique VAPID depuis le serveur
+      //    applicationServerKey: null provoquait un DOMException côté navigateur
+      const apiBase = NEXUS_CONFIG.apiUrl || "";
+      const token   = sessionStorage.getItem("nexus_jwt") || "";
+      const vapidRes = await fetch(apiBase + "/api/push/vapid-key", {
+        headers: token ? { "Authorization": "Bearer " + token } : {},
+      }).catch(() => null);
+
+      if (!vapidRes || !vapidRes.ok) {
+        addToast("Clé VAPID indisponible — push non configuré sur le serveur", "error");
+        setSubLoading(false); return;
+      }
+      const { publicKey } = await vapidRes.json();
+      if (!publicKey) {
+        addToast("Clé VAPID manquante — contactez l\'administrateur", "error");
+        setSubLoading(false); return;
+      }
+
+      // 4. S\'abonner aux push avec la vraie applicationServerKey
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly:      true,
+          applicationServerKey: publicKey,
+        });
+      }
+
+      // 5. Envoyer l\'abonnement au backend avec le token JWT
+      if (sub && apiBase) {
+        const regRes = await fetch(apiBase + "/api/push/subscribe", {
+          method:  "POST",
+          headers: {
+            "Content-Type":  "application/json",
+            ...(token ? { "Authorization": "Bearer " + token } : {}),
+          },
+          body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
+        }).catch(() => null);
+
+        if (!regRes || !regRes.ok) {
+          addToast("Erreur enregistrement push — réessayez", "error");
+          setSubLoading(false); return;
+        }
+      }
+
       addToast("Notifications push activées ✓", "success");
-    } catch(e) { addToast("Erreur activation push : " + e.message, "error"); }
+    } catch(e) {
+      addToast("Erreur activation push : " + e.message, "error");
+    }
     setSubLoading(false);
   };
 
@@ -14029,6 +14082,30 @@ const App = ({ onUserChange }) => {
       setOnboardingRole(user.role);
       setShowOnboarding(true);
     }
+
+    // ── [VAPID v2] Auto-subscribe push après login ────────────────────────────
+    // Déclenché uniquement si la permission n\'a pas déjà été refusée.
+    // Différé de 3s pour ne pas surcharger le thread principal au moment du login.
+    if (typeof Notification !== "undefined" && Notification.permission !== "denied") {
+      const _jwt = sessionStorage.getItem("nexus_jwt") || "";
+      if (_jwt) {
+        const _doSubscribe = () => {
+          if (window.__nexusSWReg && window.nexusPush?.subscribe) {
+            window.nexusPush.subscribe(_jwt).catch(() => {});
+          }
+        };
+        if (window.__nexusSWReg) {
+          setTimeout(_doSubscribe, 3000);
+        } else {
+          // SW pas encore prêt — attendre l\'événement de registration
+          const _onSwReady = () => {
+            setTimeout(_doSubscribe, 1000);
+            window.removeEventListener("nexus-sw-ready", _onSwReady);
+          };
+          window.addEventListener("nexus-sw-ready", _onSwReady, { once: true });
+        }
+      }
+    }
   };
   const handleLogout = () => {
     // [FIX] Déconnecter l'UI IMMÉDIATEMENT — sans attendre l'API (cold start Render ~30s)
@@ -14232,6 +14309,9 @@ if ("serviceWorker" in navigator) {
         console.log("[SW] ✅ Service Worker enregistré — scope:", reg.scope);
         window.__nexusSWReg = reg;
 
+        // Notifier l\'app que le SW est prêt (déclenche l\'auto-subscribe push)
+        window.dispatchEvent(new CustomEvent("nexus-sw-ready"));
+
         // Proposer les notifications après interaction utilisateur
         if ("Notification" in window && Notification.permission === "default") {
           window.__nexusRequestNotifPermission = async () => {
@@ -14241,10 +14321,36 @@ if ("serviceWorker" in navigator) {
           };
         }
 
-        // Écouter les messages du SW (ex: SW_ACTIVATED à la mise à jour)
+        // Écouter les messages du SW
         navigator.serviceWorker.addEventListener("message", evt => {
-          if (evt.data && evt.data.type === "SW_ACTIVATED") {
+          if (!evt.data) return;
+
+          // SW mis à jour
+          if (evt.data.type === "SW_ACTIVATED") {
             console.log("[SW] Nouvelle version activée :", evt.data.version);
+          }
+
+          // Navigation depuis un clic de notification push
+          if (evt.data.type === "PUSH_NAVIGATE" && evt.data.url) {
+            const url = evt.data.url;
+            // Utiliser le routeur React si dispo, sinon navigation native
+            if (typeof window.nexusNavigate === "function") {
+              window.nexusNavigate(url);
+            } else {
+              window.location.href = url;
+            }
+          }
+
+          // Renouvellement automatique d\'abonnement push
+          if (evt.data.type === "PUSH_SUBSCRIPTION_RENEWED" && evt.data.subscription) {
+            const jwt = sessionStorage.getItem("nexus_jwt") || "";
+            if (jwt && NEXUS_CONFIG.apiUrl) {
+              fetch(NEXUS_CONFIG.apiUrl + "/api/push/subscribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": "Bearer " + jwt },
+                body: JSON.stringify({ subscription: evt.data.subscription }),
+              }).catch(() => {});
+            }
           }
         });
       })
