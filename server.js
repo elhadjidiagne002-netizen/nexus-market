@@ -457,31 +457,12 @@ app.use((req, _res, next) => {
 app.use(helmet({ contentSecurityPolicy: false }));
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-// [FIX CORS-1] Avertissement bloquant si FRONTEND_URL absent en production.
-// Sans cette variable, aucune origine ne peut être autorisée de manière sûre
-// en production — toutes les requêtes cross-origin seront refusées (fail-safe).
-// À configurer AVANT le lancement : Railway → Variables → FRONTEND_URL = https://nexus-market-md360.vercel.app
-const _isProduction = process.env.NODE_ENV === 'production';
-if (!process.env.FRONTEND_URL) {
-  if (_isProduction) {
-    console.error('');
-    console.error('🔴  FRONTEND_URL ABSENT — CORS en mode BLOCAGE TOTAL (production).');
-    console.error('    Toutes les requêtes cross-origin du navigateur seront refusées.');
-    console.error('');
-    console.error('   ➤  Ajoutez FRONTEND_URL dans Railway :');
-    console.error('      Dashboard → votre service → Variables → + New Variable');
-    console.error('      FRONTEND_URL = https://nexus-market-md360.vercel.app');
-    console.error('');
-  } else {
-    console.warn('[CORS] ⚠️  FRONTEND_URL absent — mode développement : toutes les origines acceptées.');
-    console.warn('           Définissez FRONTEND_URL dans .env avant le lancement en production.');
-  }
-}
-
-// [FIX CORS-2] Patterns larges réservés au développement uniquement.
-// En production, seule FRONTEND_URL fait autorité (origine exacte).
-// Les patterns ci-dessous ne s'appliquent qu'hors production (local, staging non-prod).
-const DEV_ORIGIN_PATTERNS = [
+// [FIX] Réflexion explicite de l'Origin (au lieu de callback(null,true) qui
+// peut être muet sur certains proxies).  credentials:true interdit l'usage de '*',
+// on reflète donc l'origine entrante si elle existe, sinon on répond false.
+// L'expose des headers 'Authorization' et 'Content-Type' est nécessaire pour que
+// le navigateur puisse lire les réponses JSON derrière un proxy Cloudflare/Render.
+const ALLOWED_ORIGIN_PATTERNS = [
   /vercel\.app$/,
   /localhost/,
   /127\.0\.0\.1/,
@@ -491,38 +472,26 @@ const DEV_ORIGIN_PATTERNS = [
   /up\.railway\.app$/,
   /onrender\.com$/,
 ];
-
-// Construire l'origine de production autorisée (exacte, échappée)
-let _prodOriginRegex = null;
+// [FIX CORS] Ajouter dynamiquement FRONTEND_URL comme origine explicitement autorisée
+// Cela couvre les domaines Vercel personnalisés (ex: nexus-market-md360.vercel.app)
 if (process.env.FRONTEND_URL) {
   try {
     const _feHost = new URL(process.env.FRONTEND_URL).host;
-    _prodOriginRegex = new RegExp('^https://' + _feHost.replace(/\./g, '\\.') + '$');
-  } catch (_) {
-    console.error('[CORS] FRONTEND_URL invalide (URL mal formée) :', process.env.FRONTEND_URL);
-  }
+    if (_feHost && !ALLOWED_ORIGIN_PATTERNS.some(p => p.test(_feHost))) {
+      ALLOWED_ORIGIN_PATTERNS.push(new RegExp('^https?://' + _feHost.replace(/\./g, '\\.') + '$'));
+    }
+  } catch (_) {}
 }
-
-// Vérifie si une origine est autorisée selon le contexte (prod vs dev)
-function _isOriginAllowed(origin) {
-  if (!origin) return true; // curl, Postman, cron-job.org — pas de Origin → autorisé
-  if (_isProduction) {
-    // En production : UNIQUEMENT l'origine exacte de FRONTEND_URL
-    // Si FRONTEND_URL absent → fail-safe : tout bloquer
-    if (!_prodOriginRegex) return false;
-    return _prodOriginRegex.test(origin);
-  }
-  // Hors production : patterns larges dev + FRONTEND_URL si défini
-  if (_prodOriginRegex && _prodOriginRegex.test(origin)) return true;
-  return DEV_ORIGIN_PATTERNS.some(p => p.test(origin));
-}
-
 const corsOptions = {
   origin: (origin, callback) => {
-    if (_isOriginAllowed(origin)) {
-      // Réflexion explicite de l'Origin (credentials:true interdit '*')
-      return callback(null, origin || true);
+    // Requêtes sans Origin (curl, Postman, cron-job.org) → toujours autorisé
+    if (!origin) return callback(null, true);
+    // Reflète l'origine si elle correspond à un pattern connu
+    if (ALLOWED_ORIGIN_PATTERNS.some(p => p.test(origin))) {
+      return callback(null, origin);
     }
+    // En mode development, tout accepter
+    if (process.env.NODE_ENV !== 'production') return callback(null, origin);
     // [FIX] Logguer les origines refusées pour faciliter le debug
     console.warn('[CORS] Origine refusée :', origin);
     callback(null, false);
@@ -537,7 +506,7 @@ app.use(cors(corsOptions));
 // Réponse préflight explicite AVANT le rate-limit et tout autre middleware
 app.options('*', (req, res) => {
   const origin = req.headers.origin;
-  if (origin && _isOriginAllowed(origin)) {
+  if (origin && ALLOWED_ORIGIN_PATTERNS.some(p => p.test(origin))) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
@@ -1741,6 +1710,127 @@ app.patch('/api/auth/profile', verifyToken, async (req, res) => {
   }
 });
 
+// ─── ONBOARDING VENDEUR — Paiement (payout) ──────────────────────────────────
+// [FIX ONBOARDING-1] Synchronisation DB du statut "payout configuré"
+// Avant : le flag était stocké uniquement dans localStorage → perdu si l'utilisateur
+//         change de navigateur, vide son cache, ou se connecte depuis un autre appareil.
+// Après : payout_method, payout_destination et onboarding_complete sont persistés
+//         dans la table profiles (colonnes déjà présentes, voir SQL ci-dessous).
+//
+// SQL requis (exécuter dans l'éditeur SQL Supabase) :
+//   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_method      text;
+//   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payout_destination text;
+//   ALTER TABLE profiles ADD COLUMN IF NOT EXISTS onboarding_complete boolean DEFAULT false;
+
+// GET /api/vendor/onboarding/status — état complet de l'onboarding depuis la DB
+// Remplace la lecture localStorage : le frontend n'a plus besoin de stocker le flag.
+app.get('/api/vendor/onboarding/status', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
+  try {
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('avatar, shop_name, payout_method, payout_destination, onboarding_complete')
+      .eq('id', req.user.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!profile) return res.status(404).json({ error: 'Profil vendeur introuvable' });
+
+    // Étape 3 (produits) : vérifier si le vendeur a au moins 1 produit actif
+    const { count: productCount } = await supabase
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('vendor_id', req.user.id)
+      .eq('active', true);
+
+    const steps = {
+      profile_complete:   !!(profile.avatar && profile.shop_name),
+      product_added:      (productCount || 0) > 0,
+      payout_configured:  !!(profile.payout_method && profile.payout_destination),
+    };
+    const allDone = Object.values(steps).every(Boolean);
+
+    res.json({
+      steps,
+      onboarding_complete: profile.onboarding_complete || allDone,
+      payout_method:       profile.payout_method       || null,
+      payout_destination:  profile.payout_destination  || null,
+    });
+  } catch (e) {
+    Logger.error('onboarding', 'status.error', e.message, { userId: req.user?.id });
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// PATCH /api/vendor/onboarding/payout — enregistrer la méthode de paiement en DB
+// Corps attendu : { method: 'mobile'|'bank', provider?: string, destination: string }
+//   mobile → destination = numéro Wave/Orange Money
+//   bank   → destination = IBAN ou RIB
+app.patch('/api/vendor/onboarding/payout', verifyToken, requireRole('vendor', 'admin'), async (req, res) => {
+  try {
+    const { method, provider, destination } = req.body;
+
+    if (!method || !['mobile', 'bank'].includes(method))
+      return res.status(400).json({ error: "method doit être 'mobile' ou 'bank'" });
+    if (!destination || typeof destination !== 'string' || destination.trim().length < 3)
+      return res.status(400).json({ error: 'destination requis (numéro ou IBAN)' });
+
+    // Construire la valeur stockée : "mobile:wave:77XXXXXXX" ou "bank:IBAN"
+    const payoutMethod      = method;
+    const payoutDestination = provider
+      ? `${provider.toLowerCase().trim()}:${destination.trim()}`
+      : destination.trim();
+
+    // Vérifier si toutes les autres étapes sont déjà complètes → marquer onboarding terminé
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('avatar, shop_name')
+      .eq('id', req.user.id)
+      .maybeSingle();
+
+    const { count: productCount } = await supabase
+      .from('products')
+      .select('id', { count: 'exact', head: true })
+      .eq('vendor_id', req.user.id)
+      .eq('active', true);
+
+    const profileComplete = !!(profile?.avatar && profile?.shop_name);
+    const productAdded    = (productCount || 0) > 0;
+    const allStepsDone    = profileComplete && productAdded; // + payout qu'on vient de configurer
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({
+        payout_method:       payoutMethod,
+        payout_destination:  payoutDestination,
+        onboarding_complete: allStepsDone,  // true seulement si tout le reste est fait
+      })
+      .eq('id', req.user.id)
+      .select('payout_method, payout_destination, onboarding_complete')
+      .single();
+
+    if (error) throw error;
+
+    Logger.info('onboarding', 'payout.configured', `Payout configuré: ${payoutMethod}`, {
+      userId: req.user.id,
+      meta: { method: payoutMethod, onboarding_complete: data.onboarding_complete },
+    });
+
+    res.json({
+      message:             'Méthode de paiement enregistrée',
+      payout_method:       data.payout_method,
+      payout_destination:  data.payout_destination,
+      onboarding_complete: data.onboarding_complete,
+      steps: {
+        profile_complete:  profileComplete,
+        product_added:     productAdded,
+        payout_configured: true,
+      },
+    });
+  } catch (e) {
+    Logger.error('onboarding', 'payout.error', e.message, { userId: req.user?.id });
+    res.status(500).json({ error: 'Erreur serveur lors de l\'enregistrement du payout' });
+  }
+});
+
 app.patch('/api/auth/change-password', verifyToken, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Champs requis' });
@@ -1758,9 +1848,19 @@ app.patch('/api/auth/change-password', verifyToken, async (req, res) => {
 });
 
 // ─── FILE UPLOAD ─────────────────────────────────────────────────────────────
-// [FIX] Route /api/upload manquante — le frontend l'appelait mais elle n'existait pas,
-// forçant le fallback Supabase Storage direct (qui peut échouer si RLS bloque).
-// Utilise multer (memoryStorage) + Supabase Storage service-role (bypass RLS).
+// [FIX UPLOAD-1] Chaîne de fallback : imgBB (si IMGBB_API_KEY configuré) → Supabase Storage
+// Avant : upload passait uniquement par Supabase Storage. Si le bucket nexus-images
+//         n'existait pas ou si RLS bloquait, l'erreur retournée était générique.
+// Après :
+//   1. Si IMGBB_API_KEY est défini → tente imgBB (CDN externe, pas de problème RLS)
+//   2. Si imgBB échoue ou absent   → tente Supabase Storage (service-role, bypass RLS)
+//   3. Si les deux échouent        → retourne un message d'erreur diagnostique précis
+//      (distingue: bucket absent, RLS bloquant, quota dépassé, taille dépassée)
+//
+// Variable .env à ajouter (optionnel mais recommandé) :
+//   IMGBB_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//   → Obtenir sur https://imgbb.com/api (inscription gratuite)
+
 const uploadMiddleware = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 }, // 8 Mo max
@@ -1770,21 +1870,101 @@ const uploadMiddleware = multer({
   },
 });
 
+// Helper : upload vers imgBB via l'API REST
+async function _uploadToImgBB(buffer, mimetype, filename) {
+  const apiKey = process.env.IMGBB_API_KEY;
+  if (!apiKey) throw new Error('IMGBB_API_KEY non configuré');
+
+  const base64 = buffer.toString('base64');
+  const form   = new URLSearchParams();
+  form.append('key',   apiKey);
+  form.append('image', base64);
+  form.append('name',  filename);
+
+  const resp = await fetch('https://api.imgbb.com/1/upload', {
+    method: 'POST',
+    body:   form,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => '');
+    throw new Error(`imgBB HTTP ${resp.status}: ${txt.slice(0, 200)}`);
+  }
+  const json = await resp.json();
+  if (!json?.data?.url) throw new Error('imgBB: réponse invalide (pas d\'URL)');
+  return { url: json.data.url, display_url: json.data.display_url, delete_url: json.data.delete_url };
+}
+
+// Helper : diagnostic d'erreur Supabase Storage → message lisible
+function _storageErrorMessage(error) {
+  const msg = (error?.message || error?.error || String(error)).toLowerCase();
+  if (msg.includes('bucket') && (msg.includes('not found') || msg.includes('does not exist'))) {
+    return 'Bucket nexus-images introuvable. Créez-le dans Supabase Dashboard → Storage → New Bucket (nom: nexus-images, public: true).';
+  }
+  if (msg.includes('row-level security') || msg.includes('rls') || msg.includes('violates') || msg.includes('policy')) {
+    return 'Accès refusé par RLS Supabase Storage. Vérifiez que la clé SUPABASE_SERVICE_KEY (service_role) est utilisée côté backend — elle bypass les policies RLS.';
+  }
+  if (msg.includes('payload too large') || msg.includes('file size') || msg.includes('413')) {
+    return 'Fichier trop volumineux. Limite : 8 Mo.';
+  }
+  if (msg.includes('invalid') && msg.includes('mime')) {
+    return 'Type MIME non accepté. Formats supportés : JPEG, PNG, WebP, GIF.';
+  }
+  if (msg.includes('quota') || msg.includes('storage limit')) {
+    return 'Quota de stockage Supabase atteint. Vérifiez votre plan Supabase.';
+  }
+  return `Supabase Storage: ${error?.message || 'erreur inconnue'}`;
+}
+
 app.post('/api/upload', verifyToken, uploadMiddleware.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
-    const ext      = req.file.mimetype.split('/')[1] || 'jpg';
-    const filename = `products/${req.user.id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-    const { error } = await supabase.storage
+    const ext      = req.file.mimetype.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+    const basename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const filename = `products/${req.user.id}/${basename}`;
+
+    // ── Tentative 1 : imgBB (CDN externe, aucun problème RLS) ───────────────
+    if (process.env.IMGBB_API_KEY) {
+      try {
+        const result = await _uploadToImgBB(req.file.buffer, req.file.mimetype, basename);
+        Logger.info('upload', 'image.uploaded.imgbb', `imgBB: ${basename}`, { userId: req.user.id });
+        return res.json({ url: result.url, filename: basename, provider: 'imgbb', delete_url: result.delete_url });
+      } catch (imgbbErr) {
+        Logger.warn('upload', 'imgbb.failed', imgbbErr.message, {
+          userId: req.user.id,
+          meta: { fallback: 'supabase' },
+        });
+        // imgBB échoue → on continue vers Supabase Storage
+      }
+    }
+
+    // ── Tentative 2 : Supabase Storage (service-role → bypass RLS) ──────────
+    const { error: storageErr } = await supabase.storage
       .from('nexus-images')
       .upload(filename, req.file.buffer, {
         contentType: req.file.mimetype,
         upsert: true,
       });
-    if (error) throw error;
+
+    if (storageErr) {
+      const humanMsg = _storageErrorMessage(storageErr);
+      Logger.error('upload', 'image.storage_error', humanMsg, {
+        userId: req.user?.id,
+        meta: { rawError: storageErr?.message, filename },
+      });
+      // [FIX UPLOAD-2] Message d'erreur diagnostique précis au lieu du message Supabase brut
+      return res.status(500).json({
+        error: humanMsg,
+        hint: process.env.IMGBB_API_KEY
+          ? 'imgBB a aussi échoué. Vérifiez IMGBB_API_KEY et la connectivité réseau.'
+          : 'Ajoutez IMGBB_API_KEY dans .env pour activer le CDN externe en fallback.',
+      });
+    }
+
     const { data: { publicUrl } } = supabase.storage.from('nexus-images').getPublicUrl(filename);
-    Logger.info('upload', 'image.uploaded', `Image uploadée: ${filename}`, { userId: req.user.id });
-    res.json({ url: publicUrl, filename });
+    Logger.info('upload', 'image.uploaded.supabase', `Supabase: ${filename}`, { userId: req.user.id });
+    res.json({ url: publicUrl, filename, provider: 'supabase' });
+
   } catch (e) {
     Logger.error('upload', 'image.error', e.message, { userId: req.user?.id });
     res.status(500).json({ error: e.message });
@@ -6921,13 +7101,23 @@ app.use('/api/delivery', _deliveryRouter);
 //   GET /api/search/popular    — Termes populaires (cache mémoire 5 min)
 //   GET /api/search/health     — Diagnostic : RPC présente / mode fallback
 //
-// SQL requis (exécuter supabase_fts_migration.sql) :
-//   ALTER TABLE products ADD COLUMN IF NOT EXISTS search_vector tsvector;
-//   CREATE INDEX idx_products_fts ON products USING gin(search_vector);
-//   CREATE TRIGGER trig_products_search_vector ...  (mise à jour automatique)
-//   CREATE FUNCTION search_products(...)            (RPC principale)
-//   CREATE TABLE search_logs + FUNCTION upsert_search_log(p_term)
-//   CREATE FUNCTION search_suggest(p_prefix, p_limit) (autocomplete trigram)
+// ── SQL REQUIS : exécuter supabase_fts_migration.sql dans Supabase SQL Editor ──
+// Ce fichier contient (idempotent, sans risque de perte de données) :
+//   - Extensions pg_trgm + unaccent + config french_unaccent
+//   - ALTER TABLE products ADD COLUMN IF NOT EXISTS search_vector tsvector
+//   - CREATE INDEX idx_products_fts ON products USING gin(search_vector)
+//   - CREATE INDEX idx_products_name_trgm (trigram — autocomplete)
+//   - Trigger trig_products_search_vector (mise à jour auto name/vendor/category/description)
+//   - Back-fill : UPDATE products SET search_vector = ... (produits existants)
+//   - CREATE FUNCTION search_products(query_text, p_category, p_min, p_max, p_sort, p_limit, p_offset)
+//   - CREATE TABLE search_logs + FUNCTION upsert_search_log(p_term)
+//   - CREATE FUNCTION search_suggest(p_prefix, p_limit) — autocomplete trigram
+//
+// ── FALLBACK AUTOMATIQUE ────────────────────────────────────────────────────────
+// Si la RPC n'est pas encore déployée (code PGRST202 / 42883), le serveur bascule
+// automatiquement sur un ILIKE multi-colonnes (plus lent mais fonctionnel).
+// Le champ "fallback: true" dans la réponse JSON indique ce mode dégradé.
+// Vérifier l'état : GET /api/search/health
 // ════════════════════════════════════════════════════════════════════════════════
 
 const _ftsRouter = express.Router();
