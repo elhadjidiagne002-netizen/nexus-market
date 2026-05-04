@@ -457,12 +457,31 @@ app.use((req, _res, next) => {
 app.use(helmet({ contentSecurityPolicy: false }));
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-// [FIX] Réflexion explicite de l'Origin (au lieu de callback(null,true) qui
-// peut être muet sur certains proxies).  credentials:true interdit l'usage de '*',
-// on reflète donc l'origine entrante si elle existe, sinon on répond false.
-// L'expose des headers 'Authorization' et 'Content-Type' est nécessaire pour que
-// le navigateur puisse lire les réponses JSON derrière un proxy Cloudflare/Render.
-const ALLOWED_ORIGIN_PATTERNS = [
+// [FIX CORS-1] Avertissement bloquant si FRONTEND_URL absent en production.
+// Sans cette variable, aucune origine ne peut être autorisée de manière sûre
+// en production — toutes les requêtes cross-origin seront refusées (fail-safe).
+// À configurer AVANT le lancement : Railway → Variables → FRONTEND_URL = https://nexus-market-md360.vercel.app
+const _isProduction = process.env.NODE_ENV === 'production';
+if (!process.env.FRONTEND_URL) {
+  if (_isProduction) {
+    console.error('');
+    console.error('🔴  FRONTEND_URL ABSENT — CORS en mode BLOCAGE TOTAL (production).');
+    console.error('    Toutes les requêtes cross-origin du navigateur seront refusées.');
+    console.error('');
+    console.error('   ➤  Ajoutez FRONTEND_URL dans Railway :');
+    console.error('      Dashboard → votre service → Variables → + New Variable');
+    console.error('      FRONTEND_URL = https://nexus-market-md360.vercel.app');
+    console.error('');
+  } else {
+    console.warn('[CORS] ⚠️  FRONTEND_URL absent — mode développement : toutes les origines acceptées.');
+    console.warn('           Définissez FRONTEND_URL dans .env avant le lancement en production.');
+  }
+}
+
+// [FIX CORS-2] Patterns larges réservés au développement uniquement.
+// En production, seule FRONTEND_URL fait autorité (origine exacte).
+// Les patterns ci-dessous ne s'appliquent qu'hors production (local, staging non-prod).
+const DEV_ORIGIN_PATTERNS = [
   /vercel\.app$/,
   /localhost/,
   /127\.0\.0\.1/,
@@ -472,26 +491,38 @@ const ALLOWED_ORIGIN_PATTERNS = [
   /up\.railway\.app$/,
   /onrender\.com$/,
 ];
-// [FIX CORS] Ajouter dynamiquement FRONTEND_URL comme origine explicitement autorisée
-// Cela couvre les domaines Vercel personnalisés (ex: nexus-market-md360.vercel.app)
+
+// Construire l'origine de production autorisée (exacte, échappée)
+let _prodOriginRegex = null;
 if (process.env.FRONTEND_URL) {
   try {
     const _feHost = new URL(process.env.FRONTEND_URL).host;
-    if (_feHost && !ALLOWED_ORIGIN_PATTERNS.some(p => p.test(_feHost))) {
-      ALLOWED_ORIGIN_PATTERNS.push(new RegExp('^https?://' + _feHost.replace(/\./g, '\\.') + '$'));
-    }
-  } catch (_) {}
+    _prodOriginRegex = new RegExp('^https://' + _feHost.replace(/\./g, '\\.') + '$');
+  } catch (_) {
+    console.error('[CORS] FRONTEND_URL invalide (URL mal formée) :', process.env.FRONTEND_URL);
+  }
 }
+
+// Vérifie si une origine est autorisée selon le contexte (prod vs dev)
+function _isOriginAllowed(origin) {
+  if (!origin) return true; // curl, Postman, cron-job.org — pas de Origin → autorisé
+  if (_isProduction) {
+    // En production : UNIQUEMENT l'origine exacte de FRONTEND_URL
+    // Si FRONTEND_URL absent → fail-safe : tout bloquer
+    if (!_prodOriginRegex) return false;
+    return _prodOriginRegex.test(origin);
+  }
+  // Hors production : patterns larges dev + FRONTEND_URL si défini
+  if (_prodOriginRegex && _prodOriginRegex.test(origin)) return true;
+  return DEV_ORIGIN_PATTERNS.some(p => p.test(origin));
+}
+
 const corsOptions = {
   origin: (origin, callback) => {
-    // Requêtes sans Origin (curl, Postman, cron-job.org) → toujours autorisé
-    if (!origin) return callback(null, true);
-    // Reflète l'origine si elle correspond à un pattern connu
-    if (ALLOWED_ORIGIN_PATTERNS.some(p => p.test(origin))) {
-      return callback(null, origin);
+    if (_isOriginAllowed(origin)) {
+      // Réflexion explicite de l'Origin (credentials:true interdit '*')
+      return callback(null, origin || true);
     }
-    // En mode development, tout accepter
-    if (process.env.NODE_ENV !== 'production') return callback(null, origin);
     // [FIX] Logguer les origines refusées pour faciliter le debug
     console.warn('[CORS] Origine refusée :', origin);
     callback(null, false);
@@ -506,7 +537,7 @@ app.use(cors(corsOptions));
 // Réponse préflight explicite AVANT le rate-limit et tout autre middleware
 app.options('*', (req, res) => {
   const origin = req.headers.origin;
-  if (origin && ALLOWED_ORIGIN_PATTERNS.some(p => p.test(origin))) {
+  if (origin && _isOriginAllowed(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
