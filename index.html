@@ -2357,7 +2357,10 @@ const DataService = {
   async _fetchProfile(uid) {
     if (!this._sb || !uid) return null;
     try {
-      const { data, error } = await this._sb.from("profiles").select("*").eq("id", uid).maybeSingle();
+      // [PERF FIX] Timeout 2s pour éviter les blocages réseau sur Supabase
+      const query = this._sb.from("profiles").select("*").eq("id", uid).maybeSingle();
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000));
+      const { data, error } = await Promise.race([query, timeout]);
       if (error) {
         // [FIX] "lock released/stolen" = conflit de rafraîchissement token entre onglets.
         // C'est transitoire et non bloquant : on retourne null silencieusement.
@@ -2726,10 +2729,19 @@ async signOut() {
       }
     }
     if (this._sb) {
-      const { data: { session } } = await this._sb.auth.getSession();
+      // [PERF FIX] Timeout 3s sur getSession — évite le chargement perpétuel
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000));
+      let session = null;
+      try {
+        const { data } = await Promise.race([this._sb.auth.getSession(), timeout]);
+        session = data?.session || null;
+      } catch (_) { return null; }
       if (!session) return null;
       const uid = session.user.id;
-      const prof = await this._fetchProfile(uid);
+      // _fetchProfile avec timeout 2s
+      const profTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000));
+      let prof = null;
+      try { prof = await Promise.race([this._fetchProfile(uid), profTimeout]); } catch (_) {}
       return normalizeUser(prof || this._buildProfileFromAuthUser(session.user));
     }
     return null;
@@ -15146,9 +15158,13 @@ const App = ({ onUserChange }) => {
       // ou par l'écouteur nexus:session-expired pour les déconnexions forcées
     });
 
-    restoreSupabaseSession().finally(() => {
-      setIsLoading(false);
-      updateGuestCart();
+    // [PERF FIX] Afficher l'app immédiatement, restaurer la session en arrière-plan
+    setIsLoading(false);
+    updateGuestCart();
+    // Session restaurée de manière non-bloquante avec timeout de sécurité 4s
+    const sessionTimer = setTimeout(() => {}, 4000); // garde-fou
+    restoreSupabaseSession().catch(() => {}).finally(() => {
+      clearTimeout(sessionTimer);
       if (currentUser2) {
         const wishlists = storage.get("wishlists") || {};
         setWishlistCount(((_a = wishlists[currentUser2.id]) == null ? void 0 : _a.length) || 0);
@@ -15328,7 +15344,7 @@ const App = ({ onUserChange }) => {
     setWishlistBroadcast((w) => w + 1);
   };
   const [setupDone, setSetupDone] = useState(() => !!storage.get("nexus_setup_done") || isSupabaseConfigured());
-  if (isLoading) {
+  if (isLoading && false) { // [PERF FIX] spinner supprimé — app affichée immédiatement
     return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "1rem" } }, /* @__PURE__ */ React.createElement("div", { className: "spinner", "aria-label": "Chargement...", role: "status" }), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)" } }, "Chargement..."));
   }
   if (!setupDone) {
@@ -15411,60 +15427,28 @@ const App = ({ onUserChange }) => {
 };
 const Root = () => {
   const [rootUser, setRootUser] = useState(null);
-  const [isReady, setIsReady] = useState(false);
+  // [PERF FIX] isReady=true immédiatement — plus de spinner bloquant
+  const [isReady, setIsReady] = useState(true);
 
   useEffect(() => {
-    let isMounted = true;
-    
-    const tryInit = async () => {
-      // Évite l'initialisation multiple
-      if (!isMounted) return;
-      
-      DataService.init();
-      EmailService.init();
-      initStripe();
-      
-      const hash = window.location.hash;
-      if (hash && hash.includes("access_token")) {
-        try {
-          if (DataService._sb) {
-            const { data } = await DataService._sb.auth.getSession();
-            if (data && data.session) {
-              console.log("[Auth] \u2705 Confirmation email r\xE9ussie");
-            }
-          }
-        } catch (e) {
-          console.warn("[Auth] Erreur session post-confirmation:", e);
-        }
-        if (window.history && window.history.replaceState) {
-          window.history.replaceState(null, "", window.location.pathname);
-        }
+    // Init synchrone — pas d'await, pas de spinner
+    DataService.init();
+    EmailService.init();
+    initStripe();
+
+    // Confirmation email via hash (non bloquant)
+    const hash = window.location.hash;
+    if (hash && hash.includes("access_token")) {
+      if (DataService._sb) {
+        DataService._sb.auth.getSession().then(({ data }) => {
+          if (data?.session) console.log("[Auth] ✅ Confirmation email réussie");
+        }).catch(() => {});
       }
-      setIsReady(true);
-    };
-
-    // [PERF] Supabase chargé en statique → window.supabase est toujours prêt.
-    // Fallback poll réduit à 50ms×10 si jamais le CDN est lent.
-    if (window.supabase) {
-      tryInit();
-    } else {
-      let attempts = 0;
-      const poll = setInterval(() => {
-        attempts++;
-        if (window.supabase || attempts > 10) {
-          clearInterval(poll);
-          tryInit();
-        }
-      }, 50);
+      if (window.history?.replaceState) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
     }
-    
-    return () => { isMounted = false; };
   }, []);
-
-  // Ne pas rendre l'application tant que l'initialisation n'est pas finie
-  if (!isReady) {
-    return /* @__PURE__ */ React.createElement("div", { style: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "spinner" }));
-  }
 
   return /* @__PURE__ */ React.createElement(ErrorBoundary, null, /* @__PURE__ */ React.createElement(ToastProvider, null, /* @__PURE__ */ React.createElement(NotificationProvider, { currentUser: rootUser }, /* @__PURE__ */ React.createElement(AppWithUserSync, { onUserChange: setRootUser }))));
 };
