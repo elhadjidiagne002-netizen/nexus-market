@@ -1,51 +1,74 @@
 # ─── netlify.toml — NEXUS Market ────────────────────────────────────────────
-# Déploiement Netlify — application single-file (index.html)
-# PayTech Mobile Money via Netlify Functions (clés côté serveur)
-# ─────────────────────────────────────────────────────────────────────────────
 
 [build]
   publish   = "."
   command   = ""
   functions = "netlify/functions"
 
-# ── Variables d'environnement (fallback — préférer le Dashboard Netlify) ──
-# NE PAS mettre les clés secrètes ici si le dépôt est public.
 [build.environment]
   NODE_ENV    = "production"
   PAYTECH_ENV = "prod"
 
 # ── Redirects ─────────────────────────────────────────────────────────────────
 
-# PayTech — initiation de paiement Mobile Money
 [[redirects]]
   from   = "/api/payments/mobile-money"
   to     = "/.netlify/functions/payments-mobile-money"
   status = 200
   force  = true
 
-# PayTech — IPN Webhook (notification serveur)
 [[redirects]]
   from   = "/api/payments/webhook"
   to     = "/.netlify/functions/paytech-webhook"
   status = 200
   force  = true
 
-# SPA fallback — toutes les routes inconnues → index.html
 [[redirects]]
   from   = "/*"
   to     = "/index.html"
   status = 200
 
-# ── En-têtes de sécurité ──────────────────────────────────────────────────────
+# ── Headers ────────────────────────────────────────────────────────────────────
+
+# index.html — jamais mis en cache (SPA, doit être toujours frais)
 [[headers]]
-  for = "/*"
+  for = "/index.html"
   [headers.values]
+    Cache-Control          = "no-cache, no-store, must-revalidate"
     X-Frame-Options        = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy        = "strict-origin-when-cross-origin"
     Permissions-Policy     = "camera=(), microphone=(), geolocation=()"
 
+# Racine — même règle que index.html
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# Fonctions Netlify — pas de cache
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Cache-Control                    = "no-store"
+    Access-Control-Allow-Origin      = "*"
+    Access-Control-Allow-Methods     = "POST, OPTIONS"
+    Access-Control-Allow-Headers     = "Content-Type, Authorization"
+
+# Assets statiques — cache 1 an (immuables car hash dans le nom)
 [[headers]]
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
+# Fonts — cache long
+[[headers]]
+  for = "/*.woff2"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Service Worker — jamais mis en cache
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store"
