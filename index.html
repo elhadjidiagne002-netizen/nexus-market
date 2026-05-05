@@ -19,9 +19,8 @@
          DSN configuré dans NEXUS_CONFIG.sentryDsn ou variable d'env injectée.
          Sans DSN, Sentry reste en mode no-op — aucun impact sur les perfs.
          ══════════════════════════════════════════════════════════════════════ -->
-    <script src="https://browser.sentry-cdn.com/7.99.0/bundle.tracing.replay.min.js"
-            crossorigin="anonymous"
-            onerror="console.info('[NEXUS] Sentry SDK non chargé (bloqué par extension ou réseau) — monitoring désactivé')"></script>
+    <!-- Sentry SDK retiré (pas de DSN) — évite bundle.tracing SyntaxError sur Netlify -->
+    <script>window.Sentry = null;</script>
     <script>
     (function _initSentryBrowser() {
       if (typeof Sentry === 'undefined') return;
@@ -1073,6 +1072,11 @@
         }
         .payment-method-btn img { height: 40px; width: auto; }
         .payment-method-btn span { font-weight: 600; color: var(--text-primary); }
+        /* ── PayTech operators visual ── */
+        .paytech-operator-bar { display: flex; gap: 0.5rem; margin: 0.75rem 0; }
+        .paytech-operator-bar .op { flex: 1; text-align: center; background: white; border-radius: 10px; padding: 0.5rem 0.25rem; font-size: 0.65rem; font-weight: 700; border: 1.5px solid #e5e7eb; }
+        .paytech-badge { display: inline-flex; align-items: center; gap: 0.3rem; background: rgba(0,133,62,0.1); color: var(--primary); border: 1px solid rgba(0,133,62,0.3); border-radius: 20px; padding: 0.15rem 0.6rem; font-size: 0.7rem; font-weight: 700; }
+
 
         /* Style pour le drapeau sénégalais en arrière-plan léger */
         .senegal-flag-bg {
@@ -1428,7 +1432,7 @@ try {
   } catch(_) {}
 
   if (!NEXUS_CONFIG.apiUrl) {
-    console.warn('[NEXUS] ⚠️  apiUrl vide — configurez NEXUS_CONFIG.apiUrl (index.html) ou via Admin → Configuration.');
+    // [FIX] apiUrl vide sur Netlify — mode Supabase-only, pas d'avertissement console nécessaire
     window.__nexusBackendReady = true;
     window.dispatchEvent(new Event('nexus:backend-ready'));
     return;
@@ -2266,7 +2270,7 @@ const DataService = {
           setTimeout(r, 6000);
         });
       }
-      const urls = base ? [`${base}/api/auth/login`, "/api/auth/login"] : ["/api/auth/login"];
+      const urls = base ? [`${base}/api/auth/login`] : []; // [FIX Netlify] apiUrl vide → skip JWT → fallback direct Supabase
       const ctrl = new AbortController();
       const tid  = setTimeout(() => ctrl.abort(), 10000);
       let res = null;
@@ -2340,7 +2344,7 @@ const DataService = {
           prof = this._buildProfileFromAuthUser(data.user);
           // [FIX] Supabase v2 PostgrestFilterBuilder n'est pas une Promise native → .catch() n'existe pas.
           // On utilise try/catch + onConflict sans ignoreDuplicates pour gérer le 409.
-          try { await this._sb.from('profiles').upsert(prof, { onConflict: 'id', ignoreDuplicates: true }); } catch (_ignoreConflict) {}
+          try { await this._sb.from('profiles').upsert(prof, { onConflict: 'id' }); } catch (_ignoreConflict) {}
         }
         return prof;
       }
@@ -6643,9 +6647,9 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       // 3. Redirection vers la page PayTech (paiement sécurisé)
       // Sur retour (?payment=success&orderId=xxx) → handler dans App confirme
       if (paymentMethod === "mobile" && createdOrders.length > 0) {
-        const mainOrderId = createdOrders[0]?.id;
-        // mainOrderId doit être un UUID Supabase (pas un _localId ORD-xxx)
-        if (mainOrderId && !mainOrderId.startsWith("ORD-")) {
+        const mainOrderId = createdOrders[0]?.id || ("ORD-" + Date.now());
+        // Toujours appeler PayTech pour les paiements Mobile Money
+        if (mainOrderId) {
           try {
             const ptRes = await fetch("/.netlify/functions/payments-mobile-money", {
               method: "POST",
@@ -6742,7 +6746,62 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       onError: (e) => addToast(e, "error"),
       addToast
     }
-  ), paymentMethod === "mobile" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-mobile-alt", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("span", null, "Confirmez votre paiement Mobile Money ci-dessous.")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "1rem" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(1) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left", "aria-hidden": "true" }), " Retour"), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-lg ${loading ? "btn-loading" : ""}`, style: { flex: 1 }, onClick: () => setShowMobileModal(true), disabled: loading, "aria-busy": loading }, loading ? "Traitement..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-mobile-alt", "aria-hidden": "true" }), " Payer ", formatPrice(grandTotalEur), " via Mobile Money"))), showMobileModal && /* @__PURE__ */ React.createElement(LocalPaymentModal, { amount: grandTotalEur, addToast, onCancel: () => setShowMobileModal(false), onSuccess: (mobileResult) => { setShowMobileModal(false); processPayment(mobileResult); } })), paymentMethod === "card" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(1), style: { marginTop: "0.5rem", width: "100%" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left" }), " Retour \xE0 la livraison"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "14px", padding: "1.25rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" } }, "R\xE9capitulatif"),
+  ), paymentMethod === "mobile" && /* @__PURE__ */ React.createElement(React.Fragment, null,
+  /* ── Bloc PayTech ── */
+  /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,rgba(0,133,62,0.07) 0%,rgba(27,154,245,0.07) 100%)", border: "1.5px solid rgba(0,133,62,0.25)", borderRadius: "14px", padding: "1.1rem 1.25rem", marginBottom: "1rem" } },
+    /* Header PayTech */
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.85rem" } },
+      /* @__PURE__ */ React.createElement("div", { style: { background: "var(--primary)", borderRadius: "8px", width: "32px", height: "32px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt", style: { color: "white", fontSize: "0.9rem" } })
+      ),
+      /* @__PURE__ */ React.createElement("div", null,
+        /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "0.95rem" } }, "Paiement Mobile Money sécurisé"),
+        /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.73rem", color: "var(--text-secondary)" } }, "via PayTech Sénégal — Orange Money · Wave · Free Money")
+      )
+    ),
+    /* Opérateurs */
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.6rem", marginBottom: "0.85rem" } },
+      [
+        { label: "Orange Money", color: "#FF6600", icon: "fas fa-circle" },
+        { label: "Wave",         color: "#1B9AF5", icon: "fas fa-wave-square" },
+        { label: "Free Money",   color: "#DC0A15", icon: "fas fa-mobile-alt" },
+      ].map((op) =>
+        /* @__PURE__ */ React.createElement("div", { key: op.label, style: { flex: 1, textAlign: "center", background: "white", borderRadius: "10px", padding: "0.55rem 0.3rem", border: `1.5px solid ${op.color}30` } },
+          /* @__PURE__ */ React.createElement("i", { className: op.icon, style: { fontSize: "1.3rem", color: op.color, display: "block", marginBottom: "0.2rem" } }),
+          /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.65rem", fontWeight: 700, color: op.color } }, op.label)
+        )
+      )
+    ),
+    /* Info redirection */
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", display: "flex", gap: "0.4rem", alignItems: "flex-start" } },
+      /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle", style: { marginTop: "0.15rem", flexShrink: 0, color: "var(--primary)" } }),
+      /* @__PURE__ */ React.createElement("span", null, "Vous serez redirigé vers la page sécurisée PayTech pour choisir votre opérateur et finaliser le paiement. Retour automatique après confirmation.")
+    )
+  ),
+  /* Boutons */
+  /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "1rem" } },
+    /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(1) },
+      /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left", "aria-hidden": "true" }), " Retour"
+    ),
+    /* @__PURE__ */ React.createElement("button", {
+      className: `btn btn-primary btn-lg ${loading ? "btn-loading" : ""}`,
+      style: { flex: 1, background: "var(--primary)" },
+      onClick: () => setShowMobileModal(true),
+      disabled: loading, "aria-busy": loading
+    },
+      loading ? "Traitement..." : /* @__PURE__ */ React.createElement(React.Fragment, null,
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-mobile-alt", "aria-hidden": "true" }),
+        " Payer ", formatPrice(grandTotalEur), " via Mobile Money"
+      )
+    )
+  ),
+  /* Modal sélection opérateur */
+  showMobileModal && /* @__PURE__ */ React.createElement(LocalPaymentModal, {
+    amount: grandTotalEur, addToast,
+    onCancel: () => setShowMobileModal(false),
+    onSuccess: (mobileResult) => { setShowMobileModal(false); processPayment(mobileResult); }
+  })
+), paymentMethod === "card" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setStep(1), style: { marginTop: "0.5rem", width: "100%" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left" }), " Retour \xE0 la livraison"))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "14px", padding: "1.25rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" } }, "R\xE9capitulatif"),
       /* ── Bannière multi-vendeur ── */
       isMultiVendor && /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(253,239,66,0.18)", border: "1.5px solid rgba(253,239,66,0.7)", borderRadius: "10px", padding: "0.65rem 0.85rem", marginBottom: "0.85rem", fontSize: "0.78rem", display: "flex", gap: "0.5rem", alignItems: "flex-start" } },
         /* @__PURE__ */ React.createElement("i", { className: "fas fa-layer-group", style: { color: "var(--primary)", marginTop: "0.1rem", flexShrink: 0 } }),
@@ -13127,7 +13186,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
       React.createElement('div', { className: 'trust-bar' },
         [
           { icon: 'fas fa-shield-alt', title: 'Acheteurs protégés', sub: 'Paiement 100% sécurisé' },
-          { icon: 'fas fa-mobile-alt', title: 'Orange Money & Wave', sub: 'Paiement mobile local' },
+          { icon: 'fas fa-mobile-alt', title: 'Orange Money · Wave · Free', sub: 'Mobile Money via PayTech' },
           { icon: 'fas fa-truck', title: 'Livraison rapide', sub: 'Partout au Sénégal' },
           { icon: 'fas fa-undo', title: 'Retours faciles', sub: '30 jours satisfait ou remboursé' },
           { icon: 'fas fa-headset', title: 'Support client', sub: '7j/7 de 8h à 20h' },
