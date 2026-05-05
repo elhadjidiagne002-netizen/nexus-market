@@ -1363,7 +1363,7 @@ var __spreadValues = (a, b) => {
 var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 const { useState, useEffect, useRef, createContext, useContext, useCallback, useMemo, useReducer } = React;
 const NEXUS_CONFIG = {
-  apiUrl: "", // Netlify deployment — PayTech via /.netlify/functions/payments-mobile-money
+  apiUrl: "", // [Netlify] Backend Railway supprimé — toutes les données via Supabase + Netlify Functions
   // BUG FIX: nexus-confirm.html n'existe pas dans le déploiement single-file Vercel.
   // La confirmation Supabase redirige vers cette URL avec le token dans le hash #access_token=...
   // Le SDK Supabase JS le lit automatiquement si on pointe vers la même page (index.html).
@@ -1450,7 +1450,12 @@ try {
     return;
   }
 
-  // Vérification silencieuse de l'URL configurée (une seule tentative, pas de retry)
+  // [FIX Netlify] apiUrl vide → pas de vérification backend
+  if (!NEXUS_CONFIG.apiUrl) {
+    window.__nexusBackendReady = true;
+    window.dispatchEvent(new Event('nexus:backend-ready'));
+    return;
+  }
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 5000);
   fetch(NEXUS_CONFIG.apiUrl + '/api/health', { signal: ctrl.signal, cache: 'no-store' })
@@ -1491,7 +1496,7 @@ const IS_EMAILJS_CONFIGURED = isEmailjsConfigured(); // valeur initiale (compati
 // Phase 1 : réveil rapide (2 tentatives avec backoff)
 // Phase 2 : ping silencieux toutes les 30 min pour détecter les redémarrages Railway
 window.__nexusBackendReady = false;
-if (NEXUS_CONFIG.apiUrl) {
+if (NEXUS_CONFIG.apiUrl && false) { // [FIX Netlify] KeepAlive Railway désactivé — apiUrl vide
   (function nexusKeepAlive() {
     const KEEPALIVE_INTERVAL_MS = 30 * 60 * 1000;    // 30 min — Railway ne dort pas
     const WAKE_DELAYS = [0, 8000, 20000];              // max 3 tentatives au démarrage
@@ -2212,32 +2217,7 @@ const DataService = {
   },
   // ── Auth Supabase ─────────────────────────────────────────────────────────
   async signUp(email, password, profile) {
-    // ── Backend Node.js (absolu ou relatif) ────────────────────────────────
-    {
-      const base = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
-      const urls = base ? [`${base}/api/auth/register`, "/api/auth/register"] : ["/api/auth/register"];
-      let backendRes = null;
-      for (const url of urls) {
-        try {
-          backendRes = await fetch(url, {
-            method: "POST",
-            mode: url.startsWith("/") ? "same-origin" : "cors",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password, name: profile.name, role: profile.role, ...profile })
-          });
-          if (backendRes) break;
-        } catch (_) { backendRes = null; }
-      }
-      if (backendRes !== null) {
-        const json = await backendRes.json();
-        if (!backendRes.ok) throw new Error(json.error || json.message || "Erreur inscription");
-        if (json.emailConfirmPending) return { __emailConfirmPending: true, email };
-        if (json.token || json.accessToken) {
-          this._saveTokens(json.accessToken || json.token, json.expiresIn || 900, json.refreshToken || null, 30 * 24 * 3600);
-        }
-        return json.user || json;
-      }
-    }
+    // [FIX Netlify] Inscription Railway supprimée — Supabase Auth uniquement
     if (this._sb) {
       const sanitizedEmail = email.trim().toLowerCase();
       const redirectTo = window.location.origin;
@@ -2522,18 +2502,35 @@ async signOut() {
       const ctrl = new AbortController();
       const tid  = setTimeout(() => ctrl.abort(), 10000);
 
-      const refreshUrl = base ? `${base}/api/auth/refresh` : "/api/auth/refresh";
+      // [FIX Netlify] Pas de backend Railway → refresh via Supabase Auth uniquement
+      clearTimeout(tid);
+      if (!base) {
+        // Supabase gère le refresh automatiquement via son propre mécanisme
+        if (this._sb) {
+          const { data, error } = await this._sb.auth.refreshSession();
+          const ok = !error && !!data?.session;
+          this._isRefreshing = false;
+          this._refreshQueue.forEach(cb => cb(ok));
+          this._refreshQueue = [];
+          return ok;
+        }
+        this._clearTokens();
+        this._isRefreshing = false;
+        this._refreshQueue.forEach(cb => cb(false));
+        this._refreshQueue = [];
+        return false;
+      }
+
+      const refreshUrl = `${base}/api/auth/refresh`;
       const res = await fetch(refreshUrl, {
         method:  "POST",
-        mode:    base ? "cors" : "same-origin",
+        mode:    "cors",
         signal:  ctrl.signal,
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ refreshToken: this._refreshToken }),
       });
-      clearTimeout(tid);
 
       if (!res.ok) {
-        // 401 REFRESH_TOKEN_REUSE_DETECTED ou REFRESH_TOKEN_EXPIRED → logout complet
         const body = await res.json().catch(() => ({}));
         console.warn("[NEXUS] Refresh échoué :", body.code || res.status);
         this._clearTokens();
@@ -2544,12 +2541,11 @@ async signOut() {
       }
 
       const json = await res.json();
-      // Stocker les nouveaux tokens
       this._saveTokens(
         json.accessToken || json.token,
-        json.expiresIn   || 900,         // 15 min par défaut
+        json.expiresIn   || 900,
         json.refreshToken,
-        30 * 24 * 3600                   // 30 jours
+        30 * 24 * 3600
       );
 
       console.info("[NEXUS] Token rafraîchi avec succès ✓");
@@ -2570,7 +2566,9 @@ async signOut() {
   // Wrapper fetch → auto-logout on 401 + PERF FIX: timeout 4s pour éviter les cold starts Render
   async apiFetch(path, options = {}) {
     const _apiBase = (NEXUS_CONFIG.apiUrl || "").endsWith("/") ? NEXUS_CONFIG.apiUrl.slice(0,-1) : (NEXUS_CONFIG.apiUrl || "");
-    const _fullUrl = _apiBase ? (_apiBase + path) : path;
+    // [FIX Netlify] Sans apiUrl, toutes les routes Railway n'existent pas → null immédiat
+    if (!_apiBase) return null;
+    const _fullUrl = _apiBase + path;
     if (this.isSessionExpired()) {
       window.dispatchEvent(new CustomEvent("nexus:session-expired"));
       throw new Error("SESSION_EXPIRED");
@@ -7275,7 +7273,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           const ctrl = new AbortController();
           const tid  = setTimeout(() => ctrl.abort(), 12000);
           let _vendorRes = null;
-          const vUrls = base3 ? [`${base3}/api/auth/register`, "/api/auth/register"] : ["/api/auth/register"];
+          const vUrls = base3 ? [`${base3}/api/auth/register`] : []; // [FIX Netlify] skip Railway
           let fetchFailed = false;
           for (const vUrl of vUrls) {
             try {
