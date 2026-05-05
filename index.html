@@ -1347,7 +1347,7 @@ var __spreadValues = (a, b) => {
 var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 const { useState, useEffect, useRef, createContext, useContext, useCallback, useMemo, useReducer } = React;
 const NEXUS_CONFIG = {
-  apiUrl: "https://nexus-market-production.up.railway.app", // URL Railway configurée
+  apiUrl: "", // Netlify deployment — PayTech via /.netlify/functions/payments-mobile-money
   // BUG FIX: nexus-confirm.html n'existe pas dans le déploiement single-file Vercel.
   // La confirmation Supabase redirige vers cette URL avec le token dans le hash #access_token=...
   // Le SDK Supabase JS le lit automatiquement si on pointe vers la même page (index.html).
@@ -6642,13 +6642,14 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       // 2. Sauvegarde du contexte en sessionStorage (pour restaurer après retour)
       // 3. Redirection vers la page PayTech (paiement sécurisé)
       // Sur retour (?payment=success&orderId=xxx) → handler dans App confirme
-      if (paymentMethod === "mobile" && NEXUS_CONFIG.apiUrl && createdOrders.length > 0) {
+      if (paymentMethod === "mobile" && createdOrders.length > 0) {
         const mainOrderId = createdOrders[0]?.id;
         // mainOrderId doit être un UUID Supabase (pas un _localId ORD-xxx)
         if (mainOrderId && !mainOrderId.startsWith("ORD-")) {
           try {
-            const ptRes = await DataService.apiFetch("/api/payments/mobile-money", {
+            const ptRes = await fetch("/.netlify/functions/payments-mobile-money", {
               method: "POST",
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ orderId: mainOrderId, amount: grandTotalEur }),
             });
             if (ptRes && ptRes.ok) {
@@ -9873,41 +9874,6 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const [editBanner, setEditBanner] = React.useState(null);
   const [editPromo, setEditPromo] = React.useState(null);
   const [newCatForm, setNewCatForm] = React.useState({ name: '', icon: '🛒' });
-  const [adminTrustBar, setAdminTrustBar] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_trust') || 'null') || [
-      { icon: 'fas fa-shield-alt', title: 'Acheteurs protégés', sub: 'Paiement 100% sécurisé', active: true },
-      { icon: 'fas fa-mobile-alt', title: 'Orange Money & Wave', sub: 'Paiement mobile local', active: true },
-      { icon: 'fas fa-truck', title: 'Livraison rapide', sub: 'Partout au Sénégal', active: true },
-      { icon: 'fas fa-undo', title: 'Retours faciles', sub: '30 jours satisfait ou remboursé', active: true },
-      { icon: 'fas fa-headset', title: 'Support client', sub: '7j/7 de 8h à 20h', active: true },
-    ]; } catch(e) { return []; }
-  });
-  const [adminSections, setAdminSections] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_sections') || 'null') || [
-      { id: 'flash', title: '⚡ Ventes Flash', active: true, count: 12, showCountdown: true },
-      { id: 'categories', title: '🗂️ Explorer par catégorie', active: true },
-      { id: 'promos', title: '📢 Banners Promotionnels', active: true },
-      { id: 'toprated', title: '⭐ Meilleures Ventes', active: true, count: 10 },
-      { id: 'newarrivals', title: '🆕 Nouveaux Arrivages', active: true, count: 10 },
-      { id: 'cheapest', title: '💸 Petits Prix', active: true, count: 10 },
-      { id: 'allproducts', title: '🛒 Tous les produits', active: true },
-      { id: 'ctabanner', title: '🎉 Bannière CTA finale', active: true },
-    ]; } catch(e) { return []; }
-  });
-  const [adminGlobalTexts, setAdminGlobalTexts] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_globals') || 'null') || {
-      searchPlaceholder: 'Rechercher produits, catégories, vendeurs...',
-      ctaTitle: '🎉 Rejoignez NEXUS Market Sénégal',
-      ctaSubtitle: 'Des milliers de vendeurs vérifiés · Paiement Orange Money & Wave · Livraison partout',
-      flashTitle: '⚡ VENTES FLASH',
-    }; } catch(e) { return {}; }
-  });
-  const [editTrust, setEditTrust] = React.useState(null);
-  const [newTrustForm, setNewTrustForm] = React.useState({ icon: 'fas fa-star', title: '', sub: '' });
-  const [newBannerForm, setNewBannerForm] = React.useState({ badge: '🆕 Nouveau', title: 'Titre\nde la Bannière', sub: 'Sous-titre', deco: '✨', cls: 'slide-0', active: true });
-  const [showNewBanner, setShowNewBanner] = React.useState(false);
-  const [newPromoForm, setNewPromoForm] = React.useState({ label: 'Promotion', title: 'Titre\nPromo', cta: 'Découvrir', deco: '🎁', cls: 'green', active: true });
-  const [showNewPromo, setShowNewPromo] = React.useState(false);
   const [view, setView] = useState("overview");
   const [stats, setStats] = useState({});
   const [vendors, setVendors] = useState([]);
