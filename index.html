@@ -10,10 +10,19 @@
     <!-- PERF FIX: preconnect CDNs & fonts early -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://cdnjs.cloudflare.com">
-    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://pqcqbstbdujzaclsiosv.supabase.co" crossorigin>
+    <link rel="dns-prefetch" href="https://paytech.sn">
+    <!-- Preload scripts critiques pour éliminer les waterfalls réseau -->
+    <link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin>
+    <link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin>
+    <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin>
+    <link rel="preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin>
     <!-- Fonts via <link> (non-bloquant) — remplace @import CSS -->
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&family=Montserrat:wght@500;600;700&display=swap">
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&display=swap" media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&display=swap"></noscript>
     <!-- ══════════════════════════════════════════════════════════════════════
          SENTRY — Error tracking navigateur (doit être le PREMIER script chargé)
          DSN configuré dans NEXUS_CONFIG.sentryDsn ou variable d'env injectée.
@@ -115,7 +124,10 @@
         document.head.appendChild(st);
     })();
     </script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Font Awesome chargé en non-bloquant via media trick -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+          media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"></noscript>
     <!-- PWA BUG FIX: manifest.json retournait 401 (protégé par Vercel auth).
          Remplacement par un manifest inliné en data URI — aucun fichier externe requis. -->
     <link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjogIk5FWFVTIE1hcmtldCIsICJzaG9ydF9uYW1lIjogIk5FWFVTIiwgInN0YXJ0X3VybCI6ICIvIiwgImRpc3BsYXkiOiAic3RhbmRhbG9uZSIsICJiYWNrZ3JvdW5kX2NvbG9yIjogIiNmZmZmZmYiLCAidGhlbWVfY29sb3IiOiAiIzAwODUzRSIsICJkZXNjcmlwdGlvbiI6ICJNYXJrZXRwbGFjZSBCMkIvQjJDIFNcdTAwZTluXHUwMGU5Z2FsIiwgImljb25zIjogW3sic3JjIjogImh0dHBzOi8vcGxhY2Vob2xkLmNvLzE5MngxOTIvMDA4NTNFL3doaXRlP3RleHQ9TlgiLCAic2l6ZXMiOiAiMTkyeDE5MiIsICJ0eXBlIjogImltYWdlL3BuZyJ9LCB7InNyYyI6ICJodHRwczovL3BsYWNlaG9sZC5jby81MTJ4NTEyLzAwODUzRS93aGl0ZT90ZXh0PU5YIiwgInNpemVzIjogIjUxMng1MTIiLCAidHlwZSI6ICJpbWFnZS9wbmcifV19">
@@ -9139,7 +9151,7 @@ const MessageComposeModal = ({ currentUser: currentUser2, recipientId, recipient
 
   // Polling léger pour mettre à jour le fil en temps réel (toutes les 3s)
   useEffect(() => {
-    const iv = setInterval(() => setThread(getThread()), 3000);
+    const iv = setInterval(() => setThread(getThread()), 10000); // [PERF] 3s→10s
     return () => clearInterval(iv);
   }, [recipientId]);
 
@@ -11887,10 +11899,10 @@ const VendorChatInline = ({ currentUser: currentUser2, addToast }) => {
 
   // [PERF] Polling adaptatif — 3s si onglet visible, 15s si caché
   React.useEffect(() => {
-    let iv = setInterval(() => setTick(t => t + 1), 3000);
+    let iv = setInterval(() => setTick(t => t + 1), 15000); // [PERF] 3s→15s
     const onVisibility = () => {
       clearInterval(iv);
-      iv = setInterval(() => setTick(t => t + 1), document.hidden ? 15000 : 3000);
+      iv = setInterval(() => setTick(t => t + 1), document.hidden ? 60000 : 15000); // [PERF]
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVisibility); };
@@ -15172,7 +15184,7 @@ const App = ({ onUserChange }) => {
   useEffect(() => {
     if (!currentUser2) {
       // PERF FIX: polling 5s au lieu de 1s — évite 5 re-renders/s inutiles
-      const interval = setInterval(updateGuestCart, 5e3);
+      const interval = setInterval(updateGuestCart, 30000); // [PERF] 5s→30s: réduction polling panier
       return () => clearInterval(interval);
     }
   }, [currentUser2]);
@@ -16256,10 +16268,10 @@ window.openMessagingWith = window.__nexusOpenMessaging;
 
 // ── 2. CONSTANTES ────────────────────────────────────────────────────────────
 const MSG_EMOJIS = ['👍','❤️','😂','😮','😢','🔥','🙏','✅'];
-const MSG_POLL_ACTIVE_MS   = 2000;   // Conversation ouverte + onglet visible
-const MSG_POLL_IDLE_MS     = 8000;   // Onglet visible, pas de conversation active
-const MSG_POLL_HIDDEN_MS   = 30000;  // Onglet caché (document.hidden)
-const MSG_POLL_BACKOFF_MAX = 60000;  // Erreur réseau: max 60s
+const MSG_POLL_ACTIVE_MS   = 6000;   // [PERF] 2s→6s: conversation ouverte + onglet visible
+const MSG_POLL_IDLE_MS     = 20000;  // [PERF] 8s→20s: onglet visible, pas de conversation active
+const MSG_POLL_HIDDEN_MS   = 60000;  // [PERF] 30s→60s: onglet caché (document.hidden)
+const MSG_POLL_BACKOFF_MAX = 120000; // [PERF] 60s→120s: erreur réseau max backoff
 const MSG_TYPING_TTL_MS    = 4000;   // Un indicateur de frappe disparaît après 4s sans signal
 const MSG_PAGE_SIZE        = 40;     // Messages par page
 
