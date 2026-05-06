@@ -1743,18 +1743,29 @@ const DataService = {
       if (localProds.length > 0) return localProds;
     }
     if (this._sb) {
-      let q = this._sb.from("products").select("*", { count: "exact" }).eq("active", true);
-      if (category) q = q.eq("category", category);
-      if (search) q = q.ilike("name", `%${search}%`);
-      q = q.range((page-1)*limit, page*limit-1).order("created_at", { ascending: false });
-      const { data, error } = await q;
-      if (!error && data) {
-        const normalized = data.map(normalizeProduct);
-        storage.set("products", normalized);
-        return normalized;
+      try {
+        // [FIX] neq(false) au lieu de eq(true) — inclut les lignes où active est NULL
+        let q = this._sb.from("products").select("*", { count: "exact" }).neq("active", false);
+        if (category) q = q.eq("category", category);
+        if (search)   q = q.ilike("name", `%${search}%`);
+        q = q.range((page-1)*limit, page*limit-1).order("created_at", { ascending: false });
+        const { data, error } = await q;
+        if (error) {
+          console.warn("[getProducts] Supabase error:", error.message, "— code:", error.code);
+        }
+        if (!error && data) {
+          const normalized = data.map(normalizeProduct);
+          if (normalized.length > 0) storage.set("products", normalized);
+          return normalized;
+        }
+      } catch(sbErr) {
+        console.warn("[getProducts] Supabase exception:", sbErr.message);
       }
     }
-    return localProds;
+    // Dernier recours : localStorage
+    if (localProds.length > 0) return localProds;
+    console.warn("[getProducts] Aucune source disponible (API hors ligne, Supabase inaccessible, localStorage vide)");
+    return [];
   },
   async saveProduct(product) {
     // [FIX D+F] API en priorité — upsert(product) camelCase échoue silencieusement + pas de vérif propriétaire
@@ -13400,11 +13411,19 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
   const [flashTime, setFlashTime] = React.useState(3 * 3600 + 42 * 60 + 17);
   const ITEMS_PER_PAGE = 9;
   useEffect(() => { (async () => {
-    const allProducts = storage.getArray("products");
-    setProducts(allProducts);
+    // [FIX] Charger depuis Supabase/API en priorité, localStorage en fallback
+    let allProducts = [];
+    try {
+      allProducts = await DataService.getProducts({ limit: 200 });
+    } catch(_) {}
+    // Si l'API/Supabase n'a rien retourné, utiliser localStorage
+    if (!allProducts || allProducts.length === 0) {
+      allProducts = storage.getArray("products");
+    }
+    setProducts(allProducts || []);
     const savedCart = storage.get("guest_cart") || [];
     setCart(savedCart);
-    // [FIX #5] Charger les avis depuis GET /api/reviews
+    // Charger les avis
     const allReviews = DataService.getReviews ? await DataService.getReviews({}).catch(() => storage.getArray("reviews")) : storage.getArray("reviews");
     setReviews(Array.isArray(allReviews) ? allReviews : storage.getArray("reviews"));
   })(); }, []);
