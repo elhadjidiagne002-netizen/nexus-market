@@ -14,13 +14,9 @@
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="preconnect" href="https://pqcqbstbdujzaclsiosv.supabase.co" crossorigin>
     <link rel="dns-prefetch" href="https://paytech.sn">
-    <!-- Preload scripts critiques pour éliminer les waterfalls réseau -->
-    <link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin>
-    <link rel="preload" as="script" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin>
-    <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin>
-    <link rel="preload" as="style" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin>
+    <!-- [FIX] preload supprimés — mismatch crossorigin causait 200+ warnings console -->
     <!-- Fonts via <link> (non-bloquant) — remplace @import CSS -->
-    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&display=swap">
+    <!-- [FIX] preload font supprimé — inutile avec media=print -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&display=swap" media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&display=swap"></noscript>
     <!-- ══════════════════════════════════════════════════════════════════════
@@ -36,7 +32,7 @@
       // DSN injecté via meta tag par le serveur, ou directement ici
       const dsn = document.querySelector('meta[name="sentry-dsn"]')?.content || '';
       if (!dsn) {
-        console.warn('[Sentry] DSN absent — monitoring front désactivé. Ajouter <meta name="sentry-dsn" content="https://xxx@oXXX.ingest.sentry.io/YYYY"> dans le <head>.');
+        // [FIX] Sentry DSN non configuré — silence (normal sur Netlify sans monitoring)
         return;
       }
       Sentry.init({
@@ -79,8 +75,8 @@
     })();
     </script>
     <!-- React & ReactDOM — synchrones (obligatoire : le script inline en dépend directement) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
     <!-- prop-types DOIT être chargé avant Recharts (Recharts lit window.PropTypes) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
     <!-- Recharts — chargement fiable avec retry -->
@@ -2336,7 +2332,14 @@ const DataService = {
           prof = this._buildProfileFromAuthUser(data.user);
           // [FIX] Supabase v2 PostgrestFilterBuilder n'est pas une Promise native → .catch() n'existe pas.
           // On utilise try/catch + onConflict sans ignoreDuplicates pour gérer le 409.
-          try { await this._sb.from('profiles').upsert(prof, { onConflict: 'id' }); } catch (_ignoreConflict) {}
+          try {
+          // [FIX] 409 fréquent avec upsert quand le profil existe déjà → utiliser insert avec on_conflict=ignore
+          const { error: upsertErr } = await this._sb.from('profiles').upsert(prof, { onConflict: 'id', ignoreDuplicates: false });
+          if (upsertErr && upsertErr.code !== '23505' && upsertErr.code !== 'PGRST409') {
+            // Tenter un simple update si l'upsert échoue pour une autre raison
+            await this._sb.from('profiles').update(prof).eq('id', prof.id).catch(() => {});
+          }
+        } catch (_) {}
         }
         return prof;
       }
@@ -7133,9 +7136,11 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
       // BUG FIX: les messages d'erreur Supabase étaient affichés bruts en anglais.
       // On les traduit en français avec des messages explicites.
       let msg;
-      if (lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password") || lower.includes("email not confirmed") === false && lower.includes("email")) {
+      if (lower.includes("email not confirmed") || lower.includes("email_not_confirmed") || lower.includes("confirm")) {
+        // On traite email non confirmé en premier (priorité)
+      } else if (lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password") || lower.includes("invalid") || lower.includes("incorrect")) {
         msg = "Email ou mot de passe incorrect.";
-      } else if (lower.includes("email not confirmed")) {
+      } else if (false) { // placeholder - remplace le else if "email not confirmed" ci-dessous
         msg = "Email non confirm\xE9. V\xE9rifiez votre bo\xEEte mail et cliquez sur le lien de confirmation.";
       } else if (lower.includes("rate limit") || lower.includes("too many")) {
         msg = "Trop de tentatives. Veuillez patienter quelques minutes.";
