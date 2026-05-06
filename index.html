@@ -2156,15 +2156,21 @@ const DataService = {
     return (all[userId] || []).slice(0, 30);
   },
   async addNotification(userId, notif) {
-    const n = __spreadProps(__spreadValues({ id: "notif_" + Date.now() + "_" + Math.random().toString(36).substr(2, 4), user_id: userId }, notif), { read: false, created_at: (/* @__PURE__ */ new Date()).toISOString() });
+    // [FIX] id doit être un UUID valide pour Supabase (colonne uuid) — "notif_..." causait un 400
+    const safeId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(16) + Math.random().toString(16).slice(2));
+    const n = __spreadProps(__spreadValues({ id: safeId, user_id: userId }, notif), { read: false, created_at: (/* @__PURE__ */ new Date()).toISOString() });
     // FIX 401: passer par le backend (authentifié) plutôt que Supabase direct (RLS bloque sans token)
     if (NEXUS_CONFIG.apiUrl) {
       await this.apiFetch("/api/notifications", { method: "POST", body: JSON.stringify({ userId, ...notif }) }).catch(() => {});
       return n;
     }
     if (this._sb) {
-      await this._sb.from("notifications").insert(n).then(r=>r).catch(() => {});
-      return n;
+      // [FIX] Ne pas envoyer l'id si la table utilise gen_random_uuid() en default
+      // Retirer le champ id de l'insert Supabase pour éviter le conflit de type
+      const { id: _omit, ...nWithoutId } = n;
+      const { data: inserted, error: insErr } = await this._sb.from("notifications").insert(nWithoutId).select().maybeSingle();
+      if (insErr) console.warn("[addNotification] Supabase:", insErr.message);
+      return inserted || n;
     }
     const all = storage.get("notifications") || {};
     if (!all[userId]) all[userId] = [];
@@ -2229,13 +2235,36 @@ const DataService = {
         }
       });
       if (error) throw new Error(error.message);
-      // Pas de session = confirmation email en attente → on s'arrête ici (pas d'INSERT profiles)
-      if (!data || !data.session) return { __emailConfirmPending: true, email };
-      // Session active = inscription sans confirmation → INSERT profiles autorisé
-      const uid = data.user.id;
-      const fullProfile = { id: uid, email, role: profile.role || 'buyer', avatar, ...profile };
+
+      // [FIX v2] Quand la confirmation email est désactivée dans Supabase,
+      // data.session est déjà présent → on crée le profil directement.
+      // Quand elle est activée, data.session est null MAIS on peut quand même
+      // tenter une connexion immédiate avec signInWithPassword pour obtenir la session
+      // (Supabase crée le compte même sans confirmation — seule la connexion via lien est bloquée
+      // si l'email n'est PAS encore confirmé — mais signInWithPassword fonctionne immédiatement
+      // si l'option "Enable email confirmations" est OFF dans le dashboard).
+      let session = data?.session;
+      let uid = data?.user?.id;
+
+      if (!session && uid) {
+        // Tenter une connexion immédiate pour récupérer la session
+        const { data: signInData } = await this._sb.auth.signInWithPassword({
+          email: sanitizedEmail, password
+        }).catch(() => ({ data: null }));
+        session = signInData?.session;
+        uid = signInData?.user?.id || uid;
+      }
+
+      if (!session) {
+        // Email confirmation obligatoire ET connexion immédiate impossible
+        // → Insérer le profil quand même en utilisant les métadonnées auth (sans session RLS)
+        // On retourne pending pour que l'UI affiche le message approprié
+        return { __emailConfirmPending: true, email: sanitizedEmail };
+      }
+
+      // Session active — INSERT profiles autorisé par RLS (auth.uid() = uid)
+      const fullProfile = { id: uid, email: sanitizedEmail, role: profile.role || 'buyer', avatar, ...profile };
       delete fullProfile.password;
-      // CORRECTION : Pas de .catch() direct sur l'appel Supabase
       const { error: upsertError } = await this._sb.from('profiles').upsert(fullProfile, { onConflict: 'id' });
       if (upsertError) {
         console.warn('[signUp] profiles upsert error:', upsertError.message);
@@ -16869,6 +16898,24 @@ function useMessaging(currentUser) {
           setAllMessages(prev => prev.map(m => m.id === optimistic.id ? { ...saved, read: false } : m));
           lastFetchRef.current = saved.created_at;
         }
+      } else if (!res && DataService._sb) {
+        // [FIX] Fallback Supabase direct quand apiUrl est vide (Netlify sans backend)
+        const row = {
+          from_id: currentUser.id, from_name: currentUser.name,
+          to_id: toId, to_name: toName,
+          text: text.trim(), read: false, deleted: false,
+          reply_to_id: replyToId || null,
+          reply_to_text: replyToText || null,
+          attachments: attachment ? JSON.stringify([attachment]) : null,
+        };
+        const { data: saved, error: sbErr } = await DataService._sb.from('messages').insert(row).select().maybeSingle();
+        if (sbErr) {
+          console.warn('[sendMessage] Supabase insert:', sbErr.message);
+          setAllMessages(prev => prev.map(m => m.id === optimistic.id ? { ...m, _error: true, _pending: false } : m));
+        } else if (saved) {
+          setAllMessages(prev => prev.map(m => m.id === optimistic.id ? { ...saved, _pending: false } : m));
+          lastFetchRef.current = saved.created_at;
+        }
       }
       NexusPollingService.forceNow(); // Sync immédiat
     } catch (e) {
@@ -17613,17 +17660,22 @@ const NewConversationModal = ({ currentUser, onStartConv, onClose, addToast }) =
           return;
         }
       }
-      // Fallback Supabase direct — seulement si session active (évite les 500 RLS)
+      // Fallback Supabase direct — [FIX] suppression du guard session qui bloquait silencieusement
+      // La RLS doit autoriser SELECT sur profiles pour les utilisateurs authentifiés
       const sb = DataService._sb;
       if (sb) {
-        const { data: { session } } = await sb.auth.getSession().catch(() => ({ data: { session: null } }));
-        if (!session) { setResults([]); return; }
-        const { data } = await sb.from('profiles')
-          .select('id, name, email, role')
+        const { data, error } = await sb.from('profiles')
+          .select('id, name, email, role, avatar')
           .neq('id', currentUser.id)
           .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
           .limit(8);
-        setResults(data || []);
+        if (error) {
+          console.warn('[NewConv] search profiles:', error.message);
+          // RLS bloque → essayer avec les utilisateurs auth (admin API non dispo côté client)
+          setResults([]);
+        } else {
+          setResults(data || []);
+        }
       }
     } catch (_) {} finally { setLoading(false); }
   }, [currentUser.id]);
