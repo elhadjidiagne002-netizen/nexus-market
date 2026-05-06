@@ -2343,13 +2343,12 @@ const DataService = {
         }
         return prof;
       }
-      // Supabase a retourné une erreur d'authentification — identifiants invalides
+      // Supabase a retourné une erreur d'authentification
       if (error) {
-        throw new Error(
-          error.message?.toLowerCase().includes('invalid login')
-            ? "Email ou mot de passe incorrect."
-            : error.message || "Email ou mot de passe incorrect."
-        );
+        const msg = error.message || error.error_description || "";
+        const code = error.code || error.error || "";
+        // Relayer le message Supabase exact pour que handleLogin puisse le traduire
+        throw new Error(msg || code || "Email ou mot de passe incorrect.");
       }
     }
     // Plus aucun fallback localStorage — tous les comptes sont dans Supabase/backend
@@ -7130,26 +7129,27 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
       addToast(`Bienvenue, ${user.name || user.email} !`, "success");
       onLogin(user);
     } catch(err) {
-      console.error("[Login] Erreur:", err);
+      console.warn("[Login] Échec connexion:", err?.message || err);
       const raw = (err && err.message) ? err.message : "";
       const lower = raw.toLowerCase();
       // BUG FIX: les messages d'erreur Supabase étaient affichés bruts en anglais.
       // On les traduit en français avec des messages explicites.
       let msg;
-      if (lower.includes("email not confirmed") || lower.includes("email_not_confirmed") || lower.includes("confirm")) {
-        // On traite email non confirmé en premier (priorité)
-      } else if (lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password") || lower.includes("invalid") || lower.includes("incorrect")) {
+      // Détection par ordre de priorité (messages Supabase Auth v2)
+      if (lower.includes("email not confirmed") || lower.includes("email_not_confirmed")) {
+        msg = "Email non confirmé. Vérifiez votre boîte mail et cliquez sur le lien de confirmation.\n→ Ou désactivez la confirmation email dans Supabase Dashboard → Authentication → Settings.";
+      } else if (lower.includes("invalid login credentials") || lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password") || lower.includes("invalid") || lower.includes("incorrect")) {
         msg = "Email ou mot de passe incorrect.";
-      } else if (false) { // placeholder - remplace le else if "email not confirmed" ci-dessous
-        msg = "Email non confirm\xE9. V\xE9rifiez votre bo\xEEte mail et cliquez sur le lien de confirmation.";
+      } else if (lower.includes("user not found") || lower.includes("no user found")) {
+        msg = "Aucun compte associé à cet email.";
       } else if (lower.includes("rate limit") || lower.includes("too many")) {
         msg = "Trop de tentatives. Veuillez patienter quelques minutes.";
-      } else if (lower.includes("network") || lower.includes("fetch")) {
-        msg = "Probl\xE8me de connexion r\xE9seau. V\xE9rifiez votre connexion internet.";
+      } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("failed")) {
+        msg = "Problème de connexion réseau. Vérifiez votre connexion internet.";
       } else {
-        msg = raw || "Email ou mot de passe incorrect";
+        msg = raw || "Email ou mot de passe incorrect.";
       }
-      setError(msg);
+      setError(msg || "Email ou mot de passe incorrect.");
     } finally {
       setLoading(false);
     }
