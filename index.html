@@ -1678,6 +1678,21 @@ const initSupabase = () => {
   } catch (e) { console.warn("[Supabase] Erreur init:", e); }
   return supabaseClient;
 };
+// ── Calcul local du palier (miroir du serveur) ─────────────────────────────
+const LOYALTY_TIERS = [
+  { name: "Bronze",  icon: "🥉", color: "#CD7F32", min: 0,     multiplier: 1,   perks: ["1 pt par euro dépensé", "Accès ventes flash 1h avant"] },
+  { name: "Argent",  icon: "🥈", color: "#C0C0C0", min: 1000,  multiplier: 1.5, perks: ["1,5 pt / euro", "Livraison gratuite dès 10 000 FCFA"] },
+  { name: "Or",      icon: "🥇", color: "#FFD700", min: 5000,  multiplier: 2,   perks: ["2 pts / euro", "Livraison gratuite dès 5 000 FCFA", "Cadeau anniversaire"] },
+  { name: "Platine", icon: "💎", color: "#B0C4DE", min: 15000, multiplier: 3,   perks: ["3 pts / euro", "Livraison gratuite illimitée", "Gestionnaire dédié"] },
+];
+function _computeTier(points) {
+  const tier = [...LOYALTY_TIERS].reverse().find(t => points >= t.min) || LOYALTY_TIERS[0];
+  const idx  = LOYALTY_TIERS.indexOf(tier);
+  const next = LOYALTY_TIERS[idx + 1] || null;
+  const progress = next ? Math.min(100, Math.round(((points - tier.min) / (next.min - tier.min)) * 100)) : 100;
+  return { ...tier, progress, nextTier: next ? `${(next.min - points).toLocaleString("fr-FR")} pts pour ${next.name} ${next.icon}` : null };
+}
+
 const DataService = {
   _sb:            null,
   _token:         null,
@@ -3457,40 +3472,84 @@ async signOut() {
 
   // ── LOYALTY POINTS ────────────────────────────────────────────────
   async getLoyaltyPoints(userId) {
-    // [FIX] Priorité backend API — source de vérité serveur
-    if (NEXUS_CONFIG.apiUrl) {
-      const res = await this.apiFetch("/api/loyalty").catch(() => null);
-      if (res && res.ok) {
-        const json = await res.json().catch(() => null);
-        if (json && typeof json.points === "number") {
-          const pts = storage.get("loyalty_points") || {};
-          pts[userId] = json.points; storage.set("loyalty_points", pts);
-          return json.points;
+    // [LOYALTY v2] Source de vérité : Netlify Function → Supabase direct → cache
+    try {
+      const session = this._sb ? (await this._sb.auth.getSession()).data?.session : null;
+      if (session?.access_token) {
+        const res = await fetch("/.netlify/functions/loyalty", {
+          headers: { Authorization: "Bearer " + session.access_token }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          // Mettre à jour le cache local avec les vraies données
+          const lc = storage.get("loyalty_cache") || {};
+          lc[userId] = json;
+          storage.set("loyalty_cache", lc);
+          return json;  // retourne l'objet complet { points, tier, history, ... }
         }
       }
-    }
+    } catch (_) {}
+    // Fallback : Supabase direct
     if (this._sb) {
-      const { data, error } = await this._sb.from("loyalty_points").select("points").eq("user_id", userId).maybeSingle();
-      if (!error && data) {
-        const pts = storage.get("loyalty_points") || {};
-        pts[userId] = data.points; storage.set("loyalty_points", pts);
-        return data.points;
+      const { data } = await this._sb.from("loyalty_points")
+        .select("points, total_earned, total_redeemed")
+        .eq("user_id", userId).maybeSingle().catch(() => ({ data: null }));
+      if (data) {
+        const pts = data.points || 0;
+        return { points: pts, totalEarned: data.total_earned || 0, totalRedeemed: data.total_redeemed || 0,
+          canRedeem: pts >= 500, minRedeem: 500, fcfaValue: Math.floor(pts / 100),
+          tier: _computeTier(pts), history: [] };
       }
     }
-    return (storage.get("loyalty_points") || {})[userId] || 0;
+    // Fallback final : cache localStorage
+    const cached = (storage.get("loyalty_cache") || {})[userId];
+    if (cached) return cached;
+    return { points: 0, totalEarned: 0, totalRedeemed: 0, canRedeem: false, minRedeem: 500, fcfaValue: 0,
+      tier: { name: "Bronze", icon: "🥉", color: "#CD7F32", progress: 0, nextTier: "1 000 pts pour Argent 🥈", perks: ["1 pt par euro dépensé"] }, history: [] };
   },
-  async addLoyaltyPoints(userId, delta) {
-    // [FIX] Points crédités côté backend lors de la commande — cette méthode
-    // sert uniquement de fallback localStorage pour le mode hors-ligne
-    const pts = storage.get("loyalty_points") || {};
-    pts[userId] = (pts[userId] || 0) + delta;
-    storage.set("loyalty_points", pts);
-    if (this._sb && !NEXUS_CONFIG.apiUrl) {
-      await this._sb.from("loyalty_points")
-        .upsert({ user_id: userId, points: pts[userId] }, { onConflict: "user_id" })
-        .catch(()=>{});
+  async addLoyaltyPoints(userId, deltaOrAmount, { reason = "order", orderId, note, isEuros = false } = {}) {
+    // [LOYALTY v2] Créditer via Netlify Function (atomique, source de vérité Supabase)
+    try {
+      const session = this._sb ? (await this._sb.auth.getSession()).data?.session : null;
+      if (session?.access_token) {
+        const body = isEuros
+          ? { amountEur: deltaOrAmount, reason, orderId, note }
+          : { delta: deltaOrAmount, reason, orderId, note };
+        const res = await fetch("/.netlify/functions/loyalty", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          // Mettre à jour le cache local
+          const lc = storage.get("loyalty_cache") || {};
+          lc[userId] = { ...lc[userId], points: json.points, totalEarned: json.totalEarned,
+            totalRedeemed: json.totalRedeemed, tier: json.tier, fcfaValue: json.fcfaValue,
+            canRedeem: json.points >= 500 };
+          storage.set("loyalty_cache", lc);
+          return json;
+        }
+      }
+    } catch (_) {}
+    // Fallback : Supabase direct (RPC atomique)
+    if (this._sb) {
+      const { data } = await this._sb.rpc("add_loyalty_points", {
+        p_user_id:  userId,
+        p_delta:    isEuros ? Math.floor(deltaOrAmount * 10) : deltaOrAmount,
+        p_reason:   reason,
+        p_order_id: orderId || null,
+        p_note:     note    || null,
+      }).catch(() => ({ data: null }));
+      if (data) return data;
     }
-    return pts[userId];
+    // Fallback final : localStorage
+    const pts = storage.get("loyalty_cache") || {};
+    const cur = pts[userId]?.points || 0;
+    const newPts = Math.max(0, cur + (isEuros ? Math.floor(deltaOrAmount * 10) : deltaOrAmount));
+    pts[userId] = { ...(pts[userId] || {}), points: newPts };
+    storage.set("loyalty_cache", pts);
+    return { points: newPts };
   },
 
   // ── WISHLISTS ─────────────────────────────────────────────────────
@@ -5259,28 +5318,17 @@ const POINTS_REDEEM = 100;
 const LoyaltyWidget = ({ currentUser: currentUser2, compact = false }) => {
   const [loyalty, setLoyalty] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [activeTab, setActiveTab] = React.useState("overview"); // "overview" | "history" | "tiers"
 
   React.useEffect(() => {
     if (!currentUser2?.id) { setLoading(false); return; }
-
-    DataService.apiFetch("/api/loyalty")
-      .then(async (res) => {
-        if (res && res.ok) {
-          const json = await res.json();
-          setLoyalty(json);
-          // Mise en cache locale (facultatif — source de vérité = API)
-          const pts = storage.get("loyalty_points") || {};
-          pts[currentUser2.id] = json.points;
-          storage.set("loyalty_points", pts);
-        }
-      })
-      .catch(() => {
-        // Fallback cache local si réseau indisponible
-        const pts = storage.get("loyalty_points") || {};
-        const cached = pts[currentUser2.id] || 0;
-        setLoyalty({ points: cached, totalEarned: cached, totalRedeemed: 0, canRedeem: cached >= 500, minRedeem: 500, tier: { name: "Bronze", icon: "🥉", color: "#CD7F32", progress: Math.min(100, Math.round(cached / 10)) } });
-      })
-      .finally(() => setLoading(false));
+    // Afficher immédiatement depuis le cache
+    const cached = (storage.get("loyalty_cache") || {})[currentUser2.id];
+    if (cached) { setLoyalty(cached); setLoading(false); }
+    // Puis rafraîchir depuis Netlify Function
+    DataService.getLoyaltyPoints(currentUser2.id)
+      .then(data => { if (data) { setLoyalty(data); setLoading(false); } })
+      .catch(() => setLoading(false));
   }, [currentUser2?.id]);
 
   if (!currentUser2) return null;
@@ -5330,112 +5378,167 @@ const LoyaltyWidget = ({ currentUser: currentUser2, compact = false }) => {
     );
   }
 
-  const pts          = loyalty?.points        || 0;
-  const totalEarned  = loyalty?.totalEarned   || 0;
+  const pts           = loyalty?.points        || 0;
+  const totalEarned   = loyalty?.totalEarned   || 0;
   const totalRedeemed = loyalty?.totalRedeemed || 0;
-  const tier         = loyalty?.tier          || { name: "Bronze", icon: "🥉", color: "#CD7F32", progress: 0, nextTier: null };
-  const canRedeem    = loyalty?.canRedeem     ?? false;
-  const minRedeem    = loyalty?.minRedeem     || 500;
+  const tier          = loyalty?.tier          || _computeTier(0);
+  const canRedeem     = loyalty?.canRedeem     ?? false;
+  const minRedeem     = loyalty?.minRedeem     || 500;
+  const fcfaValue     = loyalty?.fcfaValue     || Math.floor(pts / 100);
+  const history       = loyalty?.history       || [];
+  const allTiers      = loyalty?.tiers         || LOYALTY_TIERS;
 
-  // 100 pts = 1 FCFA
-  const fcfaValue = Math.floor(pts / 100);
+  const REASON_LABELS = {
+    order:    { icon: "fa-shopping-bag", label: "Commande",   color: "var(--success)" },
+    redeem:   { icon: "fa-gift",         label: "Réduction",  color: "var(--danger)"  },
+    referral: { icon: "fa-user-plus",    label: "Parrainage", color: "#7C3AED"        },
+    bonus:    { icon: "fa-star",         label: "Bonus",      color: "#F59E0B"        },
+    manual:   { icon: "fa-edit",         label: "Ajustement", color: "var(--primary)" },
+  };
+
+  const tabStyle = (t) => ({
+    padding: "0.5rem 1rem", borderRadius: "8px", border: "none", cursor: "pointer",
+    fontWeight: activeTab === t ? 700 : 400,
+    background: activeTab === t ? "var(--primary)" : "transparent",
+    color: activeTab === t ? "white" : "var(--text-secondary)",
+    fontSize: "0.85rem", transition: "all 0.2s",
+  });
 
   return React.createElement(
     "div",
     { className: "card", style: { marginBottom: "1.5rem" } },
 
-    // ── En-tête palier ─────────────────────────────────────────────────────────
-    React.createElement(
-      "div",
-      {
-        style: {
-          background:   `linear-gradient(135deg, ${tier.color}22, ${tier.color}44)`,
-          border:       `2px solid ${tier.color}88`,
-          borderRadius: "14px",
-          padding:      "1.5rem",
-          textAlign:    "center",
-          marginBottom: "1.5rem",
-        },
-      },
+    // ── En-tête palier ──────────────────────────────────────────────────────
+    React.createElement("div", {
+      style: { background: `linear-gradient(135deg, ${tier.color}22, ${tier.color}44)`,
+        border: `2px solid ${tier.color}88`, borderRadius: "14px", padding: "1.5rem",
+        textAlign: "center", marginBottom: "1rem" },
+    },
       React.createElement("div", { style: { fontSize: "3rem", lineHeight: 1 } }, tier.icon),
       React.createElement("div", { style: { fontSize: "1.5rem", fontWeight: 800, marginTop: "0.5rem" } }, tier.name),
-      React.createElement(
-        "div",
-        { style: { fontSize: "2.5rem", fontWeight: 900, color: "var(--primary)", margin: "0.5rem 0" } },
+      React.createElement("div", { style: { fontSize: "2.5rem", fontWeight: 900, color: "var(--primary)", margin: "0.5rem 0" } },
         pts.toLocaleString("fr-FR"),
-        React.createElement("span", { style: { fontSize: "1rem", fontWeight: 500, color: "var(--text-secondary)", marginLeft: "0.4rem" } }, "points")
-      ),
-      // Barre de progression vers le prochain palier
-      tier.nextTier && React.createElement(
-        React.Fragment,
-        null,
-        React.createElement(
-          "div",
-          { style: { background: "rgba(0,0,0,0.1)", borderRadius: "999px", height: "8px", margin: "0.75rem 0 0.4rem" } },
-          React.createElement("div", {
-            style: {
-              width:        `${tier.progress}%`,
-              background:   tier.color,
-              height:       "100%",
-              borderRadius: "999px",
-              transition:   "width 0.6s ease",
-            },
-          })
-        ),
-        React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, tier.nextTier)
-      )
+        React.createElement("span", { style: { fontSize: "1rem", fontWeight: 500, color: "var(--text-secondary)", marginLeft: "0.4rem" } }, "points")),
+      tier.nextTier && React.createElement(React.Fragment, null,
+        React.createElement("div", { style: { background: "rgba(0,0,0,0.1)", borderRadius: "999px", height: "8px", margin: "0.75rem 0 0.4rem" } },
+          React.createElement("div", { style: { width: `${tier.progress}%`, background: tier.color, height: "100%", borderRadius: "999px", transition: "width 0.6s ease" } })),
+        React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, tier.nextTier))
     ),
 
-    // ── Statistiques ───────────────────────────────────────────────────────────
-    React.createElement(
-      "div",
-      { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", marginBottom: "1.5rem" } },
-      [
-        { label: "Pts gagnés",   value: totalEarned.toLocaleString("fr-FR"),   icon: "fa-plus-circle",  color: "var(--success)" },
-        { label: "Pts utilisés", value: totalRedeemed.toLocaleString("fr-FR"), icon: "fa-minus-circle", color: "var(--danger)"  },
-        { label: "Valeur",       value: fcfaValue.toLocaleString("fr-FR") + " FCFA", icon: "fa-coins", color: "var(--accent-dark, #a07800)" },
-      ].map(({ label, value, icon, color }) =>
-        React.createElement(
-          "div",
-          { key: label, style: { background: "var(--bg-light)", borderRadius: "10px", padding: "1rem", textAlign: "center" } },
-          React.createElement("i", { className: `fas ${icon}`, style: { color, fontSize: "1.5rem" } }),
-          React.createElement("div", { style: { fontWeight: 800, fontSize: "1.1rem", marginTop: "0.3rem" } }, value),
-          React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)" } }, label)
+    // ── Onglets ─────────────────────────────────────────────────────────────
+    React.createElement("div", { style: { display: "flex", gap: "0.4rem", marginBottom: "1.2rem", background: "var(--bg-light)", borderRadius: "10px", padding: "0.3rem" } },
+      React.createElement("button", { style: tabStyle("overview"), onClick: () => setActiveTab("overview") }, "📊 Solde"),
+      React.createElement("button", { style: tabStyle("history"),  onClick: () => setActiveTab("history")  }, "📋 Historique"),
+      React.createElement("button", { style: tabStyle("tiers"),    onClick: () => setActiveTab("tiers")    }, "🏅 Paliers"),
+    ),
+
+    // ── Onglet Overview ──────────────────────────────────────────────────────
+    activeTab === "overview" && React.createElement(React.Fragment, null,
+      React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", marginBottom: "1.2rem" } },
+        [
+          { label: "Pts gagnés",   value: totalEarned.toLocaleString("fr-FR"),        icon: "fa-plus-circle",  color: "var(--success)" },
+          { label: "Pts utilisés", value: totalRedeemed.toLocaleString("fr-FR"),      icon: "fa-minus-circle", color: "var(--danger)"  },
+          { label: "Valeur",       value: fcfaValue.toLocaleString("fr-FR") + " FCFA",icon: "fa-coins",        color: "#a07800"        },
+        ].map(({ label, value, icon, color }) =>
+          React.createElement("div", { key: label, style: { background: "var(--bg-light)", borderRadius: "10px", padding: "1rem", textAlign: "center" } },
+            React.createElement("i", { className: `fas ${icon}`, style: { color, fontSize: "1.5rem" } }),
+            React.createElement("div", { style: { fontWeight: 800, fontSize: "1.1rem", marginTop: "0.3rem" } }, value),
+            React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)" } }, label)
+          )
         )
+      ),
+      // Avantages du palier actuel
+      tier.perks && React.createElement("div", { style: { background: `${tier.color}11`, border: `1px solid ${tier.color}44`, borderRadius: "10px", padding: "1rem", marginBottom: "1rem" } },
+        React.createElement("div", { style: { fontWeight: 700, marginBottom: "0.5rem", color: tier.color } }, `✨ Vos avantages ${tier.name}`),
+        tier.perks.map(p => React.createElement("div", { key: p, style: { fontSize: "0.85rem", display: "flex", gap: "0.4rem", marginBottom: "0.2rem" } },
+          React.createElement("span", { style: { color: tier.color } }, "✓"), p))
+      ),
+      React.createElement("div", {
+        style: { background: canRedeem ? "rgba(0,133,62,0.07)" : "rgba(0,0,0,0.04)",
+          border: `1px solid ${canRedeem ? "rgba(0,133,62,0.3)" : "var(--border)"}`,
+          borderRadius: "10px", padding: "1rem", fontSize: "0.88rem", color: "var(--text-secondary)" },
+      },
+        React.createElement("i", { className: "fas fa-info-circle", style: { marginRight: "0.4rem", color: "var(--primary)" } }),
+        canRedeem
+          ? `Vos ${pts.toLocaleString("fr-FR")} pts valent ${fcfaValue.toLocaleString("fr-FR")} FCFA. Utilisables au paiement (100 pts = 1 FCFA).`
+          : `Il vous faut au moins ${minRedeem.toLocaleString("fr-FR")} pts pour utiliser vos réductions. Continuez à commander !`
       )
     ),
 
-    // ── Info utilisation ──────────────────────────────────────────────────────
-    React.createElement(
-      "div",
-      {
-        style: {
-          background:   canRedeem ? "rgba(0,133,62,0.07)" : "rgba(0,0,0,0.04)",
-          border:       `1px solid ${canRedeem ? "rgba(0,133,62,0.3)" : "var(--border)"}`,
-          borderRadius: "10px",
-          padding:      "1rem",
-          fontSize:     "0.88rem",
-          color:        "var(--text-secondary)",
-        },
-      },
-      React.createElement("i", { className: "fas fa-info-circle", style: { marginRight: "0.4rem", color: "var(--primary)" } }),
-      canRedeem
-        ? `Vos ${pts.toLocaleString("fr-FR")} points valent ${fcfaValue.toLocaleString("fr-FR")} FCFA. Utilisables au moment du paiement (100 pts = 1 FCFA).`
-        : `Il vous faut au moins ${minRedeem.toLocaleString("fr-FR")} points pour utiliser vos réductions. Continuez à commander pour en gagner !`
+    // ── Onglet Historique ────────────────────────────────────────────────────
+    activeTab === "history" && React.createElement("div", null,
+      history.length === 0
+        ? React.createElement("div", { style: { textAlign: "center", padding: "2rem", color: "var(--text-secondary)" } },
+            React.createElement("i", { className: "fas fa-history", style: { fontSize: "2rem", marginBottom: "0.5rem", display: "block" } }),
+            "Aucune transaction pour l'instant")
+        : history.map(tx => {
+            const rinfo = REASON_LABELS[tx.reason] || { icon: "fa-circle", label: tx.reason, color: "var(--text-secondary)" };
+            const isPos = tx.delta > 0;
+            return React.createElement("div", { key: tx.id,
+              style: { display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.75rem 0", borderBottom: "1px solid var(--border)" } },
+              React.createElement("div", { style: { width: "36px", height: "36px", borderRadius: "50%", background: `${rinfo.color}18`,
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
+                React.createElement("i", { className: `fas ${rinfo.icon}`, style: { color: rinfo.color, fontSize: "0.9rem" } })),
+              React.createElement("div", { style: { flex: 1 } },
+                React.createElement("div", { style: { fontWeight: 600, fontSize: "0.88rem" } }, rinfo.label,
+                  tx.note && React.createElement("span", { style: { fontWeight: 400, color: "var(--text-secondary)", marginLeft: "0.3rem" } }, "— ", tx.note)),
+                React.createElement("div", { style: { fontSize: "0.73rem", color: "var(--text-secondary)" } },
+                  new Date(tx.created_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" }))),
+              React.createElement("div", { style: { fontWeight: 700, color: isPos ? "var(--success)" : "var(--danger)", fontSize: "0.95rem", whiteSpace: "nowrap" } },
+                isPos ? "+" : "", tx.delta.toLocaleString("fr-FR"), " pts")
+            );
+          })
+    ),
+
+    // ── Onglet Paliers ───────────────────────────────────────────────────────
+    activeTab === "tiers" && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.75rem" } },
+      allTiers.map(t => {
+        const isActive  = tier.name === t.name;
+        const isUnlocked = pts >= (t.min || 0);
+        return React.createElement("div", { key: t.name,
+          style: { border: `2px solid ${isActive ? t.color : isUnlocked ? t.color + "55" : "var(--border)"}`,
+            borderRadius: "12px", padding: "1rem", background: isActive ? `${t.color}11` : "transparent",
+            opacity: isUnlocked ? 1 : 0.55 } },
+          React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.5rem" } },
+            React.createElement("span", { style: { fontSize: "1.6rem" } }, t.icon),
+            React.createElement("div", null,
+              React.createElement("div", { style: { fontWeight: 700, color: t.color } }, t.name,
+                isActive && React.createElement("span", { style: { fontSize: "0.7rem", background: t.color, color: "white",
+                  borderRadius: "20px", padding: "0.1rem 0.5rem", marginLeft: "0.5rem", verticalAlign: "middle" } }, "Actuel")),
+              React.createElement("div", { style: { fontSize: "0.73rem", color: "var(--text-secondary)" } },
+                t.min === 0 ? "Dès le départ" : `À partir de ${t.min.toLocaleString("fr-FR")} pts`,
+                " • ", `×${t.multiplier} les points`)
+            )
+          ),
+          t.perks && React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "0.3rem" } },
+            t.perks.map(p => React.createElement("span", { key: p,
+              style: { fontSize: "0.72rem", background: isUnlocked ? `${t.color}18` : "var(--bg-light)",
+                color: isUnlocked ? t.color : "var(--text-secondary)",
+                border: `1px solid ${isUnlocked ? t.color + "44" : "var(--border)"}`,
+                borderRadius: "20px", padding: "0.15rem 0.6rem" } }, p))
+          )
+        );
+      })
     )
   );
 };
 
 const useAddLoyaltyPoints = () => {
-  return useCallback((userId, amountEur) => {
-    if (!userId) return;
-    const earned = Math.floor(amountEur * POINTS_RATE);
-    DataService.addLoyaltyPoints(userId, earned).catch(()=>{});
-    if (earned > 0) {
-      const pts = storage.get("loyalty_points") || {};
-      DataService.addNotification(userId, { type: "system", title: `+${earned} points de fid\xE9lit\xE9 !`, message: `Vous gagnez ${earned} pts pour votre achat. Total : ${((pts[userId]||0)+earned).toLocaleString("fr-FR")} pts.` });
-    }
-    return earned;
+  return useCallback((userId, amountEur, { reason = "order", orderId } = {}) => {
+    if (!userId || !amountEur) return;
+    DataService.addLoyaltyPoints(userId, amountEur, { reason, orderId, isEuros: true })
+      .then(result => {
+        if (result?.pointsAdded > 0) {
+          DataService.addNotification(userId, {
+            type: "system",
+            title: `+${result.pointsAdded} points de fidélité !`,
+            message: `Vous gagnez ${result.pointsAdded} pts pour votre achat. Total : ${(result.points||0).toLocaleString("fr-FR")} pts — Palier ${result.tier?.name||""} ${result.tier?.icon||""}.`,
+          });
+        }
+      }).catch(() => {
+        const earned = Math.floor(amountEur * (typeof POINTS_RATE !== "undefined" ? POINTS_RATE : 10));
+        DataService.addLoyaltyPoints(userId, earned, { reason, orderId }).catch(() => {});
+      });
   }, []);
 };
 const BulkImportModal = ({ currentUser: currentUser2, onImported, onClose, addToast }) => {
@@ -7087,15 +7190,19 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       else storage.set("guest_cart", []);
       // ── [FIX] Déduire les points via backend (vérification solde serveur) ─
       if (currentUser2 && pointsUsed > 0) {
-        if (NEXUS_CONFIG.apiUrl) {
-          DataService.apiFetch("/api/loyalty/redeem", {
-            method: "POST", body: JSON.stringify({ points: pointsUsed })
+        // [LOYALTY v2] Déduire les points via Netlify Function (atomique, sans condition apiUrl)
+        const session7 = DataService._sb ? (await DataService._sb.auth.getSession()).data?.session : null;
+        if (session7?.access_token) {
+          await fetch("/.netlify/functions/loyalty", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + session7.access_token },
+            body: JSON.stringify({ points: loyaltyToRedeem || pointsUsed, orderId: createdOrders[0]?.id }),
           }).catch(() => {});
+        } else {
+          await DataService.addLoyaltyPoints(currentUser2.id, -(loyaltyToRedeem || pointsUsed), { reason: "redeem" }).catch(() => {});
         }
-        const pts = storage.get("loyalty_points") || {};
-        pts[currentUser2.id] = Math.max(0, (pts[currentUser2.id] || 0) - pointsUsed);
-        storage.set("loyalty_points", pts);
-      }
+      } // end if pointsUsed > 0
+
       // ── Récompense parrainage gérée côté backend (rewardReferrer appelé dans /api/orders)
       // Fallback localStorage uniquement si pas de backend
       if (currentUser2 && !NEXUS_CONFIG.apiUrl) {
