@@ -14038,21 +14038,47 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
     addToast(`Notification "${PUSH_NOTIF_TYPES.find(t=>t.key===key)?.label}" ${next[key] ? "activée" : "désactivée"}`, "success");
   };
 
+  // [FIX VAPID] Convertit une clé base64url en Uint8Array pour applicationServerKey
+  const urlBase64ToUint8Array = (base64String) => {
+    const padding = "=".repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  };
+
+  // [FIX] Endpoint Netlify Function (fonctionne sans apiUrl backend)
+  const PUSH_SUBSCRIBE_URL  = "/.netlify/functions/push-subscribe";
+  const PUSH_VAPID_KEY_URL  = "/.netlify/functions/push-vapid-key";
+
   const requestPush = async () => {
     setSubLoading(true);
     try {
       const perm = await Notification.requestPermission();
       setPermission(perm);
       if (perm !== "granted") { addToast("Permission notifications refusée", "warning"); setSubLoading(false); return; }
-      if (!("serviceWorker" in navigator)) { addToast("Service Worker non supporté sur ce navigateur", "error"); setSubLoading(false); return; }
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: null }).catch(() => null);
-      if (sub && NEXUS_CONFIG.apiUrl) {
-        await fetch(NEXUS_CONFIG.apiUrl + "/api/push/subscribe", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subscription: sub, preferences: prefs }),
-        }).catch(() => {});
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        addToast("Notifications push non supportées sur ce navigateur", "error"); setSubLoading(false); return;
       }
+      // [FIX] Récupérer la vraie clé VAPID publique depuis la Netlify Function
+      const vapidRes = await fetch(PUSH_VAPID_KEY_URL).catch(() => null);
+      if (!vapidRes || !vapidRes.ok) {
+        addToast("Clé VAPID non disponible — vérifiez la config Netlify", "error"); setSubLoading(false); return;
+      }
+      const { publicKey } = await vapidRes.json();
+      const reg = await navigator.serviceWorker.ready;
+      // [FIX] applicationServerKey ne peut pas être null — doit être Uint8Array
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      // Récupérer le token Supabase pour l'associer à l'utilisateur côté serveur
+      const sbSession = await DataService._sb?.auth.getSession().catch(() => null);
+      const token = sbSession?.data?.session?.access_token || sessionStorage.getItem("nexus_jwt") || "";
+      await fetch(PUSH_SUBSCRIBE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
+      }).catch(() => {});
       addToast("Notifications push activées ✓", "success");
     } catch(e) { addToast("Erreur activation push : " + e.message, "error"); }
     setSubLoading(false);
@@ -14066,12 +14092,10 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
         const sub = await reg.pushManager.getSubscription();
         if (sub) {
           await sub.unsubscribe();
-          if (NEXUS_CONFIG.apiUrl) {
-            await fetch(NEXUS_CONFIG.apiUrl + "/api/push/subscribe", {
-              method: "DELETE", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ endpoint: sub.endpoint }),
-            }).catch(() => {});
-          }
+          await fetch(PUSH_SUBSCRIBE_URL, {
+            method: "DELETE", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          }).catch(() => {});
         }
       }
       setPermission("default");
@@ -15313,6 +15337,17 @@ const App = ({ onUserChange }) => {
     if (onUserChange) onUserChange(user);
     setShowAuth(false);
     setLoginTarget(null);
+
+    // [FIX PUSH] Abonnement push automatique après login (silencieux — ne bloque pas le login)
+    // Uniquement si l'utilisateur a déjà accordé la permission (pas de pop-up intempestive)
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && window.nexusPush) {
+      const sbSession = DataService._sb?.auth?.getSession().catch(() => null);
+      Promise.resolve(sbSession).then(s => {
+        const tok = s?.data?.session?.access_token || sessionStorage.getItem('nexus_jwt') || '';
+        const doSub = () => window.nexusPush.subscribe(tok).catch(() => {});
+        window.__nexusSWReg ? doSub() : setTimeout(doSub, 2000);
+      });
+    }
     // [FIX #4] Fetch B2B discount rate for buyer_pro on login
     if (user.role === "buyer_pro" && NEXUS_CONFIG.apiUrl) {
       DataService.apiFetch("/api/b2b/discount").then(async res => {
@@ -15578,43 +15613,54 @@ window.nexusPush.subscribe = async function(apiToken) {
     return false;
   }
 
+  // [FIX] urlBase64ToUint8Array : conversion clé VAPID base64url → Uint8Array
+  const urlBase64ToUint8Array = (b64) => {
+    const pad = '='.repeat((4 - b64.length % 4) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  };
+
   try {
-    // 2. Récupérer la clé VAPID publique depuis le serveur
-    const vapidRes = await fetch((NEXUS_CONFIG.apiUrl || "") + "/api/push/vapid-key", {
-      headers: { 'Authorization': `Bearer ${apiToken}` },
-    });
-    if (!vapidRes.ok) {
-      console.warn('[Push] VAPID key non disponible :', vapidRes.status);
+    // 2. Récupérer la clé VAPID publique depuis la Netlify Function (plus de 404)
+    // [FIX] URL corrigée : /.netlify/functions/ au lieu de /api/push/ (inexistant sans backend)
+    const vapidRes = await fetch('/.netlify/functions/push-vapid-key', {
+      headers: apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {},
+    }).catch(() => null);
+
+    if (!vapidRes || !vapidRes.ok) {
+      console.warn('[Push] VAPID key non disponible :', vapidRes?.status);
       return false;
     }
     const { publicKey } = await vapidRes.json();
 
     // 3. Créer ou récupérer l'abonnement push
+    // [FIX] applicationServerKey ne peut PAS être null — pushManager.subscribe échoue sinon
     const existing = await window.__nexusSWReg.pushManager.getSubscription();
     let sub = existing;
     if (!sub) {
       sub = await window.__nexusSWReg.pushManager.subscribe({
         userVisibleOnly:      true,
-        applicationServerKey: publicKey,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
     }
 
-    // 4. Envoyer l'abonnement au serveur
-    const regRes = await fetch((NEXUS_CONFIG.apiUrl || "") + "/api/push/subscribe", {
+    // 4. Envoyer l'abonnement au serveur via Netlify Function
+    // [FIX] URL corrigée : /.netlify/functions/push-subscribe
+    const regRes = await fetch('/.netlify/functions/push-subscribe', {
       method:  'POST',
       headers: {
         'Content-Type':  'application/json',
-        'Authorization': `Bearer ${apiToken}`,
+        ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {}),
       },
       body: JSON.stringify({ subscription: sub.toJSON() }),
-    });
+    }).catch(() => null);
 
-    if (regRes.ok) {
+    if (regRes && regRes.ok) {
       console.log('[Push] ✅ Abonnement push enregistré');
       return true;
     } else {
-      const err = await regRes.json().catch(() => ({}));
-      console.warn('[Push] Erreur serveur :', err.error || regRes.status);
+      const err = await regRes?.json().catch(() => ({}));
+      console.warn('[Push] Erreur serveur :', err?.error || regRes?.status);
       return false;
     }
   } catch (err) {
