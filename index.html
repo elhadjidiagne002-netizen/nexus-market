@@ -5619,34 +5619,65 @@ const LiveChat = ({ currentUser: currentUser2 }) => {
     setInput("");
     setTyping(true);
 
-    // 1) Tenter Claude API (si clé configurée)
+    // 1) Appel direct Groq API — Llama 3.3 70B
     if (useAI) {
       try {
-// Appel via le backend NEXUS proxy (clé Groq sécurisée côté serveur)
-        const response = await fetch("/api/ai/chat", {
+        const GROQ_API_KEY = "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";
+        const GROQ_MODEL   = "llama-3.3-70b-versatile";
+        const SYSTEM_PROMPT = `Tu es l'assistant virtuel de NEXUS Market Sénégal, une marketplace B2B/B2C dédiée au marché sénégalais. Tu réponds toujours en français, de manière concise, amicale et professionnelle.
+
+Informations clés sur NEXUS Market :
+- Paiements acceptés : Orange Money, Wave, Free Money, cartes Visa/Mastercard (tous sécurisés SSL)
+- Livraison : 1-3 jours pour Dakar, 3-7 jours pour les autres régions. Gratuite dès 20 000 FCFA
+- Retours : sous 30 jours, remboursement en 3 jours ouvrables via la page commande
+- Devenir vendeur : inscription gratuite, validation sous 24h, commission de 15%
+- Support : contact@nexus.sn | WhatsApp +221 33 123 45 67 (lun-ven 8h-20h)
+- Litiges : ouverture depuis la page commande, traitement sous 48h
+- Parrainage : 5% de crédit pour chaque ami inscrit avec ton code (visible dans le profil)
+- Sécurité : SSL, 2FA, données jamais revendues
+
+Réponds uniquement aux questions liées à NEXUS Market ou au commerce en ligne au Sénégal. Si la question est hors sujet, redirige poliment vers le support.`;
+
+        const historyMsgs = messages
+          .filter(m => m.from !== "support" || !m.quick)
+          .slice(-10)
+          .map(m => ({ role: m.from === "user" ? "user" : "assistant", content: m.text }));
+
+        const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${GROQ_API_KEY}`
+          },
           body: JSON.stringify({
+            model: GROQ_MODEL,
             messages: [
-              ...messages.filter(m => m.from !== "support" || !m.quick).slice(-8).map(m => ({
-                role: m.from === "user" ? "user" : "assistant",
-                content: m.text
-              })),
+              { role: "system", content: SYSTEM_PROMPT },
+              ...historyMsgs,
               { role: "user", content: msg }
-            ]
+            ],
+            temperature: 0.6,
+            max_tokens: 400,
+            stream: false
           })
         });
-        if (response.ok) {
-          const data = await response.json();
-          const aiText = data.reply;
+
+        if (groqRes.ok) {
+          const groqData = await groqRes.json();
+          const aiText = groqData?.choices?.[0]?.message?.content?.trim();
           if (aiText) {
             setMessages(m => [...m, { from: "support", text: aiText, time: new Date().toISOString(), ai: true }]);
             setTyping(false);
             return;
           }
+        } else {
+          // Quota dépassé ou autre erreur Groq → fallback silencieux
+          console.warn("Groq API error:", groqRes.status);
+          setUseAI(false);
         }
       } catch(e) {
-        // Pas de cl\xE9 API ou erreur r\xE9seau → fallback sur r\xE9ponses scriptées
+        // Erreur réseau → fallback sur réponses scriptées
+        console.warn("Groq fetch error:", e);
         setUseAI(false);
       }
     }
