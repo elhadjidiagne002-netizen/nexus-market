@@ -1454,6 +1454,15 @@ try {
   }
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 5000);
+  // [FIX] Auto-détecter l'URL API sur Cloudflare Pages / tout domaine déployé
+  if (!NEXUS_CONFIG.apiUrl && typeof window !== 'undefined') {
+    const h = window.location.hostname;
+    const isLocal = h === 'localhost' || h === '127.0.0.1' || h.startsWith('192.168.') || h.endsWith('.local');
+    if (!isLocal) {
+      NEXUS_CONFIG.apiUrl = window.location.origin;
+      console.log('[NEXUS] apiUrl auto-détecté :', NEXUS_CONFIG.apiUrl);
+    }
+  }
   fetch(NEXUS_CONFIG.apiUrl + '/api/health', { signal: ctrl.signal, cache: 'no-store' })
     .then(r => {
       clearTimeout(tid);
@@ -1779,7 +1788,11 @@ const DataService = {
     }
     // Dernier recours : localStorage
     if (localProds.length > 0) return localProds;
-    console.warn("[getProducts] Aucune source disponible (API hors ligne, Supabase inaccessible, localStorage vide)");
+    // [FIX] Log silencieux si les tables Supabase n'existent pas encore
+    if (!window.__nexusTablesWarned) {
+      window.__nexusTablesWarned = true;
+      console.info("[getProducts] Aucune donnée disponible — vérifiez que le script SQL Supabase a été exécuté et que les tables existent.");
+    }
     return [];
   },
   async saveProduct(product) {
@@ -2076,16 +2089,29 @@ const DataService = {
         subtotal: cleanOrder.subtotal || cleanOrder.total,
         total: cleanOrder.total,
         commission: cleanOrder.commission || (cleanOrder.total * 0.15),
+        discount: cleanOrder.discount || 0,
+        coupon_code: cleanOrder.couponCode || cleanOrder.coupon_code || null,
         status: cleanOrder.status || "processing",
         payment_method: cleanOrder.paymentMethod || "unknown",
         shipping_city: cleanOrder.shippingCity || null,
         tracking_number: cleanOrder.trackingNumber || null,
       };
-      const { data, error } = await this._sb.from("orders").insert(row).select().single();
-      if (!error && data) {
-        const saved = { ...cleanOrder, id: data.id, date: data.created_at };
-        const all = storage.getArray("orders"); all.push(saved); storage.set("orders", all);
-        return saved;
+      try {
+        // [FIX] Rafraîchir la session Supabase avant l'insert pour éviter le 401
+        if (this._sb?.auth) {
+          const { data: session } = await this._sb.auth.getSession();
+          if (!session?.session && this._token) {
+            await this._sb.auth.setSession({ access_token: this._token, refresh_token: this._refreshToken || '' }).catch(() => {});
+          }
+        }
+        const { data, error } = await this._sb.from("orders").insert(row).select().single();
+        if (!error && data) {
+          const saved = { ...cleanOrder, id: data.id, date: data.created_at };
+          return saved;
+        }
+        if (error) console.warn("[saveOrder] Supabase:", error.message, "code:", error.code);
+      } catch(sbEx) {
+        console.warn("[saveOrder] Exception Supabase:", sbEx.message);
       }
     }
     const saved = { ...cleanOrder, id: localId, date: new Date().toISOString() };
@@ -2191,11 +2217,27 @@ const DataService = {
       return n;
     }
     if (this._sb) {
-      // [FIX] Ne pas envoyer l'id si la table utilise gen_random_uuid() en default
-      // Retirer le champ id de l'insert Supabase pour éviter le conflit de type
+      // [FIX 401] Rafraîchir la session Supabase avant l'insert
+      try {
+        const { data: sess } = await this._sb.auth.getSession();
+        if (!sess?.session && this._token) {
+          await this._sb.auth.setSession({ access_token: this._token, refresh_token: this._refreshToken || '' }).catch(() => {});
+        }
+      } catch(_) {}
       const { id: _omit, ...nWithoutId } = n;
       const { data: inserted, error: insErr } = await this._sb.from("notifications").insert(nWithoutId).select().maybeSingle();
-      if (insErr) console.warn("[addNotification] Supabase:", insErr.message);
+      if (insErr) {
+        console.warn("[addNotification] Supabase:", insErr.message);
+        // [FIX 401] Si toujours non autorisé, stocker en cache mémoire session uniquement
+        if (insErr.code === '42501' || insErr.message?.includes('permission') || insErr.message?.includes('Unauthorized')) {
+          console.info("[addNotification] RLS bloque l'insert direct — notification stockée en mémoire session");
+          const all = storage.get("notifications") || {};
+          if (!all[userId]) all[userId] = [];
+          all[userId].unshift(n); all[userId] = all[userId].slice(0, 50);
+          storage.set("notifications", all);
+          return n;
+        }
+      }
       return inserted || n;
     }
     const all = storage.get("notifications") || {};
