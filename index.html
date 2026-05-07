@@ -1892,7 +1892,7 @@ const DataService = {
     }
 
     // Fallback localStorage (exécuté si pas de _sb OU si pas de buyer/vendor)
-    let orders = storage.getArray("orders");
+    let orders = [];  // Orders toujours lus depuis Supabase/API
     if (buyer) orders = orders.filter((o) => o.buyer === buyer);
     if (vendor) orders = orders.filter((o) => o.vendor === vendor);
     if (status) orders = orders.filter((o) => o.status === status);
@@ -3482,9 +3482,6 @@ async signOut() {
         if (res.ok) {
           const json = await res.json();
           // Mettre à jour le cache local avec les vraies données
-          const lc = storage.get("loyalty_cache") || {};
-          lc[userId] = json;
-          storage.set("loyalty_cache", lc);
           return json;  // retourne l'objet complet { points, tier, history, ... }
         }
       }
@@ -3501,9 +3498,7 @@ async signOut() {
           tier: _computeTier(pts), history: [] };
       }
     }
-    // Fallback final : cache localStorage
-    const cached = (storage.get("loyalty_cache") || {})[userId];
-    if (cached) return cached;
+    // Pas de fallback localStorage — retourner les valeurs par défaut
     return { points: 0, totalEarned: 0, totalRedeemed: 0, canRedeem: false, minRedeem: 500, fcfaValue: 0,
       tier: { name: "Bronze", icon: "🥉", color: "#CD7F32", progress: 0, nextTier: "1 000 pts pour Argent 🥈", perks: ["1 pt par euro dépensé"] }, history: [] };
   },
@@ -3523,11 +3518,6 @@ async signOut() {
         if (res.ok) {
           const json = await res.json();
           // Mettre à jour le cache local
-          const lc = storage.get("loyalty_cache") || {};
-          lc[userId] = { ...lc[userId], points: json.points, totalEarned: json.totalEarned,
-            totalRedeemed: json.totalRedeemed, tier: json.tier, fcfaValue: json.fcfaValue,
-            canRedeem: json.points >= 500 };
-          storage.set("loyalty_cache", lc);
           return json;
         }
       }
@@ -3543,17 +3533,24 @@ async signOut() {
       }).catch(() => ({ data: null }));
       if (data) return data;
     }
-    // Fallback final : localStorage
-    const pts = storage.get("loyalty_cache") || {};
-    const cur = pts[userId]?.points || 0;
-    const newPts = Math.max(0, cur + (isEuros ? Math.floor(deltaOrAmount * 10) : deltaOrAmount));
-    pts[userId] = { ...(pts[userId] || {}), points: newPts };
-    storage.set("loyalty_cache", pts);
-    return { points: newPts };
+    // Pas de fallback localStorage — si Netlify Function et Supabase sont indisponibles, retourner null
+    console.error("[addLoyaltyPoints] Toutes les sources indisponibles — points non crédités");
+    return null;
   },
 
   // ── WISHLISTS ─────────────────────────────────────────────────────
   async getWishlist(userId) {
+    // Source de vérité : API → Supabase. Aucun fallback localStorage.
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch('/api/wishlists').catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json().catch(() => []);
+        const ids = Array.isArray(data) ? data.map(r => r.product_id || r).filter(Boolean) : [];
+        const ws = storage.get("wishlists") || {};
+        ws[userId] = ids; storage.set("wishlists", ws);
+        return ids;
+      }
+    }
     if (this._sb) {
       const { data, error } = await this._sb.from("wishlists").select("product_id").eq("user_id", userId);
       if (!error && data) {
@@ -3563,31 +3560,32 @@ async signOut() {
         return ids;
       }
     }
+    // Fallback : cache mémoire session uniquement (jamais localStorage)
     return (storage.get("wishlists") || {})[userId] || [];
   },
   async toggleWishlist(userId, productId) {
-    // [FIX #1] Sync wishlist avec API
-    const ws = storage.get("wishlists") || {};
-    const list = ws[userId] || [];
-    const exists = list.includes(productId);
-    ws[userId] = exists ? list.filter(id => id !== productId) : [...list, productId];
-    storage.set("wishlists", ws);
+    // Écriture Supabase/API en premier — cache mémoire mis à jour après confirmation
+    const currentIds = (storage.get("wishlists") || {})[userId] || [];
+    const exists = currentIds.includes(productId);
     if (NEXUS_CONFIG.apiUrl) {
       if (exists) {
         await this.apiFetch(`/api/wishlists/${productId}`, { method: 'DELETE' }).catch(() => {});
       } else {
         await this.apiFetch('/api/wishlists', { method: 'POST', body: JSON.stringify({ productId }) }).catch(() => {});
       }
-      return ws[userId];
-    }
-    if (this._sb) {
+    } else if (this._sb) {
       if (exists) {
-        const { error: eWd } = await this._sb.from("wishlists").delete().eq("user_id", userId).eq("product_id", productId); if (eWd) console.warn("[toggleWishlist delete]", eWd.message);
+        const { error: eWd } = await this._sb.from("wishlists").delete().eq("user_id", userId).eq("product_id", productId);
+        if (eWd) console.warn("[toggleWishlist delete]", eWd.message);
       } else {
-        const { error: eWi } = await this._sb.from("wishlists").insert({ user_id: userId, product_id: productId }); if (eWi) console.warn("[toggleWishlist insert]", eWi.message);
+        const { error: eWi } = await this._sb.from("wishlists").insert({ user_id: userId, product_id: productId });
+        if (eWi) console.warn("[toggleWishlist insert]", eWi.message);
       }
     }
-    return ws[userId];
+    const newIds = exists ? currentIds.filter(id => id !== productId) : [...currentIds, productId];
+    const ws = storage.get("wishlists") || {};
+    ws[userId] = newIds; storage.set("wishlists", ws);
+    return newIds;
   },
 
   // ── STOCK ALERTS ──────────────────────────────────────────────────
@@ -3733,7 +3731,8 @@ async signOut() {
         storage.set("nexus_coupons", mapped); return mapped;
       }
     }
-    return storage.get("nexus_coupons") || [];
+    // Ni API ni Supabase disponible — retourner tableau vide (pas de localStorage)
+    return [];
   },
   async saveCoupon(coupon) {
     // [FIX] POST /api/coupons en priorité — Supabase direct contournait requireRole('admin')
@@ -3756,6 +3755,7 @@ async signOut() {
             discount: data.discount ?? coupon.discount, description: data.description || coupon.description,
             maxUses: data.max_uses ?? coupon.maxUses, usedCount: data.used_count ?? coupon.usedCount ?? 0,
             expiresAt: data.expires_at || coupon.expiresAt, active: data.active ?? coupon.active };
+          // Mettre à jour le cache mémoire session
           if (idx >= 0) all[idx] = saved; else all.push(saved);
           storage.set("nexus_coupons", all);
           return saved;
@@ -3770,10 +3770,7 @@ async signOut() {
         active: coupon.active !== false
       }).catch(() => {});
     }
-    const all = storage.get("nexus_coupons") || [];
-    const idx = all.findIndex(c => c.id === coupon.id);
-    if (idx >= 0) all[idx] = coupon; else all.push(coupon);
-    storage.set("nexus_coupons", all);
+    // Pas d'écriture localStorage — source de vérité : API/Supabase uniquement
   },
   async updateCoupon(id, updates) {
     // [FIX] PATCH /api/coupons/:id en priorité
@@ -3790,6 +3787,7 @@ async signOut() {
       if (updates.usedCount !== undefined) sbUp.used_count = updates.usedCount;
       if (Object.keys(sbUp).length) { const { error: eCoup } = await this._sb.from("coupons").update(sbUp).eq("id", id); if (eCoup) console.warn("[saveCoupon]", eCoup.message); }
     }
+    // Mettre à jour cache mémoire session uniquement
     const all = storage.get("nexus_coupons") || [];
     const idx = all.findIndex(c => c.id === id);
     if (idx >= 0) { all[idx] = { ...all[idx], ...updates }; storage.set("nexus_coupons", all); }
@@ -3797,32 +3795,58 @@ async signOut() {
 
   // ── PRODUCT Q&A ───────────────────────────────────────────────────
   async getQA(productId) {
-    if (this._sb) {
-      const { data, error } = await this._sb.from("product_qa").select("*").eq("product_id", productId).order("created_at"); // [FIX] created_at
-      if (!error && data) {
-        const qa = storage.get("product_qa") || {};
-        qa[productId] = data.map(r => ({
-          id: r.id, productId: r.product_id, userId: r.user_id, userName: r.user_name,
-          vendorId: r.vendor_id, question: r.question, answer: r.answer,
-          date: r.created_at // [FIX] r.date → r.created_at
+    // Source de vérité : API → Supabase. Cache mémoire session uniquement.
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch(`/api/products/${productId}/qa`).catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json().catch(() => []);
+        const mapped = (Array.isArray(data) ? data : []).map(r => ({
+          id: r.id, productId: r.product_id || productId, userId: r.user_id, userName: r.user_name,
+          vendorId: r.vendor_id, question: r.question, answer: r.answer, date: r.created_at
         }));
-        storage.set("product_qa", qa); return qa[productId];
+        const qa = {};  // Q&A chargé depuis Supabase via getQA par produit
+        qa[productId] = mapped; storage.set("product_qa", qa);
+        return mapped;
       }
     }
+    if (this._sb) {
+      const { data, error } = await this._sb.from("product_qa").select("*").eq("product_id", productId).order("created_at");
+      if (!error && data) {
+        const mapped = data.map(r => ({
+          id: r.id, productId: r.product_id, userId: r.user_id, userName: r.user_name,
+          vendorId: r.vendor_id, question: r.question, answer: r.answer, date: r.created_at
+        }));
+        const qa = {};  // Q&A chargé depuis Supabase via getQA par produit
+        qa[productId] = mapped; storage.set("product_qa", qa);
+        return mapped;
+      }
+    }
+    // Fallback : cache mémoire session (jamais localStorage)
     return (storage.get("product_qa") || {})[productId] || [];
   },
   async saveQuestion(qa) {
-    if (this._sb) {
-      // [FIX] Ne pas inclure l'id local non-UUID — laisser Supabase gen_random_uuid()
+    // Écriture Supabase obligatoire — pas de fallback localStorage
+    if (NEXUS_CONFIG.apiUrl) {
+      const res = await this.apiFetch(`/api/products/${qa.productId}/qa`, {
+        method: 'POST',
+        body: JSON.stringify({ question: qa.question, userId: qa.userId, userName: qa.userName })
+      }).catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.id) qa = { ...qa, id: data.id };
+      }
+    } else if (this._sb) {
       const row = {
         product_id: qa.productId, user_id: qa.userId, user_name: qa.userName,
-        vendor_id:  qa.vendorId || null, question: qa.question,
-        answer:     qa.answer || null
-        // [FIX] colonne "date" supprimée — Supabase utilise created_at automatiquement
+        vendor_id: qa.vendorId || null, question: qa.question, answer: qa.answer || null
       };
       const { data } = await this._sb.from("product_qa").insert(row).select("id").single().catch(() => ({ data: null }));
-      if (data?.id) qa = { ...qa, id: data.id }; // remplacer l'ID local par le vrai UUID
+      if (data?.id) qa = { ...qa, id: data.id };
+    } else {
+      console.error("[saveQuestion] Ni API ni Supabase disponible — question non sauvegardée");
+      return;
     }
+    // Mettre à jour le cache mémoire session
     const all = storage.get("product_qa") || {};
     if (!all[qa.productId]) all[qa.productId] = [];
     const idx = all[qa.productId].findIndex(q => q.id === qa.id);
@@ -3832,7 +3856,7 @@ async signOut() {
 
   // ── REFERRALS ─────────────────────────────────────────────────────
   async getReferrals(userId) {
-    // [FIX] Route backend sécurisée
+    // Source de vérité : API → Supabase. Aucun fallback localStorage.
     if (NEXUS_CONFIG.apiUrl) {
       const res = await this.apiFetch("/api/referrals").catch(() => null);
       if (res && res.ok) return res.json().catch(() => []);
@@ -3841,17 +3865,16 @@ async signOut() {
       const { data, error } = await this._sb.from("referrals").select("*").eq("referrer_id", userId);
       if (!error && data) return data;
     }
-    return (storage.get("referrals") || []).filter(r => r.referrerId === userId);
+    return [];
   },
   async saveReferral(ref) {
-    // [FIX] Enregistrement via backend — validation anti-auto-parrainage côté serveur
+    // Enregistrement via backend — validation anti-auto-parrainage côté serveur
     if (NEXUS_CONFIG.apiUrl) {
       const res = await this.apiFetch("/api/referrals", {
         method: "POST",
         body: JSON.stringify({ referralCode: ref.code, referredEmail: ref.referredEmail })
       }).catch(() => null);
       if (res && res.ok) return res.json().catch(() => null);
-      // Même si le backend échoue, on ne bloque pas l'inscription
     }
     if (this._sb) {
       await this._sb.from("referrals").upsert({
@@ -3859,8 +3882,7 @@ async signOut() {
         code: ref.code, rewarded: ref.rewarded || false
       }).catch(()=>{});
     }
-    const all = storage.get("referrals") || [];
-    all.push(ref); storage.set("referrals", all);
+    // Pas d'écriture localStorage — les parrainages sont dans Supabase uniquement
   }
 };
 let stripeInstance = null;
@@ -4726,7 +4748,7 @@ const PROVIDER_LABELS = { orange: "🟠 Orange Money", wave: "🔵 Wave", free: 
 async function apiFetchPayout(path, options = {}) {
   const token = (window.__supabaseClient
     ? (await window.__supabaseClient.auth.getSession()).data?.session?.access_token
-    : null) || localStorage.getItem("sb_access_token") || "";
+    : null) || "";  // Pas de fallback localStorage pour sb_access_token
   const res = await fetch(path, {
     ...options,
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, ...(options.headers || {}) },
@@ -6085,7 +6107,7 @@ const PlatformHealth = () => {
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h2", { className: "section-title" }, "Sant\xE9 de la plateforme"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => setRefresh((r) => r + 1) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafra\xEEchir")), /* @__PURE__ */ React.createElement("div", { className: "stats-grid", style: { marginBottom: "2rem" } }, metrics.map((m, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${m.icon} stat-icon`, style: { color: m.color } }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, m.label), /* @__PURE__ */ React.createElement("div", { className: "stat-value", style: { color: m.color, fontSize: "1.6rem" } }, m.value), /* @__PURE__ */ React.createElement("div", { className: "stat-trend", style: { color: "var(--text-secondary)", fontSize: "0.75rem" } }, m.sub)))), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "\xC9tat des services")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.6rem" } }, systemChecks.map((check, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.65rem 1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${check.ok ? "check-circle" : "exclamation-circle"}`, style: { color: check.ok ? "var(--success)" : "var(--warning)", fontSize: "1.1rem", flexShrink: 0 } }), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 600, flex: 1, fontSize: "0.9rem" } }, check.label), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${check.ok ? "success" : "warning"}`, style: { fontSize: "0.75rem" } }, check.mode))))));
 };
 const shareWishlist = (currentUser2, products) => {
-  const wishlists = storage.get("wishlists") || {};
+  const wishlists = {};  // Chargé depuis Supabase
   const wishIds = wishlists[currentUser2 == null ? void 0 : currentUser2.id] || [];
   const wishProducts = products.filter((p) => wishIds.includes(p.id));
   if (wishProducts.length === 0) return;
@@ -6359,14 +6381,18 @@ const SafeLineChart = ({ data, dataKey = "ventes", label = "Ventes", color = "#0
   );
 };
 // ─────────────────────────────────────────────────────────────────────────────
+// storage — cache mémoire pur (AUCUN localStorage pour les données métier).
+// Source de vérité : Supabase / API backend.
+// Les tokens JWT restent dans localStorage via les helpers dédiés ci-dessous.
+// Le panier invité et les produits récemment vus utilisent sessionStorage (UI session).
+const _memStore = new Map();
 const storage = {
   get(key) {
-    try {
-      const item = localStorage.getItem(key);
-      return item ? JSON.parse(item) : null;
-    } catch (e) {
-      return null;
+    // Panier invité et préférences UI → sessionStorage (acceptable, session locale)
+    if (key === 'guest_cart' || key === 'cookie_consent' || key === 'onboarding_done' || key === 'nexus_setup_done') {
+      try { const v = sessionStorage.getItem('nexus_ss_' + key); return v ? JSON.parse(v) : null; } catch(e) { return null; }
     }
+    return _memStore.has(key) ? _memStore.get(key) : null;
   },
   // Retourne toujours un tableau — corrige le cas où orders/products sont stockés en objet {}
   getArray(key) {
@@ -6377,21 +6403,15 @@ const storage = {
     return [];
   },
   set(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
+    if (key === 'guest_cart' || key === 'cookie_consent' || key === 'onboarding_done' || key === 'nexus_setup_done') {
+      try { sessionStorage.setItem('nexus_ss_' + key, JSON.stringify(value)); } catch(e) {}
       return true;
-    } catch (e) {
-      return false;
     }
+    _memStore.set(key, value);
+    return true;
   },
-  delete(key) {
-    try {
-      localStorage.removeItem(key);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
+  remove(key) { _memStore.delete(key); try { sessionStorage.removeItem('nexus_ss_' + key); } catch(e) {} },
+  delete(key) { return this.remove(key); }
 };
 // ── PATCH : storage → SupabaseStorage (écriture Supabase en arrière-plan) ──
 // Le patch est appliqué automatiquement par nexus_storage_supabase.js
@@ -6514,7 +6534,7 @@ const initializeData = () => {
   storage.set("wishlists", {});
   storage.set("orders", []);
   storage.set("messages", []);
-  storage.set("pendingVendors", []);
+  storage.set("pendingVendors_mem", []);
   storage.set("offers", []);
   storage.set("data_v6", true);
 };
@@ -6600,7 +6620,7 @@ const WishlistHeart = ({ product, currentUser: currentUser2, addToast }) => {
   useEffect(() => {
     var _a;
     if (!currentUser2) return;
-    const wishlists = storage.get("wishlists") || {};
+    const wishlists = {};  // Chargé depuis Supabase
     setIsWishlisted(((_a = wishlists[currentUser2.id]) == null ? void 0 : _a.includes(product.id)) || false);
   }, [currentUser2, product.id]);
   const toggleWishlist = (e) => {
@@ -6609,7 +6629,7 @@ const WishlistHeart = ({ product, currentUser: currentUser2, addToast }) => {
       addToast("Connectez-vous pour utiliser la wishlist", "info");
       return;
     }
-    const wishlists = storage.get("wishlists") || {};
+    const wishlists = {};  // Chargé depuis Supabase
     const userWish = wishlists[currentUser2.id] || [];
     let newWish;
     if (userWish.includes(product.id)) {
@@ -7206,7 +7226,8 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       // ── Récompense parrainage gérée côté backend (rewardReferrer appelé dans /api/orders)
       // Fallback localStorage uniquement si pas de backend
       if (currentUser2 && !NEXUS_CONFIG.apiUrl) {
-        const refs = storage.get("referrals") || [];
+        // Les parrainages viennent de Supabase — pas de localStorage
+        const refs = [];  // Rechargé depuis Supabase via getReferrals si nécessaire
         const pendingRef = refs.find(r => r.newUserId === currentUser2.id && r.status === "pending");
         if (pendingRef) {
           const REFERRAL_REWARD = 200;
@@ -7217,7 +7238,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
             const { error: eRef } = await DataService._sb.from("referrals").update({ rewarded: true }).eq("code", pendingRef.code || ""); if (eRef) console.warn("[referral reward]", eRef.message);
           }
           const updRefs = refs.map(r => r.newUserId === currentUser2.id ? {...r, status:"completed", rewardDate: new Date().toISOString()} : r);
-          storage.set("referrals", updRefs);
+          // Pas d'écriture localStorage — le statut rewarded est mis à jour dans Supabase ci-dessus
           DataService.addNotification(pendingRef.referrerId, { type:"system", title:"🎁 Récompense parrainage !", message:`Votre filleul vient de passer sa 1ère commande ! Vous gagnez ${REFERRAL_REWARD} points de fidélité.` });
           DataService.addNotification(currentUser2.id, { type:"system", title:"⭐ Bonus filleul !", message:"Vous gagnez 50 pts de fidélité pour votre 1ère commande via parrainage." });
         }
@@ -7830,7 +7851,8 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
       if (role === "vendor") {
         // Les vendeurs passent par validation admin — pas de compte auth direct
         const id = "user_" + Date.now();
-        const pending = storage.get("pendingVendors") || [];
+        // Ne plus stocker dans localStorage — Supabase est la source de vérité
+        const pending = [];  // pendingVendors ne se stocke plus localement
         // FIX: snake_case pour correspondre aux colonnes Supabase
         const pendingEntry = {
           email:          form.email,
@@ -7856,7 +7878,8 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         };
         // localStorage garde le format local — date supprimée (Supabase utilise created_at)
         pending.push({ id, ...pendingEntry, role: "vendor" });
-        storage.set("pendingVendors", pending);
+        // L'inscription vendor est envoyée à Supabase via l'API backend
+        console.info("[vendor registration] Demande envoyée à Supabase — pas de stockage local");
         // Appel backend — URL absolue ou relative selon la configuration
         {
           const base3 = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
@@ -10511,7 +10534,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   }, []);
   // ── Homepage Editor States ──
   const [adminBanners, setAdminBanners] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_banners') || 'null') || [
+    try { return storage.get('nexus_admin_banners') || [
       { cls: 'slide-0', badge: '🌿 Nouveautés', title: 'Découvrez les\nMeilleurs Produits', sub: 'Vendeurs vérifiés · Paiement Orange Money & Wave', deco: 'NX', active: true },
       { cls: 'slide-1', badge: '⚡ Vente Flash', title: 'Jusqu\'à -60%\nsur l\'Électronique', sub: 'Offres limitées, profitez-en maintenant', deco: '%', active: true },
       { cls: 'slide-2', badge: '🛍️ Mode & Style', title: 'Collection\nSaison 2025', sub: 'Tissus africains, prêt-à-porter, accessoires', deco: '👗', active: true },
@@ -10519,10 +10542,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     ]; } catch(e) { return []; }
   });
   const [adminCategories, setAdminCategories] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_categories') || 'null') || []; } catch(e) { return []; }
+    try { return storage.get('nexus_admin_categories') || []; } catch(e) { return []; }
   });
   const [adminPromos, setAdminPromos] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_promos') || 'null') || [
+    try { return storage.get('nexus_admin_promos') || [
       { cls: 'green', deco: '🏪', label: 'Opportunité', title: 'Devenez\nVendeur', cta: 'Commencer maintenant', active: true },
       { cls: 'yellow', deco: '💰', label: 'Bons Plans', title: 'Prix\nImbattables', cta: 'Voir les offres', active: true },
       { cls: 'red', deco: '⭐', label: 'Sélection', title: 'Top Produits\nNotés', cta: 'Découvrir', active: true },
@@ -10598,7 +10621,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     }).catch(() => {});
 
     // Charger les vendeurs en attente — triple source de vérité
-    let pendingData = storage.get("pendingVendors") || [];
+    let pendingData = storage.get("pendingVendors_mem") || [];
     let _apiPendingOk = false;
     if (NEXUS_CONFIG.apiUrl) {
       try {
@@ -10607,7 +10630,8 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           const apiData = await resp.json();
           if (Array.isArray(apiData) && apiData.length >= 0) {
             pendingData = apiData;
-            storage.set("pendingVendors", apiData); // Sync localStorage
+            // Cache mémoire session uniquement (plus localStorage)
+        storage.set("pendingVendors_mem", apiData);
             _apiPendingOk = true;
           }
         } else if (resp && resp.status === 403) {
@@ -10643,7 +10667,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
             status:    v.status,
           }));
           pendingData = normalized;
-          storage.set("pendingVendors", normalized);
+          storage.set("pendingVendors_mem", normalized);
           if (normalized.length > 0) {
             console.info(`[loadData] pendingVendors: ${normalized.length} trouvé(s) via Supabase direct`);
           }
@@ -10727,7 +10751,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
 
     // Mise à jour locale immédiate après succès API
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
-    storage.set("pendingVendors", (storage.get("pendingVendors") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
+    storage.set("pendingVendors_mem", (storage.get("pendingVendors_mem") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
     if (vendor) {
       DataService.addNotification(vendorId, {
         type: "vendor", title: "🎉 Boutique approuvée !",
@@ -10768,7 +10792,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     }
 
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
-    storage.set("pendingVendors", (storage.get("pendingVendors") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
+    storage.set("pendingVendors_mem", (storage.get("pendingVendors_mem") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
     loadData();
     addToast(`Demande de ${vendor?.name || "ce vendeur"} refusée.`, "info");
   };
@@ -10825,7 +10849,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   ].map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "stat-card", role: "listitem" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${s.icon} stat-icon`, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, s.label), /* @__PURE__ */ React.createElement("div", { className: "stat-value" }, s.value), /* @__PURE__ */ React.createElement("div", { className: "stat-trend" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-up", "aria-hidden": "true" }), " ", s.trend)))), pendingVendors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning mb-2", role: "alert" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-clock", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("strong", null, pendingVendors.length, " demande(s) vendeur en attente"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-sm", style: { marginLeft: "auto", background: "var(--warning)", color: "white" }, onClick: () => setView("vendors") }, "Voir")), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Commandes R\xE9centes"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => setView("orders") }, "Toutes les commandes")), /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Commandes r\xE9centes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Vendeur"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Commission"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"))), /* @__PURE__ */ React.createElement("tbody", null, orders.slice(0, 5).map((order) => {
     var _a, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: order.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", null, order.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, order.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, order.vendorName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(order.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Commission", style: { color: "var(--success)" } }, formatPrice(order.commission || 0)), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${((_a = STATUS_MAP[order.status]) == null ? void 0 : _a.badge) || "warning"}` }, ((_b = STATUS_MAP[order.status]) == null ? void 0 : _b.label) || order.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(order.date).toLocaleDateString("fr-FR")));
-  })))))), view === "vendors" && /* @__PURE__ */ React.createElement(React.Fragment, null,/* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-plug" }),/* @__PURE__ */ React.createElement("span", null,/* @__PURE__ */ React.createElement("strong", null, "Source : "),NEXUS_CONFIG.apiUrl ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--success)" } }, "\u2713 API Render") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--warning)" } }, "\u26A0 Pas d'apiUrl"),DataService._sb ? " + Supabase direct (fallback actif)" : " — Supabase non initialisé"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { marginLeft: "auto" }, onClick: () => { storage.remove && storage.remove("pendingVendors"); loadData(); addToast("Liste rafraîchie", "info"); } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir")),pendingVendors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" },/* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs en Attente"),/* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", "aria-label": `${pendingVendors.length} en attente` }, pendingVendors.length)),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"),/* @__PURE__ */ React.createElement("th", null, "Email"),/* @__PURE__ */ React.createElement("th", null, "Catégorie"),/* @__PURE__ */ React.createElement("th", null, "NINEA / RC"),/* @__PURE__ */ React.createElement("th", null, "Téléphone"),/* @__PURE__ */ React.createElement("th", null, "Date"),/* @__PURE__ */ React.createElement("th", null, "Actions"))),/* @__PURE__ */ React.createElement("tbody", null, pendingVendors.map((vendor) =>/* @__PURE__ */ React.createElement("tr", { key: vendor.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, vendor.name), /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, vendor.ownerName)),/* @__PURE__ */ React.createElement("td", null, vendor.email),/* @__PURE__ */ React.createElement("td", null, vendor.category || "—"),/* @__PURE__ */ React.createElement("td", { style: { fontFamily: "monospace", fontSize: "0.8rem" } }, vendor.ninea ? `${vendor.ninea}${vendor.rc ? " / " + vendor.rc : ""}` : "—"),/* @__PURE__ */ React.createElement("td", null, vendor.phone || "—"),/* @__PURE__ */ React.createElement("td", null, (() => { try { return new Date(vendor.date).toLocaleDateString("fr-FR"); } catch(_) { return vendor.date || "—"; } })()),/* @__PURE__ */ React.createElement("td", null,/* @__PURE__ */ React.createElement("div", { className: "flex gap-1" },/* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => approveVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => rejectVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser"))))))))),pendingVendors.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-success mb-2", style: { fontSize: "0.85rem" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" })," Aucune demande en attente. Si vous attendez une inscription, cliquez Rafraîchir."),/* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs Actifs (", vendors.length, ")"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: async () => { if (NEXUS_CONFIG.apiUrl) { try { const _rv = await DataService.apiFetch("/api/admin/export/vendors"); if (_rv && _rv.ok) { const _tv = await _rv.text(); const _av = document.createElement("a"); _av.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_tv); _av.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _av.click(); return; } } catch(_ev) {} } const _rows = [["ID","Boutique","Email","Note","CA FCFA"].join(",")]; vendors.forEach(v => _rows.push([v.id,`"${v.name||""}"`,v.email||"",v.rating||0,Math.round((v.totalSales||0)*655.957)].join(","))); const _aav = document.createElement("a"); _aav.href = "data:text/csv;charset=utf-8,\\uFEFF" + encodeURIComponent(_rows.join("\\n")); _aav.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _aav.click(); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Export CSV")),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"), /* @__PURE__ */ React.createElement("th", null, "Email"), /* @__PURE__ */ React.createElement("th", null, "Ventes"), /* @__PURE__ */ React.createElement("th", null, "Commission"), /* @__PURE__ */ React.createElement("th", null, "Note"), /* @__PURE__ */ React.createElement("th", null, "Statut"))),/* @__PURE__ */ React.createElement("tbody", null, vendors.map((v) =>/* @__PURE__ */ React.createElement("tr", { key: v.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { width: "30px", height: "30px", fontSize: "0.75rem" } }, v.avatar), /* @__PURE__ */ React.createElement("strong", null, v.name))),/* @__PURE__ */ React.createElement("td", null, v.email),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, formatPrice(v.totalSales || 0))),/* @__PURE__ */ React.createElement("td", null, v.commission, "%"),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "stars" }, "★"), " ", v.rating),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, "Actif"))))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Toutes les Commandes (", orders.length, ")"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", title: "Exporter toutes les commandes en CSV", onClick: async () => {
+  })))))), view === "vendors" && /* @__PURE__ */ React.createElement(React.Fragment, null,/* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-plug" }),/* @__PURE__ */ React.createElement("span", null,/* @__PURE__ */ React.createElement("strong", null, "Source : "),NEXUS_CONFIG.apiUrl ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--success)" } }, "\u2713 API Render") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--warning)" } }, "\u26A0 Pas d'apiUrl"),DataService._sb ? " + Supabase direct (fallback actif)" : " — Supabase non initialisé"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { marginLeft: "auto" }, onClick: () => { storage.remove("pendingVendors_mem"); loadData(); addToast("Liste rafraîchie", "info"); } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir")),pendingVendors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" },/* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs en Attente"),/* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", "aria-label": `${pendingVendors.length} en attente` }, pendingVendors.length)),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"),/* @__PURE__ */ React.createElement("th", null, "Email"),/* @__PURE__ */ React.createElement("th", null, "Catégorie"),/* @__PURE__ */ React.createElement("th", null, "NINEA / RC"),/* @__PURE__ */ React.createElement("th", null, "Téléphone"),/* @__PURE__ */ React.createElement("th", null, "Date"),/* @__PURE__ */ React.createElement("th", null, "Actions"))),/* @__PURE__ */ React.createElement("tbody", null, pendingVendors.map((vendor) =>/* @__PURE__ */ React.createElement("tr", { key: vendor.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, vendor.name), /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, vendor.ownerName)),/* @__PURE__ */ React.createElement("td", null, vendor.email),/* @__PURE__ */ React.createElement("td", null, vendor.category || "—"),/* @__PURE__ */ React.createElement("td", { style: { fontFamily: "monospace", fontSize: "0.8rem" } }, vendor.ninea ? `${vendor.ninea}${vendor.rc ? " / " + vendor.rc : ""}` : "—"),/* @__PURE__ */ React.createElement("td", null, vendor.phone || "—"),/* @__PURE__ */ React.createElement("td", null, (() => { try { return new Date(vendor.date).toLocaleDateString("fr-FR"); } catch(_) { return vendor.date || "—"; } })()),/* @__PURE__ */ React.createElement("td", null,/* @__PURE__ */ React.createElement("div", { className: "flex gap-1" },/* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => approveVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => rejectVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser"))))))))),pendingVendors.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-success mb-2", style: { fontSize: "0.85rem" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" })," Aucune demande en attente. Si vous attendez une inscription, cliquez Rafraîchir."),/* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs Actifs (", vendors.length, ")"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: async () => { if (NEXUS_CONFIG.apiUrl) { try { const _rv = await DataService.apiFetch("/api/admin/export/vendors"); if (_rv && _rv.ok) { const _tv = await _rv.text(); const _av = document.createElement("a"); _av.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_tv); _av.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _av.click(); return; } } catch(_ev) {} } const _rows = [["ID","Boutique","Email","Note","CA FCFA"].join(",")]; vendors.forEach(v => _rows.push([v.id,`"${v.name||""}"`,v.email||"",v.rating||0,Math.round((v.totalSales||0)*655.957)].join(","))); const _aav = document.createElement("a"); _aav.href = "data:text/csv;charset=utf-8,\\uFEFF" + encodeURIComponent(_rows.join("\\n")); _aav.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _aav.click(); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Export CSV")),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"), /* @__PURE__ */ React.createElement("th", null, "Email"), /* @__PURE__ */ React.createElement("th", null, "Ventes"), /* @__PURE__ */ React.createElement("th", null, "Commission"), /* @__PURE__ */ React.createElement("th", null, "Note"), /* @__PURE__ */ React.createElement("th", null, "Statut"))),/* @__PURE__ */ React.createElement("tbody", null, vendors.map((v) =>/* @__PURE__ */ React.createElement("tr", { key: v.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { width: "30px", height: "30px", fontSize: "0.75rem" } }, v.avatar), /* @__PURE__ */ React.createElement("strong", null, v.name))),/* @__PURE__ */ React.createElement("td", null, v.email),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, formatPrice(v.totalSales || 0))),/* @__PURE__ */ React.createElement("td", null, v.commission, "%"),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "stars" }, "★"), " ", v.rating),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, "Actif"))))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Toutes les Commandes (", orders.length, ")"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", title: "Exporter toutes les commandes en CSV", onClick: async () => {
   if (NEXUS_CONFIG.apiUrl) { try { const _r = await DataService.apiFetch("/api/admin/export/orders"); if (_r && _r.ok) { const _t = await _r.text(); const _a = document.createElement("a"); _a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_t); _a.download = `nexus_commandes_${new Date().toISOString().slice(0,10)}.csv`; _a.click(); return; } } catch(_e) {} }
   const BOM = "\uFEFF";
   const rows = [["ID","Date","Acheteur","Email Acheteur","Vendeur","Produits","Total EUR","Total FCFA","Commission FCFA","Statut","Adresse","Tracking"].join(",")];
@@ -11153,7 +11177,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     };
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retrait (", reqs.length, ")"), /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, reqs.filter((r) => r.status === "pending").length, " en attente")), reqs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune demande")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "ID"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Montant"), /* @__PURE__ */ React.createElement("th", null, "M\xE9thode"), /* @__PURE__ */ React.createElement("th", null, "Destination"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, reqs.sort((a, b) => new Date(b.date) - new Date(a.date)).map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, r.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, r.vendorName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--success)" } }, formatPrice(r.amount))), /* @__PURE__ */ React.createElement("td", { "data-label": "M\xE9thode" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, r.provider)), /* @__PURE__ */ React.createElement("td", { "data-label": "Destination", style: { fontFamily: "monospace", fontSize: "0.82rem" } }, r.destination), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${r.status === "paid" ? "success" : r.status === "rejected" ? "danger" : "warning"}` }, r.status === "paid" ? "Pay\xE9" : r.status === "rejected" ? "Refus\xE9" : "En attente")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, r.status === "pending" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handlePayout(r.id, true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Valider"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handlePayout(r.id, false) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))))))))));
   })(), view === "health" && /* @__PURE__ */ React.createElement(PlatformHealth, null), view === "homepage_editor" && (() => {
-      const saveS = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch(e){} };
+      const saveS = (key, val) => { storage.set(key, val); };  // Cache mémoire session (plus localStorage)
       const moveItem = (arr, idx, dir) => { const a = [...arr]; const to = idx + dir; if (to < 0 || to >= a.length) return a; [a[idx], a[to]] = [a[to], a[idx]]; return a; };
       return React.createElement(React.Fragment, null,
 
@@ -11644,7 +11668,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     const btn = modal.querySelector('#_resetConfirm');
     inp.addEventListener('input', () => { const ok = inp.value === 'RESET'; btn.disabled = !ok; btn.style.opacity = ok ? '1' : '.4'; });
     modal.querySelector('#_resetCancel').addEventListener('click', () => document.body.removeChild(modal));
-    btn.addEventListener('click', () => { document.body.removeChild(modal); localStorage.clear(); window.location.reload(); });
+    btn.addEventListener('click', () => { document.body.removeChild(modal); // Effacement des données session mémoire + sessionStorage
+_memStore.clear(); 
+['nexus_ss_guest_cart','nexus_ss_cookie_consent','nexus_ss_onboarding_done','nexus_ss_nexus_setup_done'].forEach(k => { try { sessionStorage.removeItem(k); } catch(e){} });
+window.location.reload(); });
     inp.focus();
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset données"))), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
@@ -12896,7 +12923,7 @@ const VendorInvoicesView = ({ currentUser: currentUser2, orders, addToast, downl
 
   const downloadOrderInvoice = async (orderId) => {
     const url = `${NEXUS_CONFIG.apiUrl}/api/invoices/order/${orderId}/pdf?type=vendor`;
-    const tok = DataService._getToken ? DataService._getToken() : localStorage.getItem("nexus_token");
+    const tok = DataService._getToken ? DataService._getToken() : (DataService._token || sessionStorage.getItem("nexus_jwt") || null);
     const r = await fetch(url, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
     if (!r.ok) { addToast("Erreur génération facture", "error"); return; }
     const blob = await r.blob();
@@ -12966,7 +12993,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   const _downloadStatement = onDownloadStatement || window.__nexusDownloadMonthlyStatement || (() => (window.__nexusToast || alert)("Relevé mensuel : connectez-vous au serveur NEXUS.", "error"));
   // ── Homepage Editor States ──
   const [adminBanners, setAdminBanners] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_banners') || 'null') || [
+    try { return storage.get('nexus_admin_banners') || [
       { cls: 'slide-0', badge: '🌿 Nouveautés', title: 'Découvrez les\nMeilleurs Produits', sub: 'Vendeurs vérifiés · Paiement Orange Money & Wave', deco: 'NX', active: true },
       { cls: 'slide-1', badge: '⚡ Vente Flash', title: 'Jusqu\'à -60%\nsur l\'Électronique', sub: 'Offres limitées, profitez-en maintenant', deco: '%', active: true },
       { cls: 'slide-2', badge: '🛍️ Mode & Style', title: 'Collection\nSaison 2025', sub: 'Tissus africains, prêt-à-porter, accessoires', deco: '👗', active: true },
@@ -12974,10 +13001,10 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     ]; } catch(e) { return []; }
   });
   const [adminCategories, setAdminCategories] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_categories') || 'null') || []; } catch(e) { return []; }
+    try { return storage.get('nexus_admin_categories') || []; } catch(e) { return []; }
   });
   const [adminPromos, setAdminPromos] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('nexus_admin_promos') || 'null') || [
+    try { return storage.get('nexus_admin_promos') || [
       { cls: 'green', deco: '🏪', label: 'Opportunité', title: 'Devenez\nVendeur', cta: 'Commencer maintenant', active: true },
       { cls: 'yellow', deco: '💰', label: 'Bons Plans', title: 'Prix\nImbattables', cta: 'Voir les offres', active: true },
       { cls: 'red', deco: '⭐', label: 'Sélection', title: 'Top Produits\nNotés', cta: 'Découvrir', active: true },
@@ -13236,7 +13263,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     { id: "analytics", icon: "chart-bar", label: "Statistiques" },
     { id: "reviews", icon: "star", label: "Avis clients" },
     { id: "qa", icon: "question-circle", label: "Q&R produits", badge: (() => {
-      const qa = storage.get("product_qa") || {};
+      const qa = {};  // Q&A chargé depuis Supabase via getQA par produit
       return products.flatMap((p) => (qa[p.id] || []).filter((q) => !q.answer)).length;
     })() },
     { id: "invoices", icon: "file-invoice-dollar", label: "Factures & Relevés" },
@@ -13322,7 +13349,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     const saveAnswer = (qId, productId) => {
       var _a;
       if (!((_a = answer[qId]) == null ? void 0 : _a.trim())) return;
-      const qa = storage.get("product_qa") || {};
+      const qa = {};  // Q&A chargé depuis Supabase via getQA par produit
       if (!qa[productId]) return;
       const idx = qa[productId].findIndex((q) => q.id === qId);
       if (idx >= 0) {
@@ -13562,8 +13589,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
     const savedCart = storage.get("guest_cart") || [];
     setCart(savedCart);
     // Charger les avis
-    const allReviews = DataService.getReviews ? await DataService.getReviews({}).catch(() => storage.getArray("reviews")) : storage.getArray("reviews");
-    setReviews(Array.isArray(allReviews) ? allReviews : storage.getArray("reviews"));
+    const allReviews = DataService.getReviews ? await DataService.getReviews({}).catch(() => []) : [];
+    setReviews(Array.isArray(allReviews) ? allReviews : []);
   })(); }, []);
   const addToCart = (product, quantity = 1) => {
     if (!product || product.stock <= 0) {
@@ -14583,7 +14610,7 @@ const PUSH_NOTIF_TYPES = [
 const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
   const PREF_KEY = `push_prefs_${currentUser2?.id || "guest"}`;
   const [prefs, setPrefs] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem(PREF_KEY) || "{}"); } catch { return {}; }
+    try { return JSON.parse(sessionStorage.getItem(PREF_KEY) || "{}"); } catch { return {}; }
   });
   const [permission, setPermission] = React.useState(typeof Notification !== "undefined" ? Notification.permission : "default");
   const [subLoading, setSubLoading] = React.useState(false);
@@ -14591,7 +14618,7 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
   const togglePref = (key) => {
     const next = { ...prefs, [key]: !prefs[key] };
     setPrefs(next);
-    localStorage.setItem(PREF_KEY, JSON.stringify(next));
+    sessionStorage.setItem(PREF_KEY, JSON.stringify(next));
     addToast(`Notification "${PUSH_NOTIF_TYPES.find(t=>t.key===key)?.label}" ${next[key] ? "activée" : "désactivée"}`, "success");
   };
 
@@ -14763,7 +14790,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       const savedCart = await DataService.getCart(currentUser2.id).catch(() => storage.get(`cart_${currentUser2.id}`) || []);
       DataService.migrateLocalCart(currentUser2.id).catch(() => {});
       DataService.migrateLocalStockAlerts(currentUser2.id).catch(() => {});
-      const wishlists = storage.get("wishlists") || {};
+      const wishlists = {};  // Chargé depuis Supabase via getWishlist
       const userWish = wishlists[currentUser2.id] || [];
       setProducts(allProducts || []);
       setOrders(Array.isArray(allOrders) ? allOrders : (allOrders || []).filter((o) => o.buyer === currentUser2.id));
@@ -14772,16 +14799,16 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setReviews(allReviews);
       setOffers((allOffers.status === "fulfilled" ? allOffers.value : []).filter((o) => o.buyerId === currentUser2.id));
     } catch(e) {
-      // fallback localStorage
-      const allProducts = storage.getArray("products");
-      const allOrders = storage.getArray("orders");
+      // Pas de fallback localStorage — si l'API échoue, afficher vide
+      const allProducts = [];
+      const allOrders = [];
       setProducts(allProducts);
       setOrders(allOrders.filter((o) => o.buyer === currentUser2.id));
-      setCart(storage.get(`cart_${currentUser2.id}`) || []);
+      setCart([]);
       const w = storage.get("wishlists") || {};
       setWishlist(w[currentUser2.id] || []);
-      setReviews(storage.getArray("reviews"));
-      setOffers(storage.getArray("offers").filter((o) => o.buyerId === currentUser2.id));
+      setReviews([]);
+      setOffers([]);
     }
   };
   const addToCart = (product) => {
@@ -14833,7 +14860,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setView("orders");
   };
   const toggleWishlist = (product) => {
-    const wishlists = storage.get("wishlists") || {};
+    const wishlists = {};  // Chargé depuis Supabase
     const userWish = wishlists[currentUser2.id] || [];
     let newWish;
     if (userWish.includes(product.id)) {
@@ -14875,8 +14902,8 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "wishlist", icon: "heart", label: "Ma Wishlist", badge: wishlist.length },
     { id: "orders", icon: "box", label: "Mes Commandes" },
     { id: "messages", icon: "comments", label: "Messages", badge: (() => {
-        // [FIX] Fallback localStorage — le vrai compteur est mis à jour par useEffect sur unreadMsgCount
-        const msgs = storage.getArray("messages");
+        // Pas de fallback localStorage — les messages viennent de Supabase
+        const msgs = [];
         return msgs.filter(m => (m.to === currentUser2.id || m.to_id === currentUser2.id) && !m.read).length;
       })() },
     { id: "offers", icon: "hand-holding-usd", label: "Mes Offres", badge: offers.filter((o) => o.status === "pending").length },
@@ -14953,7 +14980,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     /* @__PURE__ */ React.createElement("span", { style:{fontSize:"0.78rem",color:"var(--text-secondary)"} }, "Cliquez sur un contact pour ouvrir la conversation")
   ),
   (() => {
-    const allMsgs = storage.getArray("messages");
+    const allMsgs = [];  // Messages chargés depuis Supabase — pas localStorage
     const myMsgs = allMsgs.filter(m => m.from === currentUser2.id || m.to === currentUser2.id);
     // Group by conversation partner
     const threads = {};
@@ -15009,7 +15036,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     const LoyaltyHist = () => {
       const [ld, setLd] = React.useState(null);
       React.useEffect(() => { DataService.getLoyaltyPoints && DataService.getLoyaltyPoints(currentUser2.id).then(d => setLd(d)).catch(() => {}); }, []);
-      const pts2 = ld?.points ?? (storage.get("loyalty_points") || {})[currentUser2.id] ?? 0;
+      const pts2 = ld?.points ?? 0;  // Points lus depuis Supabase via getLoyaltyPoints
       const tier = ld?.tier || "Bronze";
       const hist = ld?.history || [];
       const tierC = { Bronze: "#cd7f32", Silver: "#9ca3af", Gold: "#ffd700" };
@@ -15141,8 +15168,8 @@ const ProfileEditor = ({ currentUser: currentUser2, addToast }) => {
   const [saving, setSaving] = useState(false);
   const [savingPw, setSavingPw] = useState(false);
   const [showPw, setShowPw] = useState(false);
-  const orders = storage.getArray("orders").filter((o) => o.buyer === currentUser2.id);
-  const wishlists = storage.get("wishlists") || {};
+  const orders = [];  // Rechargé depuis Supabase — voir useEffect getOrders
+  const wishlists = {};  // Chargé depuis Supabase
   const wishCount = ((_b = wishlists[currentUser2.id]) == null ? void 0 : _b.length) || 0;
   const handleSaveProfile = async () => {
     const errs = {};
@@ -15749,10 +15776,10 @@ const App = ({ onUserChange }) => {
 
     // ── Auto-login admin depuis nexus_admin.html ──────────────────────
     (async () => { try {
-      const pending = localStorage.getItem('nexus_pending_admin');
+      const pending = sessionStorage.getItem('nexus_pending_admin');
       if (pending) {
         const { userId, ts } = JSON.parse(pending);
-        localStorage.removeItem('nexus_pending_admin');
+        sessionStorage.removeItem('nexus_pending_admin');
         sessionStorage.removeItem('nexus_admin_autologin');
         if (Date.now() - ts < 30000) {
           // Vérifier le rôle admin directement dans Supabase profiles
@@ -15784,7 +15811,7 @@ const App = ({ onUserChange }) => {
     restoreSupabaseSession().catch(() => {}).finally(() => {
       clearTimeout(sessionTimer);
       if (currentUser2) {
-        const wishlists = storage.get("wishlists") || {};
+        const wishlists = {};  // Chargé depuis Supabase via getWishlist
         setWishlistCount(((_a = wishlists[currentUser2.id]) == null ? void 0 : _a.length) || 0);
       }
     });
@@ -15917,7 +15944,7 @@ const App = ({ onUserChange }) => {
         }
       }).catch(() => {});
     }
-    const wishlists = storage.get("wishlists") || {};
+    const wishlists = {};  // Chargé depuis Supabase
     setWishlistCount(((_a = wishlists[user.id]) == null ? void 0 : _a.length) || 0);
     const toured = storage.get("onboarding_done") || [];
     if (!toured.includes(user.id)) {
@@ -16305,11 +16332,11 @@ function _pushLocalEvent(category, action, label, value) {
       lbl: label || '',
       val: value != null ? Number(value) : undefined
     };
-    const arr = JSON.parse(localStorage.getItem(_localAnalyticsKey) || '[]');
+    const arr = [];  // Analytics — pas de localStorage
     arr.push(ev);
     // Conserver max 2000 événements
     if (arr.length > 2000) arr.splice(0, arr.length - 2000);
-    localStorage.setItem(_localAnalyticsKey, JSON.stringify(arr));
+    // Pas de stockage analytics local
   } catch(e) { /* silencieux */ }
 }
 
@@ -16373,7 +16400,7 @@ window.nexusAnalytics = {
   // Renvoie les stats locales pour le dashboard admin
   getLocalStats() {
     try {
-      const arr = JSON.parse(localStorage.getItem(_localAnalyticsKey) || '[]');
+      const arr = [];  // Analytics — pas de localStorage
       const last30 = Date.now() - 30 * 86400000;
       const recent = arr.filter(e => e.ts > last30);
       const byDay  = {};
@@ -18498,8 +18525,8 @@ const MessagingBadge = ({ currentUser, onClick }) => {
           const data = await res.json().catch(() => null);
           if (data && typeof data.count === 'number') { setUnread(data.count); return; }
         }
-        // Fallback localStorage
-        const msgs = storage.getArray('messages');
+        // Pas de fallback localStorage
+        const msgs = [];
         setUnread(msgs.filter(m => m.to === currentUser.id && !m.read).length);
       } catch (_) {}
     };
