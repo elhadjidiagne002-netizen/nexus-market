@@ -1,6 +1,6 @@
 /**
  * functions/payout-request.js
- * POST /payout-request → Crée une demande de retrait via PayTech Transfer
+ * POST /payout-request → Crée une demande de retrait vendeur via PayTech Transfer
  */
 import { createClient } from "@supabase/supabase-js";
 
@@ -37,7 +37,7 @@ async function callPaytechTransfer(payload, apiKey, apiSecret) {
     },
     body: JSON.stringify(payload),
   });
-  const data = await res.json().catch(() => ({ raw: await res.text() }));
+  const data = await res.json().catch(async () => ({ raw: await res.text() }));
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -177,7 +177,7 @@ export async function onRequestPost(context) {
 
   // Notification admin
   await sb.from("notifications").insert({
-    user_id: "admin", // à adapter selon votre système
+    user_id: "admin",
     type: "payout",
     title: "💰 Nouvelle demande de retrait",
     message: `${vendorName} demande ${amount.toLocaleString("fr-FR")} FCFA via ${method === "mobile" ? PROVIDERS[provider] : "virement"}`,
