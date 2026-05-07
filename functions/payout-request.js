@@ -46,12 +46,15 @@ export async function onRequestPost(context) {
 
   const {
     SUPABASE_URL, SUPABASE_SERVICE_KEY,
-    PAYTECH_API_KEY, PAYTECH_API_SECRET,
+    PAYTECH_API_KEY,
+    // [FIX] Harmonisation : PAYTECH_SECRET_KEY (était PAYTECH_API_SECRET
+    // dans cette fonction, mais PAYTECH_SECRET_KEY partout ailleurs).
+    PAYTECH_SECRET_KEY,
     PAYTECH_ENV = "prod",
     SITE_URL,
   } = env;
 
-  if (!SUPABASE_SERVICE_KEY || !PAYTECH_API_KEY || !PAYTECH_API_SECRET) {
+  if (!SUPABASE_SERVICE_KEY || !PAYTECH_API_KEY || !PAYTECH_SECRET_KEY) {
     return json(503, { error: "Configuration incomplète" });
   }
 
@@ -70,10 +73,12 @@ export async function onRequestPost(context) {
   try { body = await request.json(); } catch { return json(400, { error: "JSON invalide" }); }
   const { amount, method, provider, destination } = body;
 
-  if (!amount || amount < MIN_PAYOUT_XOF) {
-    return json(400, { error: `Montant minimum ${MIN_PAYOUT_XOF} FCFA` });
+  // [FIX] Validation que amount est un entier positif (PayTech exige un entier XOF)
+  const amountInt = Math.floor(Number(amount));
+  if (!amountInt || amountInt < MIN_PAYOUT_XOF || amountInt !== Number(amount)) {
+    return json(400, { error: `Montant invalide — entier ≥ ${MIN_PAYOUT_XOF} FCFA requis` });
   }
-  if (!method || !["mobile","bank"].includes(method)) {
+  if (!method || !["mobile", "bank"].includes(method)) {
     return json(400, { error: "Méthode invalide" });
   }
   if (method === "mobile" && !PROVIDERS[provider]) {
@@ -87,35 +92,43 @@ export async function onRequestPost(context) {
   const eurToXof = parseFloat(env.EUR_TO_XOF || "655.957");
 
   // Calcul du solde
-  const { data: orders } = await sb
+  // [FIX] La colonne du vendeur est vendor_id (et non vendor)
+  // conformément au schéma orders (cf. saveOrder dans index.html).
+  const { data: orders, error: ordErr } = await sb
     .from("orders")
     .select("total, commission")
-    .eq("vendor", user.id)
+    .eq("vendor_id", user.id)
     .eq("status", "delivered");
 
-  const grossXof = orders.reduce((s, o) => s + Math.round((o.total || 0) * eurToXof), 0);
-  const commXof = orders.reduce((s, o) => {
+  if (ordErr) return json(500, { error: "Erreur lecture commandes" });
+
+  const grossXof = (orders || []).reduce((s, o) => s + Math.round((o.total || 0) * eurToXof), 0);
+  const commXof = (orders || []).reduce((s, o) => {
     const c = o.commission != null ? o.commission : (o.total || 0) * commissionRate;
     return s + Math.round(c * eurToXof);
   }, 0);
   const netXof = grossXof - commXof;
 
-  const { data: existing } = await sb
+  // [FIX] Vérification de l'erreur avant le .reduce() — si la query échoue,
+  // existing vaut null et .reduce() lèverait un TypeError.
+  const { data: existing, error: existErr } = await sb
     .from("payout_requests")
     .select("amount_xof, status")
     .eq("vendor_id", user.id)
     .in("status", ["pending", "processing", "paid"]);
 
-  const usedXof = existing.reduce((s, p) => s + p.amount_xof, 0);
+  if (existErr) return json(500, { error: "Erreur lecture retraits" });
+
+  const usedXof = (existing || []).reduce((s, p) => s + (p.amount_xof || 0), 0);
   const availableXof = Math.max(0, netXof - usedXof);
 
-  if (amount > availableXof) {
+  if (amountInt > availableXof) {
     return json(400, { error: `Solde insuffisant (disponible ${availableXof} FCFA)` });
   }
 
-  // Profil vendeur
+  // [FIX] Table profiles (et non users) pour le profil vendeur
   const { data: profile } = await sb
-    .from("users")
+    .from("profiles")
     .select("name, email")
     .eq("id", user.id)
     .single();
@@ -123,7 +136,6 @@ export async function onRequestPost(context) {
   const vendorName = profile?.name || user.email || "Vendeur";
   const vendorEmail = profile?.email || user.email;
 
-  // Création en base
   const refCommand = `NEXUS-PAY-${Date.now()}`;
   const { data: newPayout, error: insertErr } = await sb
     .from("payout_requests")
@@ -131,7 +143,7 @@ export async function onRequestPost(context) {
       vendor_id: user.id,
       vendor_name: vendorName,
       vendor_email: vendorEmail,
-      amount_xof: amount,
+      amount_xof: amountInt,
       method,
       provider: method === "mobile" ? provider : "bank",
       destination: destination.trim(),
@@ -146,10 +158,9 @@ export async function onRequestPost(context) {
     return json(500, { error: "Erreur création demande" });
   }
 
-  // Appel PayTech Transfer
   const ptPayload = {
     item_name: `Retrait NEXUS - ${vendorName}`,
-    item_price: amount,
+    item_price: amountInt,
     currency: "XOF",
     ref_command: refCommand,
     command_name: method === "mobile" ? PROVIDERS[provider] : "Virement bancaire",
@@ -162,7 +173,7 @@ export async function onRequestPost(context) {
 
   let paytechOk = false;
   try {
-    const { ok, data } = await callPaytechTransfer(ptPayload, PAYTECH_API_KEY, PAYTECH_API_SECRET);
+    const { ok, data } = await callPaytechTransfer(ptPayload, PAYTECH_API_KEY, PAYTECH_SECRET_KEY);
     if (ok && data.success === 1) {
       paytechOk = true;
       await sb.from("payout_requests")
@@ -175,12 +186,11 @@ export async function onRequestPost(context) {
     console.error("[payout-request] PayTech call error:", e.message);
   }
 
-  // Notification admin
   await sb.from("notifications").insert({
     user_id: "admin",
     type: "payout",
     title: "💰 Nouvelle demande de retrait",
-    message: `${vendorName} demande ${amount.toLocaleString("fr-FR")} FCFA via ${method === "mobile" ? PROVIDERS[provider] : "virement"}`,
+    message: `${vendorName} demande ${amountInt.toLocaleString("fr-FR")} FCFA via ${method === "mobile" ? PROVIDERS[provider] : "virement"}`,
     read: false,
   }).catch(e => console.warn("[payout-request] notif error:", e.message));
 
@@ -189,8 +199,8 @@ export async function onRequestPost(context) {
     payout_id: newPayout.id,
     ref_command: refCommand,
     status: paytechOk ? "processing" : "pending",
-    amount_xof: amount,
-    available_xof: availableXof - amount,
+    amount_xof: amountInt,
+    available_xof: availableXof - amountInt,
   });
 }
 
