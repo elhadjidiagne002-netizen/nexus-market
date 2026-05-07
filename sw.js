@@ -35,17 +35,17 @@ const BYPASS_HOSTS = [
   "placehold.co",          // Images placeholder
   "imgbb.com",             // ImgBB uploads
   "sentry.io",             // Sentry monitoring
+  "resend.com",            // Emails transactionnels
+  "api.stripe.com",        // Stripe API
 ];
 
+// [FIX] Les routes /api/* ne doivent JAMAIS être servies depuis le cache SW
+// sinon les Cloudflare Functions ne sont jamais appelées
+
 // ── Routes API à ne jamais mettre en cache ────────────────────────────────────
-const BYPASS_PATHS = [
-  "/api/",
-  "/api/auth/",
-  "/api/orders/",
-  "/api/payments/",
-  "/api/messages/stream", // SSE — jamais en cache
-  "/api/auth/refresh",    // JWT refresh — toujours réseau
-];
+// [FIX] Toutes les routes /api/ ne doivent JAMAIS être mises en cache
+// Cloudflare Functions gèrent leur propre cache via Cache-Control
+const BYPASS_PATHS = ["/api/"];
 
 // ── Icônes par type de notification ──────────────────────────────────────────
 const PUSH_ICONS = {
@@ -108,27 +108,44 @@ self.addEventListener("fetch", event => {
 });
 
 // ── Message handler ───────────────────────────────────────────────────────────
+// [FIX] Ne jamais retourner true implicitement dans ce handler — cela déclenche
+// le warning Chrome "message channel closed before a response was received".
+// event.waitUntil() gère l'async sans ouvrir de MessageChannel.
 self.addEventListener("message", event => {
-  const { type } = event.data || {};
+  const { type } = (event.data || {});
 
   // Mise à jour immédiate (alias rétro-compat)
   if (type === "SKIP_WAITING" || type === "SW_SKIP_WAITING") {
     self.skipWaiting();
+    event.ports[0]?.postMessage({ ok: true });
+    return;
   }
 
   // Vider le cache à la demande (ex: après déconnexion)
   if (type === "CLEAR_CACHE") {
-    caches.delete(CACHE_NAME).then(() => {
-      event.ports[0]?.postMessage({ ok: true });
-    });
+    event.waitUntil(
+      caches.delete(CACHE_NAME).then(() => {
+        event.ports[0]?.postMessage({ ok: true });
+      }).catch(() => { event.ports[0]?.postMessage({ ok: false }); })
+    );
+    return;
   }
 
   // Pré-cacher des URLs à la demande (ex: catalogue consulté)
   if (type === "CACHE_URLS") {
     const { urls } = event.data;
-    if (Array.isArray(urls)) {
-      caches.open(CACHE_NAME).then(cache => cache.addAll(urls).catch(() => {}));
+    if (Array.isArray(urls) && urls.length) {
+      event.waitUntil(
+        caches.open(CACHE_NAME).then(cache => cache.addAll(urls).catch(() => {}))
+      );
     }
+    return;
+  }
+
+  // Répondre aux pings de l'app (évite le warning "channel closed")
+  if (type === "PING") {
+    event.ports[0]?.postMessage({ ok: true, version: CACHE_NAME });
+    return;
   }
 });
 
