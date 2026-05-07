@@ -36,7 +36,10 @@ export async function onRequest(context) {
   let userId = null;
   const auth = request.headers.get("Authorization") || "";
   if (auth.startsWith("Bearer ")) {
-    const { data: { user } } = await sb.auth.getUser(auth.slice(7)).catch(() => ({}));
+    // [FIX] .catch(() => ({})) provoquait un crash car la déstructuration
+    // { data: { user } } échoue si le fallback ne contient pas de .data.
+    const { data: { user } } = await sb.auth.getUser(auth.slice(7))
+      .catch(() => ({ data: { user: null } }));
     if (user) userId = user.id;
   }
 
