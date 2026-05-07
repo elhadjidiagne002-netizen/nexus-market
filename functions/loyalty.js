@@ -45,7 +45,6 @@ export async function onRequest(context) {
   const { request, env } = context;
   const method = request.method;
 
-  // Helpers CORS/JSON
   const cors = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -57,7 +56,6 @@ export async function onRequest(context) {
       headers: { "Content-Type": "application/json", ...cors },
     });
 
-  // Vérification configuration Supabase
   const { SUPABASE_URL, SUPABASE_SERVICE_KEY } = env;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     return json(503, { error: "Configuration Supabase incomplète" });
@@ -67,15 +65,72 @@ export async function onRequest(context) {
     auth: { persistSession: false },
   });
 
-  // Authentification (Bearer token) obligatoire en GET, POST, DELETE
   const authHeader = request.headers.get("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!token) return json(401, { error: "Token manquant" });
 
+  // [FIX] L'appel interne depuis paytech-webhook.js passait la service key
+  // comme Bearer token. sb.auth.getUser(service_key) ne reconnaît pas la
+  // service key comme un JWT utilisateur et retourne une erreur 401.
+  //
+  // Solution : si le token correspond à la service key, on autorise l'appel
+  // interne et on extrait userId depuis le body (POST) ou on le refuse en
+  // GET/DELETE (qui nécessitent une session utilisateur réelle).
+  //
+  // Note : remplacer l'appel HTTP dans paytech-webhook.js par un appel
+  // direct au RPC Supabase est préférable (cf. paytech-webhook.js corrigé).
+  // Ce guard reste ici comme protection supplémentaire.
+  const isServiceCall = token === SUPABASE_SERVICE_KEY;
+
+  let userId;
+
+  if (isServiceCall) {
+    // Appel service interne — uniquement autorisé pour POST (crédit de points)
+    if (method !== "POST") {
+      return json(403, { error: "Service calls ne sont autorisés qu'en POST" });
+    }
+    let body;
+    try { body = await request.json(); } catch { return json(400, { error: "JSON invalide" }); }
+    if (!body.userId) return json(400, { error: "userId requis pour les appels service" });
+    userId = body.userId;
+
+    // Traitement direct sans passer par la suite normale
+    const { delta, reason = "order", orderId, note, amountEur } = body;
+    let pointsDelta = delta;
+    if (!pointsDelta && amountEur) {
+      const { data: current } = await sb
+        .from("loyalty_points").select("points").eq("user_id", userId).maybeSingle();
+      const currentPoints = current?.points || 0;
+      const tier = getTier(currentPoints);
+      pointsDelta = Math.floor(Number(amountEur) * POINTS_PER_EURO * tier.multiplier);
+    }
+    if (!pointsDelta || isNaN(pointsDelta)) {
+      return json(400, { error: "delta ou amountEur requis" });
+    }
+    const { data: result, error: fnErr } = await sb.rpc("add_loyalty_points", {
+      p_user_id: userId,
+      p_delta: pointsDelta,
+      p_reason: reason,
+      p_order_id: orderId || null,
+      p_note: note || null,
+    });
+    if (fnErr) {
+      console.error("[Loyalty service call]", fnErr.message);
+      return json(500, { error: "Erreur crédit points" });
+    }
+    const newPoints = result?.points || 0;
+    return json(200, {
+      success: true,
+      pointsAdded: pointsDelta,
+      points: newPoints,
+      tier: getTier(newPoints),
+    });
+  }
+
+  // Authentification utilisateur normale
   const { data: { user }, error: authErr } = await sb.auth.getUser(token);
   if (authErr || !user) return json(401, { error: "Token invalide" });
-
-  const userId = user.id;
+  userId = user.id;
 
   // ─── GET : solde + historique ────────────────────────────────
   if (method === "GET") {
