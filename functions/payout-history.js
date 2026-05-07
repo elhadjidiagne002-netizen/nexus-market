@@ -36,23 +36,23 @@ export async function onRequestGet(context) {
   const commissionRate = parseFloat(env.NEXUS_COMMISSION || "0.15");
   const eurToXof = parseFloat(env.EUR_TO_XOF || "655.957");
 
-  // Commandes livrées du vendeur
+  // [FIX] La colonne du vendeur est vendor_id dans le schéma orders
+  // (et non vendor — cf. saveOrder dans index.html).
   const { data: orders, error: ordErr } = await sb
     .from("orders")
     .select("total, commission")
-    .eq("vendor", user.id)
+    .eq("vendor_id", user.id)
     .eq("status", "delivered");
 
   if (ordErr) return json(500, { error: ordErr.message });
 
-  const grossXof = orders.reduce((s, o) => s + Math.round((o.total || 0) * eurToXof), 0);
-  const commXof = orders.reduce((s, o) => {
+  const grossXof = (orders || []).reduce((s, o) => s + Math.round((o.total || 0) * eurToXof), 0);
+  const commXof = (orders || []).reduce((s, o) => {
     const comm = o.commission != null ? o.commission : (o.total || 0) * commissionRate;
     return s + Math.round(comm * eurToXof);
   }, 0);
   const netXof = grossXof - commXof;
 
-  // Retraits existants
   const { data: payouts, error: payErr } = await sb
     .from("payout_requests")
     .select("id, amount_xof, method, provider, destination, status, ref_command, created_at, paid_at, failed_at")
@@ -61,7 +61,7 @@ export async function onRequestGet(context) {
 
   if (payErr) return json(500, { error: payErr.message });
 
-  const usedXof = payouts
+  const usedXof = (payouts || [])
     .filter(p => ["pending", "processing", "paid"].includes(p.status))
     .reduce((s, p) => s + (p.amount_xof || 0), 0);
   const availableXof = Math.max(0, netXof - usedXof);
@@ -71,11 +71,11 @@ export async function onRequestGet(context) {
       gross_xof: grossXof,
       commission_xof: commXof,
       net_xof: netXof,
-      pending_xof: payouts.filter(p => ["pending", "processing"].includes(p.status)).reduce((s, p) => s + p.amount_xof, 0),
-      paid_xof: payouts.filter(p => p.status === "paid").reduce((s, p) => s + p.amount_xof, 0),
+      pending_xof: (payouts || []).filter(p => ["pending", "processing"].includes(p.status)).reduce((s, p) => s + p.amount_xof, 0),
+      paid_xof: (payouts || []).filter(p => p.status === "paid").reduce((s, p) => s + p.amount_xof, 0),
       available_xof: availableXof,
     },
-    payouts,
+    payouts: payouts || [],
   });
 }
 
