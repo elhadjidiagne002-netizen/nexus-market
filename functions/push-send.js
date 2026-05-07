@@ -11,8 +11,16 @@ const b64ToBytes = str => {
   const binary = atob(padded);
   return Uint8Array.from(binary, c => c.charCodeAt(0));
 };
-const bytesToB64 = bytes =>
-  btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+
+// [FIX] Remplacement de btoa(String.fromCharCode(...bytes)) qui provoque
+// un "Maximum call stack size exceeded" sur de grands tableaux (payload
+// chiffré > ~65k octets). On construit la chaîne caractère par caractère.
+const bytesToB64 = bytes => {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+};
+
 const concat = (...arrays) => {
   const total = arrays.reduce((s, a) => s + a.length, 0);
   const result = new Uint8Array(total);
@@ -47,7 +55,7 @@ async function createVapidJWT(endpoint, publicKeyB64, privateKeyB64, subject) {
   return `${sigInput}.${bytesToB64(new Uint8Array(sig))}`;
 }
 
-// Chiffrement payload (aes128gcm)
+// Chiffrement payload (aes128gcm / RFC 8291)
 async function encryptPayload(p256dhB64, authB64, plaintext) {
   const receiverPub = b64ToBytes(p256dhB64);
   const auth = b64ToBytes(authB64);
@@ -113,7 +121,6 @@ async function sendNotification(sub, payload, publicKey, privateKey, email) {
   }
 }
 
-// Handler principal
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -142,12 +149,22 @@ export async function onRequestPost(context) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Auth admin pour toAll
+  // [FIX] Vérification admin via la table profiles (server-side) plutôt que
+  // user_metadata.role qui peut être falsifié par l'utilisateur lui-même.
   let isAdmin = false;
   const auth = request.headers.get("Authorization") || "";
   if (auth.startsWith("Bearer ")) {
-    const { data: { user } } = await sb.auth.getUser(auth.slice(7)).catch(() => ({}));
-    isAdmin = user?.user_metadata?.role === "admin";
+    // [FIX] fallback sûr pour éviter le crash de déstructuration
+    const { data: { user } } = await sb.auth.getUser(auth.slice(7))
+      .catch(() => ({ data: { user: null } }));
+    if (user) {
+      const { data: profile } = await sb
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+      isAdmin = profile?.role === "admin";
+    }
   }
 
   let body;
@@ -157,7 +174,6 @@ export async function onRequestPost(context) {
   if (!title || !msgBody) return json(400, { error: "title et body requis" });
   if (toAll && !isAdmin) return json(403, { error: "Admin only" });
 
-  // Récupérer les abonnements
   let query = sb.from("push_subscriptions").select("endpoint, p256dh, auth_key");
   if (!toAll && userId) query = query.eq("user_id", userId);
   const { data: subs, error: dbErr } = await query;
@@ -182,7 +198,6 @@ export async function onRequestPost(context) {
     )
   );
 
-  // Nettoyer les abonnements expirés
   if (stale.length) {
     context.waitUntil(
       sb.from("push_subscriptions").delete().in("endpoint", stale)
