@@ -4,7 +4,6 @@
  */
 
 export async function onRequest(context) {
-  // Répondre immédiatement aux pré-vols OPTIONS
   if (context.request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
@@ -12,7 +11,6 @@ export async function onRequest(context) {
     });
   }
 
-  // Injecter des helpers dans context.data
   context.data.cors = () => corsHeaders(context.request);
   context.data.json = (status, body) =>
     new Response(JSON.stringify(body), {
@@ -27,12 +25,26 @@ export async function onRequest(context) {
 }
 
 function corsHeaders(request) {
-  const origin = request?.headers?.get("Origin") || "*";
+  const origin = request?.headers?.get("Origin");
+
+  // [FIX] Access-Control-Allow-Credentials: true est incompatible avec
+  // Access-Control-Allow-Origin: * selon la spec CORS — les navigateurs
+  // rejettent la combinaison. On ne renvoie Credentials que lorsqu'on
+  // connaît l'origine exacte de la requête.
+  if (origin) {
+    return {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Credentials": "true",
+      "Vary": "Origin",
+    };
+  }
+
+  // Pas d'Origin (ex : curl, appel serveur-à-serveur) → pas de credentials
   return {
-    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Credentials": "true",
-    "Vary": "Origin",
   };
 }
