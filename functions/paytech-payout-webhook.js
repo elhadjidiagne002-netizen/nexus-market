@@ -38,21 +38,37 @@ const STATUS_MAP = {
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  const { SUPABASE_URL, SUPABASE_SERVICE_KEY, PAYTECH_API_KEY, PAYTECH_API_SECRET } = env;
+  // [FIX] Harmonisation du nom de variable : PAYTECH_SECRET_KEY
+  // (était PAYTECH_API_SECRET ici, mais PAYTECH_SECRET_KEY dans
+  // paytech-webhook.js et payments-mobile-money.js).
+  const {
+    SUPABASE_URL, SUPABASE_SERVICE_KEY,
+    PAYTECH_API_KEY, PAYTECH_SECRET_KEY,
+  } = env;
+
   if (!SUPABASE_SERVICE_KEY) return new Response("Config error", { status: 503 });
 
   const rawBody = await request.text();
-  const signatureHeader = request.headers.get("x-paytech-hash") || request.headers.get("x-signature") || "";
+  const signatureHeader =
+    request.headers.get("x-paytech-hash") ||
+    request.headers.get("x-signature") ||
+    "";
 
-  if (signatureHeader) {
-    const valid = await verifySignature(rawBody, signatureHeader, PAYTECH_API_KEY, PAYTECH_API_SECRET);
+  // [FIX] La vérification de signature était entièrement sautée si PayTech
+  // n'envoyait pas le header, ce qui ouvrait un vecteur d'injection.
+  // On l'exige dès lors que les clés API sont configurées.
+  if (PAYTECH_API_KEY && PAYTECH_SECRET_KEY) {
+    if (!signatureHeader) {
+      console.warn("[payout-webhook] Header de signature absent");
+      return new Response("Forbidden", { status: 403 });
+    }
+    const valid = await verifySignature(rawBody, signatureHeader, PAYTECH_API_KEY, PAYTECH_SECRET_KEY);
     if (!valid) {
       console.warn("[payout-webhook] Signature invalide");
       return new Response("Forbidden", { status: 403 });
     }
   }
 
-  // Parse du body (json ou form-urlencoded)
   let data = {};
   const contentType = request.headers.get("content-type") || "";
   try {
@@ -76,7 +92,7 @@ export async function onRequestPost(context) {
   } catch (_) {}
 
   if (!ref_command && !payoutId) {
-    return new Response("OK", { status: 200 }); // On ne bloque pas PayTech
+    return new Response("OK", { status: 200 });
   }
 
   const newStatus = STATUS_MAP[type_event];
@@ -88,7 +104,6 @@ export async function onRequestPost(context) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // Trouver le payout
   let query = sb.from("payout_requests").select("*");
   if (payoutId) query = query.eq("id", payoutId);
   else query = query.eq("ref_command", ref_command);
@@ -99,14 +114,12 @@ export async function onRequestPost(context) {
     return new Response("OK", { status: 200 });
   }
 
-  // Éviter les régressions de statut
   const ORDER = { pending: 0, processing: 1, paid: 2, failed: 2 };
   if ((ORDER[newStatus] ?? -1) <= (ORDER[payout.status] ?? -1) && newStatus !== "failed") {
     console.log(`[payout-webhook] Régression ignorée ${payout.status} → ${newStatus}`);
     return new Response("OK", { status: 200 });
   }
 
-  // Mise à jour
   const update = {
     status: newStatus,
     paytech_ref: ref_command || payout.paytech_ref,
@@ -121,7 +134,6 @@ export async function onRequestPost(context) {
     return new Response("DB Error", { status: 500 });
   }
 
-  // Notification au vendeur
   const messages = {
     paid: `✅ Retrait de ${payout.amount_xof?.toLocaleString("fr-FR")} FCFA effectué.`,
     processing: `⏳ Retrait de ${payout.amount_xof?.toLocaleString("fr-FR")} FCFA en cours.`,
