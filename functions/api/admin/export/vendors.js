@@ -1,4 +1,4 @@
-import { CORS, options, requireAdmin, supabase } from '';
+import { CORS, options, requireAdmin, supabase } from '../../../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -17,6 +17,10 @@ export async function onRequest({ request, env }) {
     return errFn(e.message, 500);
   }
 }
+
+
+
+
 
 
 
