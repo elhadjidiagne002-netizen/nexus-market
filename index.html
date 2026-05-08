@@ -1368,6 +1368,12 @@ const NEXUS_CONFIG = {
     url: "https://pqcqbstbdujzaclsiosv.supabase.co",
     anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE"
   },
+  paytech: {
+    // ⚠️  Remplissez vos clés PayTech ici (Tableau de bord PayTech → API)
+    apiKey:    "4ee82c55e71b271ba8e9a4e0c48ab306c84f38a54b3357ee5d453922b87f3256",
+    secretKey: "f7bdf4eaf1cf2dac9925eb20bf61cd3ae0a49fb8b7f784ea52f8d805a1d69b72",
+    env:       "prod",   // "test" ou "prod"
+  },
   stripe: {
     publishableKey: "pk_test_51TGdXe1H2qyHRVYhwjkbrHKnmKILl5v8OUT8GxFGX5niFKd904ebRj4ee1sCCfo7agsMwwd9LqapTenEerTIfwQg00BrxAzuy3"
     // pk_live_... ou pk_test_...
@@ -7319,35 +7325,57 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         // Toujours appeler PayTech pour les paiements Mobile Money
         if (mainOrderId) {
           try {
-            const ptRes = await fetch("/payments-mobile-money", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ orderId: mainOrderId, amount: grandTotalEur }),
-            });
-            if (ptRes && ptRes.ok) {
-              const ptData = await ptRes.json();
-              if (ptData.simulation) {
-                // Mode simulation (PayTech non configuré) — comportement normal
-                addToast("\u2705 Paiement Mobile Money simulé confirmé !", "success");
-              } else if (ptData.redirect_url) {
-                // Sauvegarder le contexte pour restauration au retour de PayTech
+            // [FIX] Appel PayTech direct depuis le frontend (fonctions Cloudflare non déployées)
+            const EUR_TO_FCFA = 655.957;
+            const amountFcfa = Math.round(grandTotalEur * EUR_TO_FCFA);
+            const ptApiKey    = NEXUS_CONFIG.paytech?.apiKey    || "";
+            const ptSecretKey = NEXUS_CONFIG.paytech?.secretKey || "";
+            const ptEnv       = NEXUS_CONFIG.paytech?.env       || "prod";
+            if (!ptApiKey || ptApiKey === "VOTRE_PAYTECH_API_KEY") {
+              // Clés non configurées → mode simulation
+              addToast("\u2705 Paiement Mobile Money simulé confirmé !", "success");
+            } else {
+              const origin = window.location.origin;
+              const ptBody = {
+                item_name:    `Commande NEXUS #${mainOrderId}`,
+                item_price:   amountFcfa,
+                currency:     "XOF",
+                ref_command:  mainOrderId,
+                command_name: "Paiement Mobile Money – NEXUS Market",
+                env:          ptEnv,
+                ipn_url:      `${origin}/paytech-webhook`,
+                success_url:  `${origin}/?payment=success&orderId=${encodeURIComponent(mainOrderId)}`,
+                cancel_url:   `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
+                custom_field: JSON.stringify({ orderId: mainOrderId, source: "nexus-market" }),
+              };
+              const ptRes = await fetch("https://paytech.sn/api/payment/request-payment", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Accept":       "application/json",
+                  "API_KEY":      ptApiKey,
+                  "API_SECRET":   ptSecretKey,
+                },
+                body: JSON.stringify(ptBody),
+              });
+              const ptData = await ptRes.json().catch(() => ({}));
+              if (ptRes.ok && ptData.success === 1 && ptData.redirect_url) {
                 sessionStorage.setItem("nexus_paytech_pending", JSON.stringify({
                   orderId:    mainOrderId,
                   amount:     grandTotalEur,
                   orders:     createdOrders.map(o => ({ id: o.id, trackingNumber: o.trackingNumber, vendorName: o.vendorName, total: o.total })),
-                  buyerEmail: customerInfo.email,
+                  buyerEmail: customerInfo?.email || "",
                   ts:         Date.now(),
                 }));
                 setLoading(false);
-                // Rediriger vers la page PayTech sécurisée
                 window.location.href = ptData.redirect_url;
-                return; // Ne pas afficher step 3 — l'utilisateur reviendra après paiement
+                return;
+              } else {
+                console.warn("[PayTech] Réponse:", ptData);
+                addToast(ptData?.message || "Erreur PayTech — vérifiez vos clés API", "error");
+                setLoading(false);
+                return;
               }
-            } else {
-              const errData = ptRes ? await ptRes.json().catch(() => ({})) : {};
-              addToast(errData.error || "Erreur PayTech — paiement non initié", "error");
-              setLoading(false);
-              return;
             }
           } catch (e) {
             console.warn("[PayTech] Erreur initiation paiement:", e.message);
