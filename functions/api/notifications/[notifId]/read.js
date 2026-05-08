@@ -5,14 +5,20 @@ export async function onRequest({ request, env, params }) {
   if (request.method !== 'POST') return err('POST requis', 405);
 
   try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
+    const [user, authError] = await requireAuth(request, env);
+    if (authError) return authError;
 
     const sb = supabase(env);
-    await sb.from('notifications').update(
-      { read: true, read_at: new Date().toISOString() },
-      `id=eq.${params.notifId}&user_id=eq.${user.id}`
-    );
+    const { error } = await sb
+      .from('notifications')
+      .update({
+        read: true,
+        read_at: new Date().toISOString()
+      })
+      .eq('id', params.notifId)
+      .eq('user_id', user.id);
+
+    if (error) return err(error.message, 500);
 
     return json({ success: true });
   } catch (e) {
