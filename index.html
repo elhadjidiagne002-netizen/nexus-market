@@ -1374,6 +1374,12 @@ const NEXUS_CONFIG = {
     secretKey: "f7bdf4eaf1cf2dac9925eb20bf61cd3ae0a49fb8b7f784ea52f8d805a1d69b72",
     env:       "test",   // "test" jusqu'à activation du compte PayTech en production
   },
+  resend: {
+    // Clé Resend — https://resend.com/api-keys
+    // ⚠️  À renseigner dans les variables d'environnement Cloudflare Pages
+    // (ne pas mettre la clé ici en clair — elle est utilisée côté serveur uniquement)
+    confirmEndpoint: "/confirm-email",
+  },
   stripe: {
     publishableKey: "pk_test_51TGdXe1H2qyHRVYhwjkbrHKnmKILl5v8OUT8GxFGX5niFKd904ebRj4ee1sCCfo7agsMwwd9LqapTenEerTIfwQg00BrxAzuy3"
     // pk_live_... ou pk_test_...
@@ -2342,8 +2348,17 @@ const DataService = {
 
       if (!session) {
         // Email confirmation obligatoire ET connexion immédiate impossible
-        // → Insérer le profil quand même en utilisant les métadonnées auth (sans session RLS)
-        // On retourne pending pour que l'UI affiche le message approprié
+        // → Envoyer l'email branded via Resend (Cloudflare function /confirm-email)
+        // en arrière-plan (on ne bloque pas l'UI sur l'erreur réseau)
+        fetch(NEXUS_CONFIG.resend?.confirmEndpoint || "/confirm-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "resend",
+            email:  sanitizedEmail,
+            name:   profile?.name || sanitizedEmail.split("@")[0],
+          }),
+        }).catch(e => console.warn("[signUp] Resend confirm email failed:", e.message));
         return { __emailConfirmPending: true, email: sanitizedEmail };
       }
 
@@ -8168,7 +8183,25 @@ if (json.token || json.accessToken) {
         ),
         React.createElement("button",{className:"btn btn-primary btn-block",onClick:onSwitchToLogin},
           React.createElement("i",{className:"fas fa-sign-in-alt"})," J’ai confirmé mon email — Se connecter"
-        )
+        ),
+        React.createElement("button",{
+          className:"btn btn-outline btn-block",
+          style:{marginTop:"0.6rem"},
+          onClick:async function(e){
+            e.target.disabled=true;
+            var orig="🔁 Renvoyer l’email de confirmation";
+            e.target.textContent="Envoi en cours…";
+            try{
+              var r=await fetch(NEXUS_CONFIG.resend&&NEXUS_CONFIG.resend.confirmEndpoint||"/confirm-email",{
+                method:"POST",headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({action:"resend",email:form.email,name:form.name||""})
+              });
+              var d=await r.json().catch(function(){return{};});
+              e.target.textContent=r.ok?"✅ Email renvoyé !":"❌ "+(d.error||"Erreur");
+            }catch(_){e.target.textContent="❌ Erreur réseau";}
+            setTimeout(function(){e.target.disabled=false;e.target.textContent=orig;},4000);
+          }
+        },"🔁 Renvoyer l’email de confirmation")
       );
     }
     // ── Vendor pending review ─────────────────────────────────────────────
