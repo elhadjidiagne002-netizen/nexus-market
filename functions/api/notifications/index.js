@@ -1,22 +1,54 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
+
   try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
+    const [user, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+
     const sb = supabase(env);
+    const url = new URL(request.url);
+
+    // GET: Récupérer les notifications
     if (request.method === 'GET') {
-      const data = await sb.from('notifications').select('*', \`user_id=eq.\${user.id}&order=created_at.desc&limit=30\`);
+      const limit = parseInt(url.searchParams.get('limit') || '30');
+      const { data, error } = await sb
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user.id)  // ✅ Syntaxe corrigée
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) throw error;
       return json(data || []);
     }
+
+    // POST: Créer une notification
     if (request.method === 'POST') {
-      // Admin peut créer des notifs pour d'autres users
       const body = await request.json();
-      const notif = { ...body, user_id: body.user_id || user.id };
-      const data = await sb.from('notifications').insert(notif);
-      return json(Array.isArray(data) ? data[0] : data, 201);
+      const notification = {
+        user_id: body.user_id || user.id,
+        type: body.type || 'info',
+        title: body.title || '',
+        message: body.message || '',
+        read: false,
+      };
+
+      const { data: saved, error } = await sb
+        .from('notifications')
+        .insert(notification)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return json(saved, 201);
     }
+
     return err('Méthode non supportée', 405);
-  } catch (e) { return err(e.message, e.status || 500); }
+  } catch (error) {
+    return err(error.message, error.status || 500);
+  }
 }
+
+

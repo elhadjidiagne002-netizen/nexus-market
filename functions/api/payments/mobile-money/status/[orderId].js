@@ -1,16 +1,33 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../../../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
 
 export async function onRequest({ request, env, params }) {
   if (request.method === 'OPTIONS') return options();
+  if (request.method !== 'GET') return err('GET requis', 405);
+
   try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
+    const [user, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+
     const sb = supabase(env);
-    const orders = await sb.from('orders').select('*', \`id=eq.\${params.orderId}\`);
-    if (!orders?.length) return err('Commande introuvable', 404);
-    const order = orders[0];
-    if (order.buyer_id !== user.id && user.role !== 'admin') return err('Accès refusé', 403);
-    // Retourner le statut actuel — à connecter à l'API Wave/OM si disponible
-    return json({ orderId: params.orderId, status: order.status, paymentMethod: order.payment_method });
-  } catch (e) { return err(e.message, 500); }
+
+    // Utilisation de la syntaxe fluide de Supabase pour éviter les erreurs de backticks
+    const { data: order, error: orderError } = await sb
+      .from('orders')
+      .select('*')
+      .eq('id', params.orderId)
+      .eq('user_id', user.id)
+      .single();
+
+    if (orderError) return err(orderError.message, 500);
+    if (!order) return err('Commande introuvable', 404);
+
+    return json({
+      success: true,
+      order: order
+    });
+
+  } catch (e) {
+    return err(e.message, 500);
+  }
 }
+

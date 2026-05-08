@@ -1,22 +1,57 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
+
   try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
+    // Authentification
+    const [user, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+
     const sb = supabase(env);
 
+    // GET: Récupérer le profil de l'utilisateur
     if (request.method === 'GET') {
-      const data = await sb.from('profiles').select('*', \`id=eq.\${user.id}\`);
-      return json(data?.[0] || user);
+      const { data, error } = await sb
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)  // ✅ Syntaxe corrigée
+        .single();
+
+      if (error) throw error;
+      if (!data) return err('Profil non trouvé', 404);
+      return json(data);
     }
-    if (request.method === 'PATCH' || request.method === 'PUT') {
+
+    // PUT: Mettre à jour le profil
+    if (request.method === 'PUT') {
       const body = await request.json();
-      delete body.id; delete body.email; delete body.role; // champs protégés
-      const updated = await sb.from('profiles').update(body, \`id=eq.\${user.id}\`);
-      return json(Array.isArray(updated) ? updated[0] : updated);
+      const { data: updated, error } = await sb
+        .from('profiles')
+        .update({
+          name: body.name,
+          email: body.email,
+          phone: body.phone,
+          address: body.address,
+          city: body.city,
+          country: body.country,
+          bio: body.bio,
+          avatar: body.avatar,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return json(updated);
     }
+
+    // Méthode non autorisée
     return err('Méthode non supportée', 405);
-  } catch (e) { return err(e.message, e.status || 500); }
+  } catch (error) {
+    return err(error.message, error.status || 500);
+  }
 }
+
+

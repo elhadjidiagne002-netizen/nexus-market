@@ -1,4 +1,4 @@
-import { CORS, options, json, err, requireAdmin } from '../../../../_lib/utils.js';
+import { CORS, options, json, err, requireAdmin } from '../../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -9,3 +9,5 @@ export async function onRequest({ request, env }) {
     return json({ logs: [], message: 'Connectez Logflare ou Sentry pour les logs de production' });
   } catch (e) { return err(e.message, 500); }
 }
+
+

@@ -1,24 +1,37 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
 
 export async function onRequest({ request, env, params }) {
   if (request.method === 'OPTIONS') return options();
+  if (request.method !== 'POST') return err('POST requis', 405);
+
   try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
+    const [user, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+
     const sb = supabase(env);
-    const orders = await sb.from('orders').select('*', `id=eq.${params.orderId}`);
-    if (!orders?.length) return err('Commande introuvable', 404);
-    const order = orders[0];
-    if (order.buyer_id !== user.id && user.role !== 'admin') return err('Accès refusé', 403);
-    if (['shipped','delivered'].includes(order.status)) return err('Impossible d'annuler une commande déjà expédiée', 400);
-    const updated = await sb.from('orders').update({ status: 'cancelled' }, `id=eq.${params.orderId}`);
-    // Notifier le vendeur
-    if (order.vendor_id) {
-      await sb.from('notifications').insert({
-        user_id: order.vendor_id, type: 'warning', title: 'Commande annulée',
-        message: \`La commande #\${params.orderId.slice(0,8)} de \${order.buyer_name} a été annulée.\`,
-      }).catch(() => {});
+    const { data: order, error: orderError } = await sb
+      .from('orders')
+      .select('status')
+      .eq('id', params.orderId)
+      .eq('user_id', user.id)
+      .single();
+
+    if (orderError) return err(orderError.message, 500);
+    if (order.status !== 'pending') {
+      return err('Impossible d\'annuler une commande déjà expédiée ou traitée', 400);
     }
-    return json(Array.isArray(updated) ? updated[0] : updated);
-  } catch (e) { return err(e.message, e.status || 500); }
+
+    const { error: updateError } = await sb
+      .from('orders')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+      .eq('id', params.orderId)
+      .eq('user_id', user.id);
+
+    if (updateError) return err(updateError.message, 500);
+
+    return json({ success: true, message: 'Commande annulée avec succès' });
+  } catch (e) {
+    return err(e.message, 500);
+  }
 }
+

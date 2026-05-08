@@ -1,4 +1,4 @@
-import { CORS, options, json, err, supabase, requireAdmin, sendEmail } from '../../../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAdmin, sendEmail } from '../../_lib/utils.js';
 
 export async function onRequest({ request, env, params }) {
   if (request.method === 'OPTIONS') return options();
@@ -45,3 +45,4 @@ export async function onRequest({ request, env, params }) {
     return json({ success: true, approved });
   } catch (e) { return err(e.message, e.status || 500); }
 }
+

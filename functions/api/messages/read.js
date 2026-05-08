@@ -1,4 +1,4 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -10,8 +10,10 @@ export async function onRequest({ request, env }) {
     const sb = supabase(env);
     await sb.from('messages').update(
       { read: true, read_at: new Date().toISOString() },
-      \`to_id=eq.\${user.id}&read=eq.false\${fromId ? \`&from_id=eq.\${fromId}\` : ''}\`
+      `to_id=eq.${user.id}&read=eq.false${fromId ? `&from_id=eq.${fromId}` : ''}`
     );
     return json({ success: true });
   } catch (e) { return err(e.message, 500); }
 }
+
+

@@ -1,30 +1,37 @@
-import { CORS, options, json, err, supabase, requireAuth, sendEmail } from '../../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
 
 export async function onRequest({ request, env, params }) {
   if (request.method === 'OPTIONS') return options();
+  if (request.method !== 'POST') return err('POST requis', 405);
+
   try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
-    if (!['vendor','admin'].includes(user.role)) return err('Accès refusé', 403);
-    const { status, trackingNumber } = await request.json();
-    const allowed = ['processing','paid','shipped','delivered','cancelled','refunded'];
-    if (!allowed.includes(status)) return err('Statut invalide', 400);
+    const [user, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+
     const sb = supabase(env);
-    const updates = { status };
-    if (trackingNumber) updates.tracking_number = trackingNumber;
-    const data = await sb.from('orders').update(updates, `id=eq.${params.orderId}`);
-    const order = Array.isArray(data) ? data[0] : data;
-    // Notifier l'acheteur
-    if (order?.buyer_id) {
-      const labels = { shipped: 'Commande expédiée', delivered: 'Commande livrée', cancelled: 'Commande annulée' };
-      if (labels[status]) {
-        await sb.from('notifications').insert({
-          user_id: order.buyer_id, type: status === 'cancelled' ? 'warning' : 'success',
-          title: labels[status],
-          message: trackingNumber ? \`N° de suivi : \${trackingNumber}\` : \`Votre commande #\${params.orderId.slice(0,8)} est \${status}.\`,
-        }).catch(() => {});
-      }
-    }
-    return json(order);
-  } catch (e) { return err(e.message, e.status || 500); }
+    const { data: order, error: orderError } = await sb
+      .from('orders')
+      .select('status, tracking_number')
+      .eq('id', params.orderId)
+      .eq('user_id', user.id)
+      .single();
+
+    if (orderError) return err(orderError.message, 500);
+    if (!order) return err('Commande introuvable', 404);
+
+    // Corrigé : Utilisation de guillemets simples pour éviter les conflits avec les backticks
+    const message = order.tracking_number
+      ? `N° de suivi : ${order.tracking_number}`
+      : 'Votre commande est en cours de traitement';
+
+    return json({
+      success: true,
+      status: order.status,
+      message: message
+    });
+
+  } catch (e) {
+    return err(e.message, 500);
+  }
 }
+
