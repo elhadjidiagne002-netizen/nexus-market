@@ -1359,7 +1359,7 @@ var __spreadValues = (a, b) => {
 var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 const { useState, useEffect, useRef, createContext, useContext, useCallback, useMemo, useReducer } = React;
 const NEXUS_CONFIG = {
-  apiUrl: "", // [Netlify] Backend Railway supprimé — toutes les données via Supabase + Netlify Functions
+  apiUrl: "", // [Cloudflare Pages] Backend Railway supprimé — toutes les données via Supabase + Netlify Functions
   // BUG FIX: nexus-confirm.html n'existe pas dans le déploiement single-file Vercel.
   // La confirmation Supabase redirige vers cette URL avec le token dans le hash #access_token=...
   // Le SDK Supabase JS le lit automatiquement si on pointe vers la même page (index.html).
@@ -1446,7 +1446,7 @@ try {
     return;
   }
 
-  // [FIX Netlify] apiUrl vide → pas de vérification backend
+  // [FIX Cloudflare Pages] apiUrl vide → pas de vérification backend
   if (!NEXUS_CONFIG.apiUrl) {
     window.__nexusBackendReady = true;
     window.dispatchEvent(new Event('nexus:backend-ready'));
@@ -1501,7 +1501,7 @@ const IS_EMAILJS_CONFIGURED = isEmailjsConfigured(); // valeur initiale (compati
 // Phase 1 : réveil rapide (2 tentatives avec backoff)
 // Phase 2 : ping silencieux toutes les 30 min pour détecter les redémarrages Railway
 window.__nexusBackendReady = false;
-if (NEXUS_CONFIG.apiUrl && false) { // [FIX Netlify] KeepAlive Railway désactivé — apiUrl vide
+if (NEXUS_CONFIG.apiUrl && false) { // [FIX Cloudflare Pages] KeepAlive Railway désactivé — apiUrl vide
   (function nexusKeepAlive() {
     const KEEPALIVE_INTERVAL_MS = 30 * 60 * 1000;    // 30 min — Railway ne dort pas
     const WAKE_DELAYS = [0, 8000, 20000];              // max 3 tentatives au démarrage
@@ -2079,10 +2079,11 @@ const DataService = {
     const { _localId, stripePaymentId, fromOffer, date: _ignoredDate, ...cleanOrder } = order;
     const localId = _localId || ("ORD-" + Date.now());
     if (this._sb) {
+      // [FIX PGRST204] buyer_email et buyer_address ne sont pas des colonnes de la table
+      // orders — les envoyer provoquait "Could not find the column in the schema cache".
+      // Ces données sont conservées dans le champ JSONB metadata pour ne pas les perdre.
       const row = {
         buyer_id: cleanOrder.buyer, buyer_name: cleanOrder.buyerName,
-        buyer_email: cleanOrder.buyerEmail || null,
-        buyer_address: cleanOrder.buyerAddress || null,
         vendor_id: cleanOrder.vendor || cleanOrder.vendorId,
         vendor_name: cleanOrder.vendorName || null,
         products: cleanOrder.products || [],
@@ -2095,6 +2096,13 @@ const DataService = {
         payment_method: cleanOrder.paymentMethod || "unknown",
         shipping_city: cleanOrder.shippingCity || null,
         tracking_number: cleanOrder.trackingNumber || null,
+        // Données acheteur dans JSONB — ne génèrent pas d'erreur schéma si absent de la table
+        ...(cleanOrder.buyerEmail || cleanOrder.buyerAddress ? {
+          metadata: {
+            buyer_email:   cleanOrder.buyerEmail   || null,
+            buyer_address: cleanOrder.buyerAddress || null,
+          }
+        } : {}),
       };
       try {
         // [FIX] Rafraîchir la session Supabase avant l'insert pour éviter le 401
@@ -2287,7 +2295,7 @@ const DataService = {
   },
   // ── Auth Supabase ─────────────────────────────────────────────────────────
   async signUp(email, password, profile) {
-    // [FIX Netlify] Inscription Railway supprimée — Supabase Auth uniquement
+    // [FIX Cloudflare Pages] Inscription Railway supprimée — Supabase Auth uniquement
     if (this._sb) {
       const sanitizedEmail = email.trim().toLowerCase();
       const redirectTo = window.location.origin;
@@ -2355,7 +2363,7 @@ const DataService = {
           setTimeout(r, 6000);
         });
       }
-      const urls = base ? [`${base}/api/auth/login`] : []; // [FIX Netlify] apiUrl vide → skip JWT → fallback direct Supabase
+      const urls = base ? [`${base}/api/auth/login`] : []; // [FIX Cloudflare Pages] apiUrl vide → skip JWT → fallback direct Supabase
       const ctrl = new AbortController();
       const tid  = setTimeout(() => ctrl.abort(), 10000);
       let res = null;
@@ -2431,7 +2439,7 @@ const DataService = {
           // On utilise try/catch + onConflict sans ignoreDuplicates pour gérer le 409.
           try {
           // [FIX] 409 fréquent avec upsert quand le profil existe déjà → utiliser insert avec on_conflict=ignore
-          const { error: upsertErr } = await this._sb.from('profiles').upsert(prof, { onConflict: 'id', ignoreDuplicates: false });
+          const { error: upsertErr } = await this._sb.from('profiles').upsert(prof, { onConflict: 'id', ignoreDuplicates: true });
           if (upsertErr && upsertErr.code !== '23505' && upsertErr.code !== 'PGRST409') {
             // Tenter un simple update si l'upsert échoue pour une autre raison
             await this._sb.from('profiles').update(prof).eq('id', prof.id).catch(() => {});
@@ -2604,7 +2612,7 @@ async signOut() {
       const ctrl = new AbortController();
       const tid  = setTimeout(() => ctrl.abort(), 10000);
 
-      // [FIX Netlify] Pas de backend Railway → refresh via Supabase Auth uniquement
+      // [FIX Cloudflare Pages] Pas de backend Railway → refresh via Supabase Auth uniquement
       clearTimeout(tid);
       if (!base) {
         // Supabase gère le refresh automatiquement via son propre mécanisme
@@ -2668,7 +2676,7 @@ async signOut() {
   // Wrapper fetch → auto-logout on 401 + PERF FIX: timeout 4s pour éviter les cold starts Render
   async apiFetch(path, options = {}) {
     const _apiBase = (NEXUS_CONFIG.apiUrl || "").endsWith("/") ? NEXUS_CONFIG.apiUrl.slice(0,-1) : (NEXUS_CONFIG.apiUrl || "");
-    // [FIX Netlify] Sans apiUrl, toutes les routes Railway n'existent pas → null immédiat
+    // [FIX Cloudflare Pages] Sans apiUrl, toutes les routes Railway n'existent pas → null immédiat
     if (!_apiBase) return null;
     const _fullUrl = _apiBase + path;
     if (this.isSessionExpired()) {
@@ -3518,7 +3526,7 @@ async signOut() {
     try {
       const session = this._sb ? (await this._sb.auth.getSession()).data?.session : null;
       if (session?.access_token) {
-        const res = await fetch("/.netlify/functions/loyalty", {
+        const res = await fetch("/functions/loyalty", {
           headers: { Authorization: "Bearer " + session.access_token }
         });
         if (res.ok) {
@@ -3552,7 +3560,7 @@ async signOut() {
         const body = isEuros
           ? { amountEur: deltaOrAmount, reason, orderId, note }
           : { delta: deltaOrAmount, reason, orderId, note };
-        const res = await fetch("/.netlify/functions/loyalty", {
+        const res = await fetch("/functions/loyalty", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
           body: JSON.stringify(body),
@@ -7255,7 +7263,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         // [LOYALTY v2] Déduire les points via Netlify Function (atomique, sans condition apiUrl)
         const session7 = DataService._sb ? (await DataService._sb.auth.getSession()).data?.session : null;
         if (session7?.access_token) {
-          await fetch("/.netlify/functions/loyalty", {
+          await fetch("/functions/loyalty", {
             method: "DELETE",
             headers: { "Content-Type": "application/json", Authorization: "Bearer " + session7.access_token },
             body: JSON.stringify({ points: loyaltyToRedeem || pointsUsed, orderId: createdOrders[0]?.id }),
@@ -7311,7 +7319,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         // Toujours appeler PayTech pour les paiements Mobile Money
         if (mainOrderId) {
           try {
-            const ptRes = await fetch("/.netlify/functions/payments-mobile-money", {
+            const ptRes = await fetch("/functions/payments-mobile-money", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ orderId: mainOrderId, amount: grandTotalEur }),
@@ -7928,7 +7936,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           const ctrl = new AbortController();
           const tid  = setTimeout(() => ctrl.abort(), 12000);
           let _vendorRes = null;
-          const vUrls = base3 ? [`${base3}/api/auth/register`] : []; // [FIX Netlify] skip Railway
+          const vUrls = base3 ? [`${base3}/api/auth/register`] : []; // [FIX Cloudflare Pages] skip Railway
           let fetchFailed = false;
           for (const vUrl of vUrls) {
             try {
@@ -14673,8 +14681,8 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
   };
 
   // [FIX] Endpoint Netlify Function (fonctionne sans apiUrl backend)
-  const PUSH_SUBSCRIBE_URL  = "/.netlify/functions/push-subscribe";
-  const PUSH_VAPID_KEY_URL  = "/.netlify/functions/push-vapid-key";
+  const PUSH_SUBSCRIBE_URL  = "/functions/push-subscribe";
+  const PUSH_VAPID_KEY_URL  = "/functions/push-vapid-key";
 
   const requestPush = async () => {
     setSubLoading(true);
@@ -16248,8 +16256,8 @@ window.nexusPush.subscribe = async function(apiToken) {
 
   try {
     // 2. Récupérer la clé VAPID publique depuis la Netlify Function (plus de 404)
-    // [FIX] URL corrigée : /.netlify/functions/ au lieu de /api/push/ (inexistant sans backend)
-    const vapidRes = await fetch('/.netlify/functions/push-vapid-key', {
+    // [FIX] URL corrigée : /functions/ au lieu de /api/push/ (inexistant sans backend)
+    const vapidRes = await fetch('/functions/push-vapid-key', {
       headers: apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {},
     }).catch(() => null);
 
@@ -16271,8 +16279,8 @@ window.nexusPush.subscribe = async function(apiToken) {
     }
 
     // 4. Envoyer l'abonnement au serveur via Netlify Function
-    // [FIX] URL corrigée : /.netlify/functions/push-subscribe
-    const regRes = await fetch('/.netlify/functions/push-subscribe', {
+    // [FIX] URL corrigée : /functions/push-subscribe
+    const regRes = await fetch('/functions/push-subscribe', {
       method:  'POST',
       headers: {
         'Content-Type':  'application/json',
