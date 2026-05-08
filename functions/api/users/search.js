@@ -1,16 +1,38 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '../../../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
+
   try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
-    const u = new URL(request.url);
-    const q = u.searchParams.get('q') || '';
-    const limit = parseInt(u.searchParams.get('limit') || '8');
-    if (q.length < 2) return json([]);
+    const [user, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+
     const sb = supabase(env);
-    const data = await sb.from('profiles').select('id,name,email,role,avatar,shop_name', \`or=(name.ilike.*\${q}*,email.ilike.*\${q}*)&limit=\${limit}\`);
-    return json(data || []);
-  } catch (e) { return err(e.message, 500); }
+    const url = new URL(request.url);
+    const q = url.searchParams.get('q') || '';
+
+    // GET: Rechercher des utilisateurs
+    if (request.method === 'GET') {
+      // Construction de la requête avec la syntaxe recommandée de Supabase
+      let query = sb
+        .from('users')
+        .select('id, name, email, role, avatar, shop_name');
+
+      // Ajout des filtres de recherche
+      if (q.trim() !== '') {
+        query = query
+          .or(`name.ilike.*${q}*,email.ilike.*${q}*`);
+      }
+
+      // Exécution de la requête
+      const { data, error } = await query;
+      if (error) throw error;
+
+      return json(data || []);
+    }
+
+    return err('Méthode non supportée', 405);
+  } catch (error) {
+    return err(error.message, error.status || 500);
+  }
 }
