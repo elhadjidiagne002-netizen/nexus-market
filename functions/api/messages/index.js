@@ -9,29 +9,25 @@ export async function onRequest({ request, env }) {
     const u = new URL(request.url);
 
     if (request.method === 'GET') {
-      const withUser = u.searchParams.get('with');
-      let qs = `or=(from_id.eq.${user.id},to_id.eq.${user.id})&deleted=eq.false&order=created_at.asc`;
-      if (withUser) qs = `or=(and(from_id.eq.${user.id},to_id.eq.${withUser}),and(from_id.eq.${withUser},to_id.eq.${user.id}))&deleted=eq.false&order=created_at.asc`;
-      const data = await sb.from('messages').select('*', qs);
+      const limit = parseInt(u.searchParams.get('limit') || '30');
+      const data = await sb.from('notifications')
+        .select('*')
+        .filter('user_id', 'eq', user.id)
+        .order('created_at', { ascending: false })
+        .limit(limit);
       return json(data || []);
     }
 
     if (request.method === 'POST') {
       const body = await request.json();
-      const msg = {
-        from_id: user.id, from_name: body.fromName || user.name,
-        to_id: body.toId, to_name: body.toName,
-        text: body.text || '', read: false, deleted: false,
-        reply_to_id: body.replyToId || null, reply_to_text: body.replyToText || null,
-        attachments: body.attachments || [], reactions: {},
+      const notif = {
+        user_id: body.userId || body.user_id,
+        type:    body.type    || 'info',
+        title:   body.title   || '',
+        message: body.message || '',
+        read:    false,
       };
-      const data = await sb.from('messages').insert(msg);
-      const saved = Array.isArray(data) ? data[0] : data;
-      // Notifier le destinataire
-      await sb.from('notifications').insert({
-        user_id: body.toId, type: 'info', title: `Message de ${user.name || 'quelqu\'un'}`,
-        message: (body.text || '').slice(0, 80),
-      }).catch(() => {});
+      const saved = await sb.from('notifications').insert(notif).select().single();
       return json(saved, 201);
     }
     return err('Méthode non supportée', 405);
