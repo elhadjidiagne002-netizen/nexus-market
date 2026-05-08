@@ -2075,34 +2075,23 @@ const DataService = {
   },
 
   async saveOrder(order) {
-    // [FIX O] Utiliser _localId comme id de fallback + ne pas envoyer les champs privés à Supabase
+    // Schéma réel de la table orders (vérifié via information_schema) :
+    // id, user_id, amount_eur, amount_fcfa, paid_amount_fcfa, currency,
+    // status, paytech_token, failure_reason, items, buyer_address,
+    // created_at, updated_at, paid_at, canceled_at
     const { _localId, stripePaymentId, fromOffer, date: _ignoredDate, ...cleanOrder } = order;
     const localId = _localId || ("ORD-" + Date.now());
     if (this._sb) {
-      // [FIX PGRST204] buyer_email et buyer_address ne sont pas des colonnes de la table
-      // orders — les envoyer provoquait "Could not find the column in the schema cache".
-      // Ces données sont conservées dans le champ JSONB metadata pour ne pas les perdre.
+      const EUR_TO_FCFA = 655.957;
       const row = {
-        buyer_id: cleanOrder.buyer, buyer_name: cleanOrder.buyerName,
-        vendor_id: cleanOrder.vendor || cleanOrder.vendorId,
-        vendor_name: cleanOrder.vendorName || null,
-        products: cleanOrder.products || [],
-        subtotal: cleanOrder.subtotal || cleanOrder.total,
-        total: cleanOrder.total,
-        commission: cleanOrder.commission || (cleanOrder.total * 0.15),
-        discount: cleanOrder.discount || 0,
-        coupon_code: cleanOrder.couponCode || cleanOrder.coupon_code || null,
-        status: cleanOrder.status || "processing",
-        payment_method: cleanOrder.paymentMethod || "unknown",
-        shipping_city: cleanOrder.shippingCity || null,
-        tracking_number: cleanOrder.trackingNumber || null,
-        // Données acheteur dans JSONB — ne génèrent pas d'erreur schéma si absent de la table
-        ...(cleanOrder.buyerEmail || cleanOrder.buyerAddress ? {
-          metadata: {
-            buyer_email:   cleanOrder.buyerEmail   || null,
-            buyer_address: cleanOrder.buyerAddress || null,
-          }
-        } : {}),
+        user_id:       cleanOrder.buyer || null,
+        amount_eur:    cleanOrder.total || 0,
+        amount_fcfa:   Math.round((cleanOrder.total || 0) * EUR_TO_FCFA),
+        currency:      "XOF",
+        status:        cleanOrder.status || "processing",
+        items:         cleanOrder.products || [],
+        buyer_address: cleanOrder.buyerAddress || null,
+        // Champs sans colonne dédiée → stockés dans items[0].meta si besoin
       };
       try {
         // [FIX] Rafraîchir la session Supabase avant l'insert pour éviter le 401
