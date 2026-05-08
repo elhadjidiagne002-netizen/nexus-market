@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
-=======
-import { CORS, options, json, err, supabase, requireAuth } from '../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -12,17 +9,19 @@ export async function onRequest({ request, env }) {
 
     const sb = supabase(env);
 
-    // POST: Marquer toutes les notifications comme lues
     if (request.method === 'POST') {
       const { data, error } = await sb
         .from('notifications')
-        .update({ read: true, read_at: new Date().toISOString() })
+        .update({
+          read: true,
+          read_at: new Date().toISOString()
+        })
         .eq('user_id', user.id)
         .eq('read', false)
         .select();
 
       if (error) throw error;
-      return json(data || [], 200);
+      return json(data || []);
     }
 
     return err('Méthode non supportée', 405);
@@ -30,7 +29,5 @@ export async function onRequest({ request, env }) {
     return err(error.message, error.status || 500);
   }
 }
-
-
 
 

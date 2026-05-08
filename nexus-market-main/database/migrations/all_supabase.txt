@@ -1,0 +1,2714 @@
+-- ============================================================
+-- NEXUS Market Sénégal — Schéma PostgreSQL / Supabase v3.1
+-- ============================================================
+-- Exécutez ce fichier dans l'éditeur SQL de Supabase
+-- (ou via psql en production)
+-- ============================================================
+
+-- Extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm"; -- recherche full-text
+
+-- ─── PROFILES ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS profiles (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email           TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    avatar          TEXT,
+    role            TEXT NOT NULL DEFAULT 'buyer' CHECK (role IN ('buyer', 'vendor', 'admin')),
+    status          TEXT DEFAULT 'active' CHECK (status IN ('active', 'pending', 'banned', 'approved')),
+    phone           TEXT,
+    bio             TEXT,
+    rating          NUMERIC(3,1) DEFAULT 0,
+    total_sales     NUMERIC(12,2) DEFAULT 0,
+    commission_rate NUMERIC(4,2) DEFAULT 15.00, -- % de commission
+    shop_category   TEXT,
+    last_login      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_profiles_email  ON profiles(email);
+CREATE INDEX IF NOT EXISTS idx_profiles_role   ON profiles(role);
+CREATE INDEX IF NOT EXISTS idx_profiles_status ON profiles(status);
+
+-- ─── PENDING VENDORS ────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS pending_vendors (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name          TEXT NOT NULL,
+    owner_name    TEXT NOT NULL,
+    email         TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    category      TEXT DEFAULT 'Général',
+    avatar        TEXT,
+    documents     TEXT[],
+    status        TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    notes         TEXT,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─── PRODUCTS ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS products (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name              TEXT NOT NULL,
+    category          TEXT NOT NULL,
+    price             NUMERIC(10,2) NOT NULL CHECK (price > 0),
+    stock             INT NOT NULL DEFAULT 0 CHECK (stock >= 0),
+    description       TEXT,
+    image_url         TEXT,
+    images            TEXT[],
+    vendor_id         UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    vendor_name       TEXT NOT NULL,
+    rating            NUMERIC(3,1) DEFAULT 0,
+    reviews_count     INT DEFAULT 0,
+    active            BOOLEAN DEFAULT true,
+    moderated         BOOLEAN DEFAULT false,  -- Admin approval required
+    moderation_reason TEXT,
+    moderated_at      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_products_name   ON products USING gin(name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_products_cat    ON products(category);
+CREATE INDEX IF NOT EXISTS idx_products_vendor ON products(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_products_active ON products(active, moderated);
+
+-- ─── PRODUCT QUESTIONS ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS product_questions (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    product_id   UUID REFERENCES products(id) ON DELETE CASCADE,
+    product_name TEXT NOT NULL,
+    vendor_id    UUID REFERENCES profiles(id),
+    user_id      UUID REFERENCES profiles(id),
+    user_name    TEXT NOT NULL,
+    text         TEXT NOT NULL,
+    answer       TEXT,
+    answered_at  TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_questions_product ON product_questions(product_id);
+CREATE INDEX IF NOT EXISTS idx_questions_vendor  ON product_questions(vendor_id);
+
+-- ─── ORDERS ─────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS orders (
+    id               TEXT PRIMARY KEY DEFAULT 'ORD-' || EXTRACT(EPOCH FROM NOW())::BIGINT || '-' || UPPER(SUBSTR(MD5(RANDOM()::TEXT), 1, 5)),
+    buyer_id         UUID REFERENCES profiles(id),
+    buyer_name       TEXT NOT NULL,
+    buyer_email      TEXT NOT NULL,
+    buyer_address    TEXT,
+    buyer_phone      TEXT,
+    vendor_id        UUID REFERENCES profiles(id),
+    vendor_name      TEXT NOT NULL,
+    vendor_note      TEXT,          -- Note vendeur visible acheteur
+    products         JSONB NOT NULL, -- [{id, name, price, quantity, imageUrl}]
+    subtotal         NUMERIC(10,2) NOT NULL,
+    discount_amount  NUMERIC(10,2) DEFAULT 0,
+    total            NUMERIC(10,2) NOT NULL,
+    commission       NUMERIC(10,2) NOT NULL,
+    status           TEXT DEFAULT 'pending_payment'
+                         CHECK (status IN ('pending_payment','processing','in_transit','delivered','cancelled')),
+    payment_method   TEXT CHECK (payment_method IN ('card','mobile')),
+    payment_status   TEXT DEFAULT 'pending' CHECK (payment_status IN ('pending','paid','failed','refunded')),
+    stripe_payment_id TEXT,
+    mobile_money_ref TEXT,          -- Référence transaction mobile money
+    tracking_number  TEXT,
+    shipping_city    TEXT,
+    coupon_code      TEXT,
+    return_status    TEXT,
+    return_id        UUID,
+    dispute_id       UUID,
+    has_dispute      BOOLEAN DEFAULT false,
+    cancel_reason    TEXT,
+    cancelled_at     TIMESTAMPTZ,
+    processing_at    TIMESTAMPTZ,
+    in_transit_at    TIMESTAMPTZ,
+    delivered_at     TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_buyer   ON orders(buyer_id);
+CREATE INDEX IF NOT EXISTS idx_orders_vendor  ON orders(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_orders_status  ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at DESC);
+
+-- ─── RETURN REQUESTS ────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS return_requests (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id     TEXT REFERENCES orders(id),
+    buyer_id     UUID REFERENCES profiles(id),
+    buyer_name   TEXT NOT NULL,
+    vendor_id    UUID REFERENCES profiles(id),
+    vendor_name  TEXT NOT NULL,
+    products     JSONB,
+    order_total  NUMERIC(10,2),
+    category     TEXT NOT NULL,    -- 'defective', 'wrong_item', 'not_as_described', 'changed_mind', 'other'
+    description  TEXT NOT NULL,
+    status       TEXT DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','refunded')),
+    admin_notes  TEXT,             -- Notes admin visibles par l'acheteur
+    approved_at  TIMESTAMPTZ,
+    rejected_at  TIMESTAMPTZ,
+    refunded_at  TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_returns_buyer  ON return_requests(buyer_id);
+CREATE INDEX IF NOT EXISTS idx_returns_vendor ON return_requests(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_returns_status ON return_requests(status);
+CREATE INDEX IF NOT EXISTS idx_returns_order  ON return_requests(order_id);
+
+-- ─── DISPUTES ───────────────────────────────────────────────────────────────
+-- Table manquante dans la version originale — nécessaire pour le système de litiges
+CREATE TABLE IF NOT EXISTS disputes (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id        TEXT REFERENCES orders(id),
+    buyer_id        UUID REFERENCES profiles(id),
+    buyer_name      TEXT NOT NULL,
+    vendor_id       UUID REFERENCES profiles(id),
+    vendor_name     TEXT NOT NULL,
+    order_total     NUMERIC(10,2),
+    reason          TEXT NOT NULL,  -- 'not_received', 'not_as_described', 'damaged', 'unauthorized', 'other'
+    description     TEXT NOT NULL,
+    status          TEXT DEFAULT 'open' CHECK (status IN ('open','investigating','resolved','closed')),
+    resolution      TEXT,           -- Description de la résolution (visible par les deux parties)
+    admin_notes     TEXT,           -- Notes internes admin uniquement
+    resolved_by     UUID REFERENCES profiles(id),
+    open_at         TIMESTAMPTZ DEFAULT NOW(),
+    investigating_at TIMESTAMPTZ,
+    resolved_at     TIMESTAMPTZ,
+    closed_at       TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_disputes_buyer  ON disputes(buyer_id);
+CREATE INDEX IF NOT EXISTS idx_disputes_vendor ON disputes(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_disputes_order  ON disputes(order_id);
+CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes(status);
+
+-- ─── REVIEWS ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS reviews (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    product_id  UUID REFERENCES products(id) ON DELETE CASCADE,
+    user_id     UUID REFERENCES profiles(id),
+    user_name   TEXT NOT NULL,
+    rating      INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment     TEXT,
+    helpful     INT DEFAULT 0,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(product_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id);
+
+-- ─── MESSAGES ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS messages (
+    id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    from_id   UUID REFERENCES profiles(id),
+    from_name TEXT NOT NULL,
+    to_id     UUID REFERENCES profiles(id),
+    to_name   TEXT NOT NULL,
+    text      TEXT NOT NULL,
+    read      BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_to   ON messages(to_id);
+CREATE INDEX IF NOT EXISTS idx_messages_from ON messages(from_id);
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(from_id, to_id, created_at DESC);
+
+-- ─── NOTIFICATIONS ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS notifications (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id    UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    type       TEXT NOT NULL CHECK (type IN ('order','offer','message','return','vendor','system','dispute')),
+    title      TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    read       BOOLEAN DEFAULT false,
+    link       TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifs_user    ON notifications(user_id, read);
+CREATE INDEX IF NOT EXISTS idx_notifs_created ON notifications(created_at DESC);
+
+-- ─── COUPONS ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS coupons (
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code             TEXT UNIQUE NOT NULL,
+    discount_percent NUMERIC(5,2) NOT NULL CHECK (discount_percent > 0 AND discount_percent <= 100),
+    type             TEXT DEFAULT 'percent' CHECK (type IN ('percent','fixed')),
+    description      TEXT,
+    min_order_amount NUMERIC(10,2) DEFAULT 0,
+    max_uses         INT,
+    used_count       INT DEFAULT 0,
+    active           BOOLEAN DEFAULT true,
+    expires_at       TIMESTAMPTZ,
+    created_by       UUID REFERENCES profiles(id),
+    created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─── OFFERS (négociation de prix) ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS offers (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    product_id    UUID REFERENCES products(id),
+    product_name  TEXT NOT NULL,
+    buyer_id      UUID REFERENCES profiles(id),
+    buyer_name    TEXT NOT NULL,
+    vendor_id     UUID REFERENCES profiles(id),
+    offered_price NUMERIC(10,2) NOT NULL,
+    counter_price NUMERIC(10,2),   -- Contre-proposition du vendeur
+    message       TEXT,
+    status        TEXT DEFAULT 'pending' CHECK (status IN ('pending','accepted','rejected')),
+    created_at    TIMESTAMPTZ DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_offers_buyer  ON offers(buyer_id);
+CREATE INDEX IF NOT EXISTS idx_offers_vendor ON offers(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_offers_status ON offers(status);
+
+-- ─── WISHLISTS ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wishlists (
+    user_id    UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (user_id, product_id)
+);
+
+-- ─── PASSWORD RESETS ────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS password_resets (
+    email      TEXT PRIMARY KEY,
+    code       TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─── STOCK ALERTS ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS stock_alerts (
+    product_id  UUID REFERENCES products(id) ON DELETE CASCADE,
+    user_id     UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    user_email  TEXT,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (product_id, user_id)
+);
+
+-- ─── FLASH SALES ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS flash_sales (
+    id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    product_id       UUID REFERENCES products(id) ON DELETE CASCADE,
+    discount_percent NUMERIC(5,2) NOT NULL,
+    ends_at          TIMESTAMPTZ NOT NULL,
+    active           BOOLEAN DEFAULT true,
+    created_by       UUID REFERENCES profiles(id),
+    created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─── PAYOUT REQUESTS ────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS payout_requests (
+    id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    vendor_id     UUID REFERENCES profiles(id),
+    vendor_name   TEXT NOT NULL,
+    amount        NUMERIC(12,2) NOT NULL,
+    method        TEXT CHECK (method IN ('mobile','bank')),
+    provider      TEXT,            -- 'orange', 'wave', 'free', 'bank_name'
+    destination   TEXT NOT NULL,   -- Numéro tel ou IBAN
+    status        TEXT DEFAULT 'pending' CHECK (status IN ('pending','paid','rejected')),
+    admin_note    TEXT,
+    processed_at  TIMESTAMPTZ,
+    processed_by  UUID REFERENCES profiles(id),
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payouts_vendor ON payout_requests(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_payouts_status ON payout_requests(status);
+
+-- ─── RLS ACTIVATION ─────────────────────────────────────────────────────────
+ALTER TABLE profiles          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE products          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reviews           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wishlists         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE offers            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE return_requests   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE disputes          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coupons           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stock_alerts      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE flash_sales       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payout_requests   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_questions ENABLE ROW LEVEL SECURITY;
+
+-- ─── ROW LEVEL SECURITY POLICIES ────────────────────────────────────────────
+
+-- Produits
+DROP POLICY IF EXISTS "products_public_read" ON products;
+CREATE POLICY "products_public_read" ON products FOR SELECT USING (active = true AND moderated = true);
+DROP POLICY IF EXISTS "vendors_manage_own" ON products;
+CREATE POLICY "vendors_manage_own" ON products FOR ALL   USING (vendor_id = auth.uid());
+DROP POLICY IF EXISTS "admin_all_products" ON products;
+CREATE POLICY "admin_all_products" ON products FOR ALL   USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+-- Profils
+DROP POLICY IF EXISTS "profiles_public_read" ON profiles;
+CREATE POLICY "profiles_public_read" ON profiles FOR SELECT USING (true);
+DROP POLICY IF EXISTS "users_update_own" ON profiles;
+CREATE POLICY "users_update_own" ON profiles FOR UPDATE USING (id = auth.uid());
+DROP POLICY IF EXISTS "admin_all_profiles" ON profiles;
+CREATE POLICY "admin_all_profiles" ON profiles FOR ALL   USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+-- Commandes
+DROP POLICY IF EXISTS "buyer_sees_own_orders" ON orders;
+CREATE POLICY "buyer_sees_own_orders" ON orders FOR SELECT USING (buyer_id = auth.uid());
+DROP POLICY IF EXISTS "vendor_sees_own_orders" ON orders;
+CREATE POLICY "vendor_sees_own_orders" ON orders FOR SELECT USING (vendor_id = auth.uid());
+DROP POLICY IF EXISTS "admin_all_orders" ON orders;
+CREATE POLICY "admin_all_orders" ON orders FOR ALL   USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+-- Notifications
+DROP POLICY IF EXISTS "own_notifications" ON notifications;
+CREATE POLICY "own_notifications" ON notifications FOR ALL USING (user_id = auth.uid());
+
+-- Messages
+DROP POLICY IF EXISTS "message_participants" ON messages;
+CREATE POLICY "message_participants" ON messages FOR SELECT USING (from_id = auth.uid() OR to_id = auth.uid());
+DROP POLICY IF EXISTS "send_messages" ON messages;
+CREATE POLICY "send_messages" ON messages FOR INSERT WITH CHECK (from_id = auth.uid());
+DROP POLICY IF EXISTS "mark_read" ON messages;
+CREATE POLICY "mark_read" ON messages FOR UPDATE USING (to_id = auth.uid());
+
+-- Wishlist
+DROP POLICY IF EXISTS "own_wishlist" ON wishlists;
+CREATE POLICY "own_wishlist" ON wishlists FOR ALL USING (user_id = auth.uid());
+
+-- Offres
+DROP POLICY IF EXISTS "buyer_sees_own_offers" ON offers;
+CREATE POLICY "buyer_sees_own_offers" ON offers FOR SELECT USING (buyer_id = auth.uid());
+DROP POLICY IF EXISTS "vendor_sees_own_offers" ON offers;
+CREATE POLICY "vendor_sees_own_offers" ON offers FOR SELECT USING (vendor_id = auth.uid());
+DROP POLICY IF EXISTS "buyer_creates_offers" ON offers;
+CREATE POLICY "buyer_creates_offers" ON offers FOR INSERT WITH CHECK (buyer_id = auth.uid());
+DROP POLICY IF EXISTS "vendor_updates_offers" ON offers;
+CREATE POLICY "vendor_updates_offers" ON offers FOR UPDATE USING (vendor_id = auth.uid());
+
+-- Coupons
+DROP POLICY IF EXISTS "coupons_auth_read" ON coupons;
+CREATE POLICY "coupons_auth_read" ON coupons FOR SELECT USING (auth.uid() IS NOT NULL);
+DROP POLICY IF EXISTS "admin_manages_coupons" ON coupons;
+CREATE POLICY "admin_manages_coupons" ON coupons FOR ALL   USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+-- Retours
+DROP POLICY IF EXISTS "buyer_sees_own_returns" ON return_requests;
+CREATE POLICY "buyer_sees_own_returns" ON return_requests FOR SELECT USING (buyer_id = auth.uid());
+DROP POLICY IF EXISTS "vendor_sees_returns" ON return_requests;
+CREATE POLICY "vendor_sees_returns" ON return_requests FOR SELECT USING (vendor_id = auth.uid());
+DROP POLICY IF EXISTS "buyer_creates_returns" ON return_requests;
+CREATE POLICY "buyer_creates_returns" ON return_requests FOR INSERT WITH CHECK (buyer_id = auth.uid());
+DROP POLICY IF EXISTS "admin_all_returns" ON return_requests;
+CREATE POLICY "admin_all_returns" ON return_requests FOR ALL   USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+-- Litiges
+DROP POLICY IF EXISTS "buyer_sees_own_disputes" ON disputes;
+CREATE POLICY "buyer_sees_own_disputes" ON disputes FOR SELECT USING (buyer_id = auth.uid());
+DROP POLICY IF EXISTS "vendor_sees_disputes" ON disputes;
+CREATE POLICY "vendor_sees_disputes" ON disputes FOR SELECT USING (vendor_id = auth.uid());
+DROP POLICY IF EXISTS "buyer_creates_disputes" ON disputes;
+CREATE POLICY "buyer_creates_disputes" ON disputes FOR INSERT WITH CHECK (buyer_id = auth.uid());
+DROP POLICY IF EXISTS "admin_all_disputes" ON disputes;
+CREATE POLICY "admin_all_disputes" ON disputes FOR ALL   USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+-- Stock alerts
+DROP POLICY IF EXISTS "own_stock_alerts" ON stock_alerts;
+CREATE POLICY "own_stock_alerts" ON stock_alerts     FOR ALL USING (user_id = auth.uid());
+
+-- Flash sales
+DROP POLICY IF EXISTS "public_flash_sales" ON flash_sales;
+CREATE POLICY "public_flash_sales" ON flash_sales      FOR SELECT USING (active = true AND ends_at > NOW());
+DROP POLICY IF EXISTS "admin_flash_sales" ON flash_sales;
+CREATE POLICY "admin_flash_sales" ON flash_sales      FOR ALL   USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+-- Payout requests
+DROP POLICY IF EXISTS "vendor_payout_requests" ON payout_requests;
+CREATE POLICY "vendor_payout_requests" ON payout_requests  FOR SELECT USING (vendor_id = auth.uid());
+DROP POLICY IF EXISTS "vendor_create_payouts" ON payout_requests;
+CREATE POLICY "vendor_create_payouts" ON payout_requests  FOR INSERT WITH CHECK (vendor_id = auth.uid());
+DROP POLICY IF EXISTS "admin_payout_requests" ON payout_requests;
+CREATE POLICY "admin_payout_requests" ON payout_requests  FOR ALL   USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+-- Questions produits
+DROP POLICY IF EXISTS "questions_public_read" ON product_questions;
+CREATE POLICY "questions_public_read" ON product_questions FOR SELECT USING (true);
+DROP POLICY IF EXISTS "users_ask_questions" ON product_questions;
+CREATE POLICY "users_ask_questions" ON product_questions FOR INSERT WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS "vendor_answers" ON product_questions;
+CREATE POLICY "vendor_answers" ON product_questions FOR UPDATE USING (vendor_id = auth.uid());
+
+-- ─── RPC FUNCTIONS ──────────────────────────────────────────────────────────
+
+-- Décrémenter le stock de façon atomique
+CREATE OR REPLACE FUNCTION decrement_stock(product_id UUID, qty INT)
+RETURNS VOID AS $$
+  UPDATE products SET stock = GREATEST(0, stock - qty), updated_at = NOW()
+  WHERE id = product_id;
+$$ LANGUAGE SQL;
+
+-- Incrémenter le stock (annulation)
+CREATE OR REPLACE FUNCTION increment_stock(product_id UUID, qty INT)
+RETURNS VOID AS $$
+  UPDATE products SET stock = stock + qty, updated_at = NOW()
+  WHERE id = product_id;
+$$ LANGUAGE SQL;
+
+-- updated_at automatique
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_profiles_updated ON profiles;
+CREATE TRIGGER trg_profiles_updated  BEFORE UPDATE ON profiles  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_products_updated ON products;
+CREATE TRIGGER trg_products_updated  BEFORE UPDATE ON products  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_orders_updated ON orders;
+CREATE TRIGGER trg_orders_updated    BEFORE UPDATE ON orders    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+DROP TRIGGER IF EXISTS trg_offers_updated ON offers;
+CREATE TRIGGER trg_offers_updated    BEFORE UPDATE ON offers    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ─── RÉALTIME ───────────────────────────────────────────────────────────────
+-- Activer dans Supabase Dashboard → Table Editor → [table] → Enable Realtime
+-- Tables recommandées pour le Realtime : notifications, messages, orders
+
+-- ─── VUES UTILES ────────────────────────────────────────────────────────────
+CREATE OR REPLACE VIEW vendor_stats AS
+SELECT
+  p.id AS vendor_id,
+  p.name AS vendor_name,
+  p.avatar,
+  p.shop_category,
+  p.rating AS profile_rating,
+  COUNT(DISTINCT o.id) AS total_orders,
+  COALESCE(SUM(o.total), 0) AS total_revenue,
+  COALESCE(SUM(o.commission), 0) AS total_commission,
+  COALESCE(SUM(o.total - o.commission), 0) AS net_payout,
+  COUNT(DISTINCT pr.id) AS total_products,
+  COALESCE(AVG(r.rating), 0) AS avg_rating,
+  COUNT(DISTINCT r.id) AS total_reviews
+FROM profiles p
+LEFT JOIN orders o ON o.vendor_id = p.id AND o.status = 'delivered'
+LEFT JOIN products pr ON pr.vendor_id = p.id AND pr.active = true
+LEFT JOIN reviews r ON r.product_id = pr.id
+WHERE p.role = 'vendor' AND p.status = 'approved'
+GROUP BY p.id, p.name, p.avatar, p.shop_category, p.rating;
+
+CREATE OR REPLACE VIEW platform_stats AS
+SELECT
+  COUNT(DISTINCT CASE WHEN role = 'buyer'  THEN id END) AS total_buyers,
+  COUNT(DISTINCT CASE WHEN role = 'vendor' THEN id END) AS total_vendors,
+  (SELECT COUNT(*) FROM products WHERE active = true AND moderated = true) AS total_products,
+  (SELECT COUNT(*) FROM products WHERE moderated = false AND active = true) AS pending_products,
+  (SELECT COUNT(*) FROM orders) AS total_orders,
+  (SELECT COUNT(*) FROM orders WHERE status = 'delivered') AS delivered_orders,
+  (SELECT COUNT(*) FROM orders WHERE status = 'processing') AS processing_orders,
+  (SELECT COALESCE(SUM(total), 0) FROM orders WHERE status = 'delivered') AS total_revenue,
+  (SELECT COALESCE(SUM(commission), 0) FROM orders WHERE status = 'delivered') AS total_commission,
+  (SELECT COUNT(*) FROM disputes WHERE status = 'open') AS open_disputes,
+  (SELECT COUNT(*) FROM return_requests WHERE status = 'pending') AS pending_returns,
+  (SELECT COUNT(*) FROM pending_vendors WHERE status = 'pending') AS pending_vendors
+FROM profiles;
+
+-- ─── DONNÉES DE DÉMONSTRATION ───────────────────────────────────────────────
+-- Coupons par défaut
+INSERT INTO coupons (code, discount_percent, type, description, max_uses, active)
+VALUES
+  ('BIENVENUE10', 10, 'percent', '10% de réduction sur votre première commande', 1000, true),
+  ('SENEGAL',      5, 'percent', '5% pour les fêtes nationales', NULL, true),
+  ('NEXUS20',     20, 'percent', '20% — offre de lancement', 500, true)
+ON CONFLICT (code) DO NOTHING;
+
+-- Admin par défaut — CHANGER LE MOT DE PASSE EN PRODUCTION !
+-- Le hash ci-dessous correspond à 'admin123' (bcrypt, 12 rounds)
+-- Générez votre propre hash avec : node -e "require('bcrypt').hash('votre_mdp', 12).then(console.log)"
+-- INSERT INTO profiles (email, password_hash, name, role, status, avatar)
+-- VALUES ('admin@nexus.sn', '$2b$12$VOTRE_HASH_ICI', 'Admin NEXUS', 'admin', 'active', 'AD')
+-- ON CONFLICT (email) DO NOTHING;
+
+-- ─── NOTES DE DÉPLOIEMENT ───────────────────────────────────────────────────
+-- 1. Activez le Realtime sur les tables : notifications, messages, orders
+--    (Supabase Dashboard → Database → Replication → Source tables)
+--
+-- 2. Configurez les webhooks pour le Mobile Money dans le backend :
+--    POST /webhooks/mobile-money  (Orange Money / Wave)
+--    POST /webhooks/stripe        (Stripe)
+--
+-- 3. Créez les index de recherche full-text sur description :
+--    CREATE INDEX idx_products_desc ON products USING gin(description gin_trgm_ops);
+--
+-- 4. Configurez les alertes de monitoring Supabase pour :
+--    - stock = 0 (alerte stock épuisé)
+--    - disputes status = 'open' > 24h (alerte litiges non traités)
+
+
+
+-- ============================================================
+-- NEXUS Market Sénégal — Migration v3.2 (complète)
+-- À exécuter dans Supabase SQL Editor APRÈS schema.sql initial
+-- ============================================================
+
+-- ─── 1. REFRESH TOKENS ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id    UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked    BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rt_user    ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_rt_hash    ON refresh_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_rt_expires ON refresh_tokens(expires_at);
+ALTER TABLE refresh_tokens ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "No direct client access" ON refresh_tokens USING (false);
+
+-- ─── 2. POINTS DE FIDÉLITÉ ──────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS loyalty_points (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    order_id    TEXT REFERENCES orders(id) ON DELETE SET NULL,
+    type        TEXT NOT NULL CHECK (type IN ('earn', 'redeem')),
+    points      INT NOT NULL CHECK (points > 0),
+    description TEXT,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_loyalty_user ON loyalty_points(user_id);
+ALTER TABLE loyalty_points ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Own loyalty read"  ON loyalty_points FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY "Admin loyalty all" ON loyalty_points FOR ALL
+  USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+
+CREATE OR REPLACE VIEW loyalty_balances AS
+SELECT
+    user_id,
+    SUM(CASE WHEN type = 'earn'   THEN points ELSE 0    END) AS total_earned,
+    SUM(CASE WHEN type = 'redeem' THEN points ELSE 0    END) AS total_redeemed,
+    SUM(CASE WHEN type = 'earn'   THEN points ELSE -points END) AS balance
+FROM loyalty_points
+GROUP BY user_id;
+
+-- ─── 3. VOTES SUR AVIS ──────────────────────────────────────────────────────
+-- Empêche un utilisateur de voter deux fois pour le même avis (POST /api/reviews/:id/helpful)
+CREATE TABLE IF NOT EXISTS review_votes (
+    review_id  UUID NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    user_id    UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (review_id, user_id)
+);
+ALTER TABLE review_votes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Own votes" ON review_votes FOR ALL USING (user_id = auth.uid());
+
+-- Fonction RPC pour incrémenter helpful de façon atomique
+CREATE OR REPLACE FUNCTION increment_review_helpful(review_id UUID)
+RETURNS VOID AS $$
+  UPDATE reviews SET helpful = COALESCE(helpful, 0) + 1 WHERE id = review_id;
+$$ LANGUAGE SQL;
+
+-- ─── 4. CHAMP deleted SUR MESSAGES ──────────────────────────────────────────
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT false;
+
+-- ─── 5. CHAMP admin_notes SUR ORDERS ────────────────────────────────────────
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS admin_notes TEXT;
+
+-- ─── 6. COLONNES MANQUANTES SUR TABLES EXISTANTES ───────────────────────────
+
+-- orders : taux de commission appliqué + transaction mobile + transporteur
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS commission_rate       NUMERIC(4,2),
+  ADD COLUMN IF NOT EXISTS mobile_transaction_id TEXT,
+  ADD COLUMN IF NOT EXISTS carrier               TEXT;
+
+-- coupons : montant fixe FCFA + coupon nominatif fidélité
+ALTER TABLE coupons
+  ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS owner_id        UUID REFERENCES profiles(id) ON DELETE SET NULL;
+
+-- Index d'idempotence Stripe
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_stripe_pi_unique
+  ON orders(stripe_payment_id)
+  WHERE stripe_payment_id IS NOT NULL;
+
+-- Index numéro de suivi
+CREATE INDEX IF NOT EXISTS idx_orders_tracking ON orders(tracking_number)
+  WHERE tracking_number IS NOT NULL;
+
+-- Index recherche full-text sur profiles pour /api/search
+CREATE INDEX IF NOT EXISTS idx_profiles_name ON profiles USING gin(name gin_trgm_ops);
+
+-- ─── 7. NETTOYAGE AUTOMATIQUE DES TOKENS EXPIRÉS (optionnel) ────────────────
+-- Décommenter si pg_cron est activé dans votre projet Supabase :
+-- SELECT cron.schedule('purge-expired-tokens', '0 3 * * *',
+--   $$DELETE FROM refresh_tokens WHERE expires_at < NOW() - INTERVAL '1 day'$$);
+
+-- ─── 8. VARIABLE .env À AJOUTER ─────────────────────────────────────────────
+-- WAVE_WEBHOOK_SECRET=whsec_xxxxxxxx  (dashboard Wave Développeur → Webhooks)
+
+-- ─── 9. RÉCAPITULATIF COMPLET DES ROUTES API v3.2 ───────────────────────────
+--
+-- AUTH (7 routes)
+--   POST   /api/auth/register           inscription + email bienvenue + refreshToken
+--   POST   /api/auth/login              connexion + refreshToken
+--   GET    /api/auth/me                 profil connecté (reload frontend)
+--   POST   /api/auth/refresh            renouveler JWT (rotation token)
+--   POST   /api/auth/logout             déconnexion (révocation)
+--   PATCH  /api/auth/profile            modifier profil
+--   PATCH  /api/auth/change-password    changer mot de passe
+--   POST   /api/auth/forgot-password    demande reset
+--   POST   /api/auth/reset-password     reset avec code OTP
+--
+-- PAIEMENTS (5 routes)
+--   POST   /api/payments/create-intent
+--   POST   /api/payments/mobile-money             Orange Money / Wave (réel + simulation)
+--   POST   /api/payments/mobile-money/initiate    endpoint alternatif
+--   POST   /webhooks/stripe
+--   POST   /api/webhooks/orange-money
+--   POST   /api/webhooks/wave                     HMAC SHA-256 vérifié
+--
+-- COMMANDES (7 routes)
+--   POST   /api/orders                  créer (idempotent + coupon fixed/percent)
+--   GET    /api/orders                  liste paginée (?page=&limit=&status=)
+--   GET    /api/orders/:id              détail
+--   PATCH  /api/orders/:id/status       mise à jour + loyalty auto à delivered
+--   PATCH  /api/orders/:id/cancel       annuler + remboursement Stripe
+--   PATCH  /api/orders/:id/tracking     numéro suivi + email expédition
+--   GET    /api/admin/orders            vue admin filtrée paginée
+--   PATCH  /api/admin/orders/:id        admin force-update statut/paiement
+--
+-- PRODUITS (7 routes)
+--   GET    /api/products                liste filtrée paginée
+--   POST   /api/products                créer (vendor)
+--   GET    /api/products/:id            détail
+--   PATCH  /api/products/:id            modifier
+--   DELETE /api/products/:id            désactiver
+--   PATCH  /api/products/:id/moderate   modérer (admin)
+--   PATCH  /api/products/:id/images     galerie images
+--   GET    /api/products/similar/:id    produits similaires (8 max)
+--
+-- RECHERCHE
+--   GET    /api/search?q=&type=products,vendors&page=&limit=
+--
+-- AVIS (3 routes)
+--   POST   /api/reviews                 déposer (achat vérifié)
+--   GET    /api/reviews/:productId      liste paginée par produit
+--   POST   /api/reviews/:id/helpful     voter "utile" (1 vote/user)
+--
+-- FIDÉLITÉ (2 routes)
+--   GET    /api/loyalty                 solde + historique
+--   POST   /api/loyalty/redeem          100 pts → coupon 1 000 FCFA
+--
+-- COUPONS (4 routes)
+--   GET    /api/coupons/validate/:code  valider un code
+--   GET    /api/coupons                 liste admin paginée
+--   POST   /api/coupons                 créer (admin)
+--   PATCH  /api/coupons/:id             activer/modifier (admin)
+--   DELETE /api/coupons/:id             désactiver (admin)
+--
+-- MESSAGES (4 routes)
+--   GET    /api/messages                conversations groupées
+--   POST   /api/messages                envoyer
+--   PATCH  /api/messages/:id/read       marquer lu
+--   DELETE /api/messages/:id            supprimer (soft)
+--
+-- ADMIN DIVERS
+--   GET    /api/admin/stats             statistiques globales
+--   GET    /api/admin/reports/monthly   rapport financier mensuel
+--   GET    /api/admin/users             liste utilisateurs
+--   PATCH  /api/admin/users/:id/status  ban / unban
+--   GET    /api/admin/vendors (+ pending, approve, reject, ban, commission)
+--   GET    /api/admin/products/pending
+--   GET    /api/admin/disputes
+--   GET    /api/admin/payouts
+--   GET    /api/admin/export/orders     CSV commandes
+--   GET    /api/admin/export/vendors    CSV vendeurs
+--   GET    /api/admin/export/users      CSV utilisateurs
+--
+-- VENDOR
+--   GET    /api/vendor/stats            statistiques vendeur
+--   GET    /api/vendor/commission       taux de commission propre
+--
+-- DIVERS (inchangés)
+--   GET/POST/DELETE /api/wishlists/:productId
+--   GET/POST/PATCH  /api/offers/:id
+--   GET/PATCH/DELETE /api/notifications
+--   GET/POST/DELETE /api/stock-alerts
+--   POST            /api/stock-alerts/notify/:productId
+--   GET/POST        /api/flash-sales
+--   POST/PATCH      /api/payout-requests
+--   GET             /api/vendors/:id
+--   GET             /api/returns (+ PATCH admin)
+--   POST            /api/upload
+--   GET             /api/health
+
+-- ─── 10. CHECKLIST GO-LIVE ──────────────────────────────────────────────────
+-- [ ] Exécuter ce fichier dans Supabase SQL Editor
+-- [ ] Ajouter WAVE_WEBHOOK_SECRET dans .env
+-- [ ] Tester les 9 routes auth (register, login, me, refresh, logout, change-pw...)
+-- [ ] Tester /api/search?q=boubou
+-- [ ] Tester coupon type 'fixed' sur une commande
+-- [ ] Livrer une commande → vérifier +X points dans /api/loyalty
+-- [ ] Tester POST /api/loyalty/redeem → coupon FIDELITEXXXXXX dans coupons
+-- [ ] Appliquer coupon FIDELITEXXXXXX sur nouvelle commande → remise 1 000 FCFA
+-- [ ] GET /api/admin/reports/monthly → vérifier conversionRate, topVendors
+-- [ ] GET /api/admin/export/users → CSV avec BOM UTF-8 (Excel lisible)
+-- [ ] PATCH /api/admin/orders/:id → forcer delivered → loyalty attribuée
+-- [ ] POST /api/reviews/:id/helpful → 409 si double vote
+-- [ ] DELETE /api/messages/:id → text = '[Message supprimé]' dans DB
+-- [ ] PATCH /api/orders/:id/tracking → email d'expédition reçu par acheteur
+-- [ ] Virement vendeur paid → email payoutProcessed reçu
+-- [ ] Vérifier WAVE_WEBHOOK_SECRET dans webhook Wave (signature HMAC)
+-- [ ] Supprimer nexus_reset.html du serveur web public
+
+
+
+-- À exécuter AVANT schema_analytics_v1.sql
+ALTER TABLE profiles  ADD COLUMN IF NOT EXISTS commission_rate NUMERIC(5,2) DEFAULT 10.0;
+ALTER TABLE orders    ADD COLUMN IF NOT EXISTS commission      NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE orders    ADD COLUMN IF NOT EXISTS vendor_id       UUID REFERENCES profiles(id);
+ALTER TABLE products  ADD COLUMN IF NOT EXISTS active          BOOLEAN DEFAULT true;
+ALTER TABLE products  ADD COLUMN IF NOT EXISTS moderated       BOOLEAN DEFAULT false;
+ALTER TABLE products  ADD COLUMN IF NOT EXISTS rating          NUMERIC(3,2) DEFAULT 0;
+ALTER TABLE products  ADD COLUMN IF NOT EXISTS reviews_count   INT DEFAULT 0;
+
+
+-- ============================================================
+-- NEXUS Market Sénégal — Analytics Vendeurs v1.0 (FINAL)
+-- À exécuter dans Supabase SQL Editor APRÈS schema.sql
+-- ============================================================
+
+-- ─── 0. COLONNES MANQUANTES ──────────────────────────────────────────────────
+ALTER TABLE profiles  ADD COLUMN IF NOT EXISTS commission_rate NUMERIC(5,2)  DEFAULT 10.0;
+ALTER TABLE orders    ADD COLUMN IF NOT EXISTS commission      NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE orders    ADD COLUMN IF NOT EXISTS vendor_id       UUID REFERENCES profiles(id) ON DELETE SET NULL;
+ALTER TABLE products  ADD COLUMN IF NOT EXISTS active          BOOLEAN       DEFAULT true;
+ALTER TABLE products  ADD COLUMN IF NOT EXISTS moderated       BOOLEAN       DEFAULT false;
+ALTER TABLE products  ADD COLUMN IF NOT EXISTS rating          NUMERIC(3,2)  DEFAULT 0;
+ALTER TABLE products  ADD COLUMN IF NOT EXISTS reviews_count   INT           DEFAULT 0;
+
+-- ─── 1. TABLE DE CACHE MÉTRIQUES QUOTIDIENNES ────────────────────────────────
+CREATE TABLE IF NOT EXISTS vendor_daily_metrics (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    vendor_id   UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    date        DATE NOT NULL,
+    revenue     NUMERIC(12,2) DEFAULT 0,
+    net_revenue NUMERIC(12,2) DEFAULT 0,
+    orders      INT DEFAULT 0,
+    units_sold  INT DEFAULT 0,
+    new_buyers  INT DEFAULT 0,
+    avg_basket  NUMERIC(10,2) DEFAULT 0,
+    UNIQUE (vendor_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vdm_vendor_date
+    ON vendor_daily_metrics(vendor_id, date DESC);
+
+ALTER TABLE vendor_daily_metrics ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Vendor own metrics" ON vendor_daily_metrics
+    FOR SELECT USING (vendor_id = auth.uid());
+
+CREATE POLICY "Admin all metrics" ON vendor_daily_metrics
+    FOR ALL USING (
+        (SELECT role FROM profiles WHERE id = auth.uid()) = 'admin'
+    );
+
+-- ─── 2. TABLE DES VUES PRODUITS ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS product_views (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    product_id  UUID NOT NULL REFERENCES products(id)  ON DELETE CASCADE,
+    vendor_id   UUID NOT NULL REFERENCES profiles(id)  ON DELETE CASCADE,
+    viewer_id   UUID           REFERENCES profiles(id)  ON DELETE SET NULL,
+    session_id  TEXT,
+    viewed_at   TIMESTAMPTZ DEFAULT NOW(),
+    -- Colonne générée IMMUTABLE : évite le cast ::DATE dans l'index
+    viewed_date DATE GENERATED ALWAYS AS (
+        (viewed_at AT TIME ZONE 'Africa/Dakar')::DATE
+    ) STORED
+);
+
+-- Index sur la colonne stockée (pas d'expression → pas d'erreur IMMUTABLE)
+CREATE INDEX IF NOT EXISTS idx_pv_product   ON product_views(product_id, viewed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pv_vendor    ON product_views(vendor_id,  viewed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pv_date      ON product_views(viewed_date);
+
+ALTER TABLE product_views ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Vendor reads own views" ON product_views
+    FOR SELECT USING (vendor_id = auth.uid());
+
+CREATE POLICY "Anyone inserts view" ON product_views
+    FOR INSERT WITH CHECK (true);
+
+-- ─── 3. VUE : OVERVIEW RAPIDE PAR VENDEUR ────────────────────────────────────
+CREATE OR REPLACE VIEW vendor_analytics_overview AS
+SELECT
+    p.id                                                                            AS vendor_id,
+    p.name                                                                          AS vendor_name,
+    p.commission_rate,
+
+    COUNT(DISTINCT o.id)    FILTER (WHERE o.status = 'delivered')                  AS total_orders,
+    COALESCE(SUM(o.total)   FILTER (WHERE o.status = 'delivered'), 0)              AS total_revenue,
+    COALESCE(SUM(o.commission) FILTER (WHERE o.status = 'delivered'), 0)           AS total_commission,
+    COALESCE(SUM(o.total - o.commission) FILTER (WHERE o.status = 'delivered'), 0) AS net_revenue,
+    COALESCE(AVG(o.total)   FILTER (WHERE o.status = 'delivered'), 0)              AS avg_basket,
+
+    COUNT(DISTINCT o.buyer_id) FILTER (WHERE o.status = 'delivered')               AS unique_buyers,
+    COUNT(DISTINCT o.id)    FILTER (WHERE o.status = 'cancelled')                  AS cancelled_orders,
+
+    CASE
+        WHEN COUNT(o.id) > 0
+        THEN ROUND(
+            100.0 * COUNT(o.id) FILTER (WHERE o.status = 'cancelled') / COUNT(o.id),
+            1
+        )
+        ELSE 0
+    END                                                                             AS cancel_rate,
+
+    COUNT(DISTINCT pr.id)   FILTER (WHERE pr.active AND pr.moderated)              AS active_products,
+    COALESCE(AVG(r.rating), 0)                                                     AS avg_rating,
+    COUNT(r.id)                                                                    AS total_reviews,
+
+    COALESCE(SUM(o.total) FILTER (
+        WHERE o.status = 'delivered'
+          AND o.created_at > NOW() - INTERVAL '30 days'
+    ), 0)                                                                           AS revenue_30d,
+    COUNT(DISTINCT o.id)  FILTER (
+        WHERE o.status = 'delivered'
+          AND o.created_at > NOW() - INTERVAL '30 days'
+    )                                                                               AS orders_30d,
+
+    COALESCE(SUM(o.total) FILTER (
+        WHERE o.status = 'delivered'
+          AND o.created_at > NOW() - INTERVAL '7 days'
+    ), 0)                                                                           AS revenue_7d,
+    COUNT(DISTINCT o.id)  FILTER (
+        WHERE o.status = 'delivered'
+          AND o.created_at > NOW() - INTERVAL '7 days'
+    )                                                                               AS orders_7d
+
+FROM profiles p
+LEFT JOIN orders   o  ON o.vendor_id  = p.id
+LEFT JOIN products pr ON pr.vendor_id = p.id
+LEFT JOIN reviews  r  ON r.product_id = pr.id
+WHERE p.role = 'vendor'
+GROUP BY p.id, p.name, p.commission_rate;
+
+-- ─── 4. VUE : PERFORMANCE PRODUITS PAR VENDEUR ───────────────────────────────
+CREATE OR REPLACE VIEW vendor_product_performance AS
+SELECT
+    pr.id                                                        AS product_id,
+    pr.vendor_id,
+    pr.name                                                      AS product_name,
+    pr.category,
+    pr.price,
+    pr.stock,
+    pr.rating,
+    pr.reviews_count,
+    pr.active,
+    pr.moderated,
+    pr.created_at,
+
+    COALESCE(SUM(
+        (SELECT SUM((item->>'quantity')::INT)
+         FROM jsonb_array_elements(o.products) AS item
+         WHERE (item->>'id') = pr.id::TEXT)
+    ) FILTER (WHERE o.status = 'delivered'), 0)                  AS units_sold,
+
+    COALESCE(SUM(
+        (SELECT SUM((item->>'price')::NUMERIC * (item->>'quantity')::INT)
+         FROM jsonb_array_elements(o.products) AS item
+         WHERE (item->>'id') = pr.id::TEXT)
+    ) FILTER (WHERE o.status = 'delivered'), 0)                  AS product_revenue,
+
+    COUNT(DISTINCT o.id)  FILTER (WHERE o.status = 'delivered') AS order_count,
+    COUNT(DISTINCT pv.id)                                        AS view_count,
+
+    CASE
+        WHEN COUNT(DISTINCT pv.id) > 0
+        THEN ROUND(
+            100.0
+            * COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'delivered')
+            / COUNT(DISTINCT pv.id),
+            2
+        )
+        ELSE 0
+    END                                                          AS conversion_rate
+
+FROM products pr
+LEFT JOIN orders o
+       ON o.vendor_id = pr.vendor_id
+      AND o.products::TEXT ILIKE '%' || pr.id::TEXT || '%'
+LEFT JOIN product_views pv ON pv.product_id = pr.id
+GROUP BY
+    pr.id, pr.vendor_id, pr.name, pr.category, pr.price,
+    pr.stock, pr.rating, pr.reviews_count, pr.active, pr.moderated, pr.created_at;
+
+-- ─── 5. FONCTION RPC : SÉRIE TEMPORELLE REVENUS ──────────────────────────────
+CREATE OR REPLACE FUNCTION get_vendor_revenue_series(
+    p_vendor_id UUID,
+    p_days      INT DEFAULT 30
+)
+RETURNS TABLE (
+    day         DATE,
+    revenue     NUMERIC,
+    net_revenue NUMERIC,
+    orders      BIGINT,
+    units_sold  BIGINT
+)
+LANGUAGE SQL STABLE AS $$
+    SELECT
+        d::DATE                                                                 AS day,
+        COALESCE(SUM(o.total) FILTER (WHERE o.status = 'delivered'), 0)        AS revenue,
+        COALESCE(
+            SUM(o.total - o.commission) FILTER (WHERE o.status = 'delivered'),
+            0
+        )                                                                       AS net_revenue,
+        COUNT(DISTINCT o.id) FILTER (WHERE o.status = 'delivered')             AS orders,
+        COALESCE(SUM(
+            (SELECT SUM((item->>'quantity')::INT)
+             FROM jsonb_array_elements(o.products) AS item)
+        ) FILTER (WHERE o.status = 'delivered'), 0)                             AS units_sold
+    FROM generate_series(
+        NOW()::DATE - (p_days - 1),
+        NOW()::DATE,
+        '1 day'::INTERVAL
+    ) AS d
+    LEFT JOIN orders o
+           ON o.vendor_id       = p_vendor_id
+          AND o.created_at::DATE = d::DATE
+    GROUP BY d
+    ORDER BY d ASC;
+$$;
+
+-- ─── 6. FONCTION RPC : ENREGISTRER UNE VUE PRODUIT ───────────────────────────
+CREATE OR REPLACE FUNCTION record_product_view(
+    p_product_id UUID,
+    p_viewer_id  UUID DEFAULT NULL,
+    p_session_id TEXT DEFAULT NULL
+)
+RETURNS VOID LANGUAGE plpgsql AS $$
+DECLARE
+    v_vendor_id UUID;
+BEGIN
+    SELECT vendor_id INTO v_vendor_id FROM products WHERE id = p_product_id;
+    IF v_vendor_id IS NULL THEN RETURN; END IF;
+
+    -- Déduplique : 1 vue par session par heure
+    IF NOT EXISTS (
+        SELECT 1 FROM product_views
+        WHERE product_id = p_product_id
+          AND (p_viewer_id  IS NULL OR viewer_id  = p_viewer_id)
+          AND (p_session_id IS NULL OR session_id = p_session_id)
+          AND viewed_at > NOW() - INTERVAL '1 hour'
+    ) THEN
+        INSERT INTO product_views(product_id, vendor_id, viewer_id, session_id)
+        VALUES (p_product_id, v_vendor_id, p_viewer_id, p_session_id);
+    END IF;
+END;
+$$;
+
+-- ─── 7. FONCTION RPC : RAFRAÎCHIR CACHE MÉTRIQUES QUOTIDIENNES ───────────────
+CREATE OR REPLACE FUNCTION refresh_vendor_daily_metrics(
+    p_date DATE DEFAULT CURRENT_DATE - 1
+)
+RETURNS INT LANGUAGE plpgsql AS $$
+DECLARE
+    v_count  INT := 0;
+    v_vendor RECORD;
+BEGIN
+    FOR v_vendor IN
+        SELECT DISTINCT vendor_id FROM orders WHERE created_at::DATE = p_date
+    LOOP
+        INSERT INTO vendor_daily_metrics(
+            vendor_id, date, revenue, net_revenue, orders, units_sold, avg_basket
+        )
+        SELECT
+            v_vendor.vendor_id,
+            p_date,
+            COALESCE(SUM(total)              FILTER (WHERE status = 'delivered'), 0),
+            COALESCE(SUM(total - commission) FILTER (WHERE status = 'delivered'), 0),
+            COUNT(*)                          FILTER (WHERE status = 'delivered'),
+            0,
+            COALESCE(AVG(total)              FILTER (WHERE status = 'delivered'), 0)
+        FROM orders
+        WHERE vendor_id        = v_vendor.vendor_id
+          AND created_at::DATE = p_date
+        ON CONFLICT (vendor_id, date) DO UPDATE SET
+            revenue     = EXCLUDED.revenue,
+            net_revenue = EXCLUDED.net_revenue,
+            orders      = EXCLUDED.orders,
+            avg_basket  = EXCLUDED.avg_basket;
+
+        v_count := v_count + 1;
+    END LOOP;
+    RETURN v_count;
+END;
+$$;
+
+-- ─── 8. INDEX SUPPLÉMENTAIRES ─────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_orders_vendor_status_date
+    ON orders(vendor_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_vendor_created
+    ON orders(vendor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_product_rating
+    ON reviews(product_id, rating);
+
+-- ─── 9. OPTIONNEL : pg_cron ───────────────────────────────────────────────────
+-- Activer dans Supabase → Database → Extensions → pg_cron, puis :
+-- SELECT cron.schedule(
+--     'refresh-vendor-metrics', '0 1 * * *',
+--     $$SELECT refresh_vendor_daily_metrics()$$
+-- );
+
+
+-- ── Quelles tables ont RLS activé ou non ──────────────────────────────
+SELECT
+    schemaname,
+    tablename,
+    rowsecurity   AS rls_enabled,
+    CASE rowsecurity
+        WHEN true  THEN '✅ Protégée'
+        WHEN false THEN '❌ Exposée'
+    END AS statut
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY rowsecurity ASC, tablename;
+
+
+-- ── 1. Créer la table ─────────────────────────────────────────────────
+CREATE TABLE public.password_reset (
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email      TEXT NOT NULL,
+    token      TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '1 hour',
+    used       BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── 2. Activer RLS immédiatement ──────────────────────────────────────
+ALTER TABLE public.password_reset ENABLE ROW LEVEL SECURITY;
+
+-- ── 3. Politiques ─────────────────────────────────────────────────────
+CREATE POLICY "Owner reads own token"
+    ON public.password_reset
+    FOR SELECT
+    USING (email = (SELECT email FROM profiles WHERE id = auth.uid()));
+
+CREATE POLICY "Owner deletes own token"
+    ON public.password_reset
+    FOR DELETE
+    USING (email = (SELECT email FROM profiles WHERE id = auth.uid()));
+
+-- Pas de politique INSERT côté client :
+-- seul le backend (service_role) peut créer un token — c'est voulu.
+
+-- ── 4. Index pour les lookups rapides par token ───────────────────────
+CREATE INDEX IF NOT EXISTS idx_password_reset_token
+    ON public.password_reset(token);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_email
+    ON public.password_reset(email, expires_at DESC);
+
+-- ── 5. Nettoyage automatique des tokens expirés (optionnel) ──────────
+-- Supprime les tokens de plus de 24h pour ne pas encombrer la table
+CREATE OR REPLACE FUNCTION cleanup_expired_password_resets()
+RETURNS void LANGUAGE sql AS $$
+    DELETE FROM public.password_reset
+    WHERE expires_at < NOW() - INTERVAL '24 hours'
+       OR used = true;
+$$;
+
+
+SELECT
+    t.tablename,
+    t.rowsecurity                    AS rls_enabled,
+    p.policyname,
+    p.cmd
+FROM pg_tables t
+LEFT JOIN pg_policies p
+       ON p.tablename  = t.tablename
+      AND p.schemaname = t.schemaname
+WHERE t.tablename  = 'password_reset'
+  AND t.schemaname = 'public';
+
+
+-- ── 1. Créer la table order_items ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.order_items (
+    id         UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id   TEXT         NOT NULL REFERENCES public.orders(id)   ON DELETE CASCADE,
+    product_id UUID         NOT NULL REFERENCES public.products(id) ON DELETE RESTRICT,
+    quantity   INT          NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(10,2) NOT NULL,
+    created_at TIMESTAMPTZ  DEFAULT NOW()
+);
+
+-- ── 2. Index pour les jointures fréquentes ────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_order_items_order
+    ON public.order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_product
+    ON public.order_items(product_id);
+
+-- ── 3. RLS + permissions ──────────────────────────────────────────────
+ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT ON public.order_items TO authenticated;
+
+CREATE POLICY "order_items_select" ON public.order_items
+    FOR SELECT USING (
+        EXISTS (
+            SELECT 1 FROM public.orders o
+            WHERE o.id = order_id
+              AND (o.buyer_id = auth.uid() OR o.vendor_id = auth.uid())
+        )
+    );
+
+CREATE POLICY "order_items_insert" ON public.order_items
+    FOR INSERT WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.orders o
+            WHERE o.id = order_id
+              AND o.buyer_id = auth.uid()
+        )
+    );
+
+
+
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'messages'
+ORDER BY ordinal_position;
+
+
+SELECT column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'reviews'
+ORDER BY ordinal_position;
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- NEXUS Market — Création compte Admin (version corrigée)
+-- ═══════════════════════════════════════════════════════════════
+
+-- ÉTAPE 0 : pgcrypto
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ÉTAPE 1 : Supprimer l'ancien compte
+DELETE FROM public.profiles WHERE email = 'admin@nexus.sn';
+DELETE FROM auth.users     WHERE email = 'admin@nexus.sn';
+
+-- ÉTAPE 2 : Insérer dans auth.users
+INSERT INTO auth.users (
+  id, instance_id, aud, role, email,
+  encrypted_password, email_confirmed_at,
+  raw_app_meta_data, raw_user_meta_data,
+  created_at, updated_at,
+  confirmation_token, recovery_token,
+  email_change_token_new, email_change
+) VALUES (
+  gen_random_uuid(),
+  '00000000-0000-0000-0000-000000000000',
+  'authenticated', 'authenticated',
+  'admin@nexus.sn',
+  crypt('admin123', gen_salt('bf')),
+  NOW(),
+  '{"provider":"email","providers":["email"]}'::jsonb,
+  '{"role":"admin","name":"Admin NEXUS"}'::jsonb,
+  NOW(), NOW(), '', '', '', ''
+);
+
+-- ÉTAPE 3 : Créer le profil (colonnes réelles de votre table)
+INSERT INTO public.profiles (
+  id, email, password_hash, name,
+  role, status, avatar, commission_rate
+)
+SELECT
+  u.id,
+  'admin@nexus.sn',
+  crypt('admin123', gen_salt('bf', 10)),
+  'Admin NEXUS',
+  'admin', 'active', 'AD', 0
+FROM auth.users u
+WHERE u.email = 'admin@nexus.sn';
+
+-- ÉTAPE 4 : Vérification
+SELECT
+  p.id, p.email, p.name, p.role, p.status,
+  LEFT(p.password_hash, 7)         AS hash_prefix,
+  p.password_hash <> ''            AS hash_present,
+  u.email_confirmed_at IS NOT NULL AS email_confirmed
+FROM public.profiles p
+JOIN auth.users u ON u.id = p.id
+WHERE p.email = 'admin@nexus.sn';
+
+
+-- Décrémenter le stock
+CREATE OR REPLACE FUNCTION decrement_stock(product_id UUID, qty INT)
+RETURNS void AS $$
+  UPDATE products SET stock = stock - qty WHERE id = product_id;
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- Incrémenter le stock (annulation)
+CREATE OR REPLACE FUNCTION increment_stock(product_id UUID, qty INT)
+RETURNS void AS $$
+  UPDATE products SET stock = stock + qty WHERE id = product_id;
+$$ LANGUAGE sql SECURITY DEFINER;
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- NEXUS Market — SQL Fix Final Consolidé v1.2
+-- Correction : DROP IF EXISTS ajouté dans TOUS les blocs DO $$
+-- ═══════════════════════════════════════════════════════════════════
+-- ⚠️  Exécuter en UNE SEULE FOIS (tout sélectionner → Run)
+-- ═══════════════════════════════════════════════════════════════════
+
+
+-- ════════════════════════════════════════════════════════════════════
+-- ÉTAPE 1 — Nettoyer TOUTES les anciennes policies en conflit
+-- ════════════════════════════════════════════════════════════════════
+
+-- Profiles — toutes les variantes existantes
+DROP POLICY IF EXISTS "profiles_public_read"         ON profiles;
+DROP POLICY IF EXISTS "profiles_vendor_public"        ON profiles;
+DROP POLICY IF EXISTS "profiles_select_public"        ON profiles;
+DROP POLICY IF EXISTS "users_update_own"              ON profiles;
+DROP POLICY IF EXISTS "profiles_update_own"           ON profiles;
+DROP POLICY IF EXISTS "admin_all_profiles"            ON profiles;
+DROP POLICY IF EXISTS "profiles_insert_trigger"       ON profiles;
+DROP POLICY IF EXISTS "profiles_insert_own"           ON profiles;
+DROP POLICY IF EXISTS "Users can view own profile"    ON profiles;
+DROP POLICY IF EXISTS "Users can insert own profile"  ON profiles;
+DROP POLICY IF EXISTS "Users can update own profile"  ON profiles;
+DROP POLICY IF EXISTS "Users can upsert own profile"  ON profiles;
+
+-- Products
+DROP POLICY IF EXISTS "products_public_read"     ON products;
+DROP POLICY IF EXISTS "products_select_active"   ON products;
+DROP POLICY IF EXISTS "products_select_own"      ON products;
+DROP POLICY IF EXISTS "vendors_manage_own"       ON products;
+DROP POLICY IF EXISTS "vendor_insert_own"        ON products;
+DROP POLICY IF EXISTS "vendor_update_own"        ON products;
+DROP POLICY IF EXISTS "vendor_delete_own"        ON products;
+DROP POLICY IF EXISTS "products_insert_vendor"   ON products;
+DROP POLICY IF EXISTS "products_update_vendor"   ON products;
+DROP POLICY IF EXISTS "products_delete_vendor"   ON products;
+DROP POLICY IF EXISTS "admin_all_products"       ON products;
+
+-- Orders
+DROP POLICY IF EXISTS "buyer_sees_own_orders"        ON orders;
+DROP POLICY IF EXISTS "buyer_creates_order"          ON orders;
+DROP POLICY IF EXISTS "vendor_sees_own_orders"       ON orders;
+DROP POLICY IF EXISTS "vendor_updates_order_status"  ON orders;
+DROP POLICY IF EXISTS "orders_select_buyer"          ON orders;
+DROP POLICY IF EXISTS "orders_select_vendor"         ON orders;
+DROP POLICY IF EXISTS "orders_insert_buyer"          ON orders;
+DROP POLICY IF EXISTS "orders_update_vendor"         ON orders;
+DROP POLICY IF EXISTS "admin_all_orders"             ON orders;
+
+-- Messages
+DROP POLICY IF EXISTS "message_participants"   ON messages;
+DROP POLICY IF EXISTS "send_messages"          ON messages;
+DROP POLICY IF EXISTS "mark_read"              ON messages;
+DROP POLICY IF EXISTS "mark_read_or_delete"    ON messages;
+DROP POLICY IF EXISTS "messages_select"        ON messages;
+DROP POLICY IF EXISTS "messages_insert"        ON messages;
+DROP POLICY IF EXISTS "messages_update"        ON messages;
+
+-- Notifications
+DROP POLICY IF EXISTS "own_notifications"             ON notifications;
+DROP POLICY IF EXISTS "own_notifications_read"        ON notifications;
+DROP POLICY IF EXISTS "own_notifications_update"      ON notifications;
+DROP POLICY IF EXISTS "system_creates_notifications"  ON notifications;
+DROP POLICY IF EXISTS "notifs_select_own"             ON notifications;
+DROP POLICY IF EXISTS "notifs_update_own"             ON notifications;
+DROP POLICY IF EXISTS "notifs_insert_backend"         ON notifications;
+DROP POLICY IF EXISTS "notifs_insert_any"             ON notifications;
+
+-- Reviews
+DROP POLICY IF EXISTS "reviews_public_read"    ON reviews;
+DROP POLICY IF EXISTS "reviews_select_public"  ON reviews;
+DROP POLICY IF EXISTS "buyers_create_reviews"  ON reviews;
+DROP POLICY IF EXISTS "reviews_insert_buyer"   ON reviews;
+DROP POLICY IF EXISTS "own_review_update"      ON reviews;
+DROP POLICY IF EXISTS "reviews_update_own"     ON reviews;
+DROP POLICY IF EXISTS "reviews_delete_own"     ON reviews;
+DROP POLICY IF EXISTS "admin_all_reviews"      ON reviews;
+
+-- Offers
+DROP POLICY IF EXISTS "buyer_sees_own_offers"   ON offers;
+DROP POLICY IF EXISTS "vendor_sees_own_offers"  ON offers;
+DROP POLICY IF EXISTS "buyer_creates_offers"    ON offers;
+DROP POLICY IF EXISTS "vendor_updates_offers"   ON offers;
+
+-- Wishlists
+DROP POLICY IF EXISTS "own_wishlist" ON wishlists;
+
+-- Coupons
+DROP POLICY IF EXISTS "coupons_auth_read"      ON coupons;
+DROP POLICY IF EXISTS "admin_manages_coupons"  ON coupons;
+DROP POLICY IF EXISTS "coupons_select_active"  ON coupons;
+
+-- Returns
+DROP POLICY IF EXISTS "buyer_sees_own_returns"  ON return_requests;
+DROP POLICY IF EXISTS "vendor_sees_returns"     ON return_requests;
+DROP POLICY IF EXISTS "buyer_creates_returns"   ON return_requests;
+DROP POLICY IF EXISTS "admin_all_returns"       ON return_requests;
+
+-- Disputes
+DROP POLICY IF EXISTS "buyer_sees_own_disputes"  ON disputes;
+DROP POLICY IF EXISTS "vendor_sees_disputes"     ON disputes;
+DROP POLICY IF EXISTS "buyer_creates_disputes"   ON disputes;
+DROP POLICY IF EXISTS "admin_all_disputes"       ON disputes;
+
+-- Stock alerts
+DROP POLICY IF EXISTS "own_stock_alerts" ON stock_alerts;
+
+-- Flash sales
+DROP POLICY IF EXISTS "public_flash_sales"  ON flash_sales;
+DROP POLICY IF EXISTS "admin_flash_sales"   ON flash_sales;
+
+-- Payout requests
+DROP POLICY IF EXISTS "vendor_payout_requests"  ON payout_requests;
+DROP POLICY IF EXISTS "vendor_create_payouts"   ON payout_requests;
+DROP POLICY IF EXISTS "admin_payout_requests"   ON payout_requests;
+
+-- Pending vendors
+DROP POLICY IF EXISTS "admin_all_pending_vendors"      ON pending_vendors;
+DROP POLICY IF EXISTS "public_insert_pending_vendor"   ON pending_vendors;
+
+-- Product questions
+DROP POLICY IF EXISTS "questions_public_read"     ON product_questions;
+DROP POLICY IF EXISTS "auth_create_questions"     ON product_questions;
+DROP POLICY IF EXISTS "users_ask_questions"       ON product_questions;
+DROP POLICY IF EXISTS "vendor_answers_question"   ON product_questions;
+DROP POLICY IF EXISTS "vendor_answers"            ON product_questions;
+DROP POLICY IF EXISTS "admin_all_questions"       ON product_questions;
+
+-- Analytics (static DROP for tables that may or may not exist — safe either way)
+DROP POLICY IF EXISTS "vdm_vendor_own"         ON vendor_daily_metrics;
+DROP POLICY IF EXISTS "vdm_admin_all"          ON vendor_daily_metrics;
+DROP POLICY IF EXISTS "pv_vendor_reads"        ON product_views;
+DROP POLICY IF EXISTS "pv_anyone_inserts"      ON product_views;
+DROP POLICY IF EXISTS "Vendor own metrics"     ON vendor_daily_metrics;
+DROP POLICY IF EXISTS "Admin all metrics"      ON vendor_daily_metrics;
+DROP POLICY IF EXISTS "Vendor reads own views" ON product_views;
+DROP POLICY IF EXISTS "Anyone inserts view"    ON product_views;
+
+-- Order items
+DROP POLICY IF EXISTS "order_items_select"  ON order_items;
+DROP POLICY IF EXISTS "order_items_insert"  ON order_items;
+
+-- Loyalty points  — FIX v1.2
+DROP POLICY IF EXISTS "own_loyalty_read"       ON loyalty_points;
+DROP POLICY IF EXISTS "system_inserts_loyalty" ON loyalty_points;
+DROP POLICY IF EXISTS "admin_all_loyalty"      ON loyalty_points;
+
+-- Review votes  — FIX v1.2
+DROP POLICY IF EXISTS "own_review_votes" ON review_votes;
+
+-- Refresh tokens  — FIX v1.2
+DROP POLICY IF EXISTS "no_client_access_refresh_tokens" ON refresh_tokens;
+
+
+-- ════════════════════════════════════════════════════════════════════
+-- ÉTAPE 2 — Activer RLS sur toutes les tables
+-- ════════════════════════════════════════════════════════════════════
+
+ALTER TABLE profiles           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE products           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reviews            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE offers             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wishlists          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE return_requests    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE disputes           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE coupons            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stock_alerts       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE flash_sales        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payout_requests    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_questions  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pending_vendors    ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'order_items')          THEN ALTER TABLE order_items ENABLE ROW LEVEL SECURITY; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'vendor_daily_metrics') THEN ALTER TABLE vendor_daily_metrics ENABLE ROW LEVEL SECURITY; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'product_views')        THEN ALTER TABLE product_views ENABLE ROW LEVEL SECURITY; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'refresh_tokens')       THEN ALTER TABLE refresh_tokens ENABLE ROW LEVEL SECURITY; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'loyalty_points')       THEN ALTER TABLE loyalty_points ENABLE ROW LEVEL SECURITY; END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'review_votes')         THEN ALTER TABLE review_votes ENABLE ROW LEVEL SECURITY; END IF;
+END $$;
+
+
+-- ════════════════════════════════════════════════════════════════════
+-- ÉTAPE 3 — Fonction helper rôle
+-- ════════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION auth_user_role()
+RETURNS TEXT LANGUAGE SQL STABLE SECURITY DEFINER AS $$
+  SELECT role FROM profiles WHERE id = auth.uid()
+$$;
+
+
+-- ════════════════════════════════════════════════════════════════════
+-- ÉTAPE 4 — Permissions GRANT
+-- ════════════════════════════════════════════════════════════════════
+
+GRANT SELECT          ON public.profiles TO anon;
+GRANT SELECT, UPDATE  ON public.profiles TO authenticated;
+GRANT INSERT          ON public.profiles TO authenticated;
+
+GRANT SELECT                    ON public.products TO anon;
+GRANT SELECT, INSERT, UPDATE    ON public.products TO authenticated;
+
+GRANT SELECT, INSERT, UPDATE    ON public.orders TO authenticated;
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'order_items') THEN
+    EXECUTE 'GRANT SELECT, INSERT ON public.order_items TO authenticated';
+  END IF;
+END $$;
+
+GRANT SELECT, INSERT, UPDATE ON public.messages TO authenticated;
+
+GRANT SELECT                           ON public.reviews TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE   ON public.reviews TO authenticated;
+
+GRANT SELECT, INSERT, UPDATE ON public.notifications TO authenticated;
+
+GRANT SELECT ON public.coupons TO anon, authenticated;
+
+GRANT SELECT, INSERT, DELETE ON public.wishlists TO authenticated;
+
+GRANT SELECT, INSERT, UPDATE ON public.offers TO authenticated;
+
+GRANT SELECT, INSERT ON public.return_requests TO authenticated;
+
+GRANT SELECT, INSERT ON public.disputes TO authenticated;
+
+GRANT SELECT, INSERT, DELETE ON public.stock_alerts TO authenticated;
+
+GRANT SELECT ON public.flash_sales TO anon, authenticated;
+
+GRANT SELECT, INSERT ON public.payout_requests TO authenticated;
+
+GRANT SELECT ON public.product_questions TO anon;
+GRANT SELECT, INSERT, UPDATE ON public.product_questions TO authenticated;
+
+GRANT SELECT, INSERT ON public.pending_vendors TO anon;
+GRANT SELECT ON public.pending_vendors TO authenticated;
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'vendor_daily_metrics') THEN
+    EXECUTE 'GRANT SELECT ON public.vendor_daily_metrics TO authenticated';
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'product_views') THEN
+    EXECUTE 'GRANT SELECT ON public.product_views TO authenticated';
+    EXECUTE 'GRANT INSERT ON public.product_views TO anon, authenticated';
+  END IF;
+END $$;
+
+
+-- ════════════════════════════════════════════════════════════════════
+-- ÉTAPE 5 — Politiques RLS définitives
+-- ════════════════════════════════════════════════════════════════════
+
+-- ── PROFILES ─────────────────────────────────────────────────────────
+CREATE POLICY "profiles_select_public" ON profiles
+  FOR SELECT USING (true);
+
+CREATE POLICY "profiles_insert_own" ON profiles
+  FOR INSERT WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "profiles_update_own" ON profiles
+  FOR UPDATE USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "admin_all_profiles" ON profiles
+  FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── PRODUCTS ──────────────────────────────────────────────────────────
+CREATE POLICY "products_select_active" ON products
+  FOR SELECT USING (active = true AND moderated = true);
+
+CREATE POLICY "products_select_own" ON products
+  FOR SELECT USING (auth.uid() = vendor_id);
+
+CREATE POLICY "products_insert_vendor" ON products
+  FOR INSERT WITH CHECK (auth.uid() = vendor_id);
+
+CREATE POLICY "products_update_vendor" ON products
+  FOR UPDATE USING (auth.uid() = vendor_id)
+  WITH CHECK (auth.uid() = vendor_id);
+
+CREATE POLICY "products_delete_vendor" ON products
+  FOR DELETE USING (auth.uid() = vendor_id);
+
+CREATE POLICY "admin_all_products" ON products
+  FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── ORDERS ────────────────────────────────────────────────────────────
+CREATE POLICY "orders_select_buyer"  ON orders FOR SELECT USING (auth.uid() = buyer_id);
+CREATE POLICY "orders_select_vendor" ON orders FOR SELECT USING (auth.uid() = vendor_id);
+CREATE POLICY "orders_insert_buyer"  ON orders FOR INSERT WITH CHECK (auth.uid() = buyer_id);
+CREATE POLICY "orders_update_vendor" ON orders FOR UPDATE USING (auth.uid() = vendor_id);
+CREATE POLICY "admin_all_orders"     ON orders FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── ORDER_ITEMS ────────────────────────────────────────────────────────
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'order_items') THEN
+    EXECUTE $p$
+      CREATE POLICY "order_items_select" ON order_items
+        FOR SELECT USING (
+          EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND (o.buyer_id = auth.uid() OR o.vendor_id = auth.uid()))
+        )
+    $p$;
+    EXECUTE $p$
+      CREATE POLICY "order_items_insert" ON order_items
+        FOR INSERT WITH CHECK (
+          EXISTS (SELECT 1 FROM orders o WHERE o.id = order_id AND o.buyer_id = auth.uid())
+        )
+    $p$;
+  END IF;
+END $$;
+
+
+-- ── MESSAGES ──────────────────────────────────────────────────────────
+CREATE POLICY "messages_select" ON messages
+  FOR SELECT USING ((auth.uid() = from_id OR auth.uid() = to_id) AND (deleted = false OR deleted IS NULL));
+
+CREATE POLICY "messages_insert" ON messages
+  FOR INSERT WITH CHECK (auth.uid() = from_id);
+
+CREATE POLICY "messages_update" ON messages
+  FOR UPDATE USING (auth.uid() = to_id OR auth.uid() = from_id);
+
+
+-- ── NOTIFICATIONS ─────────────────────────────────────────────────────
+CREATE POLICY "notifs_select_own" ON notifications FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "notifs_insert_any" ON notifications FOR INSERT WITH CHECK (true);
+CREATE POLICY "notifs_update_own" ON notifications FOR UPDATE USING (auth.uid() = user_id);
+
+
+-- ── REVIEWS ───────────────────────────────────────────────────────────
+CREATE POLICY "reviews_select_public" ON reviews FOR SELECT USING (true);
+CREATE POLICY "reviews_insert_buyer"  ON reviews FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "reviews_update_own"    ON reviews FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "reviews_delete_own"    ON reviews FOR DELETE USING (auth.uid() = user_id);
+
+
+-- ── OFFERS ────────────────────────────────────────────────────────────
+CREATE POLICY "buyer_sees_own_offers"  ON offers FOR SELECT USING (buyer_id = auth.uid());
+CREATE POLICY "vendor_sees_own_offers" ON offers FOR SELECT USING (vendor_id = auth.uid());
+CREATE POLICY "buyer_creates_offers"   ON offers FOR INSERT WITH CHECK (buyer_id = auth.uid());
+CREATE POLICY "vendor_updates_offers"  ON offers FOR UPDATE USING (vendor_id = auth.uid());
+
+
+-- ── WISHLISTS ─────────────────────────────────────────────────────────
+CREATE POLICY "own_wishlist" ON wishlists
+  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+
+-- ── COUPONS ───────────────────────────────────────────────────────────
+CREATE POLICY "coupons_select_active" ON coupons
+  FOR SELECT USING (active = true AND (expires_at IS NULL OR expires_at > NOW()));
+
+CREATE POLICY "admin_manages_coupons" ON coupons
+  FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── RETURN REQUESTS ───────────────────────────────────────────────────
+CREATE POLICY "buyer_sees_own_returns" ON return_requests FOR SELECT USING (buyer_id = auth.uid());
+CREATE POLICY "vendor_sees_returns"    ON return_requests FOR SELECT USING (vendor_id = auth.uid());
+CREATE POLICY "buyer_creates_returns"  ON return_requests FOR INSERT WITH CHECK (buyer_id = auth.uid());
+CREATE POLICY "admin_all_returns"      ON return_requests FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── DISPUTES ──────────────────────────────────────────────────────────
+CREATE POLICY "buyer_sees_own_disputes" ON disputes FOR SELECT USING (buyer_id = auth.uid());
+CREATE POLICY "vendor_sees_disputes"    ON disputes FOR SELECT USING (vendor_id = auth.uid());
+CREATE POLICY "buyer_creates_disputes"  ON disputes FOR INSERT WITH CHECK (buyer_id = auth.uid());
+CREATE POLICY "admin_all_disputes"      ON disputes FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── STOCK ALERTS ──────────────────────────────────────────────────────
+CREATE POLICY "own_stock_alerts" ON stock_alerts
+  FOR ALL USING (user_id = auth.uid());
+
+
+-- ── FLASH SALES ───────────────────────────────────────────────────────
+CREATE POLICY "public_flash_sales" ON flash_sales
+  FOR SELECT USING (active = true AND ends_at > NOW());
+
+CREATE POLICY "admin_flash_sales" ON flash_sales
+  FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── PAYOUT REQUESTS ───────────────────────────────────────────────────
+CREATE POLICY "vendor_payout_requests" ON payout_requests FOR SELECT USING (vendor_id = auth.uid());
+CREATE POLICY "vendor_create_payouts"  ON payout_requests FOR INSERT WITH CHECK (vendor_id = auth.uid());
+CREATE POLICY "admin_payout_requests"  ON payout_requests FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── PRODUCT QUESTIONS ─────────────────────────────────────────────────
+CREATE POLICY "questions_public_read"   ON product_questions FOR SELECT USING (true);
+CREATE POLICY "auth_create_questions"   ON product_questions FOR INSERT WITH CHECK (user_id = auth.uid());
+CREATE POLICY "vendor_answers_question" ON product_questions FOR UPDATE USING (vendor_id = auth.uid());
+CREATE POLICY "admin_all_questions"     ON product_questions FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── PENDING VENDORS ───────────────────────────────────────────────────
+CREATE POLICY "public_insert_pending_vendor" ON pending_vendors FOR INSERT WITH CHECK (true);
+CREATE POLICY "admin_all_pending_vendors"    ON pending_vendors FOR ALL USING (auth_user_role() = 'admin');
+
+
+-- ── ANALYTICS ─────────────────────────────────────────────────────────
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'vendor_daily_metrics') THEN
+    EXECUTE $p$CREATE POLICY "vdm_vendor_own" ON vendor_daily_metrics FOR SELECT USING (vendor_id = auth.uid())$p$;
+    EXECUTE $p$CREATE POLICY "vdm_admin_all"  ON vendor_daily_metrics FOR ALL   USING (auth_user_role() = 'admin')$p$;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'product_views') THEN
+    EXECUTE $p$CREATE POLICY "pv_vendor_reads"   ON product_views FOR SELECT USING (vendor_id = auth.uid())$p$;
+    EXECUTE $p$CREATE POLICY "pv_anyone_inserts" ON product_views FOR INSERT WITH CHECK (true)$p$;
+  END IF;
+END $$;
+
+
+-- ── REFRESH TOKENS ────────────────────────────────────────────────────
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'refresh_tokens') THEN
+    EXECUTE $p$CREATE POLICY "no_client_access_refresh_tokens" ON refresh_tokens FOR ALL USING (false)$p$;
+  END IF;
+END $$;
+
+
+-- ── LOYALTY POINTS ────────────────────────────────────────────────────
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'loyalty_points') THEN
+    EXECUTE $p$CREATE POLICY "own_loyalty_read"       ON loyalty_points FOR SELECT USING (user_id = auth.uid())$p$;
+    EXECUTE $p$CREATE POLICY "system_inserts_loyalty" ON loyalty_points FOR INSERT WITH CHECK (true)$p$;
+    EXECUTE $p$CREATE POLICY "admin_all_loyalty"      ON loyalty_points FOR ALL USING (auth_user_role() = 'admin')$p$;
+  END IF;
+END $$;
+
+
+-- ── REVIEW VOTES ──────────────────────────────────────────────────────
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'review_votes') THEN
+    EXECUTE $p$CREATE POLICY "own_review_votes" ON review_votes FOR ALL USING (user_id = auth.uid())$p$;
+  END IF;
+END $$;
+
+
+-- ════════════════════════════════════════════════════════════════════
+-- ÉTAPE 6 — Sécuriser les tables de reset de mot de passe
+-- ════════════════════════════════════════════════════════════════════
+
+ALTER TABLE IF EXISTS password_resets ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "password_resets_backend_only" ON password_resets;
+CREATE POLICY "password_resets_backend_only" ON password_resets
+  FOR ALL USING (false);
+
+ALTER TABLE IF EXISTS password_reset ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "password_reset_backend_only" ON password_reset;
+CREATE POLICY "password_reset_backend_only" ON password_reset
+  FOR ALL USING (false);
+
+
+-- ════════════════════════════════════════════════════════════════════
+-- ÉTAPE 7 — Fonctions RPC utilitaires
+-- ════════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION decrement_stock(product_id UUID, qty INT)
+RETURNS void AS $$
+  UPDATE products SET stock = GREATEST(stock - qty, 0), updated_at = NOW()
+  WHERE id = product_id;
+$$ LANGUAGE sql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION increment_stock(product_id UUID, qty INT)
+RETURNS void AS $$
+  UPDATE products SET stock = stock + qty, updated_at = NOW()
+  WHERE id = product_id;
+$$ LANGUAGE sql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION decrement_stock(UUID, INT) TO authenticated;
+GRANT EXECUTE ON FUNCTION increment_stock(UUID, INT) TO authenticated;
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.routines WHERE routine_name = 'get_vendor_revenue_series') THEN
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.get_vendor_revenue_series(UUID, INT) TO authenticated';
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.routines WHERE routine_name = 'record_product_view') THEN
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.record_product_view(UUID, UUID, TEXT) TO anon, authenticated';
+  END IF;
+END $$;
+
+
+-- ════════════════════════════════════════════════════════════════════
+-- ÉTAPE 8 — Vérification finale
+-- ════════════════════════════════════════════════════════════════════
+
+SELECT
+  t.tablename AS table_name,
+  CASE t.rowsecurity WHEN true THEN '✅ RLS ON' ELSE '❌ RLS OFF' END AS rls,
+  COUNT(p.policyname) AS nb_policies,
+  STRING_AGG(p.policyname, ', ' ORDER BY p.policyname) AS policy_names
+FROM pg_tables t
+LEFT JOIN pg_policies p ON p.tablename = t.tablename AND p.schemaname = t.schemaname
+WHERE t.schemaname = 'public'
+  AND t.tablename NOT IN ('schema_migrations')
+GROUP BY t.tablename, t.rowsecurity
+ORDER BY t.rowsecurity ASC, t.tablename;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- ✅ Résultat attendu : toutes les tables affichent "✅ RLS ON"
+--    avec au moins 1 policy chacune
+-- ═══════════════════════════════════════════════════════════════════
+
+
+-- ═══════════════════════════════════════════════════════════════════
+-- NEXUS Market — SQL Patch v1.1
+-- À exécuter dans Supabase SQL Editor
+-- Complète sql_fix_final.sql (si déjà exécuté)
+-- OU à ajouter à la fin de sql_fix_final.sql si pas encore fait
+-- ═══════════════════════════════════════════════════════════════════
+
+-- ─────────────────────────────────────────────────────────────────────
+-- [FIX 5] password_hash NOT NULL → nullable
+-- ─────────────────────────────────────────────────────────────────────
+-- Pourquoi : quand un utilisateur se connecte via Supabase Auth (sans backend),
+-- le profil est reconstruit depuis auth.user_metadata SANS password_hash.
+-- L'upsert échouait avec "NOT NULL constraint" → l'utilisateur ne pouvait pas se connecter.
+
+ALTER TABLE public.profiles
+  ALTER COLUMN password_hash DROP NOT NULL;
+
+-- Ajouter une valeur par défaut vide pour les nouveaux profils Supabase Auth
+ALTER TABLE public.profiles
+  ALTER COLUMN password_hash SET DEFAULT '';
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Vérification
+-- ─────────────────────────────────────────────────────────────────────
+SELECT
+  column_name,
+  is_nullable,
+  column_default
+FROM information_schema.columns
+WHERE table_name = 'profiles'
+  AND column_name = 'password_hash';
+
+-- Résultat attendu : is_nullable = YES, column_default = ''
+
+
+SELECT 1
+
+
+-- ============================================================
+-- NEXUS Market — Gestion atomique du stock
+-- À exécuter dans : Supabase Dashboard > SQL Editor
+-- ============================================================
+
+-- ── 1. check_and_reserve_stock ────────────────────────────────
+-- Vérifie et décrémente le stock de plusieurs produits en une
+-- seule transaction atomique (évite la race condition).
+-- Retourne une table avec le résultat pour chaque produit.
+-- En cas de rupture sur un seul produit, toute la transaction
+-- est annulée (ROLLBACK automatique via EXCEPTION).
+-- ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION check_and_reserve_stock(
+  p_items JSONB  -- [{"product_id": "uuid", "quantity": 2}, ...]
+)
+RETURNS TABLE (
+  product_id  UUID,
+  product_name TEXT,
+  requested   INT,
+  available   INT,
+  success     BOOLEAN
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  item        JSONB;
+  v_id        UUID;
+  v_qty       INT;
+  v_stock     INT;
+  v_name      TEXT;
+  v_has_error BOOLEAN := FALSE;
+  error_msgs  TEXT    := '';
+BEGIN
+  -- Vérification préalable (sans modifier le stock)
+  FOR item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    v_id  := (item->>'product_id')::UUID;
+    v_qty := (item->>'quantity')::INT;
+
+    SELECT stock, name INTO v_stock, v_name
+    FROM products
+    WHERE id = v_id AND active = TRUE
+    FOR UPDATE;  -- lock la ligne pour éviter la lecture sale
+
+    IF NOT FOUND THEN
+      RETURN QUERY SELECT v_id, 'Produit introuvable'::TEXT, v_qty, 0, FALSE;
+      v_has_error := TRUE;
+    ELSIF v_stock < v_qty THEN
+      RETURN QUERY SELECT v_id, v_name, v_qty, v_stock, FALSE;
+      v_has_error := TRUE;
+    ELSE
+      RETURN QUERY SELECT v_id, v_name, v_qty, v_stock, TRUE;
+    END IF;
+  END LOOP;
+
+  -- Si au moins un produit est en rupture → rollback implicite
+  IF v_has_error THEN
+    RAISE EXCEPTION 'STOCK_INSUFFICIENT: Certains articles ne sont plus disponibles en quantité suffisante.';
+  END IF;
+
+  -- Tous les articles sont disponibles → décrémentation atomique
+  FOR item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    v_id  := (item->>'product_id')::UUID;
+    v_qty := (item->>'quantity')::INT;
+
+    UPDATE products
+    SET stock = stock - v_qty,
+        updated_at = NOW()
+    WHERE id = v_id
+      AND stock >= v_qty;  -- double vérification (sécurité supplémentaire)
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'STOCK_RACE: Le stock a changé pendant la transaction pour le produit %.', v_id;
+    END IF;
+  END LOOP;
+
+END;
+$$;
+
+
+-- ── 2. release_stock ─────────────────────────────────────────
+-- Re-crédite le stock lors d'une annulation ou d'un échec de
+-- paiement. Sûr à appeler plusieurs fois (idempotent via
+-- order_stock_released).
+-- ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION release_stock(
+  p_items JSONB  -- [{"product_id": "uuid", "quantity": 2}, ...]
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  item JSONB;
+BEGIN
+  FOR item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    UPDATE products
+    SET stock = stock + (item->>'quantity')::INT,
+        updated_at = NOW()
+    WHERE id = (item->>'product_id')::UUID;
+  END LOOP;
+END;
+$$;
+
+
+-- ── 3. increment_stock (compatibilité avec l'existant) ────────
+-- Remplace l'ancienne version pour être cohérent avec release_stock.
+-- ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION increment_stock(
+  product_id UUID,
+  qty        INT DEFAULT 1
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  UPDATE products
+  SET stock = stock + qty,
+      updated_at = NOW()
+  WHERE id = product_id;
+END;
+$$;
+
+
+-- ── 4. get_product_stocks ─────────────────────────────────────
+-- Lecture des stocks en une seule requête (utilisé par le
+-- frontend pour vérifier la disponibilité avant checkout).
+-- ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION get_product_stocks(p_ids UUID[])
+RETURNS TABLE (id UUID, stock INT, active BOOLEAN)
+LANGUAGE sql
+SECURITY DEFINER
+STABLE  -- ne modifie pas les données → peut être mis en cache
+AS $$
+  SELECT id, stock, active
+  FROM products
+  WHERE id = ANY(p_ids);
+$$;
+
+
+-- ── Permissions ───────────────────────────────────────────────
+-- Ces fonctions sont SECURITY DEFINER → s'exécutent avec les
+-- droits du propriétaire (service_role), pas ceux de l'appelant.
+-- On autorise seulement authenticated + anon à les appeler.
+REVOKE ALL ON FUNCTION check_and_reserve_stock(JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION release_stock(JSONB) FROM PUBLIC;
+REVOKE ALL ON FUNCTION get_product_stocks(UUID[]) FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION check_and_reserve_stock(JSONB) TO service_role;
+GRANT EXECUTE ON FUNCTION release_stock(JSONB)           TO service_role;
+GRANT EXECUTE ON FUNCTION get_product_stocks(UUID[])     TO service_role, authenticated, anon;
+GRANT EXECUTE ON FUNCTION increment_stock(UUID, INT)     TO service_role;
+
+
+-- ── Index pour les performances ────────────────────────────────
+-- Le FOR UPDATE dans check_and_reserve_stock lock par PK — déjà indexé.
+-- Index sur vendor_id pour les requêtes de stats stock vendeur.
+CREATE INDEX IF NOT EXISTS idx_products_vendor_stock
+  ON products(vendor_id, stock)
+  WHERE active = TRUE;
+
+
+
+-- ============================================================
+-- NEXUS Market — Migration B2B + Vendeurs
+-- À exécuter dans : Supabase Dashboard > SQL Editor
+-- ============================================================
+
+-- ── 1. Table pending_vendors ─────────────────────────────────
+-- Stocke les demandes de comptes vendeurs en attente de validation admin.
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS pending_vendors (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email           TEXT NOT NULL,
+  password_hash   TEXT NOT NULL,
+  name            TEXT NOT NULL,           -- nom de la boutique
+  owner_name      TEXT NOT NULL,           -- nom du propriétaire
+  phone           TEXT,
+  category        TEXT DEFAULT 'Général',
+  shop_desc       TEXT,
+  ninea           TEXT,
+  rc              TEXT,
+  structure_type  TEXT DEFAULT 'individuel',
+  address         TEXT,
+  payment_method  TEXT DEFAULT 'mobile',
+  orange_phone    TEXT,
+  wave_phone      TEXT,
+  iban            TEXT,
+  bank_name       TEXT,
+  avatar          TEXT DEFAULT 'VD',
+  status          TEXT DEFAULT 'pending'   -- pending | approved | rejected
+    CHECK (status IN ('pending','approved','rejected')),
+  rejection_reason TEXT,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(email)
+);
+
+-- Index pour les requêtes admin
+CREATE INDEX IF NOT EXISTS idx_pending_vendors_status
+  ON pending_vendors(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pending_vendors_email
+  ON pending_vendors(email);
+
+-- RLS : seul service_role peut lire/écrire (les vendeurs s'inscrivent via le backend)
+ALTER TABLE pending_vendors ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "service_role_all_pending_vendors"
+  ON pending_vendors FOR ALL
+  TO service_role
+  USING (true) WITH CHECK (true);
+
+
+-- ── 2. Table buyer_pro_profiles ──────────────────────────────
+-- Stocke les informations professionnelles des acheteurs B2B.
+-- Liée à profiles via user_id.
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS buyer_pro_profiles (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id         UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  company         TEXT NOT NULL,
+  job_title       TEXT,
+  ninea           TEXT NOT NULL,
+  rc              TEXT,
+  address         TEXT,
+  ninea_verified  BOOLEAN DEFAULT FALSE,
+  ninea_verified_at TIMESTAMPTZ,
+  ninea_note      TEXT,                    -- note admin lors de la vérification
+  credit_limit    DECIMAL(12,2) DEFAULT 0, -- plafond de crédit B2B (FCFA)
+  payment_terms   INT DEFAULT 0,           -- délai de paiement en jours (0 = immédiat)
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id),
+  UNIQUE(ninea)
+);
+
+-- Index
+CREATE INDEX IF NOT EXISTS idx_buyer_pro_user
+  ON buyer_pro_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_buyer_pro_ninea
+  ON buyer_pro_profiles(ninea);
+CREATE INDEX IF NOT EXISTS idx_buyer_pro_verified
+  ON buyer_pro_profiles(ninea_verified);
+
+-- RLS
+ALTER TABLE buyer_pro_profiles ENABLE ROW LEVEL SECURITY;
+
+-- L'utilisateur peut lire son propre profil B2B
+CREATE POLICY "buyer_pro_read_own"
+  ON buyer_pro_profiles FOR SELECT
+  TO authenticated
+  USING (user_id = auth.uid());
+
+-- Seul service_role peut insérer/modifier (via le backend)
+CREATE POLICY "service_role_all_buyer_pro"
+  ON buyer_pro_profiles FOR ALL
+  TO service_role
+  USING (true) WITH CHECK (true);
+
+
+-- ── 3. Colonne company_name dans profiles (fallback B2B) ─────
+-- Ajoutée si la table buyer_pro_profiles n'existe pas encore
+-- lors de l'inscription. Permet de stocker le nom d'entreprise.
+-- ─────────────────────────────────────────────────────────────
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS company_name TEXT;
+
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS bio TEXT;       -- JSON fallback pour données B2B extra
+
+
+-- ── 4. Trigger updated_at ────────────────────────────────────
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS set_updated_at_pending_vendors ON pending_vendors;
+CREATE TRIGGER set_updated_at_pending_vendors
+  BEFORE UPDATE ON pending_vendors
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS set_updated_at_buyer_pro ON buyer_pro_profiles;
+CREATE TRIGGER set_updated_at_buyer_pro
+  BEFORE UPDATE ON buyer_pro_profiles
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+
+-- ── 5. Vue admin pour les comptes B2B ────────────────────────
+CREATE OR REPLACE VIEW v_buyer_pro_admin AS
+SELECT
+  p.id,
+  p.name,
+  p.email,
+  p.status,
+  p.phone,
+  p.created_at,
+  b.company,
+  b.job_title,
+  b.ninea,
+  b.rc,
+  b.address,
+  b.ninea_verified,
+  b.ninea_verified_at,
+  b.ninea_note,
+  b.credit_limit,
+  b.payment_terms
+FROM profiles p
+LEFT JOIN buyer_pro_profiles b ON b.user_id = p.id
+WHERE p.role = 'buyer_pro'
+ORDER BY p.created_at DESC;
+
+
+-- ── 6. Vérification ──────────────────────────────────────────
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'pending_vendors') THEN
+    RAISE NOTICE '✅ Table pending_vendors créée';
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'buyer_pro_profiles') THEN
+    RAISE NOTICE '✅ Table buyer_pro_profiles créée';
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- NEXUS Market — Migration Panier, Ventes Flash, Alertes Stock
+-- VERSION FINALE v5
+-- EXÉCUTER EN DEUX ÉTAPES dans Supabase SQL Editor :
+--   Étape 1 : coller et exécuter le BLOC 1 (nettoyage)
+--   Étape 2 : coller et exécuter le BLOC 2 (création)
+-- Les séparer évite tout problème de validation anticipée.
+-- ============================================================
+
+
+-- ╔══════════════════════════════════════════════════════════╗
+-- ║  BLOC 1 — Nettoyage des tables partielles               ║
+-- ║  (les tentatives précédentes ont laissé des résidus)    ║
+-- ╚══════════════════════════════════════════════════════════╝
+
+DROP TABLE IF EXISTS stock_alerts  CASCADE;
+DROP TABLE IF EXISTS flash_sales   CASCADE;
+DROP TABLE IF EXISTS carts         CASCADE;
+
+DROP FUNCTION IF EXISTS touch_cart()                      CASCADE;
+DROP FUNCTION IF EXISTS enforce_one_active_flash_sale()   CASCADE;
+DROP FUNCTION IF EXISTS expire_flash_sales()              CASCADE;
+DROP FUNCTION IF EXISTS notify_stock_alerts(UUID)         CASCADE;
+
+
+
+-- ╔══════════════════════════════════════════════════════════╗
+-- ║  BLOC 2 — Création des tables et fonctions              ║
+-- ║  À exécuter APRÈS le BLOC 1                             ║
+-- ╚══════════════════════════════════════════════════════════╝
+
+
+-- ── TABLE carts ──────────────────────────────────────────────
+CREATE TABLE carts (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  items      JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id)
+);
+
+CREATE INDEX idx_carts_user ON carts(user_id);
+
+ALTER TABLE carts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "carts_owner_all"   ON carts FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+CREATE POLICY "carts_service_all" ON carts FOR ALL TO service_role
+  USING (true) WITH CHECK (true);
+
+CREATE OR REPLACE FUNCTION touch_cart()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END;
+$$;
+
+CREATE TRIGGER trg_touch_cart
+  BEFORE UPDATE ON carts
+  FOR EACH ROW EXECUTE FUNCTION touch_cart();
+
+
+-- ── TABLE flash_sales ────────────────────────────────────────
+CREATE TABLE flash_sales (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id  UUID        NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  discount    INT         NOT NULL CHECK (discount > 0 AND discount <= 100),
+  starts_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ends_at     TIMESTAMPTZ NOT NULL,
+  active      BOOLEAN     NOT NULL DEFAULT true,
+  created_by  UUID        REFERENCES profiles(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_flash_sales_active_ends ON flash_sales(active, ends_at);
+CREATE INDEX idx_flash_sales_product     ON flash_sales(product_id);
+
+CREATE OR REPLACE FUNCTION enforce_one_active_flash_sale()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.active IS TRUE THEN
+    UPDATE flash_sales
+    SET    active = false
+    WHERE  product_id = NEW.product_id
+      AND  id        <> NEW.id
+      AND  active IS TRUE;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_one_active_flash_sale
+  BEFORE INSERT OR UPDATE ON flash_sales
+  FOR EACH ROW EXECUTE FUNCTION enforce_one_active_flash_sale();
+
+ALTER TABLE flash_sales ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "flash_sales_read"    ON flash_sales FOR SELECT TO anon, authenticated
+  USING (active IS TRUE AND ends_at > now());
+CREATE POLICY "flash_sales_service" ON flash_sales FOR ALL TO service_role
+  USING (true) WITH CHECK (true);
+
+CREATE OR REPLACE FUNCTION expire_flash_sales()
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  UPDATE flash_sales SET active = false
+  WHERE  active IS TRUE AND ends_at <= now();
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION expire_flash_sales() TO service_role;
+
+
+-- ── TABLE stock_alerts ───────────────────────────────────────
+CREATE TABLE stock_alerts (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        UUID        NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  product_id     UUID        NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  alert_sent     BOOLEAN     NOT NULL DEFAULT false,
+  alert_sent_at  TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, product_id)
+);
+
+CREATE INDEX idx_stock_alerts_lookup ON stock_alerts(product_id, alert_sent);
+CREATE INDEX idx_stock_alerts_user   ON stock_alerts(user_id);
+
+ALTER TABLE stock_alerts ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "stock_alerts_owner"   ON stock_alerts FOR ALL TO authenticated
+  USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+CREATE POLICY "stock_alerts_service" ON stock_alerts FOR ALL TO service_role
+  USING (true) WITH CHECK (true);
+
+
+-- ── FONCTION notify_stock_alerts ─────────────────────────────
+-- Marque les alertes non envoyées comme envoyées (atomique)
+-- et retourne la liste des utilisateurs à notifier.
+-- Usage : SELECT * FROM notify_stock_alerts('<uuid>'::uuid);
+-- ─────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION notify_stock_alerts(p_product_id UUID)
+RETURNS TABLE (out_user_id UUID, out_product_name TEXT)
+LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+    UPDATE stock_alerts sa
+    SET    alert_sent    = true,
+           alert_sent_at = now()
+    FROM   products p
+    WHERE  sa.product_id = p_product_id
+      AND  p.id          = p_product_id
+      AND  sa.alert_sent IS NOT TRUE
+      AND  p.stock       > 0
+    RETURNING sa.user_id, p.name;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION notify_stock_alerts(UUID) TO service_role;
+
+
+-- ── Vérification ─────────────────────────────────────────────
+DO $$
+DECLARE t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['carts','flash_sales','stock_alerts'] LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.tables
+               WHERE table_schema='public' AND table_name=t)
+    THEN RAISE NOTICE '✅ %', t;
+    ELSE RAISE WARNING '❌ % MANQUANTE', t;
+    END IF;
+  END LOOP;
+END $$;
+
+
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- NEXUS Market Sénégal — Configuration Supabase : Factures (Invoices)
+-- Version : 1.0.0
+-- À exécuter dans : Supabase Dashboard → SQL Editor
+-- ════════════════════════════════════════════════════════════════════════════
+
+-- ── 1. TABLE PRINCIPALE : invoices ──────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS invoices (
+  id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Numéro lisible, ex: "FAC-2025-000042" ou "VEND-2025-000007"
+  invoice_number   text        UNIQUE NOT NULL,
+
+  -- "buyer"  → reçu d'achat pour l'acheteur
+  -- "vendor" → relevé de vente pour le vendeur
+  -- "admin"  → facture interne / avoir
+  type             text        NOT NULL CHECK (type IN ('buyer', 'vendor', 'admin')),
+
+  -- Référence commande (texte car order.id peut être alphanumérique dans le frontend)
+  order_id         text        NOT NULL,
+
+  -- Parties concernées
+  buyer_id         uuid        REFERENCES profiles(id) ON DELETE SET NULL,
+  vendor_id        uuid        REFERENCES profiles(id) ON DELETE SET NULL,
+
+  -- Montants en FCFA
+  amount_ht        numeric(12,0) NOT NULL DEFAULT 0,  -- HT
+  tva              numeric(12,0) NOT NULL DEFAULT 0,  -- TVA 18 %
+  amount_ttc       numeric(12,0) NOT NULL DEFAULT 0,  -- TTC
+  commission       numeric(12,0) NOT NULL DEFAULT 0,  -- Commission NEXUS (pour vendeur)
+  net_vendor       numeric(12,0) NOT NULL DEFAULT 0,  -- Net à payer au vendeur
+
+  -- Statut
+  status           text        NOT NULL DEFAULT 'issued'
+                               CHECK (status IN ('draft', 'issued', 'paid', 'cancelled', 'refunded')),
+
+  -- Données complètes sérialisées (produits, adresses, infos paiement…)
+  metadata         jsonb,
+
+  -- Horodatage
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+
+-- ── 2. TRIGGER updated_at ────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS invoices_set_updated_at ON invoices;
+CREATE TRIGGER invoices_set_updated_at
+  BEFORE UPDATE ON invoices
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ── 3. INDEX ──────────────────────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_invoices_buyer_id    ON invoices (buyer_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_vendor_id   ON invoices (vendor_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_order_id    ON invoices (order_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_type_status ON invoices (type, status);
+CREATE INDEX IF NOT EXISTS idx_invoices_created_at  ON invoices (created_at DESC);
+
+-- ── 4. ROW LEVEL SECURITY ─────────────────────────────────────────────────────
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+
+-- Acheteur : accès uniquement à ses propres factures (type = 'buyer')
+CREATE POLICY "buyer_read_own_invoices" ON invoices
+  FOR SELECT
+  USING (
+    auth.uid() = buyer_id
+    AND type = 'buyer'
+  );
+
+-- Vendeur : accès uniquement à ses propres relevés (type = 'vendor')
+CREATE POLICY "vendor_read_own_invoices" ON invoices
+  FOR SELECT
+  USING (
+    auth.uid() = vendor_id
+    AND type = 'vendor'
+  );
+
+-- Admin : accès total via service_role (bypasse RLS) — pas de policy needed côté backend
+
+-- Acheteur : peut créer sa propre facture (le frontend la génère, le backend la sauvegarde)
+CREATE POLICY "buyer_insert_own_invoice" ON invoices
+  FOR INSERT
+  WITH CHECK (
+    auth.uid() = buyer_id
+    AND type = 'buyer'
+  );
+
+-- Vendeur : peut créer son propre relevé
+CREATE POLICY "vendor_insert_own_invoice" ON invoices
+  FOR INSERT
+  WITH CHECK (
+    auth.uid() = vendor_id
+    AND type = 'vendor'
+  );
+
+-- ── 5. FONCTION : génération automatique du numéro de facture ──────────────
+-- Ex: FAC-2025-000001 pour acheteur, VEND-2025-000001 pour vendeur
+CREATE SEQUENCE IF NOT EXISTS invoice_seq_buyer  START 1 INCREMENT 1;
+CREATE SEQUENCE IF NOT EXISTS invoice_seq_vendor START 1 INCREMENT 1;
+CREATE SEQUENCE IF NOT EXISTS invoice_seq_admin  START 1 INCREMENT 1;
+
+CREATE OR REPLACE FUNCTION generate_invoice_number(p_type text)
+RETURNS text AS $$
+DECLARE
+  prefix   text;
+  seq_val  bigint;
+  yr       text;
+BEGIN
+  yr := to_char(now(), 'YYYY');
+  CASE p_type
+    WHEN 'buyer'  THEN prefix := 'FAC';  seq_val := nextval('invoice_seq_buyer');
+    WHEN 'vendor' THEN prefix := 'VEND'; seq_val := nextval('invoice_seq_vendor');
+    ELSE               prefix := 'ADM';  seq_val := nextval('invoice_seq_admin');
+  END CASE;
+  RETURN prefix || '-' || yr || '-' || lpad(seq_val::text, 6, '0');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ── 6. FONCTION RPC : sauvegarder une facture (appelée depuis le backend) ──
+-- Usage côté serveur Node :
+--   await supabase.rpc('save_invoice', { p_type:'buyer', p_order_id:'...', ... })
+CREATE OR REPLACE FUNCTION save_invoice(
+  p_type       text,
+  p_order_id   text,
+  p_buyer_id   uuid    DEFAULT NULL,
+  p_vendor_id  uuid    DEFAULT NULL,
+  p_amount_ht  numeric DEFAULT 0,
+  p_tva        numeric DEFAULT 0,
+  p_amount_ttc numeric DEFAULT 0,
+  p_commission numeric DEFAULT 0,
+  p_net_vendor numeric DEFAULT 0,
+  p_status     text    DEFAULT 'issued',
+  p_metadata   jsonb   DEFAULT NULL
+)
+RETURNS jsonb AS $$
+DECLARE
+  v_number text;
+  v_id     uuid;
+BEGIN
+  v_number := generate_invoice_number(p_type);
+  INSERT INTO invoices (
+    invoice_number, type, order_id,
+    buyer_id, vendor_id,
+    amount_ht, tva, amount_ttc,
+    commission, net_vendor,
+    status, metadata
+  ) VALUES (
+    v_number, p_type, p_order_id,
+    p_buyer_id, p_vendor_id,
+    p_amount_ht, p_tva, p_amount_ttc,
+    p_commission, p_net_vendor,
+    p_status, p_metadata
+  )
+  RETURNING id INTO v_id;
+
+  RETURN jsonb_build_object(
+    'id',             v_id,
+    'invoice_number', v_number,
+    'type',           p_type,
+    'amount_ttc',     p_amount_ttc
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ── 7. VUE : résumé des factures pour le dashboard admin ─────────────────────
+CREATE OR REPLACE VIEW v_invoices_summary AS
+SELECT
+  i.id,
+  i.invoice_number,
+  i.type,
+  i.order_id,
+  i.status,
+  i.amount_ttc,
+  i.commission,
+  i.net_vendor,
+  i.created_at,
+  pb.name   AS buyer_name,
+  pb.email  AS buyer_email,
+  pv.name   AS vendor_name,
+  pv.email  AS vendor_email
+FROM invoices i
+LEFT JOIN profiles pb ON pb.id = i.buyer_id
+LEFT JOIN profiles pv ON pv.id = i.vendor_id;
+
+-- La vue est accessible via service_role uniquement (pas de RLS sur les vues)
+
+-- ── 8. STORAGE BUCKET : stockage PDF (optionnel — si vous voulez garder les PDFs) ──
+-- Décommenter si vous voulez stocker les PDFs générés côté serveur dans Supabase Storage :
+/*
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'invoices',
+  'invoices',
+  false,                -- privé
+  5242880,              -- 5 MB max par fichier
+  ARRAY['application/pdf']
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- Policy : seul le propriétaire peut lire son PDF
+CREATE POLICY "owner_read_invoice_pdf" ON storage.objects
+  FOR SELECT
+  USING (
+    bucket_id = 'invoices'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+-- Policy : le service_role (backend) peut créer/supprimer les PDFs
+CREATE POLICY "service_write_invoice_pdf" ON storage.objects
+  FOR ALL
+  USING (bucket_id = 'invoices')
+  WITH CHECK (bucket_id = 'invoices');
+*/
+
+-- ── 9. VÉRIFICATION ──────────────────────────────────────────────────────────
+DO $$
+BEGIN
+  RAISE NOTICE '✅ Table invoices créée avec succès';
+  RAISE NOTICE '✅ RLS activé (acheteur + vendeur isolés)';
+  RAISE NOTICE '✅ Séquences FAC-/VEND-/ADM- prêtes';
+  RAISE NOTICE '✅ Fonction save_invoice() disponible';
+  RAISE NOTICE '✅ Vue v_invoices_summary disponible';
+END $$;
+
+
+
+SELECT id, provider, created_at 
+FROM auth.identities 
+LIMIT 10;
+
+
+
+-- ============================================================
+-- NEXUS Market — Table invoices + fonction save_invoice v3
+-- CORRECTIF : remplace SELECT...INTO (ambigu) par := (SELECT ...)
+-- Exécuter en 2 étapes dans Supabase SQL Editor
+-- ============================================================
+
+
+-- ╔══════════════════════════════════════════════════════════╗
+-- ║  ÉTAPE 1 — Table + séquence (exécuter d'abord)          ║
+-- ╚══════════════════════════════════════════════════════════╝
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_number TEXT          UNIQUE NOT NULL,
+  type           TEXT          NOT NULL CHECK (type IN ('buyer','vendor')),
+  order_id       UUID          REFERENCES orders(id)   ON DELETE SET NULL,
+  buyer_id       UUID          REFERENCES profiles(id) ON DELETE SET NULL,
+  vendor_id      UUID          REFERENCES profiles(id) ON DELETE SET NULL,
+  status         TEXT          NOT NULL DEFAULT 'issued'
+                               CHECK (status IN ('draft','issued','paid','cancelled','refunded')),
+  amount_ht      NUMERIC(12,2) NOT NULL DEFAULT 0,
+  tva            NUMERIC(12,2) NOT NULL DEFAULT 0,
+  amount_ttc     NUMERIC(12,2) NOT NULL DEFAULT 0,
+  commission     NUMERIC(12,2) NOT NULL DEFAULT 0,
+  net_vendor     NUMERIC(12,2) NOT NULL DEFAULT 0,
+  metadata       JSONB         DEFAULT '{}'::jsonb,
+  created_at     TIMESTAMPTZ   NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_buyer  ON invoices(buyer_id,  type);
+CREATE INDEX IF NOT EXISTS idx_invoices_vendor ON invoices(vendor_id, type);
+CREATE INDEX IF NOT EXISTS idx_invoices_order  ON invoices(order_id);
+
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "invoices_owner"
+  ON invoices FOR SELECT TO authenticated
+  USING (buyer_id = auth.uid() OR vendor_id = auth.uid());
+
+CREATE POLICY "invoices_service_role"
+  ON invoices FOR ALL TO service_role
+  USING (true) WITH CHECK (true);
+
+CREATE SEQUENCE IF NOT EXISTS invoice_seq START 1;
+
+
+-- ╔══════════════════════════════════════════════════════════╗
+-- ║  ÉTAPE 2 — Fonction save_invoice (exécuter après étape 1)║
+-- ║  Utilise := (SELECT ...) au lieu de SELECT ... INTO      ║
+-- ║  pour éviter l'ambiguïté avec la création de table SQL   ║
+-- ╚══════════════════════════════════════════════════════════╝
+
+CREATE OR REPLACE FUNCTION save_invoice(
+  p_type       TEXT,
+  p_order_id   UUID,
+  p_buyer_id   UUID,
+  p_vendor_id  UUID,
+  p_amount_ht  NUMERIC,
+  p_tva        NUMERIC,
+  p_amount_ttc NUMERIC,
+  p_commission NUMERIC,
+  p_net_vendor NUMERIC,
+  p_status     TEXT  DEFAULT 'issued',
+  p_metadata   JSONB DEFAULT '{}'::jsonb
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_id      UUID;
+  v_number  TEXT;
+BEGIN
+  -- Utilise := (SELECT ...) — jamais SELECT ... INTO pour éviter
+  -- que PostgreSQL confonde avec la syntaxe de création de table
+  v_id := (
+    SELECT id
+    FROM   invoices
+    WHERE  order_id = p_order_id
+      AND  type     = p_type
+    LIMIT  1
+  );
+
+  v_number := (
+    SELECT invoice_number
+    FROM   invoices
+    WHERE  order_id = p_order_id
+      AND  type     = p_type
+    LIMIT  1
+  );
+
+  -- Facture déjà existante : retourner l'existante (idempotence)
+  IF v_id IS NOT NULL THEN
+    RETURN jsonb_build_object(
+      'id',             v_id,
+      'invoice_number', v_number,
+      'duplicate',      true
+    );
+  END IF;
+
+  -- Numéro de facture : INV-YYYY-NNNNNN
+  v_number := 'INV-' || to_char(now(), 'YYYY') || '-'
+              || lpad(nextval('invoice_seq')::text, 6, '0');
+
+  -- INSERT avec RETURNING INTO (syntaxe DML — sans ambiguïté)
+  INSERT INTO invoices (
+    invoice_number, type,       order_id,
+    buyer_id,       vendor_id,  status,
+    amount_ht,      tva,        amount_ttc,
+    commission,     net_vendor, metadata
+  )
+  VALUES (
+    v_number,    p_type,       p_order_id,
+    p_buyer_id,  p_vendor_id,  p_status,
+    p_amount_ht, p_tva,        p_amount_ttc,
+    p_commission, p_net_vendor, p_metadata
+  )
+  RETURNING id INTO v_id;
+
+  RETURN jsonb_build_object(
+    'id',             v_id,
+    'invoice_number', v_number,
+    'duplicate',      false
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION save_invoice(
+  TEXT, UUID, UUID, UUID,
+  NUMERIC, NUMERIC, NUMERIC, NUMERIC, NUMERIC,
+  TEXT, JSONB
+) TO service_role;
+
+-- Vérification
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'save_invoice'
+  ) THEN
+    RAISE NOTICE '✅ Fonction save_invoice OK';
+  ELSE
+    RAISE WARNING '❌ Fonction save_invoice MANQUANTE';
+  END IF;
+END $$;
+
+
+

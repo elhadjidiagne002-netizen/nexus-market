@@ -1,4 +1,4 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -14,6 +14,8 @@ export async function onRequest({ request, env }) {
     return json({ migrated: rows.length });
   } catch (e) { return err(e.message, 500); }
 }
+
+
 
 
 

@@ -1,51 +1,42 @@
-<<<<<<< HEAD
-import { CORS, options, json, err, supabase, requireAuth, requireAdmin } from '../../_lib/utils.js';
-=======
-import { CORS, options, json, err, supabase, requireAuth, requireAdmin } from '../../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '';
 
-export async function onRequest({ request, env, params }) {
+export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
-  if (request.method !== 'POST') return err('POST requis', 405);
 
   try {
-    // Vérification de l'authentification et des droits admin
     const [user, authError] = await requireAuth(request, env);
     if (authError) return authError;
-
-    const isAdmin = await requireAdmin(user, env);
-    if (!isAdmin) return err('Accès refusé : droits administrateur requis', 403);
+    if (user.role !== 'admin') return err('Accès refusé', 403);
 
     const sb = supabase(env);
-    const { data: product, error: productError } = await sb
-      .from('products')
-      .select('id, name, is_visible')
-      .eq('id', params.id)
-      .single();
+    const url = new URL(request.url);
+    const productId = url.pathname.split('/').pop();
 
-    if (productError) return err(productError.message, 500);
-    if (!product) return err('Produit introuvable', 404);
+    if (request.method === 'POST') {
+      const { approved, reason } = await request.json();
+      if (typeof approved !== 'boolean') return err('Statut de modération invalide', 400);
 
-    // Mise à jour de la visibilité du produit
-    const { error: updateError } = await sb
-      .from('products')
-      .update({ is_visible: true })
-      .eq('id', params.id);
+      const { data, error } = await sb
+        .from('products')
+        .update({
+          is_approved: approved,
+          moderation_reason: reason,
+          moderated_at: new Date().toISOString(),
+          moderated_by: user.id
+        })
+        .eq('id', productId)
+        .select()
+        .single();
 
-    if (updateError) return err(updateError.message, 500);
+      if (error) throw error;
+      if (!data) return err('Produit non trouvé', 404);
+      return json(data);
+    }
 
-    // Message de succès avec template literal corrigé
-    const successMessage = `Votre produit "${product.name}" est maintenant visible.`;
-
-    return json({
-      success: true,
-      message: successMessage,
-      product: { id: product.id, name: product.name, is_visible: true }
-    });
-
-  } catch (e) {
-    return err(e.message, 500);
+    return err('Méthode non supportée', 405);
+  } catch (error) {
+    return err(error.message, error.status || 500);
   }
 }
-
 
 

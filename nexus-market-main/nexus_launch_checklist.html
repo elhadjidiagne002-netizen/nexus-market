@@ -1,0 +1,298 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-sans); }
+.wrap { padding: 0 0 1.5rem; }
+.header { display:flex; align-items:center; justify-content:space-between; margin-bottom:1.25rem; flex-wrap:wrap; gap:.5rem; }
+.title { font-size:17px; font-weight:500; color:var(--color-text-primary); }
+.score-bar { display:flex; align-items:center; gap:.6rem; font-size:13px; color:var(--color-text-secondary); }
+.progress { width:140px; height:8px; background:var(--color-border-tertiary); border-radius:4px; overflow:hidden; }
+.progress-fill { height:100%; background:#1D9E75; border-radius:4px; transition:width .4s; }
+.section { margin-bottom:1rem; }
+.section-title { font-size:12px; font-weight:500; text-transform:uppercase; letter-spacing:.06em; color:var(--color-text-secondary); margin-bottom:.5rem; padding:.25rem .6rem; border-radius:4px; display:inline-block; }
+.s-red   { background:var(--color-background-danger);  color:var(--color-text-danger);  }
+.s-amber { background:var(--color-background-warning); color:var(--color-text-warning); }
+.s-blue  { background:var(--color-background-info);    color:var(--color-text-info);    }
+.s-green { background:var(--color-background-success); color:var(--color-text-success); }
+.items { display:flex; flex-direction:column; gap:.35rem; }
+.item { display:flex; align-items:flex-start; gap:.65rem; padding:.55rem .75rem; border-radius:8px; background:var(--color-background-secondary); border:0.5px solid var(--color-border-tertiary); cursor:pointer; transition:background .15s; user-select:none; }
+.item:hover { background:var(--color-background-tertiary); }
+.item.done { opacity:.55; }
+.item.done .item-title { text-decoration:line-through; }
+.check { width:18px; height:18px; border-radius:4px; border:1.5px solid var(--color-border-secondary); flex-shrink:0; margin-top:1px; display:flex; align-items:center; justify-content:center; font-size:11px; transition:.15s; }
+.check.checked { background:#1D9E75; border-color:#1D9E75; color:#fff; }
+.item-body { flex:1; }
+.item-title { font-size:13.5px; color:var(--color-text-primary); line-height:1.4; }
+.item-sub { font-size:11.5px; color:var(--color-text-secondary); margin-top:2px; line-height:1.4; }
+.badge { font-size:10px; font-weight:500; padding:1px 6px; border-radius:10px; flex-shrink:0; margin-top:2px; }
+.badge-red   { background:var(--color-background-danger);  color:var(--color-text-danger);  }
+.badge-amber { background:var(--color-background-warning); color:var(--color-text-warning); }
+.badge-blue  { background:var(--color-background-info);    color:var(--color-text-info);    }
+.badge-green { background:var(--color-background-success); color:var(--color-text-success); }
+.reset-btn { font-size:12px; color:var(--color-text-secondary); background:none; border:none; cursor:pointer; padding:.25rem .5rem; border-radius:4px; }
+.reset-btn:hover { background:var(--color-border-tertiary); }
+</style>
+<div class="wrap">
+  <div class="header">
+    <div class="title">Checklist avant lancement — NEXUS Market</div>
+    <div style="display:flex;align-items:center;gap:1rem">
+      <div class="score-bar">
+        <div class="progress"><div class="progress-fill" id="prog" style="width:0%"></div></div>
+        <span id="score-txt">0 / 22</span>
+      </div>
+      <button class="reset-btn" onclick="resetAll()">Réinitialiser</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title s-red">🚨 Bloquants — ne pas lancer sans ces éléments</div>
+    <div class="items" id="critical">
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Intégrer un vrai paiement Mobile Money</div>
+          <div class="item-sub">La route /api/payments/mobile-money est une <strong>simulation</strong> (génère un faux ref). Intégrer PayTech Sénégal, CinetPay ou l'API Wave/Orange Money réelle.</div>
+        </div>
+        <div class="badge badge-red">Critique</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Passer Stripe en mode production</div>
+          <div class="item-sub">Les clés actuelles sont sk_test_ / pk_test_. Remplacer par des clés live dans Railway + Vercel. Tester le webhook Stripe en production.</div>
+        </div>
+        <div class="badge badge-red">Critique</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Créer les tables Supabase manquantes</div>
+          <div class="item-sub">Tables définies en commentaire SQL dans server.js mais pas forcément créées : refresh_tokens, coupons, loyalty_points, referrals, payout_requests, buyer_pro_profiles.</div>
+        </div>
+        <div class="badge badge-red">Critique</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Configurer toutes les variables d'environnement</div>
+          <div class="item-sub">Manquants probables : API_URL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, RESEND_API_KEY, SENTRY_DSN, STRIPE_WEBHOOK_SECRET.</div>
+        </div>
+        <div class="badge badge-red">Critique</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Tester le flux complet de commande en prod</div>
+          <div class="item-sub">Parcours : inscription → produit → panier → checkout → paiement → confirmation email → statut vendeur → livraison. À tester avec un vrai compte sur l'URL de production.</div>
+        </div>
+        <div class="badge badge-red">Critique</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Vérifier que les emails transactionnels partent</div>
+          <div class="item-sub">Confirmation de commande, réinitialisation de mot de passe, confirmation email inscription. Tester avec Resend ou SMTP configuré — pas EmailJS seul (EmailJS a des limites).</div>
+        </div>
+        <div class="badge badge-red">Critique</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title s-amber">⚠️ Importants — à finir avant J-1</div>
+    <div class="items" id="important">
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Page de suivi de commande acheteur</div>
+          <div class="item-sub">Le champ tracking_number existe dans la DB mais il n'y a pas d'UI de suivi visible. L'acheteur doit pouvoir suivre sa livraison depuis son compte.</div>
+        </div>
+        <div class="badge badge-amber">Important</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Page Fidélité (points) complète</div>
+          <div class="item-sub">awardLoyaltyPoints() existe côté serveur et la notification renvoie vers /loyalty. Mais la page UI complète (solde, historique, utilisation) n'est pas visible dans le code.</div>
+        </div>
+        <div class="badge badge-amber">Important</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Remplacer les icônes PWA placehold.co</div>
+          <div class="item-sub">Le manifest.json utilise https://placehold.co/192x192 et 512x512 comme icônes d'app. Créer de vraies icônes PNG branded NEXUS Market.</div>
+        </div>
+        <div class="badge badge-amber">Important</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Remplacer l'OG image placehold.co</div>
+          <div class="item-sub">La meta og:image pointe vers placehold.co/1200x630. Créer une vraie image de partage branded (affichée sur WhatsApp, Facebook, etc.).</div>
+        </div>
+        <div class="badge badge-amber">Important</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Configurer les push notifications VAPID</div>
+          <div class="item-sub">Le code web-push est complet mais nécessite VAPID_PUBLIC_KEY et VAPID_PRIVATE_KEY dans Railway. Sans elles, les notifications ne partent pas.</div>
+        </div>
+        <div class="badge badge-amber">Important</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Vérifier l'approbation vendeur côté admin</div>
+          <div class="item-sub">Le workflow de validation vendeur (pending → approved) doit être testé : admin reçoit-il une notif ? Le vendeur reçoit-il un email de confirmation ?</div>
+        </div>
+        <div class="badge badge-amber">Important</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Tester le système de parrainage complet</div>
+          <div class="item-sub">Le code backend insert dans referrals mais l'UI pour partager son code et voir ses filleuls n'est pas clairement visible. À vérifier et compléter.</div>
+        </div>
+        <div class="badge badge-amber">Important</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Configurer un cron externe de keep-alive</div>
+          <div class="item-sub">Créer un job sur cron-job.org ou UptimeRobot pour pinger /api/health toutes les 10 min — en complément du self-ping serveur déjà ajouté.</div>
+        </div>
+        <div class="badge badge-amber">Important</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title s-blue">🔵 Légal & Confiance</div>
+    <div class="items">
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Contenu juridique réel dans les CGU</div>
+          <div class="item-sub">Les modales CGU et Politique de confidentialité existent. Vérifier que le contenu est rédigé par un juriste ou adapté au droit sénégalais (loi 2008-12).</div>
+        </div>
+        <div class="badge badge-blue">Légal</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Page Contact / À propos / FAQ</div>
+          <div class="item-sub">Les acheteurs et vendeurs doivent pouvoir contacter le support (email, WhatsApp). Une FAQ réduit les demandes répétitives avant lancement.</div>
+        </div>
+        <div class="badge badge-blue">Légal</div>
+      </div>
+      <div class="item" onclick="toggle(this)">
+        <div class="check"></div>
+        <div class="item-body">
+          <div class="item-title">Mentions légales de l'entreprise</div>
+          <div class="item-sub">NINEA, adresse, responsable légal. Obligatoire au Sénégal pour un site commercial. À ajouter dans le footer.</div>
+        </div>
+        <div class="badge badge-blue">Légal</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title s-green">✅ Déjà fait — vérifiés dans le code</div>
+    <div class="items">
+      <div class="item done" onclick="toggle(this)">
+        <div class="check checked">✓</div>
+        <div class="item-body">
+          <div class="item-title">Auth complète (register, login, OAuth GitHub, reset password)</div>
+        </div>
+        <div class="badge badge-green">Fait</div>
+      </div>
+      <div class="item done" onclick="toggle(this)">
+        <div class="check checked">✓</div>
+        <div class="item-body">
+          <div class="item-title">Messagerie temps réel (SSE + polling adaptatif)</div>
+        </div>
+        <div class="badge badge-green">Fait</div>
+      </div>
+      <div class="item done" onclick="toggle(this)">
+        <div class="check checked">✓</div>
+        <div class="item-body">
+          <div class="item-title">Dashboard admin complet (stats, modération, exports CSV/PDF)</div>
+        </div>
+        <div class="badge badge-green">Fait</div>
+      </div>
+      <div class="item done" onclick="toggle(this)">
+        <div class="check checked">✓</div>
+        <div class="item-body">
+          <div class="item-title">Disputes, retours, avis, système de coupons</div>
+        </div>
+        <div class="badge badge-green">Fait</div>
+      </div>
+      <div class="item done" onclick="toggle(this)">
+        <div class="check checked">✓</div>
+        <div class="item-body">
+          <div class="item-title">SEO de base (OG tags, Twitter card, PWA manifest, favicon)</div>
+        </div>
+        <div class="badge badge-green">Fait</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'nexus_checklist_v1';
+
+function getState() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
+}
+function saveState(s) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
+}
+
+function updateScore() {
+  const items = document.querySelectorAll('.item');
+  const done = document.querySelectorAll('.item.done').length;
+  const total = items.length;
+  document.getElementById('score-txt').textContent = `${done} / ${total}`;
+  document.getElementById('prog').style.width = (done / total * 100) + '%';
+}
+
+function toggle(el) {
+  const state = getState();
+  const idx = Array.from(document.querySelectorAll('.item')).indexOf(el);
+  const isDone = el.classList.contains('done');
+  el.classList.toggle('done', !isDone);
+  el.querySelector('.check').classList.toggle('checked', !isDone);
+  el.querySelector('.check').textContent = !isDone ? '✓' : '';
+  state[idx] = !isDone;
+  saveState(state);
+  updateScore();
+}
+
+function resetAll() {
+  document.querySelectorAll('.item').forEach(el => {
+    const wasDoneByDefault = el.closest('#critical') === null && el.querySelector('.badge-green') !== null;
+    el.classList.toggle('done', wasDoneByDefault);
+    el.querySelector('.check').classList.toggle('checked', wasDoneByDefault);
+    el.querySelector('.check').textContent = wasDoneByDefault ? '✓' : '';
+  });
+  saveState({});
+  updateScore();
+}
+
+// Restore state on load
+window.addEventListener('DOMContentLoaded', () => {
+  const state = getState();
+  document.querySelectorAll('.item').forEach((el, idx) => {
+    if (idx in state) {
+      el.classList.toggle('done', state[idx]);
+      el.querySelector('.check').classList.toggle('checked', state[idx]);
+      el.querySelector('.check').textContent = state[idx] ? '✓' : '';
+    }
+  });
+  updateScore();
+});
+
+updateScore();
+</script>

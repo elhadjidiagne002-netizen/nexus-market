@@ -1,42 +1,37 @@
-<<<<<<< HEAD
-import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
-=======
-import { CORS, options, json, err, supabase, requireAuth } from '../../../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '';
 
-export async function onRequest({ request, env, params }) {
+export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
-  if (request.method !== 'POST') return err('POST requis', 405);
 
   try {
     const [user, authError] = await requireAuth(request, env);
     if (authError) return authError;
 
     const sb = supabase(env);
-    const { data: order, error: orderError } = await sb
-      .from('orders')
-      .select('status, tracking_number')
-      .eq('id', params.orderId)
-      .eq('user_id', user.id)
-      .single();
+    const url = new URL(request.url);
+    const orderId = url.pathname.split('/').pop();
 
-    if (orderError) return err(orderError.message, 500);
-    if (!order) return err('Commande introuvable', 404);
+    if (request.method === 'POST') {
+      const { status } = await request.json();
+      if (!status) return err('Statut manquant', 400);
 
-    // Corrigé : Utilisation de guillemets simples pour éviter les conflits avec les backticks
-    const message = order.tracking_number
-      ? `N° de suivi : ${order.tracking_number}`
-      : 'Votre commande est en cours de traitement';
+      const { data, error } = await sb
+        .from('orders')
+        .update({ status })
+        .eq('id', orderId)
+        .eq('buyer_id', user.id)
+        .select()
+        .single();
 
-    return json({
-      success: true,
-      status: order.status,
-      message: message
-    });
+      if (error) throw error;
+      if (!data) return err('Commande non trouvée', 404);
+      return json(data);
+    }
 
-  } catch (e) {
-    return err(e.message, 500);
+    return err('Méthode non supportée', 405);
+  } catch (error) {
+    return err(error.message, error.status || 500);
   }
 }
-
 
 

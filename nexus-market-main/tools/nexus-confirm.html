@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS Market — Confirmation email</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135deg,#F9F7F0,#EFE9D8);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+  .card{background:white;border-radius:20px;padding:2.5rem;max-width:440px;width:100%;box-shadow:0 8px 40px rgba(0,133,62,.15);border:1px solid #e5e7eb;text-align:center}
+  .icon{font-size:3.5rem;margin-bottom:1rem;display:block}
+  h1{font-size:1.3rem;font-weight:800;color:#1F2937;margin-bottom:.5rem}
+  p{color:#6B7280;font-size:.9rem;line-height:1.6;margin-bottom:1rem}
+  .alert{padding:.85rem 1rem;border-radius:10px;font-size:.88rem;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:.5rem}
+  .alert-success{background:#D1FAE5;color:#065F46;border:1px solid #A7F3D0}
+  .alert-error{background:#FEE2E2;color:#991B1B;border:1px solid #FECACA}
+  .alert-info{background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE}
+  .btn{width:100%;padding:.85rem;border:none;border-radius:10px;font-size:.95rem;font-weight:700;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:.5rem;font-family:inherit;margin-top:.5rem;text-decoration:none}
+  .btn-primary{background:linear-gradient(135deg,#00853E,#33A85A);color:white}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,133,62,.3)}
+  .btn-secondary{background:white;color:#00853E;border:2px solid #00853E}
+  .spinner{width:40px;height:40px;border:3px solid #E5E7EB;border-top:3px solid #00853E;border-radius:50%;animation:spin .8s linear infinite;margin:1rem auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .step-indicator{display:flex;gap:.4rem;justify-content:center;margin-bottom:1.5rem}
+  .step{width:8px;height:8px;border-radius:50%;background:#E5E7EB}
+  .step.active{background:#00853E;width:24px;border-radius:4px}
+  .step.done{background:#33A85A}
+  code{background:#F3F4F6;padding:.15rem .4rem;border-radius:4px;font-family:monospace;font-size:.82rem;color:#374151}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="step-indicator">
+    <div class="step done" id="s1"></div>
+    <div class="step done" id="s2"></div>
+    <div class="step active" id="s3"></div>
+  </div>
+
+  <span class="icon" id="stateIcon">⏳</span>
+  <h1 id="stateTitle">Vérification en cours…</h1>
+  <p id="stateMsg">Veuillez patienter, nous confirmons votre email.</p>
+
+  <div class="spinner" id="spinner"></div>
+  <div id="alert" style="display:none" class="alert"></div>
+
+  <div id="actions" style="display:none"></div>
+</div>
+
+<script>
+// ── Helpers ────────────────────────────────────────────────────────────────
+function show(el, display='flex'){ document.getElementById(el).style.display = display; }
+function hide(el){ document.getElementById(el).style.display = 'none'; }
+function setContent(id, html){ document.getElementById(id).innerHTML = html; }
+function showAlert(msg, type){
+  const el = document.getElementById('alert');
+  el.className = 'alert alert-' + type;
+  el.innerHTML = msg;
+  show('alert');
+}
+function setActions(html){ setContent('actions', html); show('actions','block'); }
+
+// ── Lire les paramètres URL (Supabase envoie ?access_token=...&type=signup) ──
+function getParams(){
+  const h = new URLSearchParams(window.location.hash.replace('#','?'));
+  const s = new URLSearchParams(window.location.search);
+  return {
+    access_token : h.get('access_token')  || s.get('access_token'),
+    refresh_token: h.get('refresh_token') || s.get('refresh_token'),
+    type         : h.get('type')          || s.get('type'),           // signup | recovery
+    error        : h.get('error')         || s.get('error'),
+    error_description: h.get('error_description') || s.get('error_description'),
+    token        : h.get('token')         || s.get('token'),           // legacy
+  };
+}
+
+function getAppFile(){
+  const candidates = ['index.html','nexus_market.html'];
+  const ref = document.referrer;
+  if(ref){ const m = ref.match(/([^/]+\.html)$/); if(m && !['nexus-confirm.html','nexus_admin.html'].includes(m[1])) return m[1]; }
+  return candidates[0];
+}
+
+// ── Récupérer la config Supabase depuis localStorage (sauvée par SetupWizard) ──
+function getSupabaseConfig(){
+  try{
+    const c = JSON.parse(localStorage.getItem('nexus_saved_config') || '{}');
+    return { url: c.supabaseUrl || '', key: c.supabaseKey || '' };
+  }catch{ return {url:'',key:''}; }
+}
+
+// ── États UI ───────────────────────────────────────────────────────────────
+function stateSuccess(type){
+  hide('spinner');
+  if(type === 'recovery'){
+    setContent('stateIcon','🔑');
+    setContent('stateTitle','Lien valide !');
+    setContent('stateMsg','Vous pouvez maintenant définir un nouveau mot de passe.');
+    showAlert('✅ Lien de réinitialisation vérifié. Retournez à l\'application pour choisir votre nouveau mot de passe.','success');
+  } else {
+    setContent('stateIcon','✅');
+    setContent('stateTitle','Email confirmé !');
+    setContent('stateMsg','Votre compte NEXUS Market est actif. Vous pouvez maintenant vous connecter.');
+    showAlert('🎉 Bienvenue sur NEXUS Market ! Votre email a été vérifié avec succès.','success');
+  }
+  const app = getAppFile();
+  setActions(`
+    <a href="${app}" class="btn btn-primary">▶ Accéder à NEXUS Market</a>
+  `);
+}
+
+function stateError(msg){
+  hide('spinner');
+  setContent('stateIcon','❌');
+  setContent('stateTitle','Lien invalide ou expiré');
+  setContent('stateMsg', msg || 'Ce lien de confirmation n\'est plus valide.');
+  showAlert('⚠️ ' + (msg || 'Le lien a expiré ou a déjà été utilisé. Réinscrivez-vous ou demandez un nouveau lien.'),'error');
+  const app = getAppFile();
+  setActions(`
+    <a href="${app}" class="btn btn-primary">↩ Retour à l'application</a>
+    <a href="${app}" class="btn btn-secondary" style="margin-top:.5rem">✉ Renvoyer l'email de confirmation</a>
+  `);
+}
+
+function stateNoToken(){
+  hide('spinner');
+  setContent('stateIcon','📧');
+  setContent('stateTitle','Vérifiez vos emails');
+  setContent('stateMsg','Un email de confirmation a été envoyé à votre adresse. Cliquez sur le lien dans cet email pour activer votre compte.');
+  showAlert('ℹ️ Si vous ne voyez pas l\'email, vérifiez votre dossier spam.','info');
+  const app = getAppFile();
+  setActions(`
+    <a href="${app}" class="btn btn-secondary">↩ Retour</a>
+  `);
+}
+
+// ── Logique principale ─────────────────────────────────────────────────────
+async function main(){
+  const p = getParams();
+
+  // Erreur transmise par Supabase dans l'URL
+  if(p.error){
+    stateError(p.error_description || p.error);
+    return;
+  }
+
+  // Pas de token → page d'attente
+  if(!p.access_token && !p.token){
+    stateNoToken();
+    return;
+  }
+
+  // Tenter de valider le token via Supabase JS SDK
+  const cfg = getSupabaseConfig();
+  if(cfg.url && cfg.key && window.supabase){
+    try{
+      const client = window.supabase.createClient(cfg.url, cfg.key);
+
+      if(p.type === 'recovery'){
+        // Token de reset password — on le stocke en session pour que l'app puisse s'en servir
+        const { error } = await client.auth.setSession({
+          access_token: p.access_token,
+          refresh_token: p.refresh_token || ''
+        });
+        if(error) throw error;
+        // Stocker pour que l'app React capte la session
+        localStorage.setItem('nexus_pending_pw_reset', JSON.stringify({
+          access_token: p.access_token,
+          refresh_token: p.refresh_token,
+          ts: Date.now()
+        }));
+        stateSuccess('recovery');
+      } else {
+        // Confirmation d'email (signup)
+        const { error } = await client.auth.verifyOtp({
+          token_hash: p.token || p.access_token,
+          type: 'signup'
+        });
+        if(error) throw error;
+        stateSuccess('signup');
+      }
+    }catch(err){
+      // Si Supabase gère déjà la session via le hash (auto-confirm), on considère ça OK
+      if(err.message && (err.message.includes('already') || err.message.includes('used'))){
+        stateSuccess(p.type);
+      } else {
+        stateError(err.message);
+      }
+    }
+  } else {
+    // Pas de SDK ou pas configuré — mode localStorage
+    // Simplement afficher succès car le token était dans l'URL
+    stateSuccess(p.type || 'signup');
+  }
+}
+
+// Charger le SDK Supabase si possible (pour valider le token)
+(function(){
+  const cfg = getSupabaseConfig();
+  if(cfg.url && cfg.key){
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js';
+    s.onload  = main;
+    s.onerror = main; // fonctionner même sans le SDK
+    document.head.appendChild(s);
+  } else {
+    main();
+  }
+})();
+</script>
+</body>
+</html>

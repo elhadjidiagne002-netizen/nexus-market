@@ -1,24 +1,19 @@
-<<<<<<< HEAD
-import { CORS, options, json, err, supabase, requireAuth } from '../../_lib/utils.js';
-=======
-import { CORS, options, json, err, supabase, requireAuth } from '../../../_lib/utils.js';
+import { CORS, options, json, err, supabase, requireAuth } from '';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
 
   try {
-    // Authentification
     const [user, authError] = await requireAuth(request, env);
     if (authError) return authError;
 
     const sb = supabase(env);
 
-    // GET: Récupérer le profil de l'utilisateur
     if (request.method === 'GET') {
       const { data, error } = await sb
         .from('profiles')
         .select('*')
-        .eq('id', user.id)  // ✅ Syntaxe corrigée
+        .eq('id', user.id)
         .single();
 
       if (error) throw error;
@@ -26,7 +21,6 @@ export async function onRequest({ request, env }) {
       return json(data);
     }
 
-    // PUT: Mettre à jour le profil
     if (request.method === 'PUT') {
       const body = await request.json();
       const { data: updated, error } = await sb
@@ -40,7 +34,7 @@ export async function onRequest({ request, env }) {
           country: body.country,
           bio: body.bio,
           avatar: body.avatar,
-          updated_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         })
         .eq('id', user.id)
         .select()
@@ -50,13 +44,10 @@ export async function onRequest({ request, env }) {
       return json(updated);
     }
 
-    // Méthode non autorisée
     return err('Méthode non supportée', 405);
   } catch (error) {
     return err(error.message, error.status || 500);
   }
 }
-
-
 
 
