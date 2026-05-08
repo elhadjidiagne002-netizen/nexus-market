@@ -1,26 +1,12 @@
 /**
  * functions/payments-mobile-money.js
- * ──────────────────────────────────────────────────────────────────────────
- * POST /payments-mobile-money — Initie un paiement PayTech Mobile Money
- *
- * Adaptation Netlify → Cloudflare :
- *   • Le module `crypto` n'était pas utilisé dans le handler → supprimé.
- *   • fetch est déjà natif dans Cloudflare Workers (pas de polyfill nécessaire).
- *   • process.env → env
- *   • Body lu via request.json()
- *
- * Variables d'environnement Cloudflare :
- *   PAYTECH_API_KEY    — Clé API PayTech
- *   PAYTECH_SECRET_KEY — Secret PayTech
- *   PAYTECH_ENV        — "prod" | "test"
- *   FRONTEND_URL       — URL publique du site (pour les callbacks)
+ * Initie un paiement PayTech (Wave, Orange Money, etc.)
  */
-
 const EUR_TO_FCFA = 655.957;
 
 function corsHeaders() {
   return {
-    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
@@ -39,96 +25,83 @@ export async function onRequestPost(context) {
   const {
     PAYTECH_API_KEY,
     PAYTECH_SECRET_KEY,
-    PAYTECH_ENV  = "prod",
+    PAYTECH_ENV = "prod",
     FRONTEND_URL,
   } = env;
 
-  // Fallback : utiliser l'hôte de la requête si FRONTEND_URL non défini
-  const host     = request.headers.get("host") || "";
+  // Fallback de l'URL du site
+  const host = request.headers.get("host") || "";
   const protocol = host.includes("localhost") ? "http" : "https";
-  const baseUrl  = FRONTEND_URL || `${protocol}://${host}`;
+  const baseUrl = FRONTEND_URL || `${protocol}://${host}`;
 
   if (!PAYTECH_API_KEY || !PAYTECH_SECRET_KEY) {
-    console.error("[PayTech] Clés API manquantes");
-    return json(500, { error: "Configuration serveur incomplète — contacter l'administrateur" });
+    console.error("[Payments-Mobile] Clés API PayTech manquantes");
+    return json(500, { error: "Configuration serveur incomplète" });
   }
 
-  // ── Parser le body ────────────────────────────────────────────────────────
   let body;
-  try { body = await request.json(); }
-  catch { return json(400, { error: "Corps JSON invalide" }); }
+  try {
+    body = await request.json();
+  } catch {
+    return json(400, { error: "JSON invalide" });
+  }
 
   const { orderId, amount } = body;
-
   if (!orderId || amount == null || isNaN(Number(amount))) {
-    return json(400, { error: "orderId et amount (EUR) sont requis" });
+    return json(400, { error: "orderId et amount (EUR) requis" });
   }
 
-  // ── Conversion EUR → FCFA ─────────────────────────────────────────────────
   const amountFcfa = Math.round(Number(amount) * EUR_TO_FCFA);
   if (amountFcfa < 100) {
-    return json(400, { error: `Montant trop faible : ${amountFcfa} FCFA (minimum 100 FCFA)` });
+    return json(400, { error: `Montant minimum 100 FCFA (reçu ${amountFcfa})` });
   }
 
-  // ── URLs de callback ──────────────────────────────────────────────────────
+  // URLs de callback
   const successUrl = `${baseUrl}/?payment=success&orderId=${encodeURIComponent(orderId)}`;
   const cancelUrl  = `${baseUrl}/?payment=cancel&orderId=${encodeURIComponent(orderId)}`;
   const ipnUrl     = `${baseUrl}/functions/paytech-webhook`;
 
-  // ── Appel API PayTech ─────────────────────────────────────────────────────
-  const payload = {
-    item_name:    `Commande NEXUS Market #${orderId}`,
-    item_price:   amountFcfa,
-    currency:     "XOF",
-    ref_command:  orderId,
-    command_name: "Paiement Mobile Money — NEXUS Market",
-    env:          PAYTECH_ENV,
-    ipn_url:      ipnUrl,
-    success_url:  successUrl,
-    cancel_url:   cancelUrl,
-    custom_field: JSON.stringify({ orderId, source: "nexus-market" }),
-  };
-
-  let ptResponse;
   try {
-    ptResponse = await fetch("https://paytech.sn/api/payment/request-payment", {
-      method:  "POST",
+    const ptRes = await fetch("https://paytech.sn/api/payment/request-payment", {
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Accept":       "application/json",
-        "API_KEY":      PAYTECH_API_KEY,
-        "API_SECRET":   PAYTECH_SECRET_KEY,
+        "Accept": "application/json",
+        "API_KEY": PAYTECH_API_KEY,
+        "API_SECRET": PAYTECH_SECRET_KEY,
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        item_name: `Commande NEXUS #${orderId}`,
+        item_price: amountFcfa,
+        currency: "XOF",
+        ref_command: orderId,
+        command_name: "Paiement Mobile Money – NEXUS Market",
+        env: PAYTECH_ENV,
+        ipn_url: ipnUrl,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        custom_field: JSON.stringify({ orderId, source: "nexus-market" }),
+      }),
+    });
+
+    const ptData = await ptRes.json();
+
+    if (!ptRes.ok || ptData.success !== 1) {
+      console.error("[Payments-Mobile] PayTech erreur:", ptData);
+      return json(400, { error: "PayTech a refusé la demande" });
+    }
+
+    console.log(`[Payments-Mobile] Paiement initié token=${ptData.token} orderId=${orderId}`);
+    return json(200, {
+      redirect_url: ptData.redirect_url,
+      token: ptData.token,
+      orderId,
+      amountFcfa,
     });
   } catch (err) {
-    console.error("[PayTech] Erreur réseau:", err.message);
-    return json(502, { error: "Impossible de joindre PayTech — vérifiez votre connexion" });
+    console.error("[Payments-Mobile] Erreur réseau:", err.message);
+    return json(502, { error: "Impossible de contacter PayTech" });
   }
-
-  let ptData;
-  try { ptData = await ptResponse.json(); }
-  catch {
-    console.error("[PayTech] Réponse non-JSON, status:", ptResponse.status);
-    return json(502, { error: "Réponse invalide de PayTech" });
-  }
-
-  if (!ptResponse.ok || ptData.success !== 1) {
-    const errors = Array.isArray(ptData.errors)
-      ? ptData.errors.join(", ")
-      : JSON.stringify(ptData);
-    console.error("[PayTech] Échec:", errors);
-    return json(400, { error: `PayTech a refusé le paiement : ${errors}` });
-  }
-
-  console.log(`[PayTech] ✅ orderId=${orderId} montant=${amountFcfa} FCFA token=${ptData.token}`);
-
-  return json(200, {
-    redirect_url: ptData.redirect_url,
-    token:        ptData.token,
-    orderId,
-    amountFcfa,
-  });
 }
 
 export async function onRequestOptions() {

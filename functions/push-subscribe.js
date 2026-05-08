@@ -1,25 +1,13 @@
 /**
  * functions/push-subscribe.js
- * ──────────────────────────────────────────────────────────────────────────
- * POST   /push-subscribe  → Enregistre un abonnement Web Push dans Supabase
- * DELETE /push-subscribe  → Supprime l'abonnement correspondant à l'endpoint
- *
- * Adaptation Netlify → Cloudflare :
- *   • exports.handler(event) → export async function onRequest(context)
- *   • event.httpMethod       → request.method
- *   • process.env            → env
- *   • event.body             → await request.json()
- *
- * Variables d'environnement Cloudflare :
- *   SUPABASE_URL         — URL du projet Supabase
- *   SUPABASE_SERVICE_KEY — Clé service_role (contourne RLS)
+ * POST   → enregistre un abonnement push
+ * DELETE → supprime un abonnement (par endpoint)
  */
-
 import { createClient } from "@supabase/supabase-js";
 
 function corsHeaders() {
   return {
-    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
@@ -37,49 +25,46 @@ export async function onRequest(context) {
   const method = request.method;
 
   if (!env.SUPABASE_SERVICE_KEY) {
-    return json(503, { error: "SUPABASE_SERVICE_KEY non configurée" });
+    return json(503, { error: "SUPABASE_SERVICE_KEY manquante" });
   }
 
   const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // ── Extraire user_id depuis le JWT Supabase ───────────────────────────────
+  // Extraction user_id depuis le JWT (optionnel)
   let userId = null;
-  const auth = request.headers.get("authorization") || "";
+  const auth = request.headers.get("Authorization") || "";
   if (auth.startsWith("Bearer ")) {
-    const { data: { user }, error } = await sb.auth.getUser(auth.slice(7));
-    if (!error && user) userId = user.id;
+    // [FIX] .catch(() => ({})) provoquait un crash car la déstructuration
+    // { data: { user } } échoue si le fallback ne contient pas de .data.
+    const { data: { user } } = await sb.auth.getUser(auth.slice(7))
+      .catch(() => ({ data: { user: null } }));
+    if (user) userId = user.id;
   }
 
-  // ── DELETE : désabonnement ────────────────────────────────────────────────
+  // DELETE – désabonnement
   if (method === "DELETE") {
     let endpoint;
-    try { ({ endpoint } = await request.json()); } catch (_) {}
-
-    if (!endpoint) {
-      return json(400, { error: "endpoint manquant" });
-    }
+    try { ({ endpoint } = await request.json()); } catch {}
+    if (!endpoint) return json(400, { error: "endpoint manquant" });
     await sb.from("push_subscriptions").delete().eq("endpoint", endpoint);
     return json(200, { ok: true });
   }
 
-  // ── POST : abonnement ─────────────────────────────────────────────────────
+  // POST – abonnement
   if (method === "POST") {
     let subscription, preferences;
-    try { ({ subscription, preferences } = await request.json()); } catch (_) {}
-
-    if (!subscription?.endpoint) {
-      return json(400, { error: "subscription invalide" });
-    }
+    try { ({ subscription, preferences } = await request.json()); } catch {}
+    if (!subscription?.endpoint) return json(400, { error: "subscription invalide" });
 
     const row = {
-      endpoint:    subscription.endpoint,
-      p256dh:      subscription.keys?.p256dh || null,
-      auth_key:    subscription.keys?.auth   || null,
-      user_id:     userId,
+      endpoint: subscription.endpoint,
+      p256dh: subscription.keys?.p256dh || null,
+      auth_key: subscription.keys?.auth || null,
+      user_id: userId,
       preferences: preferences || {},
-      updated_at:  new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
 
     const { error } = await sb
