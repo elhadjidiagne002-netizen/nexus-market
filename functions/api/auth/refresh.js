@@ -1,4 +1,4 @@
-import { CORS, options, json, err } from '../../../_lib/utils.js';
+import { CORS, options, json, err } from '../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -15,6 +15,8 @@ export async function onRequest({ request, env }) {
     return json({ accessToken: data.access_token, refreshToken: data.refresh_token, expiresIn: data.expires_in });
   } catch (e) { return err(e.message, 500); }
 }
+
+
 
 
 

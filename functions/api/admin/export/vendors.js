@@ -1,4 +1,4 @@
-import { CORS, options, requireAdmin, supabase } from '../../../_lib/utils.js';
+import { CORS, options, requireAdmin, supabase } from '../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -13,10 +13,12 @@ export async function onRequest({ request, env }) {
     });
     return new Response(rows.join('\n'), { headers: { ...CORS, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="nexus_vendors.csv"' } });
   } catch (e) {
-    const { err: errFn } = await import('');
+    const { err: errFn } = await import('../_lib/utils.js');
     return errFn(e.message, 500);
   }
 }
+
+
 
 
 
