@@ -2,44 +2,52 @@ import { CORS, options, json, err, supabase, requireAuth } from '../../../../../
 
 export async function onRequest({ request, env, params }) {
   if (request.method === 'OPTIONS') return options();
-  const sb = supabase(env);
+  if (request.method !== 'POST') return err('POST requis', 405);
+
   try {
-    if (request.method === 'GET') {
-      const data = await sb.from('product_qa').select('*', `product_id=eq.${params.id}&order=created_at.asc`);
-      return json(data || []);
-    }
-    if (request.method === 'POST') {
-      const [user, e] = await requireAuth(request, env);
-      if (e) return e;
-      const { question } = await request.json();
-      if (!question?.trim()) return err('Question vide', 400);
-      // Trouver le vendor_id du produit
-      const products = await sb.from('products').select('vendor_id', `id=eq.${params.id}`);
-      const vendor_id = products?.[0]?.vendor_id || null;
-      const data = await sb.from('product_qa').insert({
-        product_id: params.id, user_id: user.id, user_name: user.name || user.email,
-        vendor_id, question: question.trim(),
+    // Vérification de l'authentification
+    const [user, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+
+    // Récupération des données de la requête
+    const { question } = await request.json();
+    if (!question) return err('La question est requise', 400);
+
+    const sb = supabase(env);
+
+    // Vérification que le produit appartient à l'utilisateur
+    const { data: product, error: productError } = await sb
+      .from('products')
+      .select('id, name, user_id')
+      .eq('id', params.id)
+      .single();
+
+    if (productError) return err(productError.message, 500);
+    if (!product) return err('Produit introuvable', 404);
+    if (product.user_id !== user.id) return err('Accès refusé : ce produit ne vous appartient pas', 403);
+
+    // Enregistrement de la question
+    const { error: qaError } = await sb
+      .from('product_questions')
+      .insert({
+        product_id: params.id,
+        user_id: user.id,
+        question: question,
+        created_at: new Date().toISOString()
       });
-      // Notifier le vendeur
-      if (vendor_id) {
-        await sb.from('notifications').insert({
-          user_id: vendor_id, type: 'info', title: 'Nouvelle question',
-          message: \`Un client a posé une question sur un de vos produits.\`,
-          link: \`/products/\${params.id}\`,
-        }).catch(() => {});
-      }
-      return json(Array.isArray(data) ? data[0] : data, 201);
-    }
-    if (request.method === 'PATCH') {
-      const [user, e] = await requireAuth(request, env);
-      if (e) return e;
-      const { qaId, answer } = await request.json();
-      const updated = await sb.from('product_qa').update(
-        { answer, answered_at: new Date().toISOString() },
-        `id=eq.${qaId}&vendor_id=eq.${user.id}`
-      );
-      return json(Array.isArray(updated) ? updated[0] : updated);
-    }
-    return err('Méthode non supportée', 405);
-  } catch (e) { return err(e.message, e.status || 500); }
+
+    if (qaError) return err(qaError.message, 500);
+
+    // Message de succès avec template literal corrigé
+    const successMessage = `Un client a posé une question sur un de vos produits : "${question}".`;
+
+    return json({
+      success: true,
+      message: successMessage,
+      question: { product_id: params.id, question: question }
+    });
+
+  } catch (e) {
+    return err(e.message, 500);
+  }
 }
