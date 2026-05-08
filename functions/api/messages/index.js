@@ -26,7 +26,7 @@ export async function onRequest({ request, env }) {
     if (request.method === 'POST') {
       const body = await request.json();
       const notification = {
-        user_id: body.userId || body.user_id,
+        user_id: body.user_id || user.id,
         type: body.type || 'info',
         title: body.title || '',
         message: body.message || '',
