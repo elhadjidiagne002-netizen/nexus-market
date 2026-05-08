@@ -2084,7 +2084,9 @@ const DataService = {
     if (this._sb) {
       const EUR_TO_FCFA = 655.957;
       const row = {
-        user_id:       cleanOrder.buyer || null,
+        // [FIX uuid] "guest" ou toute valeur non-UUID doit être null, pas une string
+        user_id: (cleanOrder.buyer && cleanOrder.buyer !== "guest" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanOrder.buyer))
+          ? cleanOrder.buyer : null,
         amount_eur:    cleanOrder.total || 0,
         amount_fcfa:   Math.round((cleanOrder.total || 0) * EUR_TO_FCFA),
         currency:      "XOF",
@@ -2221,6 +2223,15 @@ const DataService = {
           await this._sb.auth.setSession({ access_token: this._token, refresh_token: this._refreshToken || '' }).catch(() => {});
         }
       } catch(_) {}
+      // [FIX uuid] Ne pas envoyer à Supabase si userId n'est pas un UUID valide (ex: "", "admin", "guest")
+      const isValidUUID = userId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+      if (!isValidUUID) {
+        const all = storage.get("notifications") || {};
+        if (!all[userId]) all[userId] = [];
+        all[userId].unshift(n); all[userId] = all[userId].slice(0, 50);
+        storage.set("notifications", all);
+        return n;
+      }
       const { id: _omit, ...nWithoutId } = n;
       const { data: inserted, error: insErr } = await this._sb.from("notifications").insert(nWithoutId).select().maybeSingle();
       if (insErr) {
@@ -7194,7 +7205,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           // Champs fallback localStorage (ignorés par le backend qui génère son propre UUID et created_at)
           // [FIX I+J] id et date ne sont PLUS envoyés au backend — le backend génère son UUID + created_at
           _localId:      "ORD-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5).toUpperCase(),
-          buyer:         (currentUser2 == null ? void 0 : currentUser2.id) || "guest",
+          buyer:         (currentUser2 == null ? void 0 : currentUser2.id) || null,
           buyerName:     customerInfo.name,
           buyerEmail:    customerInfo.email,
           vendor:        vendorOrder.vendor,
