@@ -8621,22 +8621,49 @@ const ForgotPasswordModal = ({ onBack, onCancel }) => {
       // BUG FIX: la logique précédente vérifiait uniquement localStorage et ignorait
       // complètement les comptes Supabase. Si Supabase est actif, on utilise
       // resetPasswordForEmail() qui envoie un vrai email de reset sécurisé.
-      if (DataService._sb) {
-        const { error: sbErr } = await DataService._sb.auth.resetPasswordForEmail(email, {
-          redirectTo: NEXUS_CONFIG.confirmUrl
+      // [FIX] Appel CF function /api/auth/reset-password → Resend + lien Supabase admin
+      // Remplace resetPasswordForEmail() limité à 3 emails/heure sur le plan gratuit Supabase
+      try {
+        const res = await fetch("/api/auth/reset-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "request", email: email.trim().toLowerCase(), name: "" }),
         });
-        if (sbErr) {
-          if (sbErr.message.toLowerCase().includes("rate limit") || sbErr.message.toLowerCase().includes("too many")) {
-            setError("Trop de tentatives. Veuillez patienter quelques minutes avant de r\xE9essayer.");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && res.status !== 200) {
+          // Fallback Supabase direct si la CF function n'est pas déployée (404/405)
+          if (res.status === 404 || res.status === 405) {
+            if (DataService._sb) {
+              const { error: sbErr } = await DataService._sb.auth.resetPasswordForEmail(email, {
+                redirectTo: NEXUS_CONFIG.confirmUrl
+              });
+              if (sbErr) {
+                if (sbErr.message.toLowerCase().includes("rate limit") || sbErr.message.toLowerCase().includes("too many")) {
+                  setError("Trop de tentatives. Veuillez patienter quelques minutes.");
+                } else {
+                  setError(sbErr.message || "Erreur lors de l'envoi");
+                }
+                return;
+              }
+            }
           } else {
-            setError(sbErr.message || "Erreur lors de l'envoi");
+            setError(data.error || "Erreur lors de l'envoi. Réessayez.");
+            return;
           }
-          return;
         }
         setLoading(false);
         setStep(2);
         addToast(`\u{1F4E7} Email de r\xE9initialisation envoy\xE9 \xE0 ${email}. V\xE9rifiez votre bo\xEEte mail.`, "info", 8000);
         return;
+      } catch (fetchErr) {
+        // Réseau ko → fallback Supabase direct
+        if (DataService._sb) {
+          const { error: sbErr } = await DataService._sb.auth.resetPasswordForEmail(email, {
+            redirectTo: NEXUS_CONFIG.confirmUrl
+          });
+          if (!sbErr) { setLoading(false); setStep(2); return; }
+        }
+        throw fetchErr;
       }
       // Sans Supabase — afficher le même message neutre (anti-énumération)
       setLoading(false);
