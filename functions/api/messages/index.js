@@ -10,10 +10,11 @@ export async function onRequest({ request, env }) {
     const sb = supabase(env);
     const url = new URL(request.url);
 
+    // GET: Récupérer les messages
     if (request.method === 'GET') {
       const limit = parseInt(url.searchParams.get('limit') || '30');
       const { data, error } = await sb
-        .from('notifications')
+        .from('messages')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
@@ -23,19 +24,19 @@ export async function onRequest({ request, env }) {
       return json(data || []);
     }
 
+    // POST: Créer un message
     if (request.method === 'POST') {
       const body = await request.json();
-      const notification = {
+      const message = {
         user_id: body.user_id || user.id,
-        type: body.type || 'info',
+        content: body.content || '',
         title: body.title || '',
-        message: body.message || '',
         read: false,
       };
 
       const { data: saved, error } = await sb
-        .from('notifications')
-        .insert(notification)
+        .from('messages')
+        .insert(message)
         .select()
         .single();
 
