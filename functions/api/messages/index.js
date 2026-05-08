@@ -4,18 +4,16 @@ export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
 
   try {
-    // Authentification
     const [user, authError] = await requireAuth(request, env);
     if (authError) return authError;
 
     const sb = supabase(env);
     const url = new URL(request.url);
 
-    // GET: Récupérer les messages de l'utilisateur
     if (request.method === 'GET') {
       const limit = parseInt(url.searchParams.get('limit') || '30');
       const { data, error } = await sb
-        .from('messages')
+        .from('notifications')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
@@ -25,19 +23,19 @@ export async function onRequest({ request, env }) {
       return json(data || []);
     }
 
-    // POST: Créer un nouveau message
     if (request.method === 'POST') {
       const body = await request.json();
-      const message = {
+      const notification = {
         user_id: body.userId || body.user_id,
-        content: body.content || '',
+        type: body.type || 'info',
         title: body.title || '',
+        message: body.message || '',
         read: false,
       };
 
       const { data: saved, error } = await sb
-        .from('messages')
-        .insert(message)
+        .from('notifications')
+        .insert(notification)
         .select()
         .single();
 
@@ -45,7 +43,6 @@ export async function onRequest({ request, env }) {
       return json(saved, 201);
     }
 
-    // Méthode non autorisée
     return err('Méthode non supportée', 405);
   } catch (error) {
     return err(error.message, error.status || 500);
