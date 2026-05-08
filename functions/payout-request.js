@@ -97,7 +97,7 @@ export async function onRequestPost(context) {
   const { data: orders, error: ordErr } = await sb
     .from("orders")
     .select("total, commission")
-    .eq("vendor_id", user.id)
+    .eq("vendor", user.id)
     .eq("status", "delivered");
 
   if (ordErr) return json(500, { error: "Erreur lecture commandes" });
@@ -114,7 +114,7 @@ export async function onRequestPost(context) {
   const { data: existing, error: existErr } = await sb
     .from("payout_requests")
     .select("amount_xof, status")
-    .eq("vendor_id", user.id)
+    .eq("vendor", user.id)
     .in("status", ["pending", "processing", "paid"]);
 
   if (existErr) return json(500, { error: "Erreur lecture retraits" });
