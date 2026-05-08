@@ -2,7 +2,6 @@
 import { CORS, options, json, err, supabase, requireAuth, requireAdmin } from '../../_lib/utils.js';
 =======
 import { CORS, options, json, err, supabase, requireAuth, requireAdmin } from '../../../../../_lib/utils.js';
->>>>>>> de181290f9e31c8efdacd3a0be8e832d7245e20c
 
 export async function onRequest({ request, env, params }) {
   if (request.method === 'OPTIONS') return options();
@@ -47,5 +46,6 @@ export async function onRequest({ request, env, params }) {
     return err(e.message, 500);
   }
 }
+
 
 
