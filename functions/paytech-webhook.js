@@ -69,14 +69,14 @@ export async function onRequestPost(context) {
           // (et non user_id — cf. saveOrder dans index.html).
           const { data: order } = await sb
             .from("orders")
-            .select("buyer_id, total")
+            .select("user_id, amount_eur")
             .eq("id", ref_command)
             .single();
 
-          if (order?.buyer_id) {
+          if (order?.user_id) {
             // Notification
             await sb.from("notifications").insert({
-              user_id: order.buyer_id,
+              user_id: order.user_id,
               type: "payment",
               title: "✅ Paiement confirmé",
               message: `Votre paiement de ${Number(item_price).toLocaleString("fr-FR")} FCFA a été reçu. Commande en cours de traitement.`,
@@ -92,14 +92,14 @@ export async function onRequestPost(context) {
             if (order.total > 0) {
               context.waitUntil(
                 sb.rpc("add_loyalty_points", {
-                  p_user_id: order.buyer_id,
-                  p_delta: Math.floor(order.total * POINTS_PER_EURO),
+                  p_user_id: order.user_id,
+                  p_delta: Math.floor((order.amount_eur || 0) * POINTS_PER_EURO),
                   p_reason: "order",
                   p_order_id: ref_command,
                   p_note: `Commande #${ref_command}`,
                 }).then(({ error }) => {
                   if (error) console.warn("[PayTech IPN] loyalty RPC error:", error.message);
-                  else console.log(`[PayTech IPN] Points fidélité crédités pour ${order.buyer_id}`);
+                  else console.log(`[PayTech IPN] Points fidélité crédités pour ${order.user_id}`);
                 })
               );
             }
