@@ -1378,7 +1378,7 @@ const NEXUS_CONFIG = {
     // Clé Resend — https://resend.com/api-keys
     // ⚠️  À renseigner dans les variables d'environnement Cloudflare Pages
     // (ne pas mettre la clé ici en clair — elle est utilisée côté serveur uniquement)
-    confirmEndpoint: "/confirm-email",
+    confirmEndpoint: "/api/auth/resend-confirmation",
   },
   stripe: {
     publishableKey: "pk_test_51TGdXe1H2qyHRVYhwjkbrHKnmKILl5v8OUT8GxFGX5niFKd904ebRj4ee1sCCfo7agsMwwd9LqapTenEerTIfwQg00BrxAzuy3"
@@ -2350,7 +2350,7 @@ const DataService = {
         // Email confirmation obligatoire ET connexion immédiate impossible
         // → Envoyer l'email branded via Resend (Cloudflare function /confirm-email)
         // en arrière-plan (on ne bloque pas l'UI sur l'erreur réseau)
-        fetch(NEXUS_CONFIG.resend?.confirmEndpoint || "/confirm-email", {
+        fetch(NEXUS_CONFIG.resend?.confirmEndpoint || "/api/auth/resend-confirmation", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -8166,6 +8166,87 @@ if (json.token || json.accessToken) {
     );
   }
 
+
+  // ── ResendConfirmButton — renvoyer l'email de confirmation ─────────────────
+  const ResendConfirmButton = ({ email, name }) => {
+    const [state, setState] = React.useState("idle");
+    const [cd, setCd]       = React.useState(0);
+    const cdRef = React.useRef(null);
+
+    const send = async () => {
+      if (state === "sending" || cd > 0) return;
+      setState("sending");
+      try {
+        const base = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
+        const res  = await fetch(base + "/api/auth/resend-confirmation", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ email, name: name || "" }),
+        });
+        if (res.ok) {
+          setState("sent");
+          setCd(60);
+          cdRef.current = setInterval(() => {
+            setCd(c => {
+              if (c <= 1) { clearInterval(cdRef.current); setState("idle"); return 0; }
+              return c - 1;
+            });
+          }, 1000);
+        } else {
+          setState("error");
+          setTimeout(() => setState("idle"), 3000);
+        }
+      } catch (_) {
+        setState("error");
+        setTimeout(() => setState("idle"), 3000);
+      }
+    };
+
+    if (state === "sent") {
+      return React.createElement("div", {
+        style: { marginTop:"1rem", padding:"0.75rem", background:"#ECFDF5",
+                 borderRadius:"8px", border:"1px solid #A7F3D0",
+                 fontSize:"0.85rem", color:"#065F46", textAlign:"center" }
+      },
+        React.createElement("i", { className:"fas fa-check-circle", style:{marginRight:"0.4rem"} }),
+        "Email renvoy\xe9 ! V\xe9rifiez votre bo\xeete mail et les spams."
+      );
+    }
+
+    return React.createElement("div", { style:{ marginTop:"1rem", textAlign:"center" } },
+      React.createElement("p", { style:{ fontSize:"0.82rem", color:"var(--text-secondary)", marginBottom:"0.4rem" } },
+        "Vous n'avez pas re\xe7u l'email ?"
+      ),
+      React.createElement("button", {
+        onClick:  send,
+        disabled: state === "sending" || cd > 0,
+        style: {
+          background:"none", border:"none", padding:0,
+          cursor: cd > 0 ? "not-allowed" : "pointer",
+          color:  cd > 0 ? "var(--text-secondary)" : "var(--primary)",
+          fontWeight:600, fontSize:"0.85rem", textDecoration:"underline"
+        }
+      },
+        state === "sending"
+          ? React.createElement(React.Fragment, null,
+              React.createElement("i", { className:"fas fa-spinner fa-spin", style:{marginRight:"0.35rem"} }),
+              "Envoi en cours\u2026"
+            )
+          : state === "error"
+          ? React.createElement(React.Fragment, null,
+              React.createElement("i", { className:"fas fa-exclamation-circle", style:{marginRight:"0.35rem",color:"var(--danger)"} }),
+              "Erreur \u2014 r\xe9essayez"
+            )
+          : cd > 0
+          ? "Renvoyer dans " + cd + "s"
+          : React.createElement(React.Fragment, null,
+              React.createElement("i", { className:"fas fa-redo", style:{marginRight:"0.35rem"} }),
+              "Renvoyer l'email de confirmation"
+            )
+      )
+    );
+  };
+
   // ─── Render: vendor done screen ───────────────────────────
   if (done) {
     // ── Email confirmation pending ─────────────────────────────────────────
@@ -8184,24 +8265,7 @@ if (json.token || json.accessToken) {
         React.createElement("button",{className:"btn btn-primary btn-block",onClick:onSwitchToLogin},
           React.createElement("i",{className:"fas fa-sign-in-alt"})," J’ai confirmé mon email — Se connecter"
         ),
-        React.createElement("button",{
-          className:"btn btn-outline btn-block",
-          style:{marginTop:"0.6rem"},
-          onClick:async function(e){
-            e.target.disabled=true;
-            var orig="🔁 Renvoyer l’email de confirmation";
-            e.target.textContent="Envoi en cours…";
-            try{
-              var r=await fetch(NEXUS_CONFIG.resend&&NEXUS_CONFIG.resend.confirmEndpoint||"/confirm-email",{
-                method:"POST",headers:{"Content-Type":"application/json"},
-                body:JSON.stringify({action:"resend",email:form.email,name:form.name||""})
-              });
-              var d=await r.json().catch(function(){return{};});
-              e.target.textContent=r.ok?"✅ Email renvoyé !":"❌ "+(d.error||"Erreur");
-            }catch(_){e.target.textContent="❌ Erreur réseau";}
-            setTimeout(function(){e.target.disabled=false;e.target.textContent=orig;},4000);
-          }
-        },"🔁 Renvoyer l’email de confirmation")
+        React.createElement(ResendConfirmButton,{email:form.email,name:form.name||""})
       );
     }
     // ── Vendor pending review ─────────────────────────────────────────────
@@ -16233,17 +16297,85 @@ const Root = () => {
     EmailService.init();
     initStripe();
 
-    // Confirmation email via hash (non bloquant)
-    const hash = window.location.hash;
-    if (hash && hash.includes("access_token")) {
-      if (DataService._sb) {
-        DataService._sb.auth.getSession().then(({ data }) => {
-          if (data?.session) console.log("[Auth] ✅ Confirmation email réussie");
-        }).catch(() => {});
+    // ── Écoute nexus:toast pour les toasts déclenchés hors React (ex: FIX 4) ──
+    const _toastHandler = (e) => {
+      const { message, type = "info", duration = 4000 } = e.detail || {};
+      if (message && typeof addToast === "function") addToast(message, type, duration);
+      else if (message) window.__nexusPendingToast = e.detail;
+    };
+    window.addEventListener("nexus:toast", _toastHandler);
+    return () => window.removeEventListener("nexus:toast", _toastHandler);
+
+    // ── FIX 4 : Confirmation email via hash Supabase ─────────────────────────
+    // Supabase redirige vers SITE_URL/#access_token=xxx&refresh_token=xxx&type=email
+    // On lit le fragment, on restaure la session, on affiche un toast de succès.
+    const _hash = window.location.hash;
+    if (_hash && _hash.includes("access_token")) {
+      try {
+        const _hp = new URLSearchParams(_hash.replace(/^#/, ""));
+        const _at  = _hp.get("access_token");
+        const _rt  = _hp.get("refresh_token");
+        const _type = _hp.get("type"); // "email" | "recovery" | ...
+        if (_at) {
+          // 1. Restaurer la session Supabase
+          if (DataService._sb) {
+            DataService._sb.auth.setSession({ access_token: _at, refresh_token: _rt || "" })
+              .then(({ data: sd, error: se }) => {
+                if (se) { console.warn("[Auth] setSession error:", se.message); return; }
+                const u = sd?.session?.user || sd?.user;
+                if (u) {
+                  // 2. Sauvegarder les tokens JWT
+                  try {
+                    const _exp = Date.now() + 3600 * 1000;
+                    localStorage.setItem("nexus_jwt",     _at);
+                    localStorage.setItem("nexus_jwt_exp", String(_exp));
+                    if (_rt) {
+                      localStorage.setItem("nexus_refresh_token", _rt);
+                      localStorage.setItem("nexus_refresh_exp",   String(Date.now() + 7 * 86400000));
+                    }
+                  } catch(_) {}
+                  // 3. Mettre à jour DataService
+                  DataService._token        = _at;
+                  DataService._refreshToken = _rt || "";
+                  DataService._user         = u;
+                  console.log("[Auth] ✅ Confirmation email réussie — session restaurée pour", u.email);
+                  // 4. Toast de succès via window event (capté par ToastProvider)
+                  window.dispatchEvent(new CustomEvent("nexus:toast", {
+                    detail: {
+                      message: _type === "recovery"
+                        ? "Vous pouvez maintenant définir votre nouveau mot de passe."
+                        : "Email confirmé ! Bienvenue sur NEXUS Market 🎉",
+                      type: "success",
+                      duration: 5000,
+                    }
+                  }));
+                }
+              })
+              .catch(err => console.warn("[Auth] Confirmation email error:", err.message));
+          }
+          // 5. Nettoyer le hash de l'URL
+          if (window.history?.replaceState) {
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+          }
+        }
+      } catch(_hashErr) {
+        console.warn("[Auth] Hash parse error:", _hashErr.message);
       }
-      if (window.history?.replaceState) {
-        window.history.replaceState(null, "", window.location.pathname);
-      }
+    }
+
+    // ?confirmed=1 depuis notre Function /api/auth/confirm
+    const _sp = new URLSearchParams(window.location.search);
+    if (_sp.get("confirmed") === "1") {
+      window.dispatchEvent(new CustomEvent("nexus:toast", {
+        detail: { message: "Email confirmé avec succès !", type: "success", duration: 4000 }
+      }));
+      window.history?.replaceState(null, "", window.location.pathname);
+    }
+    if (_sp.get("confirm_error")) {
+      window.dispatchEvent(new CustomEvent("nexus:toast", {
+        detail: { message: "Lien de confirmation invalide ou expiré.", type: "error", duration: 5000 }
+      }));
+      window.history?.replaceState(null, "", window.location.pathname);
     }
   }, []);
 
