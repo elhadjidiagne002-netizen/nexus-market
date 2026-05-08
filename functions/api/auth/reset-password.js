@@ -12,7 +12,7 @@
  *   SUPABASE_SERVICE_KEY — service_role key
  *   SITE_URL             — ex: https://nexus-market-asb.pages.dev
  */
-import { createClient } from '../../../_lib/utils.js'@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 function cors() {
@@ -259,12 +259,3 @@ export async function onRequestPost(context) {
 export async function onRequestOptions() {
   return new Response(null, { status: 204, headers: cors() });
 }
-
-
-
-
-
-
-
-
-
