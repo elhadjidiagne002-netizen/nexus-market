@@ -259,6 +259,7 @@ export async function onRequestPost(context) {
 export async function onRequestOptions() {
   return new Response(null, { status: 204, headers: cors() });
 }
+<<<<<<< HEAD
 
 
 
@@ -270,3 +271,5 @@ export async function onRequestOptions() {
 
 
 
+=======
+>>>>>>> 0095b2cd8c08759207e9dbc37cc3962c481352c6
