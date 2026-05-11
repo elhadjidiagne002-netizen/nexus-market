@@ -5717,6 +5717,135 @@ const BulkImportModal = ({ currentUser: currentUser2, onImported, onClose, addTo
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "0.5rem" } }, "Max 1000 produits par import")
   )), step === 2 && /* @__PURE__ */ React.createElement(React.Fragment, null, errors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", null, errors.length, " ligne(s) ignor\xE9e(s) :"), /* @__PURE__ */ React.createElement("ul", { style: { margin: "0.3rem 0 0 1rem", padding: 0 } }, errors.slice(0, 5).map((e, i) => /* @__PURE__ */ React.createElement("li", { key: i }, e))))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1rem", fontWeight: 600 } }, preview.length, " produit(s) pr\xEAts \xE0 importer :"), /* @__PURE__ */ React.createElement("div", { style: { maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "10px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("table", { className: "data-table", style: { minWidth: "auto" } }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Nom"), /* @__PURE__ */ React.createElement("th", null, "Cat\xE9gorie"), /* @__PURE__ */ React.createElement("th", null, "Prix"), /* @__PURE__ */ React.createElement("th", null, "Stock"))), /* @__PURE__ */ React.createElement("tbody", null, preview.map((p, i) => /* @__PURE__ */ React.createElement("tr", { key: i }, /* @__PURE__ */ React.createElement("td", { style: { fontSize: "0.82rem" } }, p.name), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info", style: { fontSize: "0.7rem" } }, p.category)), /* @__PURE__ */ React.createElement("td", { style: { fontWeight: 600 } }, formatPrice(p.price)), /* @__PURE__ */ React.createElement("td", null, p.stock)))))), importing ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "8px", background: "var(--border)", borderRadius: "4px", overflow: "hidden", marginBottom: "0.75rem" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: `${progress}%`, background: "var(--primary)", transition: "width 0.3s ease", borderRadius: "4px" } })), /* @__PURE__ */ React.createElement("div", { style: { color: "var(--text-secondary)", fontSize: "0.88rem" } }, "Import en cours... ", progress, "%")) : /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => setStep(1) }, "Modifier"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary flex-1", onClick: handleImport, disabled: preview.length === 0 }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-upload" }), " Importer ", preview.length, " produit(s)"))), step === 3 && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "3.5rem", marginBottom: "1rem" } }, "\u2705"), /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "0.5rem" } }, preview.length, " produit(s) import\xE9(s) !"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.5rem" } }, "Vos produits sont en attente de validation par l\\'\xE9quipe NEXUS (24h ouvr\xE9es)."), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Voir mes produits"))));
 };
+// ─── ProductScraperModal — Extraction produit par URL ────────────────────────
+const ProductScraperModal = ({ currentUser: currentUser2, onClose, addToast }) => {
+  const [url, setUrl] = React.useState("");
+  const [phase, setPhase] = React.useState("idle");
+  const [data, setData] = React.useState(null);
+  const [form, setForm] = React.useState({});
+  const [saving, setSaving] = React.useState(false);
+  const CATS = ["Électronique","Mode & Vêtements","Alimentation","Maison & Déco","Beauté & Santé","Services","Informatique","Sport & Loisirs","Autres"];
+  const E2F = 655.957;
+  const fmtF = v => v && !isNaN(parseFloat(v)) ? Math.round(parseFloat(v) * E2F).toLocaleString("fr-FR") + " FCFA" : "";
+  const SYS = `Tu es un extracteur de données produit pour NEXUS Market Sénégal. À partir de l'URL fournie, utilise l'outil web_search pour visiter la page et extraire les informations. Réponds UNIQUEMENT avec un objet JSON valide, sans markdown.
+Champs requis : name (string, en français), category (exactement l'une de : Électronique, Mode & Vêtements, Alimentation, Maison & Déco, Beauté & Santé, Services, Informatique, Sport & Loisirs, Autres), price_eur (number, convertir si nécessaire : 1 USD=0.93 EUR, 1 XOF=0.00152 EUR), original_price_eur (number|null), stock (number|null), description (string max 120 car. en français), image_url (string|null), vendor_name (string|null), brand (string|null), rating (number|null), reviews_count (number|null), tags (array 3-5 mots), confidence (objet : name/price/category/image_url de 0 à 1), extraction_notes (string). Valeur inconnue = null.`;
+  const extract = async () => {
+    if (!url.trim() || !/^https?:\/\//i.test(url.trim())) { addToast("URL invalide — doit commencer par https://", "error"); return; }
+    setPhase("loading"); setData(null);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: SYS, tools: [{ type: "web_search_20250305", name: "web_search" }], messages: [{ role: "user", content: "Analyse cette page produit et extrait toutes les données :\n" + url.trim() }] }) });
+      if (!res.ok) throw new Error("API " + res.status);
+      const d = await res.json();
+      let txt = (d.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+      if (txt.startsWith("```")) txt = txt.replace(/^```[a-z]*\n?/, "").replace(/\n?```$/, "");
+      let parsed; try { parsed = JSON.parse(txt); } catch(e) { const m = txt.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Réponse non-JSON"); }
+      setData(parsed);
+      setForm({ name: parsed.name || "", category: parsed.category || "", price: parsed.price_eur ? parsed.price_eur.toFixed(2) : "", originalPrice: parsed.original_price_eur ? parsed.original_price_eur.toFixed(2) : "", stock: parsed.stock != null ? String(parsed.stock) : "0", description: parsed.description || "", imageUrl: parsed.image_url || "", vendorName: parsed.vendor_name || parsed.brand || "" });
+      setPhase("done");
+    } catch(err) { setPhase("error"); addToast("Extraction échouée : " + err.message, "error"); }
+  };
+  const save = async () => {
+    if (!form.name || !form.price) { addToast("Nom et prix requis", "error"); return; }
+    setSaving(true);
+    try {
+      await DataService.saveProduct({ name: form.name, category: form.category || "Autres", price: parseFloat(form.price), originalPrice: form.originalPrice ? parseFloat(form.originalPrice) : null, stock: parseInt(form.stock) || 0, description: form.description || null, imageUrl: form.imageUrl || null, vendorName: form.vendorName || null, vendor: currentUser2 && currentUser2.id, active: true, rating: (data && data.rating) || 0, reviewsCount: (data && data.reviews_count) || 0 });
+      addToast("Produit ajouté avec succès !", "success");
+      onClose();
+    } catch(err) { addToast("Erreur sauvegarde : " + err.message, "error"); } finally { setSaving(false); }
+  };
+  const upd = (k, v) => setForm(f => Object.assign({}, f, { [k]: v }));
+  const conf = (data && data.confidence) || {};
+  const dot = k => conf[k] != null ? /* @__PURE__ */ React.createElement("span", { title: "Confiance : " + Math.round(conf[k]*100) + "%", style: { display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: conf[k] >= 0.8 ? "#16a34a" : conf[k] >= 0.5 ? "#d97706" : "#dc2626", marginLeft: 5, verticalAlign: "middle" } }) : null;
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: e => e.target === e.currentTarget && onClose() },
+    /* @__PURE__ */ React.createElement("div", { className: "modal", style: { maxWidth: 680, width: "95vw", maxHeight: "90vh", overflowY: "auto" } },
+      /* @__PURE__ */ React.createElement("div", { className: "modal-header" },
+        /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-magic" }), " Extraire depuis une URL"),
+        /* @__PURE__ */ React.createElement("button", { className: "modal-close", onClick: onClose, "aria-label": "Fermer" }, "\xD7")
+      ),
+      /* @__PURE__ */ React.createElement("div", { className: "modal-body" },
+        /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginBottom: "1rem" } },
+          /* @__PURE__ */ React.createElement("input", { type: "url", className: "form-input", style: { flex: 1 }, placeholder: "https://www.jumia.sn/\u2026  ou  https://www.amazon.fr/dp/\u2026", value: url, onChange: e => setUrl(e.target.value), onKeyDown: e => e.key === "Enter" && phase !== "loading" && extract(), disabled: phase === "loading" }),
+          /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: extract, disabled: phase === "loading" || !url.trim(), style: { whiteSpace: "nowrap" } },
+            phase === "loading" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }), " Analyse\u2026") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-search" }), " Extraire")
+          )
+        ),
+        phase === "idle" && /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem" } },
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.5rem" } }, "Sites compatibles :"),
+          /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap" } },
+            ...["Amazon", "Jumia SN", "AliExpress", "Dakar.com", "CDiscount", "Cdiscount", "Aliexpress"].slice(0,5).map(s => /* @__PURE__ */ React.createElement("span", { key: s, style: { fontSize: "0.75rem", padding: "2px 10px", borderRadius: 99, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-globe", style: { marginRight: 4, fontSize: "0.7rem" } }), s))
+          )
+        ),
+        phase === "loading" && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "2rem" } },
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "2.5rem", marginBottom: "0.75rem" } }, "\uD83D\uDD0D"),
+          /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, marginBottom: "0.25rem" } }, "Analyse de la page en cours\u2026"),
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.85rem", color: "var(--text-secondary)" } }, "Claude navigue sur la page et extrait les donn\xE9es produit")
+        ),
+        phase === "error" && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), " Extraction \xE9chou\xE9e. V\xE9rifiez l\u2019URL ou r\xE9essayez."),
+        phase === "done" && data && /* @__PURE__ */ React.createElement(React.Fragment, null,
+          /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 130px", gap: "1.25rem", marginBottom: "1rem" } },
+            /* @__PURE__ */ React.createElement("div", null,
+              /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "0.85rem" } },
+                /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Nom du produit", dot("name")),
+                /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: form.name || "", onChange: e => upd("name", e.target.value) })
+              ),
+              /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "0.85rem" } },
+                /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Cat\xE9gorie", dot("category")),
+                /* @__PURE__ */ React.createElement("select", { className: "form-select", value: form.category || "", onChange: e => upd("category", e.target.value) },
+                  /* @__PURE__ */ React.createElement("option", { value: "" }, "\u2014 S\xE9lectionner"),
+                  ...CATS.map(c => /* @__PURE__ */ React.createElement("option", { key: c, value: c }, c))
+                )
+              ),
+              /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.85rem" } },
+                /* @__PURE__ */ React.createElement("div", null,
+                  /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Prix EUR", dot("price")),
+                  /* @__PURE__ */ React.createElement("input", { type: "number", className: "form-input", step: "0.01", value: form.price || "", onChange: e => upd("price", e.target.value) }),
+                  form.price && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--primary)", marginTop: 3, fontWeight: 600 } }, fmtF(form.price))
+                ),
+                /* @__PURE__ */ React.createElement("div", null,
+                  /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Prix original EUR"),
+                  /* @__PURE__ */ React.createElement("input", { type: "number", className: "form-input", step: "0.01", value: form.originalPrice || "", onChange: e => upd("originalPrice", e.target.value) })
+                )
+              ),
+              /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.85rem" } },
+                /* @__PURE__ */ React.createElement("div", null,
+                  /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Stock"),
+                  /* @__PURE__ */ React.createElement("input", { type: "number", className: "form-input", value: form.stock || "0", onChange: e => upd("stock", e.target.value) })
+                ),
+                /* @__PURE__ */ React.createElement("div", null,
+                  /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Vendeur / Marque"),
+                  /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: form.vendorName || "", onChange: e => upd("vendorName", e.target.value) })
+                )
+              ),
+              /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "0.85rem" } },
+                /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Description"),
+                /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: form.description || "", onChange: e => upd("description", e.target.value) })
+              )
+            ),
+            /* @__PURE__ */ React.createElement("div", null,
+              form.imageUrl ? /* @__PURE__ */ React.createElement("img", { src: form.imageUrl, alt: form.name || "Produit", style: { width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 10, border: "1px solid var(--border)" }, onError: e => { e.target.style.display = "none"; } }) : /* @__PURE__ */ React.createElement("div", { style: { width: "100%", aspectRatio: "1", background: "var(--bg-secondary)", borderRadius: 10, border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-secondary)", fontSize: "2rem" } }, "\uD83D\uDCF7"),
+              data.rating != null && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "0.5rem" } }, "\u2B50 ", data.rating.toFixed(1), " (", data.reviews_count || 0, " avis)"),
+              (data.tags || []).length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.5rem", display: "flex", flexWrap: "wrap", gap: 3 } },
+                ...(data.tags || []).slice(0,4).map(t => /* @__PURE__ */ React.createElement("span", { key: t, style: { fontSize: "0.65rem", padding: "1px 7px", borderRadius: 99, background: "var(--bg-secondary)", border: "1px solid var(--border)", color: "var(--text-secondary)" } }, t))
+              )
+            )
+          ),
+          /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "0.85rem" } },
+            /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "URL image", dot("image_url")),
+            /* @__PURE__ */ React.createElement("input", { type: "url", className: "form-input", value: form.imageUrl || "", onChange: e => upd("imageUrl", e.target.value) })
+          ),
+          data.extraction_notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", padding: "0.5rem 0.75rem", background: "var(--bg-secondary)", borderRadius: 8, marginBottom: "0.75rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), " ", data.extraction_notes)
+        )
+      ),
+      /* @__PURE__ */ React.createElement("div", { className: "modal-footer" },
+        /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: onClose }, "Annuler"),
+        phase === "done" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: save, disabled: saving || !form.name || !form.price },
+          saving ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }), " Sauvegarde\u2026") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus" }), " Ajouter le produit")
+        )
+      )
+    )
+  );
+};
+// ─────────────────────────────────────────────────────────────────────────────
 const ReferralWidget = ({ currentUser: currentUser2, compact = false }) => {
   var _a, _b;
   // [FIX #9] Fetch referral stats & register code via API
@@ -13231,6 +13360,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   const [composeRecipient, setComposeRecipient] = useState(null);
   const [showPayoutModal, setShowPayoutModal] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const [showScraper, setShowScraper] = useState(false);
   // États hissés pour respecter les règles React Hooks
   const [vendorLocalReviews, setVendorLocalReviews] = React.useState([]);
   const [vendorAnswers, setVendorAnswers] = React.useState({});
@@ -13536,7 +13666,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   ].map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${s.icon} stat-icon`, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, s.label), /* @__PURE__ */ React.createElement("div", { className: "stat-value" }, s.value), s.trend && /* @__PURE__ */ React.createElement("div", { className: "stat-trend" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-up", "aria-hidden": "true" }), " ", s.trend)))), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Commandes R\xE9centes"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => setView("orders") }, "Voir tout")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box-open", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande"), /* @__PURE__ */ React.createElement("p", null, "Vos commandes appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Commandes r\xE9centes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"))), /* @__PURE__ */ React.createElement("tbody", null, orders.slice(0, 5).map((o) => {
     var _a, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"));
-  })))))), view === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h2", { className: "section-title" }, "Mes Produits (", products.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowBulkImport(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Import CSV"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => {
+  })))))), view === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h2", { className: "section-title" }, "Mes Produits (", products.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowBulkImport(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Import CSV"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowScraper(true), title: "Extraire un produit depuis une URL (Amazon, Jumia, AliExpress\u2026)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-magic" }), " Extraire URL"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => {
   if (vendorStatus !== 'approved') { addToast("Votre boutique est en attente de validation. Vous pourrez ajouter des produits une fois approuvé.", "warning"); return; }
   setShowAddProduct(true);
 }, "aria-expanded": showAddProduct, disabled: vendorStatus !== 'approved', title: vendorStatus !== 'approved' ? "Boutique en attente d'approbation" : "Ajouter un produit", style: vendorStatus !== 'approved' ? {opacity:0.6, cursor:'not-allowed'} : {} }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit"))), products.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit"), /* @__PURE__ */ React.createElement("p", null, vendorStatus !== 'approved' ? "Votre boutique est en attente d'approbation" : "Commencez à vendre en ajoutant votre premier produit"), vendorStatus === 'approved' && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.id, className: "product-card", role: "article", "aria-label": p.name }, /* @__PURE__ */ React.createElement(ProductImg, { product: p, height: 180 }), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product: p }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), " ", /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? p.stock + " stock" : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", onClick: () => setEditProduct(p) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-edit" }), " Modifier / Supprimer")))))), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Offres re\xE7ues (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Les offres de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Acheteur"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Acheteur" }, offer.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, offer.status === "pending" ? /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleOffer(offer.id, true) }, "Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleOffer(offer.id, false) }, "Refuser")) : /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : "danger"}` }, offer.status)))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Toutes mes commandes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Produits"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, orders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE).map((o) => {
@@ -13756,6 +13886,13 @@ React.createElement("div", { className: "form-group" },
         loadData();
       },
       onClose: () => setShowBulkImport(false),
+      addToast
+    }
+  ), showScraper && /* @__PURE__ */ React.createElement(
+    ProductScraperModal,
+    {
+      currentUser: currentUser2,
+      onClose: () => { setShowScraper(false); loadData(); },
       addToast
     }
   ));
