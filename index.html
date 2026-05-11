@@ -1778,6 +1778,21 @@ const DataService = {
       // Backend timeout/erreur → fallback immédiat
       if (localProds.length > 0) return localProds;
     }
+    // [FIX RACE] Attendre que le client Supabase soit prêt (race condition au premier rendu)
+    if (!this._sb && window.__nexusSupabaseClient) {
+      this._sb = window.__nexusSupabaseClient;
+    }
+    if (!this._sb) {
+      await new Promise(resolve => {
+        const deadline = Date.now() + 4000;
+        const poll = () => {
+          if (window.__nexusSupabaseClient) { this._sb = window.__nexusSupabaseClient; resolve(); }
+          else if (Date.now() < deadline) setTimeout(poll, 120);
+          else resolve();
+        };
+        setTimeout(poll, 80);
+      });
+    }
     if (this._sb) {
       try {
         // [FIX] neq(false) au lieu de eq(true) — inclut les lignes où active est NULL
