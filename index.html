@@ -1369,10 +1369,10 @@ const NEXUS_CONFIG = {
     anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE"
   },
   paytech: {
-    // ⚠️  Remplissez vos clés PayTech ici (Tableau de bord PayTech → API)
-    apiKey:    "4ee82c55e71b271ba8e9a4e0c48ab306c84f38a54b3357ee5d453922b87f3256",
-    secretKey: "f7bdf4eaf1cf2dac9925eb20bf61cd3ae0a49fb8b7f784ea52f8d805a1d69b72",
-    env:       "test",   // "test" jusqu'à activation du compte PayTech en production
+    // ✅ Les clés API sont côté serveur uniquement.
+    // Configurez PAYTECH_API_KEY et PAYTECH_SECRET_KEY dans
+    // Cloudflare Pages → Settings → Environment Variables.
+    env: "test",  // "test" jusqu'à activation du compte PayTech en production
   },
   resend: {
     // Clé Resend — https://resend.com/api-keys
@@ -7487,57 +7487,46 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         // Toujours appeler PayTech pour les paiements Mobile Money
         if (mainOrderId) {
           try {
-            // [FIX] Appel PayTech direct depuis le frontend (fonctions Cloudflare non déployées)
+            // [FIX] Appel PayTech via proxy Cloudflare Pages Function (/api/payments/paytech)
+            // Les clés API_KEY/API_SECRET restent côté serveur (env vars Cloudflare).
             const EUR_TO_FCFA = 655.957;
             const amountFcfa = Math.round(grandTotalEur * EUR_TO_FCFA);
-            const ptApiKey    = NEXUS_CONFIG.paytech?.apiKey    || "";
-            const ptSecretKey = NEXUS_CONFIG.paytech?.secretKey || "";
-            const ptEnv       = NEXUS_CONFIG.paytech?.env       || "prod";
-            if (!ptApiKey || ptApiKey === "VOTRE_PAYTECH_API_KEY") {
-              // Clés non configurées → mode simulation
-              addToast("\u2705 Paiement Mobile Money simulé confirmé !", "success");
+            const ptEnv = NEXUS_CONFIG.paytech?.env || "test";
+            const origin = window.location.origin;
+            const ptBody = {
+              item_name:    `Commande NEXUS #${mainOrderId}`,
+              item_price:   amountFcfa,
+              currency:     "XOF",
+              ref_command:  mainOrderId,
+              command_name: "Paiement Mobile Money – NEXUS Market",
+              env:          ptEnv,
+              ipn_url:      `${origin}/paytech-webhook`,
+              success_url:  `${origin}/?payment=success&orderId=${encodeURIComponent(mainOrderId)}`,
+              cancel_url:   `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
+              custom_field: JSON.stringify({ orderId: mainOrderId, source: "nexus-market" }),
+            };
+            const ptRes = await fetch("/api/payments/paytech", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(ptBody),
+            });
+            const ptData = await ptRes.json().catch(() => ({}));
+            if (ptRes.ok && ptData.redirect_url) {
+              sessionStorage.setItem("nexus_paytech_pending", JSON.stringify({
+                orderId:    mainOrderId,
+                amount:     grandTotalEur,
+                orders:     createdOrders.map(o => ({ id: o.id, trackingNumber: o.trackingNumber, vendorName: o.vendorName, total: o.total })),
+                buyerEmail: customerInfo?.email || "",
+                ts:         Date.now(),
+              }));
+              setLoading(false);
+              window.location.href = ptData.redirect_url;
+              return;
             } else {
-              const origin = window.location.origin;
-              const ptBody = {
-                item_name:    `Commande NEXUS #${mainOrderId}`,
-                item_price:   amountFcfa,
-                currency:     "XOF",
-                ref_command:  mainOrderId,
-                command_name: "Paiement Mobile Money – NEXUS Market",
-                env:          ptEnv,
-                ipn_url:      `${origin}/paytech-webhook`,
-                success_url:  `${origin}/?payment=success&orderId=${encodeURIComponent(mainOrderId)}`,
-                cancel_url:   `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
-                custom_field: JSON.stringify({ orderId: mainOrderId, source: "nexus-market" }),
-              };
-              const ptRes = await fetch("https://paytech.sn/api/payment/request-payment", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Accept":       "application/json",
-                  "API_KEY":      ptApiKey,
-                  "API_SECRET":   ptSecretKey,
-                },
-                body: JSON.stringify(ptBody),
-              });
-              const ptData = await ptRes.json().catch(() => ({}));
-              if (ptRes.ok && ptData.success === 1 && ptData.redirect_url) {
-                sessionStorage.setItem("nexus_paytech_pending", JSON.stringify({
-                  orderId:    mainOrderId,
-                  amount:     grandTotalEur,
-                  orders:     createdOrders.map(o => ({ id: o.id, trackingNumber: o.trackingNumber, vendorName: o.vendorName, total: o.total })),
-                  buyerEmail: customerInfo?.email || "",
-                  ts:         Date.now(),
-                }));
-                setLoading(false);
-                window.location.href = ptData.redirect_url;
-                return;
-              } else {
-                console.warn("[PayTech] Réponse:", ptData);
-                addToast(ptData?.message || "Erreur PayTech — vérifiez vos clés API", "error");
-                setLoading(false);
-                return;
-              }
+              console.warn("[PayTech] Réponse proxy:", ptData);
+              addToast(ptData?.error || ptData?.message || "Erreur PayTech — vérifiez les variables d'environnement Cloudflare", "error");
+              setLoading(false);
+              return;
             }
           } catch (e) {
             console.warn("[PayTech] Erreur initiation paiement:", e.message);
