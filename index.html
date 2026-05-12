@@ -3957,7 +3957,7 @@ async signOut() {
     return [];
   },
   async saveReferral(ref) {
-    // Enregistrement via backend — validation anti-auto-parrainage côté serveur
+  // Enregistrement via backend — validation anti-auto-parrainage côté serveur
     if (NEXUS_CONFIG.apiUrl) {
       const res = await this.apiFetch("/api/referrals", {
         method: "POST",
@@ -3972,7 +3972,131 @@ async signOut() {
       }).catch(()=>{});
     }
     // Pas d'écriture localStorage — les parrainages sont dans Supabase uniquement
-  }
+  },
+  // ─── NEXUS ONDEMAND ─────────────────────────────────────────────────────────
+  async getBuyerRequests(filters = {}) {
+    if (this._sb) {
+      let q = this._sb.from("buyer_requests").select("*");
+      if (filters.buyerId)  q = q.eq("buyer_id", filters.buyerId);
+      if (filters.status)   q = q.eq("status", filters.status);
+      if (filters.category) q = q.eq("category", filters.category);
+      q = q.order("created_at", { ascending: false }).limit(filters.limit || 50);
+      const { data } = await q;
+      if (data) return data;
+    }
+    return storage.getArray("buyer_requests").filter(r => {
+      if (filters.buyerId && r.buyer_id !== filters.buyerId) return false;
+      if (filters.status  && r.status   !== filters.status)  return false;
+      return true;
+    });
+  },
+
+  async createBuyerRequest(payload) {
+    const req = { id: crypto.randomUUID(), ...payload, status: "open", offers_count: 0, created_at: new Date().toISOString() };
+    if (this._sb) {
+      const { data, error } = await this._sb.from("buyer_requests").insert(req).select().single();
+      if (!error && data) { this._invalidateCache("buyer_requests"); return data; }
+    }
+    const all = storage.getArray("buyer_requests");
+    storage.set("buyer_requests", [req, ...all]);
+    return req;
+  },
+
+  async getVendorOffers(requestId) {
+    if (this._sb) {
+      const { data } = await this._sb.from("vendor_offers").select("*").eq("request_id", requestId).order("created_at", { ascending: false });
+      if (data) return data;
+    }
+    return storage.getArray("vendor_offers").filter(o => o.request_id === requestId);
+  },
+
+  async createVendorOffer(payload) {
+    const offer = { id: crypto.randomUUID(), ...payload, status: "pending", created_at: new Date().toISOString() };
+    if (this._sb) {
+      const { data, error } = await this._sb.from("vendor_offers").insert(offer).select().single();
+      if (!error && data) return data;
+    }
+    const all = storage.getArray("vendor_offers");
+    storage.set("vendor_offers", [offer, ...all]);
+    return offer;
+  },
+
+  async acceptOffer(offerId, requestId) {
+    if (this._sb) {
+      await this._sb.from("vendor_offers").update({ status: "accepted", accepted_at: new Date().toISOString() }).eq("id", offerId);
+      await this._sb.from("vendor_offers").update({ status: "rejected" }).eq("request_id", requestId).neq("id", offerId);
+      await this._sb.from("buyer_requests").update({ status: "accepted" }).eq("id", requestId);
+    }
+    const offers = storage.getArray("vendor_offers").map(o =>
+      o.id === offerId ? { ...o, status: "accepted" } : o.request_id === requestId ? { ...o, status: "rejected" } : o
+    );
+    storage.set("vendor_offers", offers);
+  },
+
+  // ─── AMBASSADEURS ───────────────────────────────────────────────────────────
+  async getAmbassador(userId) {
+    if (this._sb) {
+      const { data } = await this._sb.from("ambassadors").select("*").eq("user_id", userId).single();
+      if (data) return data;
+    }
+    const all = storage.getArray("ambassadors");
+    return all.find(a => a.user_id === userId) || null;
+  },
+
+  async ensureAmbassador(user) {
+    let amb = await this.getAmbassador(user.id);
+    if (!amb) {
+      const code = (user.name || "").replace(/\s+/g,"").toUpperCase().slice(0,4) + Math.random().toString(36).slice(2,6).toUpperCase();
+      const newAmb = { id: crypto.randomUUID(), user_id: user.id, referral_code: code, level: "bronze", total_referrals: 0, total_sales: 0, total_earned: 0, commission_rate: 0.05, is_active: true, joined_at: new Date().toISOString() };
+      if (this._sb) {
+        const { data } = await this._sb.from("ambassadors").insert(newAmb).select().single();
+        if (data) return data;
+      }
+      const all = storage.getArray("ambassadors");
+      storage.set("ambassadors", [...all, newAmb]);
+      return newAmb;
+    }
+    return amb;
+  },
+
+  async getLeaderboard() {
+    if (this._sb) {
+      const { data } = await this._sb.from("ambassadors").select("*, profiles(name,avatar_url)").order("total_earned", { ascending: false }).limit(20);
+      if (data) return data;
+    }
+    return storage.getArray("ambassadors").sort((a,b) => b.total_earned - a.total_earned).slice(0,20);
+  },
+
+  // ─── CASHBACK ───────────────────────────────────────────────────────────────
+  async getCashbackBalance(userId) {
+    if (this._sb) {
+      const { data } = await this._sb.from("cashback_transactions").select("amount_xof,type").eq("user_id", userId);
+      if (data) {
+        return data.reduce((sum, t) => t.type === "earn" || t.type === "bonus" ? sum + t.amount_xof : sum - t.amount_xof, 0);
+      }
+    }
+    return storage.getArray("cashback_transactions").filter(t => t.user_id === userId)
+      .reduce((sum, t) => t.type === "earn" || t.type === "bonus" ? sum + t.amount_xof : sum - t.amount_xof, 0);
+  },
+
+  async addCashback(userId, orderId, amountXof, type = "earn", desc = "") {
+    const tx = { id: crypto.randomUUID(), user_id: userId, order_id: orderId, amount_xof: amountXof, type, description: desc, created_at: new Date().toISOString() };
+    if (this._sb) {
+      await this._sb.from("cashback_transactions").insert(tx).catch(() => {});
+    }
+    const all = storage.getArray("cashback_transactions");
+    storage.set("cashback_transactions", [...all, tx]);
+    return tx;
+  },
+
+  // ─── LIVE SESSIONS ──────────────────────────────────────────────────────────
+  async getLiveSessions(status = "live") {
+    if (this._sb) {
+      const { data } = await this._sb.from("live_sessions").select("*").eq("status", status).order("started_at", { ascending: false }).limit(20);
+      if (data) return data;
+    }
+    return [];
+  },
 };
 let stripeInstance = null;
 const initStripe = () => {
@@ -6824,6 +6948,26 @@ const ProductImg = ({ product, height = 220, className = "" }) => {
     }
   );
 };
+
+  // [NEXUS 2.0] Bouton WhatsApp Commerce
+  const whatsappOrder = (p) => {
+    const vendorPhone = p.vendorPhone || p.vendor_phone || "221770000000";
+    const fcfa = Math.round((p.price || 0) * 655.957);
+    const msg = encodeURIComponent(
+      `Bonjour, je suis intéressé par ce produit sur NEXUS Market :\n` +
+      `📦 *${p.name}*\n💰 *${fcfa.toLocaleString("fr-FR")} FCFA*\n` +
+      `🔗 https://nexus-market-asb.pages.dev\n\nPouvez-vous me donner plus d'infos ?`
+    );
+    window.open(`https://wa.me/${vendorPhone}?text=${msg}`, "_blank");
+  };
+  const whatsappShare = (p) => {
+    const fcfa = Math.round((p.price || 0) * 655.957);
+    const msg = encodeURIComponent(
+      `🛍️ Découvre ce produit sur NEXUS Market !\n📦 *${p.name}*\n💰 *${fcfa.toLocaleString("fr-FR")} FCFA*\n🔗 https://nexus-market-asb.pages.dev`
+    );
+    window.open(`https://wa.me/?text=${msg}`, "_blank");
+  };
+
 const Stars = ({ rating, max = 5 }) => {
   const full = Math.floor(rating);
   const half = rating % 1 >= 0.5;
@@ -9664,29 +9808,20 @@ const generateVendorInvoicePDF = async (order) => {
  * @returns {boolean}         - true si succès, false si erreur (→ fallback jsPDF)
  */
 async function _downloadPdfFromBackend(url, filename) {
-  // [FIX] Ne plus dépendre de NEXUS_CONFIG.apiUrl (backend Railway supprimé).
-  // Les endpoints PDF sont maintenant des CF Functions sur le même origin.
-  const token = (await DataService._sb?.auth?.getSession().catch(() => null))
-    ?.data?.session?.access_token
-    || sessionStorage.getItem('nexus_jwt')
-    || localStorage.getItem('nexus_jwt');
+  if (!NEXUS_CONFIG.apiUrl) return false;
+  // [FIX] nexus_token → nexus_jwt
+  const token = DataService?._token || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
   if (!token) return false;
-  // Résoudre l'URL relative à l'origin courant si elle commence par /api/
-  const resolvedUrl = url.startsWith('http') ? url : (window.location.origin + url);
   try {
     const ctrl = new AbortController();
-    const tid  = setTimeout(() => ctrl.abort(), 45000); // 45s pour les gros relevés
-    const resp = await fetch(resolvedUrl, {
+    const tid  = setTimeout(() => ctrl.abort(), 30000);
+    const resp = await fetch(url, {
       headers: { 'Authorization': `Bearer ${token}` },
       signal: ctrl.signal,
     });
     clearTimeout(tid);
-    if (!resp.ok) {
-      console.warn('[PDF] Endpoint retourné', resp.status, resolvedUrl);
-      return false;
-    }
+    if (!resp.ok) return false;
     const blob = await resp.blob();
-    if (!blob.size) return false;
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
@@ -9706,7 +9841,7 @@ async function _downloadPdfFromBackend(url, filename) {
  * Télécharge la facture acheteur — backend PDFKit en priorité, jsPDF en fallback.
  */
 const downloadBuyerInvoicePDF = async (order) => {
-  const url      = `/api/invoices/order/${order.id}/pdf?type=buyer`;
+  const url      = `${NEXUS_CONFIG.apiUrl}/api/invoices/order/${order.id}/pdf?type=buyer`;
   const filename = `Facture-Acheteur-NEXUS-${order.id}.pdf`;
   const ok = await _downloadPdfFromBackend(url, filename);
   if (!ok) return generateBuyerInvoicePDF(order); // fallback jsPDF
@@ -9716,7 +9851,7 @@ const downloadBuyerInvoicePDF = async (order) => {
  * Télécharge le relevé vendeur — backend PDFKit en priorité, jsPDF en fallback.
  */
 const downloadVendorInvoicePDF = async (order) => {
-  const url      = `/api/invoices/order/${order.id}/pdf?type=vendor`;
+  const url      = `${NEXUS_CONFIG.apiUrl}/api/invoices/order/${order.id}/pdf?type=vendor`;
   const filename = `Releve-Vente-NEXUS-${order.id}.pdf`;
   const ok = await _downloadPdfFromBackend(url, filename);
   if (!ok) return generateVendorInvoicePDF(order); // fallback jsPDF
@@ -9728,18 +9863,10 @@ const downloadVendorInvoicePDF = async (order) => {
  */
 const downloadMonthlyStatement = async (month) => {
   const m = month || new Date().toISOString().slice(0, 7);
-  const url      = `/api/invoices/statement/vendor?month=${m}`;
+  const url      = `${NEXUS_CONFIG.apiUrl}/api/invoices/statement/vendor?month=${m}`;
   const filename = `Releve-Mensuel-NEXUS-${m}.pdf`;
-  // Afficher un indicateur de chargement
-  (window.__nexusToast || console.log)('Génération du relevé en cours…', 'info');
   const ok = await _downloadPdfFromBackend(url, filename);
-  if (!ok) {
-    // Fallback : génération côté client avec jsPDF (données partielles — commandes en mémoire)
-    (window.__nexusToast || alert)(
-      'Impossible de générer le relevé serveur — vérifiez votre connexion et que vous êtes connecté.',
-      'error'
-    );
-  }
+  if (!ok) (window.__nexusToast || alert)('Le relevé mensuel nécessite une connexion au serveur NEXUS.', 'error');
 };
 
 /**
@@ -9748,7 +9875,7 @@ const downloadMonthlyStatement = async (month) => {
  * @param {string} type      - 'buyer' | 'vendor'
  */
 const downloadInvoiceById = async (invoiceId, type = 'buyer') => {
-  const url      = `/api/invoices/${invoiceId}/pdf?type=${type}`;
+  const url      = `${NEXUS_CONFIG.apiUrl}/api/invoices/${invoiceId}/pdf`;
   const filename = `Facture-NEXUS-${invoiceId.slice(0,8)}.pdf`;
   const ok = await _downloadPdfFromBackend(url, filename);
   if (!ok) (window.__nexusToast || alert)('Impossible de télécharger cette facture — réessayez.', 'error');
@@ -15296,8 +15423,10 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           { id: "b2b_statement", icon: "file-pdf",      label: "Relevé mensuel",     b2b: true },
         ]
       : [
-          { id: "loyalty",  icon: "star",  label: "Fidélité & Points" },
-          { id: "referral", icon: "users", label: "Parrainage" },
+          { id: "ondemand",    icon: "magic",        label: "🔥 OnDemand",      badge: 0, highlight: true },
+          { id: "loyalty",     icon: "star",         label: "Fidélité & Points" },
+          { id: "ambassador",  icon: "award",        label: "Ambassadeur" },
+          { id: "referral",    icon: "users",        label: "Parrainage" },
         ]
     ),
     { id: "push_settings", icon: "bell-slash", label: "Notifications push" },
@@ -15337,7 +15466,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setOfferProduct(product);
       setShowOfferModal(true);
     }, "aria-label": "Faire une offre" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd" }))
-  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: setCurrentPage, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager")), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => setSelectedProduct(product) }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
+  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: setCurrentPage, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager")), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => setSelectedProduct(product) }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(product);
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart" }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, product.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, product.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product, currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: (e) => {
@@ -16570,6 +16699,350 @@ const Root = () => {
 const AppWithUserSync = ({ onUserChange }) => {
   return /* @__PURE__ */ React.createElement(App, { onUserChange });
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEXUS MARKET 2.0 — COMPOSANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── OnDemandPanel ─────────────────────────────────────────────────────────────
+const OnDemandPanel = ({ currentUser: currentUser2, addToast }) => {
+  const CATS = ["Électronique","Mode & Vêtements","Alimentation","Maison & Déco","Beauté & Santé","Services","Informatique","Sport & Loisirs","Autres"];
+  const E2F = 655.957;
+  const [view, setView] = React.useState("list");
+  const [requests, setRequests] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [form, setForm] = React.useState({ title:"", category:"", description:"", budget_max:"", quantity:1, urgency:"normal", localisation:"Dakar" });
+  const [selectedReq, setSelectedReq] = React.useState(null);
+  const [offers, setOffers] = React.useState([]);
+  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  React.useEffect(() => {
+    setLoading(true);
+    DataService.getBuyerRequests({ buyerId: currentUser2.id }).then(data => {
+      setRequests(data || []);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [currentUser2.id]);
+
+  const loadOffers = (req) => {
+    setSelectedReq(req);
+    setView("offers");
+    DataService.getVendorOffers(req.id).then(setOffers);
+  };
+
+  const submit = async () => {
+    if (!form.title.trim()) { addToast("Décrivez le produit recherché.", "error"); return; }
+    try {
+      const req = await DataService.createBuyerRequest({
+        buyer_id: currentUser2.id, buyer_name: currentUser2.name || currentUser2.email,
+        ...form, budget_max: form.budget_max ? parseFloat(form.budget_max) : null,
+        quantity: parseInt(form.quantity) || 1,
+      });
+      setRequests(r => [req, ...r]);
+      setForm({ title:"", category:"", description:"", budget_max:"", quantity:1, urgency:"normal", localisation:"Dakar" });
+      setView("list");
+      addToast("Demande publiée ! Les vendeurs vont vous répondre.", "success");
+    } catch(e) { addToast("Erreur : " + e.message, "error"); }
+  };
+
+  const acceptOffer = async (offer) => {
+    await DataService.acceptOffer(offer.id, selectedReq.id);
+    setOffers(prev => prev.map(o => o.id === offer.id ? {...o, status:"accepted"} : {...o, status:"rejected"}));
+    setRequests(prev => prev.map(r => r.id === selectedReq.id ? {...r, status:"accepted"} : r));
+    addToast("Offre acceptée ! Vous pouvez maintenant passer commande.", "success");
+  };
+
+  const urgencyBadge = { low:"🟢 Flexible", normal:"🟡 Normal", high:"🟠 Urgent", urgent:"🔴 Très urgent" };
+  const statusBadge  = { open:"Ouverte", offers_received:"Offres reçues", accepted:"Acceptée", expired:"Expirée", cancelled:"Annulée" };
+  const statusColor  = { open:"var(--primary)", offers_received:"#d97706", accepted:"#16a34a", expired:"#94a3b8", cancelled:"#dc2626" };
+
+  return React.createElement("div", { style: { maxWidth: 800, margin: "0 auto" } },
+    // Header
+    React.createElement("div", { className: "card-header", style: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1rem" } },
+      React.createElement("div", null,
+        React.createElement("h2", { className: "card-title" }, "🔥 NEXUS OnDemand"),
+        React.createElement("p", { style: { fontSize:".85rem", color:"var(--text-secondary)", margin:0 } }, "Vous ne trouvez pas ce que vous cherchez ? Demandez-le !")
+      ),
+      view === "list" && React.createElement("button", { className:"btn btn-primary", onClick: () => setView("form") },
+        React.createElement("i", { className:"fas fa-plus" }), " Nouvelle demande"
+      )
+    ),
+
+    // Navigation tabs
+    React.createElement("div", { style: { display:"flex", gap:".5rem", marginBottom:"1rem" } },
+      [["list","📋 Mes demandes"], ["form","✏️ Créer"]].map(([id, label]) =>
+        React.createElement("button", { key:id, className:`btn ${view===id?"btn-primary":"btn-secondary"} btn-sm`, onClick: () => setView(id) }, label)
+      )
+    ),
+
+    // FORM VIEW
+    view === "form" && React.createElement("div", { className:"card" },
+      React.createElement("div", { className:"card-header" }, React.createElement("h3", { className:"card-title" }, "📝 Décrire votre besoin")),
+      React.createElement("div", { className:"card-body" },
+        React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:".75rem" } },
+          React.createElement("div", { style:{ gridColumn:"span 2" } },
+            React.createElement("label", { className:"form-label" }, "Produit recherché *"),
+            React.createElement("input", { className:"form-input", value:form.title, onChange: e=>upd("title",e.target.value), placeholder:"ex: Smartphone Samsung Galaxy A55..." })
+          ),
+          React.createElement("div", null,
+            React.createElement("label", { className:"form-label" }, "Catégorie"),
+            React.createElement("select", { className:"form-select", value:form.category, onChange: e=>upd("category",e.target.value) },
+              React.createElement("option", { value:"" }, "— Choisir"),
+              ...CATS.map(cat => React.createElement("option", { key:cat, value:cat }, cat))
+            )
+          ),
+          React.createElement("div", null,
+            React.createElement("label", { className:"form-label" }, "Urgence"),
+            React.createElement("select", { className:"form-select", value:form.urgency, onChange: e=>upd("urgency",e.target.value) },
+              React.createElement("option", { value:"low" }, "🟢 Flexible"),
+              React.createElement("option", { value:"normal" }, "🟡 Normal"),
+              React.createElement("option", { value:"high" }, "🟠 Urgent"),
+              React.createElement("option", { value:"urgent" }, "🔴 Très urgent")
+            )
+          ),
+          React.createElement("div", null,
+            React.createElement("label", { className:"form-label" }, "Budget max (FCFA)"),
+            React.createElement("input", { className:"form-input", type:"number", value:form.budget_max, onChange: e=>upd("budget_max",e.target.value), placeholder:"ex: 50000" }),
+            form.budget_max && React.createElement("small", { style:{color:"var(--text-secondary)"} }, "≈ ", parseFloat(form.budget_max).toLocaleString("fr-FR"), " FCFA")
+          ),
+          React.createElement("div", null,
+            React.createElement("label", { className:"form-label" }, "Quantité"),
+            React.createElement("input", { className:"form-input", type:"number", min:1, value:form.quantity, onChange: e=>upd("quantity",e.target.value) })
+          ),
+          React.createElement("div", null,
+            React.createElement("label", { className:"form-label" }, "Localisation"),
+            React.createElement("input", { className:"form-input", value:form.localisation, onChange: e=>upd("localisation",e.target.value), placeholder:"ex: Dakar, Plateau" })
+          ),
+          React.createElement("div", { style:{ gridColumn:"span 2" } },
+            React.createElement("label", { className:"form-label" }, "Description détaillée"),
+            React.createElement("textarea", { className:"form-input", rows:3, value:form.description, onChange: e=>upd("description",e.target.value), placeholder:"Décrivez précisément ce que vous cherchez : couleur, taille, marque préférée..." })
+          )
+        ),
+        React.createElement("div", { style:{ display:"flex", gap:".75rem", marginTop:"1rem" } },
+          React.createElement("button", { className:"btn btn-primary", onClick: submit },
+            React.createElement("i", { className:"fas fa-paper-plane" }), " Publier la demande"
+          ),
+          React.createElement("button", { className:"btn btn-secondary", onClick: () => setView("list") }, "Annuler")
+        )
+      )
+    ),
+
+    // LIST VIEW
+    view === "list" && React.createElement("div", null,
+      loading ? React.createElement("div", { className:"empty-state" }, React.createElement("i", { className:"fas fa-spinner fa-spin" }), React.createElement("p", null, "Chargement...")) :
+      requests.length === 0 ? React.createElement("div", { className:"empty-state" },
+        React.createElement("div", { style:{ fontSize:"3rem", marginBottom:".75rem" } }, "🔍"),
+        React.createElement("h3", null, "Aucune demande"),
+        React.createElement("p", null, "Créez votre première demande OnDemand"),
+        React.createElement("button", { className:"btn btn-primary", onClick: () => setView("form") },
+          React.createElement("i", { className:"fas fa-plus" }), " Créer une demande"
+        )
+      ) :
+      React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:".75rem" } },
+        ...requests.map(req =>
+          React.createElement("div", { key:req.id, className:"card", style:{ cursor:"pointer", border: req.status==="offers_received" ? "2px solid #d97706" : undefined },
+            onClick: () => req.offers_count > 0 && loadOffers(req) },
+            React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:".5rem" } },
+              React.createElement("div", { style:{ flex:1 } },
+                React.createElement("div", { style:{ fontWeight:700, fontSize:"1rem", marginBottom:".25rem" } }, req.title),
+                React.createElement("div", { style:{ fontSize:".8rem", color:"var(--text-secondary)", display:"flex", gap:".75rem", flexWrap:"wrap" } },
+                  req.category && React.createElement("span", null, "🏷 ", req.category),
+                  req.budget_max && React.createElement("span", null, "💰 ", Math.round(req.budget_max).toLocaleString("fr-FR"), " FCFA max"),
+                  React.createElement("span", null, urgencyBadge[req.urgency] || req.urgency),
+                  req.localisation && React.createElement("span", null, "📍 ", req.localisation)
+                )
+              ),
+              React.createElement("div", { style:{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:".25rem" } },
+                React.createElement("span", { style:{ background: statusColor[req.status] || "var(--primary)", color:"white", borderRadius:"99px", padding:"2px 10px", fontSize:".75rem", fontWeight:600 } },
+                  statusBadge[req.status] || req.status
+                ),
+                req.offers_count > 0 && React.createElement("span", { style:{ color:"#d97706", fontSize:".8rem", fontWeight:600 } },
+                  React.createElement("i", { className:"fas fa-tag" }), " ", req.offers_count, " offre", req.offers_count > 1 ? "s" : "", " reçue", req.offers_count > 1 ? "s" : ""
+                )
+              )
+            )
+          )
+        )
+      )
+    ),
+
+    // OFFERS VIEW
+    view === "offers" && selectedReq && React.createElement("div", null,
+      React.createElement("button", { className:"btn btn-secondary btn-sm", onClick: () => setView("list"), style:{ marginBottom:"1rem" } },
+        React.createElement("i", { className:"fas fa-arrow-left" }), " Retour"
+      ),
+      React.createElement("div", { className:"card", style:{ marginBottom:"1rem" } },
+        React.createElement("div", { className:"card-header" },
+          React.createElement("h3", { className:"card-title" }, "📬 Offres pour : ", selectedReq.title)
+        )
+      ),
+      offers.length === 0 ? React.createElement("div", { className:"empty-state" }, React.createElement("p", null, "Aucune offre reçue pour l'instant. Les vendeurs sont notifiés.")) :
+      React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:".75rem" } },
+        ...offers.map(offer =>
+          React.createElement("div", { key:offer.id, className:"card", style:{ border: offer.status==="accepted" ? "2px solid var(--primary)" : undefined } },
+            React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:".75rem" } },
+              React.createElement("div", { style:{ flex:1 } },
+                React.createElement("div", { style:{ fontWeight:700 } }, offer.vendor_name || "Vendeur"),
+                React.createElement("div", { style:{ fontSize:"1.1rem", color:"var(--primary)", fontWeight:700, margin:".25rem 0" } },
+                  Math.round(offer.price).toLocaleString("fr-FR"), " FCFA"
+                ),
+                offer.delivery_days && React.createElement("div", { style:{ fontSize:".82rem", color:"var(--text-secondary)" } },
+                  React.createElement("i", { className:"fas fa-truck" }), " Livraison en ", offer.delivery_days, " jour(s)"
+                ),
+                offer.message && React.createElement("div", { style:{ fontSize:".85rem", marginTop:".5rem", padding:".5rem", background:"var(--bg-light)", borderRadius:"8px" } }, offer.message)
+              ),
+              React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:".5rem" } },
+                offer.status === "accepted" ? React.createElement("span", { style:{ color:"var(--primary)", fontWeight:700 } }, "✅ Acceptée") :
+                offer.status === "rejected" ? React.createElement("span", { style:{ color:"#dc2626" } }, "❌ Refusée") :
+                selectedReq.status === "open" || selectedReq.status === "offers_received" ?
+                React.createElement("button", { className:"btn btn-primary btn-sm", onClick: () => acceptOffer(offer) },
+                  React.createElement("i", { className:"fas fa-check" }), " Accepter"
+                ) : null,
+                React.createElement("button", { className:"btn btn-secondary btn-sm", onClick: () => {
+                  const phone = offer.vendor_phone || "221770000000";
+                  const msg = encodeURIComponent("Bonjour, j'ai vu votre offre sur NEXUS OnDemand pour : " + selectedReq.title);
+                  window.open("https://wa.me/" + phone + "?text=" + msg, "_blank");
+                }}, React.createElement("i", { className:"fab fa-whatsapp", style:{color:"#25D366"} }), " Discuter")
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+};
+
+// ─── AmbassadorPanel ───────────────────────────────────────────────────────────
+const AmbassadorPanel = ({ currentUser: currentUser2, addToast }) => {
+  const [amb, setAmb] = React.useState(null);
+  const [leaderboard, setLeaderboard] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [copied, setCopied] = React.useState(false);
+  const [cashback, setCashback] = React.useState(0);
+
+  React.useEffect(() => {
+    Promise.all([
+      DataService.ensureAmbassador(currentUser2),
+      DataService.getLeaderboard(),
+      DataService.getCashbackBalance(currentUser2.id),
+    ]).then(([a, lb, cb]) => {
+      setAmb(a); setLeaderboard(lb || []); setCashback(cb || 0); setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [currentUser2.id]);
+
+  const copyCode = () => {
+    if (!amb) return;
+    navigator.clipboard.writeText(amb.referral_code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+    addToast("Code copié !", "success");
+  };
+
+  const shareWA = () => {
+    if (!amb) return;
+    const msg = encodeURIComponent(
+      "🛍️ Rejoins NEXUS Market avec mon code *" + amb.referral_code + "* et bénéficie de 5% de réduction sur ta première commande !\n🔗 https://nexus-market-asb.pages.dev?ref=" + amb.referral_code
+    );
+    window.open("https://wa.me/?text=" + msg, "_blank");
+  };
+
+  const LEVELS = { bronze:"🥉 Bronze", silver:"🥈 Argent", gold:"🥇 Or", platinum:"💎 Platine" };
+  const NEXT_LEVEL = { bronze: { label:"Argent", target: 10 }, silver: { label:"Or", target: 50 }, gold: { label:"Platine", target: 200 }, platinum: { label:"Platine MAX", target: 999 } };
+
+  if (loading) return React.createElement("div", { className:"empty-state" }, React.createElement("i", { className:"fas fa-spinner fa-spin" }), React.createElement("p", null, "Chargement..."));
+
+  const progress = amb ? Math.min(100, Math.round((amb.total_referrals / (NEXT_LEVEL[amb.level]?.target || 1)) * 100)) : 0;
+
+  return React.createElement("div", { style:{ maxWidth:800, margin:"0 auto" } },
+    React.createElement("div", { className:"card-header", style:{marginBottom:"1rem"} },
+      React.createElement("h2", { className:"card-title" }, "🏆 Programme Ambassadeur"),
+      React.createElement("p", { style:{ fontSize:".85rem", color:"var(--text-secondary)", margin:0 } }, "Partagez NEXUS et gagnez des commissions sur chaque vente !")
+    ),
+
+    // Stats cards
+    React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:"1rem", marginBottom:"1.25rem" } },
+      [
+        ["Niveau", amb ? LEVELS[amb.level] || amb.level : "—", "award"],
+        ["Parrainages", amb ? amb.total_referrals : 0, "users"],
+        ["Commissions", amb ? Math.round(amb.total_earned).toLocaleString("fr-FR")+" FCFA" : "0 FCFA", "coins"],
+        ["Cashback dispo", Math.round(cashback).toLocaleString("fr-FR")+" FCFA", "wallet"],
+      ].map(([label, value, icon]) =>
+        React.createElement("div", { key:label, className:"stat-card" },
+          React.createElement("div", { className:"stat-icon" }, React.createElement("i", { className:`fas fa-${icon}` })),
+          React.createElement("div", { className:"stat-value" }, value),
+          React.createElement("div", { className:"stat-label" }, label)
+        )
+      )
+    ),
+
+    // Referral code card
+    React.createElement("div", { className:"card", style:{ marginBottom:"1.25rem" } },
+      React.createElement("div", { className:"card-header" }, React.createElement("h3", { className:"card-title" }, "🎯 Votre code de parrainage")),
+      React.createElement("div", { className:"card-body" },
+        React.createElement("div", { style:{ textAlign:"center", padding:"1rem", background:"linear-gradient(135deg,rgba(0,133,62,.07),rgba(253,239,66,.07))", border:"2px dashed rgba(0,133,62,.3)", borderRadius:"12px", marginBottom:"1rem" } },
+          React.createElement("div", { style:{ fontFamily:"monospace", fontSize:"2rem", fontWeight:800, letterSpacing:".2rem", color:"var(--primary)", marginBottom:".75rem" } },
+            amb ? amb.referral_code : "—"
+          ),
+          React.createElement("div", { style:{ fontSize:".82rem", color:"var(--text-secondary)", marginBottom:"1rem" } },
+            "Vos amis obtiennent ", React.createElement("strong", null, "5% de réduction"), ", vous gagnez ", React.createElement("strong", null, "2 000 FCFA"), " de commission."
+          ),
+          React.createElement("div", { style:{ display:"flex", gap:".75rem", justifyContent:"center", flexWrap:"wrap" } },
+            React.createElement("button", { className:"btn btn-secondary", onClick: copyCode },
+              React.createElement("i", { className:`fas fa-${copied?"check":"copy"}` }), " ", copied ? "Copié !" : "Copier"
+            ),
+            React.createElement("button", { className:"btn btn-primary", onClick: shareWA },
+              React.createElement("i", { className:"fab fa-whatsapp" }), " Partager sur WhatsApp"
+            )
+          )
+        ),
+        // Level progress
+        React.createElement("div", null,
+          React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", fontSize:".82rem", marginBottom:".25rem" } },
+            React.createElement("span", null, "Progression vers ", NEXT_LEVEL[amb?.level]?.label || "Platine"),
+            React.createElement("span", { style:{ fontWeight:600 } }, amb?.total_referrals || 0, " / ", NEXT_LEVEL[amb?.level]?.target || 10)
+          ),
+          React.createElement("div", { style:{ background:"var(--bg-light)", borderRadius:"99px", height:8 } },
+            React.createElement("div", { style:{ background:"var(--primary)", height:8, borderRadius:"99px", width:progress+"%", transition:"width .5s" } })
+          )
+        )
+      )
+    ),
+
+    // Leaderboard
+    leaderboard.length > 0 && React.createElement("div", { className:"card" },
+      React.createElement("div", { className:"card-header" }, React.createElement("h3", { className:"card-title" }, "🏅 Classement Ambassadeurs")),
+      React.createElement("div", { className:"card-body" },
+        React.createElement("div", { role:"list" },
+          ...leaderboard.slice(0,10).map((a, i) =>
+            React.createElement("div", { key:a.id, role:"listitem", style:{ display:"flex", alignItems:"center", gap:".75rem", padding:".6rem 0", borderBottom:"1px solid var(--border)" } },
+              React.createElement("div", { style:{ width:28, height:28, borderRadius:"50%", background: i===0?"#FFD700":i===1?"#C0C0C0":i===2?"#CD7F32":"var(--bg-light)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:".85rem", flexShrink:0 } }, i+1),
+              React.createElement("div", { style:{ flex:1, fontWeight: a.user_id === currentUser2.id ? 700 : 400 } }, a.profiles?.name || "Ambassadeur", a.user_id === currentUser2.id && React.createElement("span", { style:{ color:"var(--primary)", fontSize:".75rem", marginLeft:".4rem" } }, "(vous)")),
+              React.createElement("div", { style:{ fontSize:".82rem", color:"var(--text-secondary)" } }, a.total_referrals, " parrainages"),
+              React.createElement("div", { style:{ fontWeight:700, color:"var(--primary)" } }, Math.round(a.total_earned).toLocaleString("fr-FR"), " FCFA")
+            )
+          )
+        )
+      )
+    )
+  );
+};
+
+// ─── WhatsAppButton (réutilisable) ─────────────────────────────────────────────
+const WhatsAppButton = ({ product, size = "sm", style = {} }) => {
+  const fcfa = Math.round((product.price || 0) * 655.957);
+  const share = () => {
+    const msg = encodeURIComponent(
+      `🛍️ *${product.name}* sur NEXUS Market\n💰 ${fcfa.toLocaleString("fr-FR")} FCFA\n🔗 https://nexus-market-asb.pages.dev\n\nCommandé via NEXUS Market Sénégal`
+    );
+    window.open(`https://wa.me/?text=${msg}`, "_blank");
+  };
+  return React.createElement("button", {
+    className: `btn btn-sm`,
+    onClick: (e) => { e.stopPropagation(); share(); },
+    title: "Partager sur WhatsApp",
+    style: { background:"#25D366", color:"white", border:"none", ...style }
+  }, React.createElement("i", { className:"fab fa-whatsapp" }), " Partager");
+};
+
+
 ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(Root, null));
 // ── Service Worker — enregistrement via /sw.js (fichier statique Vercel) ───────
 // [FIX] Les blob: URL sont bloquées par Chrome pour les SW depuis Chrome 68.
