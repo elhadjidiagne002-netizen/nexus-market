@@ -1,0 +1,48 @@
+CREATE TABLE orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL, -- Client
+  vendor_id UUID REFERENCES users(id) ON DELETE CASCADE NOT NULL, -- Vendeur
+  order_number VARCHAR(20) UNIQUE NOT NULL, -- Numéro de commande (ex: NX-2026-0001)
+  status VARCHAR(20) NOT NULL DEFAULT 'pending', -- États: pending, confirmed, processing, shipped, delivered, cancelled, refunded
+  total_amount DECIMAL(10, 2) NOT NULL, -- Montant total
+  delivery_fee DECIMAL(10, 2) DEFAULT 0, -- Frais de livraison
+  grand_total DECIMAL(10, 2) NOT NULL, -- Total TTC
+  shipping_address JSONB NOT NULL, -- { street, city, country, postal_code, phone }
+  payment_method VARCHAR(20) NOT NULL, -- mobile_money, card, cash_on_delivery
+  payment_status VARCHAR(20) DEFAULT 'pending', -- pending, paid, failed, refunded
+  tracking_number VARCHAR(100), -- Numéro de suivi (pour les livraisons)
+  delivery_partner VARCHAR(50), -- Jumia Logistics, DHL, etc.
+  delivery_eta TIMESTAMPTZ, -- Date estimée de livraison
+  notes TEXT, -- Notes du client
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+-- Table pour les articles d'une commande
+CREATE TABLE order_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID REFERENCES orders(id) ON DELETE CASCADE NOT NULL,
+  product_id UUID REFERENCES products(id) ON DELETE CASCADE NOT NULL,
+  product_name VARCHAR(255) NOT NULL, -- Sauvegardé au cas où le produit est supprimé
+  product_image VARCHAR(255), -- URL de l'image
+  quantity INTEGER NOT NULL,
+  unit_price DECIMAL(10, 2) NOT NULL,
+  total_price DECIMAL(10, 2) NOT NULL,
+  variant JSONB -- { color: "red", size: "L" }
+);
+
+-- Table pour l'historique des statuts
+CREATE TABLE order_status_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID REFERENCES orders(id) ON DELETE CASCADE NOT NULL,
+  status VARCHAR(20) NOT NULL, -- même valeurs que dans `orders`
+  changed_by UUID REFERENCES users(id), -- Qui a changé le statut (user_id ou vendor_id)
+  notes TEXT, -- Ex: "Commande expédiée avec Jumia Logistics"
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+-- Index pour les requêtes fréquentes
+CREATE INDEX idx_orders_user_id ON orders(user_id);
+CREATE INDEX idx_orders_vendor_id ON orders(vendor_id);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_created_at ON orders(created_at DESC);

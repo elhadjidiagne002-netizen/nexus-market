@@ -1,0 +1,103 @@
+// functions/api/orders/delivery/jumia.js
+import { CORS, options, json, err, supabase, requireAuth } from '../../../../_lib/utils.js';
+
+export async function onRequest({ request, env }) {
+  if (request.method === 'OPTIONS') return options();
+
+  try {
+    const { user, error: authError } = await requireAuth(request, env);
+    if (authError) return err(authError.message, authError.status);
+
+    const { order_id, action } = await request.json();
+    if (!order_id || !action) return err('order_id et action sont requis', 400);
+
+    const sb = supabase(env);
+
+    // 1. Récupérer la commande
+    const { data: order, error: orderError } = await sb
+      .from('orders')
+      .select('*, vendor_id')
+      .eq('id', order_id)
+      .single();
+
+    if (orderError) return err('Commande introuvable', 404);
+    if (order.vendor_id !== user.id) return err('Non autorisé', 403);
+
+    // 2. Récupérer les informations d'API de Jumia Logistics
+    const { data: deliveryPartner, error: partnerError } = await sb
+      .from('delivery_partners')
+      .select('*')
+      .eq('name', 'Jumia Logistics')
+      .single();
+
+    if (partnerError || !deliveryPartner) return err('Partenaire de livraison non configuré', 500);
+
+    // 3. Appeler l'API de Jumia Logistics
+    let jumiaResponse;
+    if (action === 'create_shipment') {
+      // Exemple: Créer un envoi
+      jumiaResponse = await fetch(`${deliveryPartner.api_endpoint}/shipments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${deliveryPartner.api_key}`
+        },
+        body: JSON.stringify({
+          order_id: order.id,
+          pickup_address: {
+            name: 'Nexus Market Hub',
+            address: 'Dakar, Sénégal',
+            phone: '+221 77 000 00 00'
+          },
+          delivery_address: order.shipping_address,
+          items: order.order_items.map(item => ({
+            name: item.product_name,
+            quantity: item.quantity,
+            weight: 0.5 // Poids en kg (à adapter)
+          }))
+        })
+      });
+    } else if (action === 'track_shipment') {
+      // Exemple: Suivre un envoi
+      jumiaResponse = await fetch(`${deliveryPartner.api_endpoint}/shipments/${order.tracking_number}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${deliveryPartner.api_key}`
+        }
+      });
+    } else {
+      return err('Action non supportée', 400);
+    }
+
+    if (!jumiaResponse.ok) {
+      const errorData = await jumiaResponse.json();
+      return err(`Erreur Jumia Logistics: ${errorData.error || 'Inconnu'}`, 500);
+    }
+
+    const responseData = await jumiaResponse.json();
+
+    // 4. Mettre à jour la commande avec le numéro de suivi
+    if (action === 'create_shipment' && responseData.tracking_number) {
+      await sb.from('orders').update({
+        tracking_number: responseData.tracking_number,
+        delivery_partner: 'Jumia Logistics',
+        delivery_eta: responseData.estimated_delivery_date
+      }).eq('id', order_id);
+
+      await sb.from('order_status_history').insert({
+        order_id: order_id,
+        status: 'shipped',
+        changed_by: user.id,
+        notes: `Expédié avec Jumia Logistics (Tracking: ${responseData.tracking_number})`
+      });
+    }
+
+    return json({
+      success: true,
+      data: responseData
+    });
+
+  } catch (error) {
+    return err(error.message, 500);
+  }
+}
