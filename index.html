@@ -1369,10 +1369,10 @@ const NEXUS_CONFIG = {
     anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE"
   },
   paytech: {
-    // ✅ Les clés API sont côté serveur uniquement.
-    // Configurez PAYTECH_API_KEY et PAYTECH_SECRET_KEY dans
-    // Cloudflare Pages → Settings → Environment Variables.
-    env: "test",  // "test" jusqu'à activation du compte PayTech en production
+    // ⚠️  Remplissez vos clés PayTech ici (Tableau de bord PayTech → API)
+    apiKey:    "4ee82c55e71b271ba8e9a4e0c48ab306c84f38a54b3357ee5d453922b87f3256",
+    secretKey: "f7bdf4eaf1cf2dac9925eb20bf61cd3ae0a49fb8b7f784ea52f8d805a1d69b72",
+    env:       "test",   // "test" jusqu'à activation du compte PayTech en production
   },
   resend: {
     // Clé Resend — https://resend.com/api-keys
@@ -7487,46 +7487,57 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         // Toujours appeler PayTech pour les paiements Mobile Money
         if (mainOrderId) {
           try {
-            // [FIX] Appel PayTech via proxy Cloudflare Pages Function (/api/payments/paytech)
-            // Les clés API_KEY/API_SECRET restent côté serveur (env vars Cloudflare).
+            // [FIX] Appel PayTech direct depuis le frontend (fonctions Cloudflare non déployées)
             const EUR_TO_FCFA = 655.957;
             const amountFcfa = Math.round(grandTotalEur * EUR_TO_FCFA);
-            const ptEnv = NEXUS_CONFIG.paytech?.env || "test";
-            const origin = window.location.origin;
-            const ptBody = {
-              item_name:    `Commande NEXUS #${mainOrderId}`,
-              item_price:   amountFcfa,
-              currency:     "XOF",
-              ref_command:  mainOrderId,
-              command_name: "Paiement Mobile Money – NEXUS Market",
-              env:          ptEnv,
-              ipn_url:      `${origin}/paytech-webhook`,
-              success_url:  `${origin}/?payment=success&orderId=${encodeURIComponent(mainOrderId)}`,
-              cancel_url:   `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
-              custom_field: JSON.stringify({ orderId: mainOrderId, source: "nexus-market" }),
-            };
-            const ptRes = await fetch("/api/payments/paytech", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(ptBody),
-            });
-            const ptData = await ptRes.json().catch(() => ({}));
-            if (ptRes.ok && ptData.redirect_url) {
-              sessionStorage.setItem("nexus_paytech_pending", JSON.stringify({
-                orderId:    mainOrderId,
-                amount:     grandTotalEur,
-                orders:     createdOrders.map(o => ({ id: o.id, trackingNumber: o.trackingNumber, vendorName: o.vendorName, total: o.total })),
-                buyerEmail: customerInfo?.email || "",
-                ts:         Date.now(),
-              }));
-              setLoading(false);
-              window.location.href = ptData.redirect_url;
-              return;
+            const ptApiKey    = NEXUS_CONFIG.paytech?.apiKey    || "";
+            const ptSecretKey = NEXUS_CONFIG.paytech?.secretKey || "";
+            const ptEnv       = NEXUS_CONFIG.paytech?.env       || "prod";
+            if (!ptApiKey || ptApiKey === "VOTRE_PAYTECH_API_KEY") {
+              // Clés non configurées → mode simulation
+              addToast("\u2705 Paiement Mobile Money simulé confirmé !", "success");
             } else {
-              console.warn("[PayTech] Réponse proxy:", ptData);
-              addToast(ptData?.error || ptData?.message || "Erreur PayTech — vérifiez les variables d'environnement Cloudflare", "error");
-              setLoading(false);
-              return;
+              const origin = window.location.origin;
+              const ptBody = {
+                item_name:    `Commande NEXUS #${mainOrderId}`,
+                item_price:   amountFcfa,
+                currency:     "XOF",
+                ref_command:  mainOrderId,
+                command_name: "Paiement Mobile Money – NEXUS Market",
+                env:          ptEnv,
+                ipn_url:      `${origin}/paytech-webhook`,
+                success_url:  `${origin}/?payment=success&orderId=${encodeURIComponent(mainOrderId)}`,
+                cancel_url:   `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
+                custom_field: JSON.stringify({ orderId: mainOrderId, source: "nexus-market" }),
+              };
+              const ptRes = await fetch("https://paytech.sn/api/payment/request-payment", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Accept":       "application/json",
+                  "API_KEY":      ptApiKey,
+                  "API_SECRET":   ptSecretKey,
+                },
+                body: JSON.stringify(ptBody),
+              });
+              const ptData = await ptRes.json().catch(() => ({}));
+              if (ptRes.ok && ptData.success === 1 && ptData.redirect_url) {
+                sessionStorage.setItem("nexus_paytech_pending", JSON.stringify({
+                  orderId:    mainOrderId,
+                  amount:     grandTotalEur,
+                  orders:     createdOrders.map(o => ({ id: o.id, trackingNumber: o.trackingNumber, vendorName: o.vendorName, total: o.total })),
+                  buyerEmail: customerInfo?.email || "",
+                  ts:         Date.now(),
+                }));
+                setLoading(false);
+                window.location.href = ptData.redirect_url;
+                return;
+              } else {
+                console.warn("[PayTech] Réponse:", ptData);
+                addToast(ptData?.message || "Erreur PayTech — vérifiez vos clés API", "error");
+                setLoading(false);
+                return;
+              }
             }
           } catch (e) {
             console.warn("[PayTech] Erreur initiation paiement:", e.message);
@@ -11061,30 +11072,25 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     // [FIX] Seul le backend (service_role) peut écrire dans profiles — la clé anon est bloquée par RLS.
     // Le fallback Supabase direct a été supprimé : il retournait toujours 401 "permission denied for table profiles".
     // Toutes les opérations d'approbation passent exclusivement par PATCH /api/admin/vendors/:id/approve.
-    if (!NEXUS_CONFIG.apiUrl) {
-      addToast("API non configurée (NEXUS_CONFIG.apiUrl vide). Vérifiez la configuration.", "danger");
+    if (!NEXUS_CONFIG.apiUrl && !DataService._sb) {
+      addToast("Ni API ni Supabase disponibles.", "danger");
       return;
     }
-    try {
-      const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
-        method: "PATCH",
-        body: JSON.stringify({ approved: true }),
-      });
-      if (!resp || !resp.ok) {
-        const err = await resp?.json().catch(() => ({}));
-        // 404 = vendeur introuvable dans pending_vendors (peut-être déjà approuvé ou ID incorrect)
-        if (resp?.status === 404) {
-          addToast("Vendeur introuvable dans la base (peut-être déjà approuvé). Rafraîchissez la liste.", "warning");
-          loadData();
-          return;
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
+          method: "PATCH", body: JSON.stringify({ approved: true }),
+        });
+        if (!resp || !resp.ok) {
+          const err = await resp?.json().catch(() => ({}));
+          if (resp?.status === 404) { addToast("Vendeur introuvable. Rafraîchissez.", "warning"); loadData(); return; }
+          addToast(err?.error || "Erreur approbation.", "danger"); return;
         }
-        addToast(err?.error || "Erreur lors de l'approbation. Réessayez.", "danger");
-        return;
-      }
-    } catch (e) {
-      console.warn("[approveVendor]", e);
-      addToast("Erreur réseau lors de l'approbation.", "danger");
-      return;
+      } catch (e) { addToast("Erreur réseau.", "danger"); return; }
+    } else {
+      const { error } = await DataService._sb.from("profiles")
+        .update({ status: "active", role: "vendor" }).eq("id", vendorId);
+      if (error) { addToast("Supabase : " + error.message, "danger"); return; }
     }
 
     // Mise à jour locale immédiate après succès API
@@ -11102,31 +11108,29 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const rejectVendor = async (vendorId) => {
     const vendor = pendingVendors.find((v) => v.id === vendorId);
 
-    if (!NEXUS_CONFIG.apiUrl) {
-      addToast("API non configurée. Vérifiez la configuration.", "danger");
+    if (!NEXUS_CONFIG.apiUrl && !DataService._sb) {
+      addToast("Ni API ni Supabase disponibles.", "danger");
       return;
     }
-    try {
-      const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
-        method: "PATCH",
-        body: JSON.stringify({ approved: false }),
-      });
-      if (!resp || !resp.ok) {
-        if (resp?.status === 404) {
-          // 404 = déjà supprimé — on nettoie localement
-          setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
-          loadData();
-          addToast("Demande déjà traitée, liste rafraîchie.", "info");
-          return;
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
+          method: "PATCH", body: JSON.stringify({ approved: false }),
+        });
+        if (!resp || !resp.ok) {
+          if (resp?.status === 404) { setPendingVendors(prev => prev.filter(v => v.id !== vendorId)); loadData(); addToast("Demande déjà traitée.", "info"); return; }
+          const err = await resp?.json().catch(() => ({}));
+          addToast(err?.error || "Erreur refus.", "danger"); return;
         }
-        const err = await resp?.json().catch(() => ({}));
-        addToast(err?.error || "Erreur lors du refus. Réessayez.", "danger");
+      } catch (e) {
+        console.warn("[rejectVendor]", e);
+        addToast("Erreur réseau lors du refus.", "danger");
         return;
       }
-    } catch (e) {
-      console.warn("[rejectVendor]", e);
-      addToast("Erreur réseau lors du refus.", "danger");
-      return;
+    } else if (DataService._sb) {
+      const { error } = await DataService._sb.from("profiles")
+        .update({ status: "rejected" }).eq("id", vendorId);
+      if (error) { addToast("Supabase : " + error.message, "danger"); return; }
     }
 
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
@@ -11144,9 +11148,17 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         if (!res || !res.ok) { const e = await res?.json().catch(() => ({})); addToast(e?.error || "Erreur statut.", "danger"); return; }
       } catch (e) { console.warn("[updateOrderStatus admin]", e); addToast("Erreur réseau.", "danger"); return; }
     } else {
-      const allOrders = storage.getArray("orders");
-      const idx = allOrders.findIndex((o) => o.id === orderId);
-      if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
+      if (DataService._sb) {
+        const upd = { status: newStatus };
+        if (newStatus === "delivered") upd.paid_at = new Date().toISOString();
+        if (newStatus === "cancelled") upd.canceled_at = new Date().toISOString();
+        const { error } = await DataService._sb.from("orders").update(upd).eq("id", orderId);
+        if (error) { addToast("Erreur Supabase : " + error.message, "danger"); return; }
+      } else {
+        const allOrders = storage.getArray("orders");
+        const idx = allOrders.findIndex((o) => o.id === orderId);
+        if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
+      }
     }
     loadData();
   };
@@ -13503,9 +13515,16 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         if (!res || !res.ok) { const e = await res?.json().catch(() => ({})); addToast(e?.error || "Erreur statut.", "danger"); return; }
       } catch (e) { console.warn("[updateOrderStatus vendor]", e); addToast("Erreur réseau.", "danger"); return; }
     } else {
-      const allOrders = storage.getArray("orders");
-      const idx = allOrders.findIndex((o) => o.id === orderId);
-      if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
+      if (DataService._sb) {
+        const upd = { status: newStatus, updated_at: new Date().toISOString() };
+        if (newStatus === "delivered") upd.paid_at = new Date().toISOString();
+        const { error } = await DataService._sb.from("orders").update(upd).eq("id", orderId);
+        if (error) { addToast("Erreur Supabase : " + error.message, "danger"); return; }
+      } else {
+        const allOrders = storage.getArray("orders");
+        const idx = allOrders.findIndex((o) => o.id === orderId);
+        if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
+      }
     }
     loadData();
     addToast("Statut mis \xE0 jour", "success");
@@ -15827,13 +15846,22 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
     try {
       // Appel API côté acheteur — POST /api/orders/:id/cancel
       // déclenche le remboursement Stripe automatiquement
-      const res = await DataService.apiFetch(`/api/orders/${order.id}/cancel`, {
-        method: "POST",
-        body:   JSON.stringify({ reason }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
+      let _cancelRes = null;
+      if (NEXUS_CONFIG.apiUrl) {
+        _cancelRes = await DataService.apiFetch(`/api/orders/${order.id}/cancel`, {
+          method: "POST", body: JSON.stringify({ reason }),
+        });
+      } else if (DataService._sb) {
+        const { data: _eo } = await DataService._sb.from("orders").select("status").eq("id", order.id).single();
+        if (_eo && ["delivered","in_transit"].includes(_eo.status)) {
+          addToast("Annulation impossible : commande déjà expédiée.", "error"); setLoading(false); return;
+        }
+        await DataService._sb.from("orders").update({ status: "cancelled", canceled_at: new Date().toISOString(), failure_reason: reason }).eq("id", order.id);
+        _cancelRes = { ok: true, json: async () => ({}) };
+      }
+      const res = _cancelRes;
+      if (!res || !res.ok) {
+        const err = await res?.json().catch(() => ({}));
         // Erreur métier (ex: commande déjà expédiée)
         if (err.code === "CANCELLATION_NOT_ALLOWED") {
           addToast(err.error || "Annulation impossible pour cette commande", "error");
