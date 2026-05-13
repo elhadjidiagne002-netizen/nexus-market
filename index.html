@@ -12002,25 +12002,165 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   })(), view === "payout_requests" && (() => {
     // [FIX] Charger depuis l'API admin en priorité — payout_requests localStorage est vide inter-navigateurs
     const reqs = _payoutReqs; const setReqs = _setPayoutReqs; // [FIX #310]
-    const handlePayout = async (id, approved) => {
-      const status = approved ? "paid" : "rejected";
-      // [FIX #8] PATCH /api/payouts/requests/:id
+    // ═══════════════════════════════════════════════════════════════════════
+    //  handlePayout — Versements vendeurs via backend (disbursement réel)
+    // ───────────────────────────────────────────────────────────────────────
+    //  Avant : "Valider" → status="paid" sans virement → fraude possible.
+    //  Après : "Verser" → POST /api/payouts/process/:id (backend) qui :
+    //    1. Vérifie le solde vendeur (double-check serveur)
+    //    2. Appelle l'API de disbursement (Wave Business / PayTech / banque)
+    //    3. Retourne { status:"processing"|"paid", reference, providerStatus }
+    //    4. Callback async provider → met à jour paid/failed en base
+    //  L'admin ne peut JAMAIS marquer "paid" manuellement.
+    //
+    //  Contrat backend :
+    //    POST /api/payouts/process/:id        → initier le virement
+    //    PATCH /api/payouts/requests/:id      → refus uniquement
+    //    GET /api/payouts/requests/:id/status  → polling statut provider
+    //    GET /api/payouts/export-batch?status=approved&format=csv → lot bancaire
+    //
+    //  Env vars : WAVE_BUSINESS_API_KEY, WAVE_BUSINESS_SECRET,
+    //             PAYTECH_DISBURSEMENT_KEY, PAYOUT_WEBHOOK_SECRET
+    // ═══════════════════════════════════════════════════════════════════════
+
+    const PAYOUT_STATUS = {
+      pending:    { label: "En attente",   badge: "warning" },
+      approved:   { label: "Approuvé",     badge: "info"    },
+      processing: { label: "En cours ⚡",  badge: "info"    },
+      paid:       { label: "Payé ✓",       badge: "success" },
+      failed:     { label: "Échoué",       badge: "danger"  },
+      rejected:   { label: "Refusé",       badge: "danger"  },
+    };
+
+    const handlePayoutApprove = async (id) => {
+      if (!NEXUS_CONFIG.apiUrl) {
+        addToast("Backend non configuré — impossible de traiter les versements.", "error"); return;
+      }
+      if (!confirm("Confirmer le versement ? Le montant sera transféré au vendeur.")) return;
+      setReqs(prev => prev.map(r => r.id === id ? { ...r, status: "processing", _loading: true } : r));
+      try {
+        const res = await DataService.apiFetch(`/api/payouts/process/${id}`, {
+          method: "POST",
+          body: JSON.stringify({ processedAt: new Date().toISOString() }),
+        });
+        if (!res) {
+          addToast("Backend injoignable.", "error");
+          setReqs(prev => prev.map(r => r.id === id ? { ...r, status: "pending", _loading: false } : r));
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          const ns = data.status || "processing";
+          setReqs(prev => prev.map(r => r.id === id ? { ...r, status: ns, reference: data.reference || r.reference, providerStatus: data.providerStatus, _loading: false } : r));
+          if (ns === "paid") addToast(`✅ Versement effectué — Réf : ${data.reference || "N/A"}`, "success");
+          else addToast(`⚡ Versement initié — Réf : ${data.reference || "N/A"}`, "info", 8000);
+        } else {
+          setReqs(prev => prev.map(r => r.id === id ? { ...r, status: data.status === "failed" ? "failed" : "pending", failReason: data.error, _loading: false } : r));
+          addToast(data.error || "Erreur lors du versement", "error");
+        }
+      } catch (e) {
+        console.warn("[handlePayout]", e);
+        setReqs(prev => prev.map(r => r.id === id ? { ...r, status: "pending", _loading: false } : r));
+        addToast("Erreur réseau.", "error");
+      }
+    };
+
+    const handlePayoutReject = async (id) => {
+      const note = prompt("Motif du refus (optionnel) :");
+      if (note === null) return;
       if (NEXUS_CONFIG.apiUrl) {
         try {
           const res = await DataService.apiFetch(`/api/payouts/requests/${id}`, {
-            method: 'PATCH', body: JSON.stringify({ status, processedAt: new Date().toISOString() })
+            method: "PATCH", body: JSON.stringify({ status: "rejected", adminNote: note || "", processedAt: new Date().toISOString() }),
           });
-          if (res && !res.ok) {
-            const e = await res.json().catch(() => ({}));
-            addToast(e.error || 'Erreur serveur', 'danger'); return;
-          }
-        } catch(e) { console.warn('[handlePayout]', e); }
+          if (res && !res.ok) { const e = await res.json().catch(() => ({})); addToast(e.error || "Erreur serveur", "danger"); return; }
+        } catch (e) { console.warn("[handlePayout reject]", e); }
       }
-      DataService.updatePayout(id, { status, processedAt: new Date().toISOString() }).catch(()=>{});
-      setReqs(prev => prev.map(r => r.id === id ? { ...r, status } : r));
-      addToast(approved ? "Retrait validé et payé ✅" : "Retrait refusé", approved ? "success" : "info");
+      DataService.updatePayout(id, { status: "rejected", processedAt: new Date().toISOString() }).catch(() => {});
+      setReqs(prev => prev.map(r => r.id === id ? { ...r, status: "rejected" } : r));
+      addToast("Retrait refusé", "info");
     };
-    return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retrait (", reqs.length, ")"), /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, reqs.filter((r) => r.status === "pending").length, " en attente")), reqs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune demande")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "ID"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Montant"), /* @__PURE__ */ React.createElement("th", null, "M\xE9thode"), /* @__PURE__ */ React.createElement("th", null, "Destination"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, reqs.sort((a, b) => new Date(b.date) - new Date(a.date)).map((r) => /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, r.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, r.vendorName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--success)" } }, formatPrice(r.amount))), /* @__PURE__ */ React.createElement("td", { "data-label": "M\xE9thode" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, r.provider)), /* @__PURE__ */ React.createElement("td", { "data-label": "Destination", style: { fontFamily: "monospace", fontSize: "0.82rem" } }, r.destination), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${r.status === "paid" ? "success" : r.status === "rejected" ? "danger" : "warning"}` }, r.status === "paid" ? "Pay\xE9" : r.status === "rejected" ? "Refus\xE9" : "En attente")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, r.status === "pending" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handlePayout(r.id, true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Valider"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handlePayout(r.id, false) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))))))))));
+
+    const handlePayoutRefresh = async (id) => {
+      if (!NEXUS_CONFIG.apiUrl) return;
+      try {
+        const res = await DataService.apiFetch(`/api/payouts/requests/${id}/status`);
+        if (res && res.ok) {
+          const d = await res.json();
+          setReqs(prev => prev.map(r => r.id === id ? { ...r, status: d.status || r.status, reference: d.reference || r.reference, failReason: d.failReason } : r));
+          addToast(`Statut : ${PAYOUT_STATUS[d.status]?.label || d.status}`, "info");
+        }
+      } catch (_) {}
+    };
+
+    const handleExportBatchCSV = () => {
+      const bankReqs = reqs.filter(r => r.provider === "bank" && ["pending", "approved"].includes(r.status));
+      if (bankReqs.length === 0) { addToast("Aucun virement bancaire en attente.", "info"); return; }
+      const rows = ["ID,Vendeur,IBAN,Montant_FCFA,Montant_EUR,Reference"];
+      bankReqs.forEach(r => rows.push([r.id, `"${r.vendorName||""}"`, `"${r.destination||""}"`, r.amount||0, ((r.amount||0)/655.957).toFixed(2), `"NEXUS-${r.id}"`].join(",")));
+      const a = document.createElement("a");
+      a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(rows.join("\n"));
+      a.download = `nexus_virements_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      addToast(`Export : ${bankReqs.length} virement(s)`, "success");
+    };
+    return /* @__PURE__ */ React.createElement("div", { className: "card" },
+      /* @__PURE__ */ React.createElement("div", { className: "card-header" },
+        /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retrait (", reqs.length, ")"),
+        /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" },
+          /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, reqs.filter(r => r.status === "pending").length, " en attente"),
+          reqs.some(r => r.status === "processing") && /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, reqs.filter(r => r.status === "processing").length, " en cours"),
+          /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: handleExportBatchCSV, title: "Export CSV virements bancaires" },
+            /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Export virements")
+        )
+      ),
+      !NEXUS_CONFIG.apiUrl && /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning mb-2", style: { fontSize: "0.82rem" } },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }),
+        " Backend non configur\xE9 \u2014 les versements ne peuvent pas \xEAtre trait\xE9s automatiquement."
+      ),
+      reqs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }),
+        /* @__PURE__ */ React.createElement("h3", null, "Aucune demande")
+      ) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },
+        /* @__PURE__ */ React.createElement("table", { className: "data-table" },
+          /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,
+            /* @__PURE__ */ React.createElement("th", null, "ID"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"),
+            /* @__PURE__ */ React.createElement("th", null, "Montant"), /* @__PURE__ */ React.createElement("th", null, "M\xE9thode"),
+            /* @__PURE__ */ React.createElement("th", null, "Destination"), /* @__PURE__ */ React.createElement("th", null, "Date"),
+            /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Action")
+          )),
+          /* @__PURE__ */ React.createElement("tbody", null, reqs.sort((a, b) => new Date(b.date) - new Date(a.date)).map((r) => {
+            const st = PAYOUT_STATUS[r.status] || PAYOUT_STATUS.pending;
+            return /* @__PURE__ */ React.createElement("tr", { key: r.id },
+              /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, r.id)),
+              /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, r.vendorName),
+              /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--success)" } }, formatPrice(r.amount))),
+              /* @__PURE__ */ React.createElement("td", { "data-label": "M\xE9thode" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, r.provider)),
+              /* @__PURE__ */ React.createElement("td", { "data-label": "Destination", style: { fontFamily: "monospace", fontSize: "0.82rem" } }, r.destination),
+              /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"),
+              /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" },
+                /* @__PURE__ */ React.createElement("span", { className: "badge badge-" + st.badge }, st.label),
+                r.reference && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.68rem", fontFamily: "monospace", color: "var(--text-secondary)", marginTop: "0.15rem" } }, r.reference),
+                r.failReason && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.68rem", color: "var(--danger)", marginTop: "0.15rem" } }, r.failReason)
+              ),
+              /* @__PURE__ */ React.createElement("td", { "data-label": "Action" },
+                r.status === "pending" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" },
+                  /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", disabled: r._loading, onClick: () => handlePayoutApprove(r.id) },
+                    /* @__PURE__ */ React.createElement("i", { className: "fas fa-paper-plane" }), " Verser"),
+                  /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handlePayoutReject(r.id) },
+                    /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))
+                ),
+                r.status === "processing" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => handlePayoutRefresh(r.id) },
+                  /* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Actualiser"),
+                r.status === "failed" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-warning btn-sm", onClick: () => handlePayoutApprove(r.id) },
+                  /* @__PURE__ */ React.createElement("i", { className: "fas fa-redo" }), " Relancer"),
+                ["paid", "rejected"].includes(r.status) && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--text-secondary)", fontSize: "0.82rem" } }, "Trait\xE9")
+              )
+            );
+          }))
+        )
+      )
+    );
   })(), view === "health" && /* @__PURE__ */ React.createElement(PlatformHealth, null), view === "homepage_editor" && (() => {
       const saveS = (key, val) => { storage.set(key, val); };  // Cache mémoire session (plus localStorage)
       const moveItem = (arr, idx, dir) => { const a = [...arr]; const to = idx + dir; if (to < 0 || to >= a.length) return a; [a[idx], a[to]] = [a[to], a[idx]]; return a; };
