@@ -4136,11 +4136,15 @@ async signOut() {
   },
 };
 let stripeInstance = null;
+let stripeElements = null;
 const initStripe = () => {
   try {
-    const key = IS_STRIPE_CONFIGURED ? NEXUS_CONFIG.stripe.publishableKey : "pk_test_simulation_only";
-    if (window.Stripe && !stripeInstance && IS_STRIPE_CONFIGURED) stripeInstance = window.Stripe(key);
+    if (window.Stripe && !stripeInstance && IS_STRIPE_CONFIGURED) {
+      stripeInstance = window.Stripe(NEXUS_CONFIG.stripe.publishableKey);
+      stripeElements = stripeInstance.elements({ locale: "fr" });
+    }
   } catch (e) {
+    console.warn("[Stripe] Init error:", e.message);
   }
   return stripeInstance;
 };
@@ -7558,10 +7562,11 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           status:        "processing",
           shipping:      shippingEur > 0 ? "standard" : "gratuit",
           trackingNumber,
-          stripePaymentId: (stripeResult == null ? void 0 : stripeResult.paymentMethodId)
-            || (paymentMethod === "card"   ? "pi_sim_" + Date.now()
-            :   paymentMethod === "cod"    ? "COD-"    + Date.now()
-            :                               "mobile_"  + Date.now()),
+          stripePaymentId: (stripeResult == null ? void 0 : stripeResult.paymentIntentId)
+            || (stripeResult == null ? void 0 : stripeResult.paymentMethodId)
+            || (paymentMethod === "cod"    ? "COD-"    + Date.now()
+            :   paymentMethod === "mobile" ? null
+            :   null),
         };
 
         let savedOrder;
@@ -9250,93 +9255,144 @@ const Header = ({ currentUser: currentUser2, onLogout, cartCount, wishlistCount,
           { currentUser: currentUser2, onClick: () => window.__nexusOpenMessaging && window.__nexusOpenMessaging() }
         ), currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm notification-badge", onClick: onWishlistClick, "aria-label": `Wishlist (${wishlistCount} articles)` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), wishlistCount > 0 && /* @__PURE__ */ React.createElement("div", { className: "notification-dot", "aria-hidden": "true" })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm cart-badge", onClick: onCartClick, "aria-label": `Panier (${cartCount} article${cartCount > 1 ? "s" : ""})` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cartCount))) : null, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: onLogout, "aria-label": "Se d\xE9connecter" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-sign-out-alt", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("span", null, "D\xE9connexion"))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => onLoginClick("buyer"), "aria-label": "Se connecter" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-sign-in-alt", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("span", null, "Connexion")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", onClick: () => onRegisterClick(null), "aria-label": "Créer un compte" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-user-plus", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("span", null, "S’inscrire")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => onRegisterClick("vendor"), "aria-label": "Vendre sur NEXUS" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("span", null, "Vendre"))))));
 };
+// ═══════════════════════════════════════════════════════════════════════════
+// StripePaymentForm — PCI-DSS SAQ-A compliant via Stripe Elements
+// ═══════════════════════════════════════════════════════════════════════════
+// Les données de carte sont collectées via une iframe Stripe Elements
+// (CardElement) — jamais dans nos propres <input>. Le numéro de carte
+// ne transite jamais par notre code ni notre serveur.
+//
+// Flow complet :
+//   1. stripe.elements().create("card") → iframe sécurisée
+//   2. stripe.createPaymentMethod({ card: cardElement }) → PaymentMethod ID
+//   3. POST /api/payments/stripe/create-intent { amount, currency, paymentMethodId, orderId }
+//      → backend crée le PaymentIntent avec confirm=true et retourne
+//        { clientSecret, status, paymentIntentId }
+//   4. Si status === "requires_action" (3D Secure) :
+//        stripe.confirmCardPayment(clientSecret) → confirmation navigateur
+//   5. onSuccess({ paymentMethodId, paymentIntentId, type: "stripe_card" })
+//
+// Sans backend configuré (NEXUS_CONFIG.apiUrl vide), le formulaire affiche
+// un message explicite et REFUSE de procéder — plus jamais de faux "sim_".
+//
+// Contrat backend :
+//   POST /api/payments/stripe/create-intent
+//     body : { amount (centimes), currency, paymentMethodId, orderId? }
+//     200  : { clientSecret, status, paymentIntentId }
+//     4xx  : { error: "..." }
+//
+//   POST /api/webhooks/stripe    (à configurer dans le dashboard Stripe)
+//     Stripe envoie payment_intent.succeeded / payment_intent.payment_failed
+//     → backend vérifie la signature Stripe-Signature (STRIPE_WEBHOOK_SECRET)
+//     → met à jour la commande en base (paid=true ou failed=true)
+//
+//   Variables d'env backend requises :
+//     STRIPE_SECRET_KEY         sk_live_... ou sk_test_...
+//     STRIPE_WEBHOOK_SECRET     whsec_...
+// ═══════════════════════════════════════════════════════════════════════════
 const StripePaymentForm = ({ amount, onSuccess, onError, addToast }) => {
   const [loading, setLoading] = useState(false);
   const [cardName, setCardName] = useState("");
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState("");
-  const [cardCvc, setCardCvc] = useState("");
   const [errors, setErrors] = useState({});
-  const formatCardNum = (v) => v.replace(/\D/g, "").slice(0, 16).replace(/(.{4})/g, "$1 ").trim();
-  const formatExp = (v) => {
-    const d = v.replace(/\D/g, "").slice(0, 4);
-    return d.length >= 2 ? d.slice(0, 2) + "/" + d.slice(2) : d;
-  };
-  const luhn = (num) => {
-    const d = num.replace(/\D/g, "");
-    let s = 0;
-    for (let i = 0; i < d.length; i++) {
-      let n = parseInt(d[d.length - 1 - i]);
-      if (i % 2 === 1) {
-        n *= 2;
-        if (n > 9) n -= 9;
-      }
-      s += n;
+  const [cardReady, setCardReady] = useState(false);
+  const cardContainerRef = React.useRef(null);
+  const cardElementRef  = React.useRef(null);
+
+  // Monter le Stripe CardElement au montage du composant
+  React.useEffect(() => {
+    if (!IS_STRIPE_CONFIGURED || !stripeElements) return;
+    // Créer le CardElement avec le style NEXUS
+    const cardEl = stripeElements.create("card", {
+      hidePostalCode: true,
+      style: {
+        base: {
+          fontSize: "16px",
+          fontFamily: "'DM Sans', system-ui, sans-serif",
+          color: "#1a1a1a",
+          "::placeholder": { color: "#9ca3af" },
+        },
+        invalid: { color: "#e11b22" },
+      },
+    });
+    cardElementRef.current = cardEl;
+    // Monter dans le conteneur DOM
+    if (cardContainerRef.current) {
+      cardEl.mount(cardContainerRef.current);
     }
-    return d.length >= 13 && s % 10 === 0;
-  };
-  const validate = () => {
+    cardEl.on("ready", () => setCardReady(true));
+    cardEl.on("change", (ev) => {
+      if (ev.error) setErrors(e => ({ ...e, card: ev.error.message }));
+      else          setErrors(e => { const { card, ...rest } = e; return rest; });
+    });
+    return () => { cardEl.unmount(); cardEl.destroy(); };
+  }, []);
+
+  const handlePay = async () => {
     const e = {};
     if (!cardName.trim()) e.name = "Nom requis";
-    if (!luhn(cardNumber)) e.number = "Num\xE9ro invalide";
-    const [m, y] = (cardExpiry || "").split("/");
-    const now = /* @__PURE__ */ new Date();
-    if (!m || !y || parseInt("20" + y) < now.getFullYear() || parseInt("20" + y) === now.getFullYear() && parseInt(m) < now.getMonth() + 1) e.expiry = "Date invalide";
-    if (!cardCvc || cardCvc.length < 3) e.cvc = "CVV invalide";
+    if (!cardReady)        e.card = "Carte non prête";
     setErrors(e);
-    return Object.keys(e).length === 0;
-  };
-  const handlePay = async () => {
-    if (!validate()) return;
+    if (Object.keys(e).length > 0) return;
+
     setLoading(true);
     try {
-      if (IS_STRIPE_CONFIGURED && stripeInstance) {
-        // ── Étape 1 : créer un PaymentMethod côté client ───────────────────
-        const pmResult = await stripeInstance.createPaymentMethod({
-          type: "card",
-          card: { number: cardNumber.replace(/\s/g, ""), exp_month: parseInt(cardExpiry.split("/")[0]), exp_year: parseInt("20" + cardExpiry.split("/")[1]), cvc: cardCvc },
-          billing_details: { name: cardName }
+      const cardElement = cardElementRef.current;
+      if (!stripeInstance || !cardElement) {
+        setErrors({ general: "Stripe non initialisé. Rechargez la page." });
+        setLoading(false);
+        return;
+      }
+
+      // ── Étape 1 : créer un PaymentMethod via l'iframe sécurisée ────────
+      const pmResult = await stripeInstance.createPaymentMethod({
+        type: "card",
+        card: cardElement,
+        billing_details: { name: cardName },
+      });
+      if (pmResult.error) {
+        setErrors({ general: pmResult.error.message });
+        setLoading(false);
+        return;
+      }
+
+      // ── Étape 2 : demander un PaymentIntent au backend ─────────────────
+      if (!NEXUS_CONFIG.apiUrl) {
+        setErrors({ general: "Backend non configuré (NEXUS_CONFIG.apiUrl). Le paiement réel est impossible sans serveur." });
+        setLoading(false);
+        return;
+      }
+      let intentData = null;
+      try {
+        const intentRes = await DataService.apiFetch("/api/payments/stripe/create-intent", {
+          method: "POST",
+          body: JSON.stringify({
+            amount:          Math.round(amount * 100), // centimes
+            currency:        "eur",
+            paymentMethodId: pmResult.paymentMethod.id,
+          }),
         });
-        if (pmResult.error) {
-          setErrors({ general: pmResult.error.message });
+        if (!intentRes || !intentRes.ok) {
+          const errBody = intentRes ? await intentRes.json().catch(() => ({})) : {};
+          setErrors({ general: errBody.error || "Impossible de créer le paiement côté serveur." });
           setLoading(false);
           return;
         }
+        intentData = await intentRes.json();
+      } catch (networkErr) {
+        setErrors({ general: "Erreur réseau lors de la création du paiement. Réessayez." });
+        setLoading(false);
+        return;
+      }
 
-        // ── Étape 2 : demander un PaymentIntent au backend ─────────────────
-        // POST /api/payments/create-intent → { client_secret }
-        let clientSecret = null;
-        try {
-          const intentRes = await DataService.apiFetch("/api/payments/create-intent", {
-            method: "POST",
-            body: JSON.stringify({
-              amount: Math.round(amount * 100), // en centimes
-              currency: "eur",
-              payment_method_id: pmResult.paymentMethod.id,
-            }),
-          });
-          if (!intentRes || !intentRes.ok) {
-            const errBody = await intentRes?.json().catch(() => ({}));
-            setErrors({ general: errBody?.error || "Impossible de créer le paiement côté serveur." });
-            setLoading(false);
-            return;
-          }
-          const intentData = await intentRes.json();
-          clientSecret = intentData.client_secret;
-        } catch (networkErr) {
-          setErrors({ general: "Erreur réseau lors de la création du paiement. Réessayez." });
-          setLoading(false);
-          return;
-        }
+      if (!intentData || !intentData.clientSecret) {
+        setErrors({ general: "Réponse serveur invalide : clientSecret manquant." });
+        setLoading(false);
+        return;
+      }
 
-        if (!clientSecret) {
-          setErrors({ general: "Réponse serveur invalide : client_secret manquant." });
-          setLoading(false);
-          return;
-        }
-
-        // ── Étape 3 : confirmer le paiement avec le client_secret réel ─────
-        const confirmResult = await stripeInstance.confirmCardPayment(clientSecret, {
+      // ── Étape 3 : confirmer le paiement (gère 3D Secure si nécessaire) ─
+      if (intentData.status === "requires_action" || intentData.status === "requires_confirmation") {
+        const confirmResult = await stripeInstance.confirmCardPayment(intentData.clientSecret, {
           payment_method: pmResult.paymentMethod.id,
         });
         if (confirmResult.error) {
@@ -9344,22 +9400,76 @@ const StripePaymentForm = ({ amount, onSuccess, onError, addToast }) => {
           setLoading(false);
           return;
         }
-        addToast("\u2705 Paiement Stripe trait\xE9 !", "success");
-        onSuccess({
-          paymentMethodId: pmResult.paymentMethod.id,
-          paymentIntentId: confirmResult.paymentIntent.id,
-          type: "stripe_card",
-        });
-      } else {
-        // Mode simulation (Stripe non configuré)
-        onSuccess({ paymentMethodId: "sim_" + Date.now(), type: "card_simulation" });
       }
+
+      // ── Succès ─────────────────────────────────────────────────────────
+      addToast("\u2705 Paiement Stripe traité !", "success");
+      onSuccess({
+        paymentMethodId: pmResult.paymentMethod.id,
+        paymentIntentId: intentData.paymentIntentId || intentData.id,
+        type: "stripe_card",
+      });
     } catch (e) {
-      setErrors({ general: e.message });
+      setErrors({ general: e.message || "Erreur inattendue." });
     }
     setLoading(false);
   };
-  return /* @__PURE__ */ React.createElement("div", null, errors.general && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger mb-2" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.general), !IS_STRIPE_CONFIGURED && /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), "Mode test \u2014 ", /* @__PURE__ */ React.createElement("strong", null, "4242 4242 4242 4242"), ", date future, CVV 123"), /* @__PURE__ */ React.createElement("div", { className: "form-group mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Nom sur la carte *"), /* @__PURE__ */ React.createElement("input", { type: "text", className: `form-input ${errors.name ? "error" : ""}`, value: cardName, onChange: (e) => setCardName(e.target.value), placeholder: "FATOU DIOP", autoComplete: "cc-name" }), errors.name && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.name)), /* @__PURE__ */ React.createElement("div", { className: "form-group mb-2" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Num\xE9ro de carte *"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-credit-card" }), /* @__PURE__ */ React.createElement("input", { type: "text", className: `form-input ${errors.number ? "error" : ""}`, value: cardNumber, onChange: (e) => setCardNumber(formatCardNum(e.target.value)), placeholder: "4242 4242 4242 4242", maxLength: "19", inputMode: "numeric", autoComplete: "cc-number" })), errors.number && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.number)), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Expiration *"), /* @__PURE__ */ React.createElement("input", { type: "text", className: `form-input ${errors.expiry ? "error" : ""}`, value: cardExpiry, onChange: (e) => setCardExpiry(formatExp(e.target.value)), placeholder: "MM/AA", maxLength: "5", inputMode: "numeric", autoComplete: "cc-exp" }), errors.expiry && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.expiry)), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "CVV *"), /* @__PURE__ */ React.createElement("input", { type: "text", className: `form-input ${errors.cvc ? "error" : ""}`, value: cardCvc, onChange: (e) => setCardCvc(e.target.value.replace(/\D/g, "").slice(0, 4)), placeholder: "123", maxLength: "4", inputMode: "numeric", autoComplete: "cc-csc" }), errors.cvc && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.cvc))), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block btn-lg ${loading ? "btn-loading" : ""}`, onClick: handlePay, disabled: loading }, loading ? "Traitement Stripe..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-lock" }), " Payer ", formatPrice(amount))));
+
+  // ── Rendu ──────────────────────────────────────────────────────────────
+  // Si Stripe n'est pas configuré ET pas de backend → bloquer proprement
+  if (!IS_STRIPE_CONFIGURED) {
+    return /* @__PURE__ */ React.createElement("div", null,
+      /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning", style: { fontSize: "0.88rem" } },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }),
+        " ", /* @__PURE__ */ React.createElement("strong", null, "Paiement par carte non disponible."),
+        " La clé publique Stripe n'est pas configurée. Utilisez le wizard de configuration (Admin → Configuration) pour renseigner votre clé ",
+        /* @__PURE__ */ React.createElement("code", null, "pk_live_..."), " ou ",
+        /* @__PURE__ */ React.createElement("code", null, "pk_test_..."), "."
+      )
+    );
+  }
+
+  return /* @__PURE__ */ React.createElement("div", null,
+    errors.general && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger mb-2" },
+      /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), " ", errors.general
+    ),
+    /* @__PURE__ */ React.createElement("div", { className: "form-group mb-2" },
+      /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Nom sur la carte *"),
+      /* @__PURE__ */ React.createElement("input", {
+        type: "text", className: "form-input " + (errors.name ? "error" : ""),
+        value: cardName, onChange: (e) => setCardName(e.target.value),
+        placeholder: "FATOU DIOP", autoComplete: "cc-name"
+      }),
+      errors.name && /* @__PURE__ */ React.createElement("p", { className: "form-error" },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), " ", errors.name
+      )
+    ),
+    /* @__PURE__ */ React.createElement("div", { className: "form-group mb-2" },
+      /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Informations de carte *"),
+      /* @__PURE__ */ React.createElement("div", {
+        ref: cardContainerRef,
+        className: "stripe-card-wrapper",
+        style: { minHeight: "44px" }
+      }),
+      errors.card && /* @__PURE__ */ React.createElement("p", { className: "form-error" },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), " ", errors.card
+      )
+    ),
+    /* @__PURE__ */ React.createElement("button", {
+      className: "btn btn-primary btn-block btn-lg " + (loading ? "btn-loading" : ""),
+      onClick: handlePay,
+      disabled: loading || !cardReady
+    }, loading
+      ? "Traitement Stripe..."
+      : /* @__PURE__ */ React.createElement(React.Fragment, null,
+          /* @__PURE__ */ React.createElement("i", { className: "fas fa-lock" }), " Payer ", formatPrice(amount)
+        )
+    ),
+    /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginTop: "0.5rem", fontSize: "0.72rem", color: "var(--text-secondary)" } },
+      /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt" }),
+      " Paiement sécurisé par Stripe — vos données bancaires ne transitent jamais par nos serveurs."
+    )
+  );
 };
 // ════════════════════════════════════════════════════════════════════════════
 // NEXUS Market — Génération PDF Factures : Acheteur & Vendeur v1.0.0
