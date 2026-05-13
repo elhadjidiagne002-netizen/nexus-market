@@ -1375,145 +1375,6 @@ const { useState, useEffect, useRef, createContext, useContext, useCallback, use
   } catch(e) {}
 })();
 
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   NEXUS Market — Table refund_requests (audit trail remboursements)
-   À exécuter dans Supabase SQL Editor si la table n'existe pas encore
-   ─────────────────────────────────────────────────────────────────────────────
-   CREATE TABLE IF NOT EXISTS public.refund_requests (
-     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-     order_id        UUID REFERENCES public.orders(id) ON DELETE SET NULL,
-     amount_eur      NUMERIC(10,2),
-     amount_fcfa     NUMERIC(12,2),
-     percent         INTEGER DEFAULT 100,
-     method          TEXT,      -- 'card' | 'mobile' | 'paytech' | 'cod'
-     paytech_token   TEXT,
-     stripe_pi       TEXT,
-     status          TEXT DEFAULT 'pending_manual' CHECK (status IN ('pending_manual','processed','rejected')),
-     notes           TEXT,
-     processed_at    TIMESTAMPTZ,
-     processed_by    UUID REFERENCES public.profiles(id),
-     created_at      TIMESTAMPTZ DEFAULT NOW()
-   );
-   ALTER TABLE public.refund_requests ENABLE ROW LEVEL SECURITY;
-   CREATE POLICY "admin_read_refunds" ON public.refund_requests FOR SELECT USING (
-     EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-   );
-   ───────────────────────────────────────────────────────────────────────────── */
-
-// ─── [NEXUS] Moteur de remboursement universel ────────────────────────────────
-// Gère Stripe (carte), PayTech (mobile money) et COD (espèces).
-// Toujours appelé AVANT de mettre le statut "refunded" dans Supabase.
-// Retourne { ok, provider, refundId, amount, message, requiresManual }
-const nexusRefund = async (order, percentInt = 100, notes = "") => {
-  if (!order) return { ok: false, message: "Commande introuvable.", requiresManual: true };
-
-  const totalEur  = order.amount_eur  || order.total  || 0;
-  const totalFcfa = order.amount_fcfa || Math.round(totalEur * 655.957);
-  const pct       = Math.max(1, Math.min(100, percentInt)) / 100;
-  const amountEur  = Math.round(totalEur  * pct * 100) / 100;
-  const amountFcfa = Math.round(totalFcfa * pct);
-  const method     = (order.paymentMethod || order.payment_method || "cod").toLowerCase();
-
-  // ── 1. Tentative backend (si apiUrl configuré) ──────────────────────────
-  if (NEXUS_CONFIG.apiUrl) {
-    try {
-      const res = await DataService.apiFetch("/api/refunds", {
-        method: "POST",
-        body: JSON.stringify({ orderId: order.id, percent: percentInt, notes }),
-      });
-      if (res && res.ok) {
-        const data = await res.json().catch(() => ({}));
-        return {
-          ok:       true,
-          provider: data.provider || (method === "card" ? "stripe" : "paytech"),
-          refundId: data.refundId || data.id || null,
-          amount:   data.amount   || amountEur,
-          message:  `Remboursement ${data.provider || ""} initié — Réf : ${data.refundId || data.id || "N/A"}`,
-          requiresManual: false,
-        };
-      }
-      const errData = await res?.json().catch(() => ({}));
-      // Backend retourne une erreur métier → on la remonte sans fallback
-      if (res && res.status >= 400 && res.status < 500) {
-        return { ok: false, message: errData.error || "Remboursement refusé.", requiresManual: false };
-      }
-    } catch(e) {
-      console.warn("[nexusRefund] Backend indisponible, fallback client :", e.message);
-    }
-  }
-
-  // ── 2. Stripe côté client (si stripe_payment_intent_id présent) ──────────
-  const piId = order.stripe_payment_intent_id || order.stripePaymentIntentId || null;
-  if ((method === "card" || piId) && piId && window.Stripe && NEXUS_CONFIG.stripe?.publishableKey) {
-    try {
-      // Note : les remboursements Stripe nécessitent la clé secrète — impossible côté client.
-      // On logue un remboursement "pending_manual" avec toutes les infos pour l'admin.
-      console.warn("[nexusRefund] Stripe refund impossible sans clé secrète côté client — remboursement manuel requis");
-    } catch(e) {}
-  }
-
-  // ── 3. PayTech — pas d'API de reverse public sans clé secrète ────────────
-  const paytechToken = order.paytech_token || order.paytechToken || null;
-  if ((method === "mobile" || method === "paytech") && paytechToken) {
-    // Même contrainte : la clé secrète PayTech ne peut pas être exposée côté client.
-    console.warn("[nexusRefund] PayTech refund impossible sans clé secrète côté client — remboursement manuel requis");
-  }
-
-  // ── 4. COD (paiement à la livraison) ─────────────────────────────────────
-  if (method === "cod" || method === "") {
-    // Remboursement en espèces → pas d'action automatique possible, juste traçabilité
-    return {
-      ok:       true,
-      provider: "cod",
-      refundId: "CASH-" + Date.now(),
-      amount:   amountFcfa,
-      message:  `Remboursement en espèces : ${amountFcfa.toLocaleString("fr-FR")} FCFA à remettre manuellement à l'acheteur.`,
-      requiresManual: true,
-    };
-  }
-
-  // ── 5. Fallback : remboursement "pending_manual" ─────────────────────────
-  // On enregistre la demande dans Supabase pour traitement manuel par l'admin.
-  const refundRecord = {
-    id:           crypto.randomUUID(),
-    order_id:     order.id,
-    amount_eur:   amountEur,
-    amount_fcfa:  amountFcfa,
-    percent:      percentInt,
-    method,
-    paytech_token: paytechToken,
-    stripe_pi:    piId,
-    status:       "pending_manual",
-    notes,
-    created_at:   new Date().toISOString(),
-  };
-
-  // Stocker dans Supabase si disponible
-  if (DataService._sb) {
-    DataService._sb.from("refund_requests").insert(refundRecord).catch(e =>
-      console.warn("[nexusRefund] Impossible d'enregistrer la demande de remboursement :", e.message)
-    );
-  }
-
-  // Stocker en localStorage comme filet de sécurité
-  try {
-    const pending = JSON.parse(localStorage.getItem("nexus_pending_refunds") || "[]");
-    pending.push(refundRecord);
-    localStorage.setItem("nexus_pending_refunds", JSON.stringify(pending));
-  } catch(e) {}
-
-  return {
-    ok:       false,
-    provider: "manual",
-    refundId: refundRecord.id,
-    amount:   amountFcfa,
-    message:  `Remboursement automatique impossible (${method}). Une demande manuelle a été créée pour l'admin. ID : ${refundRecord.id.slice(-8)}`,
-    requiresManual: true,
-  };
-};
-// ─────────────────────────────────────────────────────────────────────────────
-
 const NEXUS_CONFIG = {
   apiUrl: "", // [Cloudflare Pages] Backend Railway supprimé — toutes les données via Supabase + Netlify Functions
   // BUG FIX: nexus-confirm.html n'existe pas dans le déploiement single-file Vercel.
@@ -11307,37 +11168,20 @@ const AdminLogsViewer = ({ addToast }) => {
     if (!manualRefundOrder.trim()) { addToast("Entrez un ID de commande", "warning"); return; }
     setRefundLoading(true); setRefundResult(null);
     try {
-      // Récupérer la commande
-      let order = null;
-      if (DataService._sb) {
-        const { data } = await DataService._sb.from("orders").select("*").eq("id", manualRefundOrder.trim()).maybeSingle();
-        order = data;
-      }
-      if (!order) order = storage.getArray("orders").find(o => o.id === manualRefundOrder.trim()) || null;
-      if (!order) {
-        setRefundResult({ ok: false, msg: "Commande introuvable." });
-        addToast("Commande introuvable", "error");
-        setRefundLoading(false); return;
-      }
-
-      // Utiliser le moteur universel
-      const result = await nexusRefund(order, manualRefundPct, manualRefundNote || "Remboursement admin manuel");
-
-      setRefundResult({
-        ok:  result.ok || result.requiresManual,
-        msg: result.message
+      const res = await DataService.apiFetch("/api/refunds", {
+        method: "POST",
+        body: JSON.stringify({ orderId: manualRefundOrder.trim(), percent: manualRefundPct, notes: manualRefundNote }),
       });
-
-      if (result.ok && !result.requiresManual) {
-        addToast(`✅ Remboursement ${result.provider} initié — ${result.amount} — Réf : ${result.refundId || "N/A"}`, "success");
-        setManualRefundOrder(""); setManualRefundNote("");
-      } else if (result.requiresManual) {
-        addToast("⚠ Remboursement manuel requis — demande enregistrée. ID : " + (result.refundId || "").slice(-8), "warning");
+      const data = await res.json().catch(() => ({}));
+      if (res && res.ok) {
+        setRefundResult({ ok: true, msg: `✅ Remboursement initié — Réf Stripe : ${data.refundId || data.id || "N/A"} — Montant : ${data.amount || "?"} cts` });
+        addToast("Remboursement Manuel envoyé à Stripe ✓", "success");
         setManualRefundOrder(""); setManualRefundNote("");
       } else {
-        addToast(result.message, "error");
+        setRefundResult({ ok: false, msg: data.error || "Erreur API remboursement" });
+        addToast(data.error || "Erreur remboursement", "error");
       }
-    } catch(e) { setRefundResult({ ok: false, msg: e.message }); addToast("Erreur : " + e.message, "error"); }
+    } catch(e) { setRefundResult({ ok: false, msg: e.message }); addToast("Erreur réseau", "error"); }
     setRefundLoading(false);
   };
 
@@ -12043,121 +11887,40 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     const STATUS_RETURN = { pending: { label: "En attente", badge: "warning" }, approved: { label: "Approuv\xE9", badge: "success" }, rejected: { label: "Refus\xE9", badge: "danger" }, refunded: { label: "Rembours\xE9", badge: "success" } };
     const handleReturnAction = async (retId, newStatus, adminNotes) => {
       try {
-        let refundResult = null;
+        // Appel API — PATCH /api/returns/:id
+        // Si newStatus === 'refunded', déclenche automatiquement le remboursement Stripe
+        const res = await DataService.apiFetch(`/api/returns/${retId}`, {
+          method: "PATCH",
+          body:   JSON.stringify({ status: newStatus, adminNotes: adminNotes || null }),
+        });
 
-        // ── Étape 1 : déclencher le vrai remboursement AVANT de changer le statut ──
-        if (newStatus === "refunded") {
-          // Récupérer la commande liée au retour
-          const ret = returns.find(r => r.id === retId);
-          const orderId = ret?.orderId || ret?.order_id || null;
-          let order = null;
-
-          if (orderId && DataService._sb) {
-            const { data } = await DataService._sb.from("orders").select("*").eq("id", orderId).maybeSingle();
-            order = data;
-          }
-          if (!order && orderId) {
-            order = storage.getArray("orders").find(o => o.id === orderId) || null;
-          }
-
-          if (!order) {
-            addToast("Commande introuvable — impossible de rembourser automatiquement.", "error");
-            return;
-          }
-
-          // Appel du moteur de remboursement universel
-          refundResult = await nexusRefund(order, 100, adminNotes || "Retour approuvé par admin");
-
-          if (!refundResult.ok && !refundResult.requiresManual) {
-            // Erreur métier bloquante (ex: déjà remboursé)
-            addToast("Remboursement bloqué : " + refundResult.message, "error");
-            return;
-          }
-
-          if (refundResult.requiresManual) {
-            // Avertir l'admin mais continuer le changement de statut
-            addToast(
-              "⚠ Remboursement automatique impossible — une demande manuelle a été créée. " + refundResult.message,
-              "warning"
-            );
-          }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          addToast(err.error || "Erreur lors de la mise à jour du retour", "error");
+          return;
         }
 
-        // ── Étape 2 : mettre à jour le statut dans Supabase ────────────────────
-        if (DataService._sb) {
-          const updates = {
-            status:      newStatus,
-            admin_notes: adminNotes || null,
-            updated_at:  new Date().toISOString(),
-          };
-          if (refundResult?.refundId) {
-            updates.refund_id     = refundResult.refundId;
-            updates.refund_amount = refundResult.amount;
-            updates.refund_status = refundResult.requiresManual ? "pending_manual" : "processed";
-            updates.refund_provider = refundResult.provider || null;
-          }
-          const { error } = await DataService._sb.from("returns").update(updates).eq("id", retId);
-          if (error) { addToast("Erreur Supabase : " + error.message, "error"); return; }
-        } else if (NEXUS_CONFIG.apiUrl) {
-          const res = await DataService.apiFetch(`/api/returns/${retId}`, {
-            method: "PATCH",
-            body:   JSON.stringify({ status: newStatus, adminNotes: adminNotes || null }),
-          });
-          if (!res || !res.ok) {
-            const err = await res?.json().catch(() => ({}));
-            addToast(err?.error || "Erreur lors de la mise à jour du retour", "error");
-            return;
-          }
-        } else {
-          // Fallback localStorage
-          const all = storage.getArray("returns").map(r =>
-            r.id === retId ? { ...r, status: newStatus, adminNotes } : r
-          );
-          storage.set("returns", all);
-        }
+        const json = await res.json();
+        const stripeRefund = json._refund;
 
-        // ── Étape 3 : mise à jour React state ────────────────────────────────
+        // Mise à jour locale
         setReturns(prev => prev.map(r =>
-          r.id === retId ? {
-            ...r,
-            status: newStatus,
-            adminNotes,
-            ...(refundResult?.refundId ? {
-              refundId:       refundResult.refundId,
-              refundAmount:   refundResult.amount,
-              refundProvider: refundResult.provider,
-              refundManual:   refundResult.requiresManual,
-            } : {})
-          } : r
+          r.id === retId
+            ? { ...r, status: newStatus, ...(stripeRefund ? { refundId: stripeRefund.id, refundAmount: stripeRefund.amount } : {}) }
+            : r
         ));
 
-        // ── Étape 4 : notification finale ─────────────────────────────────────
-        if (newStatus === "refunded") {
-          if (!refundResult?.requiresManual) {
-            addToast(
-              `✅ Remboursement ${refundResult?.provider || ""} de ${refundResult?.amount} initié — Réf : ${refundResult?.refundId || "N/A"}`,
-              "success"
-            );
-          }
-          // Notifier l'acheteur
-          const ret = returns.find(r => r.id === retId);
-          if (ret?.buyerId || ret?.buyer_id) {
-            DataService.addNotification(ret.buyerId || ret.buyer_id, {
-              type:    "order",
-              title:   "💰 Remboursement en cours",
-              message: refundResult?.requiresManual
-                ? `Votre remboursement de ${refundResult?.amount?.toLocaleString?.("fr-FR") || ""} FCFA est en cours de traitement. Délai : 2-5 jours ouvrés.`
-                : `Votre remboursement de ${refundResult?.amount} a été initié via ${refundResult?.provider}. Vous le recevrez sous 3-5 jours.`,
-            });
-          }
+        if (newStatus === "refunded" && stripeRefund) {
+          addToast(
+            `Remboursement Stripe de ${stripeRefund.amount}€ initié ✓ — Réf : ${stripeRefund.id}`,
+            "success"
+          );
         } else {
           const label = STATUS_RETURN?.[newStatus]?.label || newStatus;
           addToast(`Retour marqué : ${label}`, "success");
         }
-
       } catch (networkErr) {
-        console.error("[handleReturnAction]", networkErr);
-        addToast("Erreur : " + networkErr.message, "error");
+        addToast("Erreur réseau — impossible de mettre à jour le retour.", "error");
       }
     };
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retour (", returns.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, returns.filter((r) => r.status === "pending").length, " en attente"))), returns.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune demande de retour")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "ID Retour"), /* @__PURE__ */ React.createElement("th", null, "Client"), /* @__PURE__ */ React.createElement("th", null, "Commande"), /* @__PURE__ */ React.createElement("th", null, "Motif"), /* @__PURE__ */ React.createElement("th", null, "Montant"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, returns.map((r) => {
@@ -12970,72 +12733,36 @@ window.location.reload(); });
     const refundPct = adminRefundPct; const setRefundPct = setAdminRefundPct;
 
     const resolveDispute = async (id, resolution, refundPercent) => {
+      // Appel API réel — remboursement Stripe déclenché côté serveur
       try {
-        const pct = refundPercent != null ? parseInt(refundPercent) : 0;
-        let refundResult = null;
-
-        // ── Étape 1 : remboursement AVANT résolution si demandé ────────────
-        if (pct > 0) {
-          const dispute = storage.getArray("disputes").find(d => d.id === id);
-          const orderId = dispute?.orderId || dispute?.order_id || null;
-          let order = null;
-          if (orderId && DataService._sb) {
-            const { data } = await DataService._sb.from("orders").select("*").eq("id", orderId).maybeSingle();
-            order = data;
-          }
-          if (!order && orderId) order = storage.getArray("orders").find(o => o.id === orderId) || null;
-
-          if (order) {
-            refundResult = await nexusRefund(order, pct, `Litige #${id.slice(-8)} — ${resolution}`);
-            if (!refundResult.ok && !refundResult.requiresManual) {
-              addToast("Remboursement bloqué : " + refundResult.message, "error");
-              return;
-            }
-            if (refundResult.requiresManual) {
-              addToast("⚠ Remboursement automatique impossible — demande manuelle créée.", "warning");
-            }
-          }
-        }
-
-        // ── Étape 2 : résoudre le litige dans Supabase ────────────────────
-        if (DataService._sb) {
-          const updates = {
-            status:      "resolved",
+        const res = await DataService.apiFetch(`/api/disputes/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            status:        "resolved",
             resolution,
-            resolved_at: new Date().toISOString(),
-            ...(refundResult?.refundId ? {
-              refund_id:       refundResult.refundId,
-              refund_amount:   refundResult.amount,
-              refund_status:   refundResult.requiresManual ? "pending_manual" : "processed",
-              refund_provider: refundResult.provider || null,
-              refund_percent:  pct,
-            } : {}),
-          };
-          await DataService._sb.from("disputes").update(updates).eq("id", id).catch(e =>
-            console.warn("[resolveDispute] Supabase update:", e.message)
-          );
-        } else if (NEXUS_CONFIG.apiUrl) {
-          const res = await DataService.apiFetch(`/api/disputes/${id}`, {
-            method: "PATCH",
-            body: JSON.stringify({ status:"resolved", resolution, adminNotes:resolution, refundPercent:pct }),
-          });
-          if (!res || !res.ok) {
-            const err = await res?.json().catch(() => ({}));
-            addToast(err?.error || "Erreur lors de la résolution du litige", "error");
-            return;
-          }
+            adminNotes:    resolution,
+            refundPercent: refundPercent ?? null,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          addToast(err.error || "Erreur lors de la résolution du litige", "error");
+          return;
         }
+        const json = await res.json();
+        const stripeRefund = json._refund;
 
-        // ── Étape 3 : localStorage sync ───────────────────────────────────
+        // Mise à jour locale optimiste
         const all = storage.getArray("disputes");
-        const idx = all.findIndex(d => d.id === id);
+        const idx = all.findIndex((d) => d.id === id);
         if (idx >= 0) {
-          all[idx].status = "resolved"; all[idx].resolution = resolution;
+          all[idx].status = "resolved";
+          all[idx].resolution = resolution;
           all[idx].resolvedAt = new Date().toISOString();
-          if (refundResult?.refundId) {
-            all[idx].refundId     = refundResult.refundId;
-            all[idx].refundAmount = refundResult.amount;
-            all[idx].refundStatus = refundResult.requiresManual ? "pending_manual" : "processed";
+          if (stripeRefund) {
+            all[idx].refundId     = stripeRefund.id;
+            all[idx].refundAmount = stripeRefund.amount;
+            all[idx].refundStatus = stripeRefund.status;
           }
           storage.set("disputes", all);
         }
@@ -13043,21 +12770,22 @@ window.location.reload(); });
         loadData();
         setActiveDispute(null);
 
-        // ── Étape 4 : feedback ────────────────────────────────────────────
-        if (pct > 0 && refundResult && !refundResult.requiresManual) {
+        if (stripeRefund) {
           addToast(
-            `Litige résolu — Remboursement ${refundResult.provider} de ${refundResult.amount} (${pct}%) initié ✓`,
+            `Litige résolu — Remboursement Stripe de ${stripeRefund.amount}€ (${refundPercent}%) initié ✓`,
             "success"
           );
-          if (window.nexusPush) window.nexusPush.sendLocal("Litige résolu + remboursement",
-            `${refundResult.amount} via ${refundResult.provider}. Réf : ${refundResult.refundId}`, "/");
+          if (window.nexusPush) window.nexusPush.sendLocal(
+            "Litige résolu + remboursement",
+            `${stripeRefund.amount}€ remboursés via Stripe. Réf : ${stripeRefund.id}`,
+            "/"
+          );
         } else {
           addToast(`Litige résolu — ${resolution}`, "success");
           if (window.nexusPush) window.nexusPush.sendLocal("Litige résolu", `#${id} : ${resolution}`, "/");
         }
       } catch (networkErr) {
-        console.error("[resolveDispute]", networkErr);
-        addToast("Erreur : " + networkErr.message, "error");
+        addToast("Erreur réseau — impossible de résoudre le litige. Réessayez.", "error");
       }
     };
 
@@ -16980,38 +16708,12 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
           method: "POST", body: JSON.stringify({ reason }),
         });
       } else if (DataService._sb) {
-        const { data: _eo } = await DataService._sb.from("orders").select("*").eq("id", order.id).single();
+        const { data: _eo } = await DataService._sb.from("orders").select("status").eq("id", order.id).single();
         if (_eo && ["delivered","in_transit"].includes(_eo.status)) {
           addToast("Annulation impossible : commande déjà expédiée.", "error"); setLoading(false); return;
         }
-        // Déclencher le remboursement réel AVANT d'annuler
-        const _refResult = await nexusRefund(_eo || order, 100, reason || "Annulation commande");
-        const _refJson = {
-          status:         "cancelled",
-          canceled_at:    new Date().toISOString(),
-          failure_reason: reason,
-          ..._refResult?.refundId ? {
-            refund_id:       _refResult.refundId,
-            refund_amount:   _refResult.amount,
-            refund_status:   _refResult.requiresManual ? "pending_manual" : "processed",
-            refund_provider: _refResult.provider || null,
-          } : {},
-        };
-        await DataService._sb.from("orders").update(_refJson).eq("id", order.id);
-        _cancelRes = {
-          ok:   true,
-          json: async () => ({
-            _refund: _refResult?.requiresManual ? null : {
-              id:     _refResult?.refundId,
-              amount: _refResult?.amount,
-            },
-            _refundManual: _refResult?.requiresManual,
-            _refundMsg:    _refResult?.message,
-          })
-        };
-        if (_refResult?.requiresManual) {
-          addToast("⚠ Remboursement automatique indisponible — une demande manuelle a été créée.", "warning");
-        }
+        await DataService._sb.from("orders").update({ status: "cancelled", canceled_at: new Date().toISOString(), failure_reason: reason }).eq("id", order.id);
+        _cancelRes = { ok: true, json: async () => ({}) };
       }
       const res = _cancelRes;
       if (!res || !res.ok) {
