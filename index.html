@@ -1386,10 +1386,30 @@ const NEXUS_CONFIG = {
     anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE"
   },
   paytech: {
-    // ⚠️  Remplissez vos clés PayTech ici (Tableau de bord PayTech → API)
-    apiKey:    "4ee82c55e71b271ba8e9a4e0c48ab306c84f38a54b3357ee5d453922b87f3256",
-    secretKey: "f7bdf4eaf1cf2dac9925eb20bf61cd3ae0a49fb8b7f784ea52f8d805a1d69b72",
-    env:       "test",   // "test" jusqu'à activation du compte PayTech en production
+    // ═══════════════════════════════════════════════════════════════════════
+    //  🚨 SÉCURITÉ — NE JAMAIS METTRE apiKey / secretKey ICI 🚨
+    // ───────────────────────────────────────────────────────────────────────
+    //  Les clés PayTech sont des SECRETS et doivent vivre côté serveur
+    //  uniquement, dans les variables d'environnement du backend :
+    //      PAYTECH_API_KEY     = <api key>
+    //      PAYTECH_API_SECRET  = <api secret>
+    //      PAYTECH_ENV         = "test" | "prod"
+    //      PAYTECH_IPN_SECRET  = <secret partagé pour vérifier l'IPN>
+    //
+    //  Le frontend appelle exclusivement /api/payments/paytech/* — il
+    //  n'a JAMAIS accès aux clés et ne peut JAMAIS appeler paytech.sn
+    //  directement (le bundle JS est public, tout secret y serait grillé).
+    //
+    //  ⚠️  CLÉS PRÉCÉDEMMENT COMMITÉES = COMPROMISES ⚠️
+    //  Des clés réelles étaient en clair dans ce fichier avant ce correctif.
+    //  Elles sont donc déjà publiques. Action OBLIGATOIRE avant production :
+    //    1. Tableau de bord PayTech → API → Régénérer apiKey + secretKey
+    //    2. Stocker les nouvelles valeurs UNIQUEMENT en env vars backend
+    //    3. Auditer l'historique git pour purger les anciennes valeurs
+    //       (git filter-repo / BFG si besoin)
+    //    4. Vérifier les transactions récentes côté PayTech (fraude)
+    // ═══════════════════════════════════════════════════════════════════════
+    env: "test",   // Indicateur d'environnement uniquement — informatif côté UI
   },
   resend: {
     // Clé Resend — https://resend.com/api-keys
@@ -7082,8 +7102,10 @@ const ReviewModal = ({ product, currentUser: currentUser2, onClose, addToast, on
 };
 // ── LocalPaymentModal — Sélection opérateur Mobile Money pour PayTech ──────
 // Flux : sélectionner opérateur + numéro → onSuccess({provider, phone})
-// → processPayment crée la commande, appelle PayTech, redirige vers la page de paiement.
-// Sur retour : ?payment=success&orderId=xxx → handler App confirme la commande.
+// → processPayment crée la commande, appelle /api/payments/paytech/init (backend),
+//   redirige vers la page sécurisée PayTech.
+// Au retour : ?payment=return&orderId=xxx → handler App interroge
+//   /api/payments/paytech/verify/:orderId (réponse paid=true UNIQUEMENT après IPN vérifié).
 const LocalPaymentModal = ({ amount, onSuccess, onCancel, addToast }) => {
   const [method, setMethod] = useState("orange");
   const [phone,  setPhone]  = useState("");
@@ -7707,52 +7729,71 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         if (currentUser2) DataService.addNotification(currentUser2.id, { type: "order", title: "Commande confirm\xE9e !", message: `Votre commande ${createdOrders[0].id} a \xE9t\xE9 enregistr\xE9e. Suivi : ${createdOrders[0].trackingNumber}` });
       }
       setLoading(false);
-      // ── PayTech Mobile Money redirect ──────────────────────────────────────
-      // Si le paiement est mobile ET qu'un backend est disponible :
-      // 1. Appel POST /api/payments/mobile-money → retourne redirect_url
-      // 2. Sauvegarde du contexte en sessionStorage (pour restaurer après retour)
-      // 3. Redirection vers la page PayTech (paiement sécurisé)
-      // Sur retour (?payment=success&orderId=xxx) → handler dans App confirme
+      // ── PayTech Mobile Money — initiation côté serveur ───────────────────
+      // Le frontend N'A PLUS accès aux clés PayTech. L'initialisation passe
+      // par /api/payments/paytech/init (backend) qui :
+      //   1. Lit PAYTECH_API_KEY / PAYTECH_API_SECRET depuis ses env vars
+      //   2. Appelle https://paytech.sn/api/payment/request-payment avec les
+      //      bons headers (API_KEY, API_SECRET)
+      //   3. Persiste { orderId → ref_command → paytech_token } pour la
+      //      réconciliation au moment de l'IPN
+      //   4. Retourne { redirect_url, token } au client
+      //
+      // ⚠️  Sécurité retour : on N'ACCEPTE PLUS l'état "payé" depuis l'URL
+      // de retour (forgeable). Le handler dans App.useEffect interroge
+      // /api/payments/paytech/verify/:orderId qui ne dit paid=true qu'après
+      // réception et vérification HMAC du webhook IPN PayTech.
+      //
+      //   Contrat backend attendu (à implémenter côté API) :
+      //   ─────────────────────────────────────────────────
+      //   POST /api/payments/paytech/init
+      //     body: { orderId, amountFcfa, itemName, successUrl, cancelUrl }
+      //     200 : { redirect_url, token, ref_command }
+      //     4xx : { error: "..." }
+      //
+      //   POST /api/payments/paytech/ipn        (URL configurée côté backend)
+      //     body PayTech (form-encoded ou JSON selon config)
+      //     → vérifier hash : sha256(api_key_sha256 || api_secret_sha256)
+      //     → si OK : marquer la commande paid=true, déclencher emails,
+      //       (optionnel) publier un event Supabase Realtime
+      //
+      //   GET  /api/payments/paytech/verify/:orderId
+      //     200 : { paid: bool, failed: bool, reason?: string, amount?: int }
+      //         paid=true UNIQUEMENT après IPN vérifié (jamais sur simple retour)
+      // ─────────────────────────────────────────────────────────────────────
       if (paymentMethod === "mobile" && createdOrders.length > 0) {
         const mainOrderId = createdOrders[0]?.id || ("ORD-" + Date.now());
-        // Toujours appeler PayTech pour les paiements Mobile Money
         if (mainOrderId) {
           try {
-            // [FIX] Appel PayTech direct depuis le frontend (fonctions Cloudflare non déployées)
             const EUR_TO_FCFA = 655.957;
-            const amountFcfa = Math.round(grandTotalEur * EUR_TO_FCFA);
-            const ptApiKey    = NEXUS_CONFIG.paytech?.apiKey    || "";
-            const ptSecretKey = NEXUS_CONFIG.paytech?.secretKey || "";
-            const ptEnv       = NEXUS_CONFIG.paytech?.env       || "prod";
-            if (!ptApiKey || ptApiKey === "VOTRE_PAYTECH_API_KEY") {
-              // Clés non configurées → mode simulation
-              addToast("\u2705 Paiement Mobile Money simulé confirmé !", "success");
+            const amountFcfa  = Math.round(grandTotalEur * EUR_TO_FCFA);
+            const origin      = window.location.origin;
+
+            if (!NEXUS_CONFIG.apiUrl) {
+              // Mode démo local (jamais en production) — pas de backend disponible.
+              // On NE crée PAS de faux "Paiement confirmé" : on prévient clairement
+              // que le paiement n'a pas eu lieu.
+              console.warn("[PayTech] Backend absent (NEXUS_CONFIG.apiUrl vide) — mode démo");
+              addToast("⚠️ Mode démo : aucun paiement réel n'a été effectué. Configurez NEXUS_CONFIG.apiUrl pour activer PayTech.", "warning", 10000);
             } else {
-              const origin = window.location.origin;
-              const ptBody = {
-                item_name:    `Commande NEXUS #${mainOrderId}`,
-                item_price:   amountFcfa,
-                currency:     "XOF",
-                ref_command:  mainOrderId,
-                command_name: "Paiement Mobile Money – NEXUS Market",
-                env:          ptEnv,
-                ipn_url:      `${origin}/paytech-webhook`,
-                success_url:  `${origin}/?payment=success&orderId=${encodeURIComponent(mainOrderId)}`,
-                cancel_url:   `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
-                custom_field: JSON.stringify({ orderId: mainOrderId, source: "nexus-market" }),
-              };
-              const ptRes = await fetch("https://paytech.sn/api/payment/request-payment", {
+              const initRes = await DataService.apiFetch("/api/payments/paytech/init", {
                 method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Accept":       "application/json",
-                  "API_KEY":      ptApiKey,
-                  "API_SECRET":   ptSecretKey,
-                },
-                body: JSON.stringify(ptBody),
-              });
-              const ptData = await ptRes.json().catch(() => ({}));
-              if (ptRes.ok && ptData.success === 1 && ptData.redirect_url) {
+                body: JSON.stringify({
+                  orderId:    mainOrderId,
+                  amountFcfa: amountFcfa,
+                  itemName:   `Commande NEXUS #${mainOrderId}`,
+                  successUrl: `${origin}/?payment=return&orderId=${encodeURIComponent(mainOrderId)}`,
+                  cancelUrl:  `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
+                }),
+              }).catch(e => { console.warn("[PayTech] Init réseau:", e?.message); return null; });
+
+              let initData = null;
+              if (initRes && typeof initRes.json === "function") {
+                if (initRes.ok) initData = await initRes.json().catch(() => null);
+                else            initData = await initRes.json().catch(() => null);   // pour le message d'erreur
+              }
+
+              if (initRes && initRes.ok && initData && initData.redirect_url) {
                 sessionStorage.setItem("nexus_paytech_pending", JSON.stringify({
                   orderId:    mainOrderId,
                   amount:     grandTotalEur,
@@ -7761,11 +7802,12 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
                   ts:         Date.now(),
                 }));
                 setLoading(false);
-                window.location.href = ptData.redirect_url;
+                window.location.href = initData.redirect_url;
                 return;
               } else {
-                console.warn("[PayTech] Réponse:", ptData);
-                addToast(ptData?.message || "Erreur PayTech — vérifiez vos clés API", "error");
+                const msg = (initData && (initData.error || initData.message)) || "Initialisation PayTech impossible";
+                console.warn("[PayTech] Init échec:", initData);
+                addToast(msg + " — réessayez ou contactez le support.", "error");
                 setLoading(false);
                 return;
               }
@@ -16616,45 +16658,82 @@ const App = ({ onUserChange }) => {
 
 
     // ── PayTech Return Handler ─────────────────────────────────────────────────
-    // Détecte le retour de la page PayTech via les query params
-    // ?payment=success&orderId=xxx → confirme, poll status, affiche succès
-    // ?payment=cancel&orderId=xxx  → informe l'utilisateur
+    // Détecte le retour de la page PayTech via les query params.
+    //
+    // ⚠️  SÉCURITÉ : on N'ACCEPTE JAMAIS l'état "payé" depuis l'URL — un
+    // attaquant peut taper /?payment=success&orderId=XXX à la main. La
+    // confirmation vient EXCLUSIVEMENT de /api/payments/paytech/verify/:id
+    // qui répond paid=true uniquement après vérification HMAC du webhook IPN.
+    //
+    // Flow :
+    //   1. URL ?payment=cancel  → toast "annulé", fin.
+    //   2. URL ?payment=return  → toast "vérification en cours",
+    //      puis polling de /api/payments/paytech/verify/:orderId.
+    //   3. Le serveur répond { paid: bool, failed: bool, reason?: string }.
+    //   4. Toast final selon réponse, ou timeout après 45s avec instruction
+    //      claire (jamais de faux "confirmé").
+    //
+    // Rétrocompat : on accepte aussi l'ancien ?payment=success — mais le
+    // traitement est identique (vérification serveur obligatoire).
     const _handlePaytechReturn = () => {
-      const params   = new URLSearchParams(window.location.search);
-      const payment  = params.get("payment");
-      const orderId  = params.get("orderId");
+      const params  = new URLSearchParams(window.location.search);
+      const payment = params.get("payment");
+      const orderId = params.get("orderId");
       if (!payment || !orderId) return false;
-      // Nettoyer l'URL immédiatement
+      // Nettoyer l'URL immédiatement pour éviter rejouer la vérif au reload
       window.history.replaceState({}, document.title, window.location.pathname);
-      if (payment === "success") {
-        // Récupérer le contexte sauvegardé
-        let pendingCtx = null;
-        try { pendingCtx = JSON.parse(sessionStorage.getItem("nexus_paytech_pending") || "null"); } catch(e) {}
-        sessionStorage.removeItem("nexus_paytech_pending");
-        // Afficher le toast immédiatement
-        setTimeout(() => addToast("\u2705 Paiement Mobile Money confirmé ! Commande en cours de traitement.", "success", 10000), 400);
-        // Pollling status (max 10 tentatives × 3s) pour s'assurer que l'IPN est arrivé
-        if (NEXUS_CONFIG.apiUrl) {
-          let attempts = 0;
-          const pollStatus = async () => {
-            attempts++;
-            try {
-              const r = await DataService.apiFetch(`/api/payments/mobile-money/status/${orderId}`);
-              if (r && r.ok) {
-                const d = await r.json();
-                if (d.paid) {
-                  console.log("[PayTech] Paiement confirmé par serveur ✓");
-                  return;
-                }
-              }
-            } catch(e) {}
-            if (attempts < 10) setTimeout(pollStatus, 3000);
-          };
-          setTimeout(pollStatus, 2000);
-        }
-      } else if (payment === "cancel") {
-        setTimeout(() => addToast("\u274C Paiement annulé. Vous pouvez r\xE9essayer depuis vos commandes.", "error", 8000), 400);
+
+      // Le contexte sessionStorage sert UNIQUEMENT à afficher des infos de la commande,
+      // jamais à confirmer un état.
+      try { sessionStorage.removeItem("nexus_paytech_pending"); } catch(_) {}
+
+      if (payment === "cancel") {
+        setTimeout(() => addToast("\u274C Paiement annulé. Vous pouvez réessayer depuis vos commandes.", "error", 8000), 400);
+        return true;
       }
+
+      // payment === "return" (ou "success" en rétrocompat)
+      setTimeout(() => addToast("\u23F3 Vérification du paiement auprès de PayTech…", "info", 6000), 400);
+
+      if (!NEXUS_CONFIG.apiUrl) {
+        setTimeout(() => addToast("\u26A0\uFE0F Impossible de vérifier le paiement (backend indisponible). Conservez la preuve PayTech et contactez le support.", "warning", 12000), 800);
+        return true;
+      }
+
+      // Polling /verify : max 15 tentatives × 3s = 45s.
+      // Tant que le serveur ne dit pas explicitement paid=true OU failed=true,
+      // on reste en "vérification en cours" — JAMAIS de faux positif.
+      let attempts  = 0;
+      let finished  = false;
+      const pollStatus = async () => {
+        if (finished) return;
+        attempts++;
+        try {
+          const r = await DataService.apiFetch(`/api/payments/paytech/verify/${encodeURIComponent(orderId)}`);
+          if (r && r.ok) {
+            const d = await r.json().catch(() => null);
+            if (d && d.paid === true) {
+              finished = true;
+              console.log("[PayTech] Paiement confirmé par serveur (IPN vérifié) ✓");
+              addToast("\u2705 Paiement confirmé ! Commande en cours de traitement.", "success", 10000);
+              return;
+            }
+            if (d && d.failed === true) {
+              finished = true;
+              const reason = d.reason ? ` (${d.reason})` : "";
+              addToast("\u274C Paiement refusé par PayTech" + reason + ".", "error", 10000);
+              return;
+            }
+            // d.paid === false && d.failed === false → IPN pas encore arrivé, on retente
+          }
+        } catch (e) { /* silencieux — on retentera */ }
+        if (attempts < 15) {
+          setTimeout(pollStatus, 3000);
+        } else if (!finished) {
+          addToast("\u23F3 Pas de confirmation après 45 s. PayTech peut prendre quelques minutes — vous recevrez un email dès validation. Vérifiez votre historique de commandes.", "warning", 15000);
+        }
+      };
+      setTimeout(pollStatus, 2000);
       return true;
     };
     const paytechHandled = _handlePaytechReturn();
