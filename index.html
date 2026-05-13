@@ -11419,6 +11419,90 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
       }
     }
+
+    // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
+    // Déclenchement unique sur "delivered". Idempotent : vérifie en DB qu'aucun
+    // crédit "earn" n'existe déjà pour cette commande avant de créditer.
+    if (newStatus === "delivered") {
+      try {
+        // 1. Récupérer la commande (état local d'abord, Supabase en fallback)
+        let fullOrder = orders.find(o => o.id === orderId);
+        if (!fullOrder && DataService._sb) {
+          const { data: sbOrder } = await DataService._sb
+            .from("orders").select("*").eq("id", orderId).maybeSingle()
+            .catch(() => ({ data: null }));
+          fullOrder = sbOrder;
+        }
+
+        const buyerId  = fullOrder?.buyer_id || fullOrder?.buyer || fullOrder?.user_id || null;
+        const totalEur = fullOrder?.total || fullOrder?.amount_eur || fullOrder?.order_total || 0;
+        const totalXof = Math.round(totalEur * 655.957);
+
+        if (buyerId && totalXof > 0) {
+          // 2. Idempotence : ne créditer qu'une seule fois par commande livrée
+          let alreadyCredited = false;
+          if (DataService._sb) {
+            const { count } = await DataService._sb
+              .from("cashback_transactions")
+              .select("id", { count: "exact", head: true })
+              .eq("order_id", orderId)
+              .eq("type", "earn")
+              .catch(() => ({ count: null }));
+            alreadyCredited = (count || 0) > 0;
+          } else {
+            alreadyCredited = storage.getArray("cashback_transactions")
+              .some(t => t.order_id === orderId && t.type === "earn");
+          }
+
+          if (!alreadyCredited) {
+            // 3. Taux cashback selon palier fidélité (Bronze 1% → Platinum 5%)
+            let cashbackRate = 0.01; // Bronze par défaut
+            if (DataService._sb) {
+              const { data: lp } = await DataService._sb
+                .from("loyalty_points").select("points").eq("user_id", buyerId).maybeSingle()
+                .catch(() => ({ data: null }));
+              const pts = lp?.points || 0;
+              if      (pts >= 20000) cashbackRate = 0.05; // Platinum
+              else if (pts >=  5000) cashbackRate = 0.03; // Gold
+              else if (pts >=  1000) cashbackRate = 0.02; // Silver
+            }
+            const cashbackXof = Math.round(totalXof * cashbackRate);
+
+            // 4. Créditer le cashback (non-bloquant)
+            await DataService.addCashback(
+              buyerId, orderId, cashbackXof, "earn",
+              `Cashback ${(cashbackRate * 100).toFixed(0)}% — commande livrée`
+            ).catch(e => console.warn("[addCashback admin]", e));
+
+            // 5. Créditer les points de fidélité (non-bloquant)
+            const loyaltyRes = await DataService.addLoyaltyPoints(
+              buyerId, totalEur,
+              { reason: "order", orderId, isEuros: true }
+            ).catch(() => null);
+
+            // 6. Notification acheteur avec détail cashback + points + palier
+            const ptsAdded = loyaltyRes?.pointsAdded ?? Math.floor(totalEur * 10);
+            const ptsTotal = loyaltyRes?.points;
+            const tierStr  = loyaltyRes?.tier?.name
+              ? ` — ${loyaltyRes.tier.icon || ""} ${loyaltyRes.tier.name}` : "";
+            DataService.addNotification(buyerId, {
+              type: "order",
+              title: "📦 Livraison confirmée — récompenses créditées !",
+              message: `Commande #${(orderId || "").slice(-8)} livrée. `
+                + `+${cashbackXof.toLocaleString("fr-FR")} FCFA cashback (${(cashbackRate * 100).toFixed(0)}%) `
+                + `& +${ptsAdded} pts fidélité crédités`
+                + (ptsTotal != null
+                    ? `. Total : ${ptsTotal.toLocaleString("fr-FR")} pts${tierStr}.`
+                    : "."),
+            });
+          }
+        }
+      } catch (eRewards) {
+        // Non-bloquant : un échec de récompense ne doit pas bloquer la mise à jour du statut
+        console.warn("[triggerDeliveredRewards admin]", eRewards);
+      }
+    }
+
     loadData();
   };
   const STATUS_MAP = { processing: { label: "En cours", badge: "warning" }, in_transit: { label: "En transit", badge: "info" }, delivered: { label: "Livr\xE9", badge: "success" }, cancelled: { label: "Annul\xE9", badge: "danger" } };
@@ -13785,6 +13869,88 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
       }
     }
+
+    // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
+    // Identique au flux admin. Idempotent via vérification cashback_transactions.
+    if (newStatus === "delivered") {
+      try {
+        // 1. Récupérer la commande complète (état local, sinon Supabase)
+        let fullOrder = orders.find(o => o.id === orderId);
+        if (!fullOrder && DataService._sb) {
+          const { data: sbOrder } = await DataService._sb
+            .from("orders").select("*").eq("id", orderId).maybeSingle()
+            .catch(() => ({ data: null }));
+          fullOrder = sbOrder;
+        }
+
+        const buyerId  = fullOrder?.buyer_id || fullOrder?.buyer || fullOrder?.user_id || null;
+        const totalEur = fullOrder?.total || fullOrder?.amount_eur || fullOrder?.order_total || 0;
+        const totalXof = Math.round(totalEur * 655.957);
+
+        if (buyerId && totalXof > 0) {
+          // 2. Idempotence : ne pas doubler le crédit si "delivered" est rejoué
+          let alreadyCredited = false;
+          if (DataService._sb) {
+            const { count } = await DataService._sb
+              .from("cashback_transactions")
+              .select("id", { count: "exact", head: true })
+              .eq("order_id", orderId)
+              .eq("type", "earn")
+              .catch(() => ({ count: null }));
+            alreadyCredited = (count || 0) > 0;
+          } else {
+            alreadyCredited = storage.getArray("cashback_transactions")
+              .some(t => t.order_id === orderId && t.type === "earn");
+          }
+
+          if (!alreadyCredited) {
+            // 3. Taux selon palier fidélité (Bronze 1% → Platinum 5%)
+            let cashbackRate = 0.01;
+            if (DataService._sb) {
+              const { data: lp } = await DataService._sb
+                .from("loyalty_points").select("points").eq("user_id", buyerId).maybeSingle()
+                .catch(() => ({ data: null }));
+              const pts = lp?.points || 0;
+              if      (pts >= 20000) cashbackRate = 0.05;
+              else if (pts >=  5000) cashbackRate = 0.03;
+              else if (pts >=  1000) cashbackRate = 0.02;
+            }
+            const cashbackXof = Math.round(totalXof * cashbackRate);
+
+            // 4. Cashback
+            await DataService.addCashback(
+              buyerId, orderId, cashbackXof, "earn",
+              `Cashback ${(cashbackRate * 100).toFixed(0)}% — commande livrée`
+            ).catch(e => console.warn("[addCashback vendor]", e));
+
+            // 5. Points de fidélité
+            const loyaltyRes = await DataService.addLoyaltyPoints(
+              buyerId, totalEur,
+              { reason: "order", orderId, isEuros: true }
+            ).catch(() => null);
+
+            // 6. Notification acheteur
+            const ptsAdded = loyaltyRes?.pointsAdded ?? Math.floor(totalEur * 10);
+            const ptsTotal = loyaltyRes?.points;
+            const tierStr  = loyaltyRes?.tier?.name
+              ? ` — ${loyaltyRes.tier.icon || ""} ${loyaltyRes.tier.name}` : "";
+            DataService.addNotification(buyerId, {
+              type: "order",
+              title: "📦 Livraison confirmée — récompenses créditées !",
+              message: `Commande #${(orderId || "").slice(-8)} livrée. `
+                + `+${cashbackXof.toLocaleString("fr-FR")} FCFA cashback (${(cashbackRate * 100).toFixed(0)}%) `
+                + `& +${ptsAdded} pts fidélité crédités`
+                + (ptsTotal != null
+                    ? `. Total : ${ptsTotal.toLocaleString("fr-FR")} pts${tierStr}.`
+                    : "."),
+            });
+          }
+        }
+      } catch (eRewards) {
+        console.warn("[triggerDeliveredRewards vendor]", eRewards);
+      }
+    }
+
     loadData();
     addToast("Statut mis \xE0 jour", "success");
   };
@@ -15481,8 +15647,11 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   };
   const handleCheckoutSuccess = (orderTotal) => {
     setShowCheckout(false);
-    const cartTotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
-    addLoyaltyPoints(currentUser2.id, cartTotal);
+    // [CASHBACK & FIDÉLITÉ v2] Les points et le cashback sont désormais crédités
+    // à la livraison (updateOrderStatus → "delivered"), pas à la pose de commande.
+    // L'ancien appel addLoyaltyPoints(cartTotal) ici créditait les points avant
+    // même que la commande soit confirmée, ce qui permettait de les gagner sur
+    // des commandes annulées. Supprimé — le déclenchement se fait côté admin/vendeur.
     setCart([]);
     DataService.clearCart(currentUser2.id);
     loadData();
