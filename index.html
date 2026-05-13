@@ -13195,6 +13195,145 @@ const VendorAnalyticsDashboard = ({ currentUser: currentUser2, orders, products,
   );
 };
 
+// ══════════════════════════════════════════════════════════════════════════════
+// [REALTIME-CHAT] Hook : sync Supabase Realtime pour les chat inline legacy
+// ──────────────────────────────────────────────────────────────────────────────
+// La table `messages` reçoit les échanges acheteur ↔ vendeur. Sans abonnement
+// postgres_changes, les composants legacy ne voyaient les nouveaux messages
+// qu'après rechargement de page (polling 15s). Ce hook :
+//   1. Recharge l'historique complet de l'utilisateur au montage (Supabase).
+//   2. S'abonne aux INSERT (messages reçus + echo de nos envois) et UPDATE
+//      (accusés de lecture sur nos messages sortants) en temps réel.
+//   3. Maintient le cache localStorage cohérent en shape legacy
+//      ({from, to, fromName, toName, date}) pour que le code de rendu
+//      existant qui lit `storage.getArray("messages")` voit les nouveautés
+//      sans modification.
+//   4. Bump un `tick` interne qui force le re-render des consommateurs.
+// Channel name unique par montage pour éviter toute collision avec le hook
+// `useMessaging` (MessagingCenter) qui utilise `realtime-messages-${uid}`.
+// ══════════════════════════════════════════════════════════════════════════════
+function useRealtimeMessagesSync(currentUser) {
+  const [tick, setTick] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!currentUser || !currentUser.id) return;
+    const uid = currentUser.id;
+    const sb  = DataService._sb;
+    let mounted    = true;
+    let channelRef = null;
+
+    // Helper : ingère des rows Supabase dans le cache localStorage (shape legacy)
+    const ingestRows = (rows) => {
+      if (!rows || rows.length === 0) return false;
+      const all = storage.getArray("messages");
+      const byId = new Map(all.map(m => [m.id, m]));
+      let changed = false;
+      for (const r of rows) {
+        const legacy = {
+          id: r.id,
+          from: r.from_id, fromName: r.from_name,
+          to: r.to_id, toName: r.to_name,
+          text: r.text,
+          date: r.created_at,
+          read: !!r.read,
+        };
+        const existing = byId.get(r.id);
+        if (!existing) {
+          all.push(legacy); byId.set(r.id, legacy); changed = true;
+        } else if (existing.read !== legacy.read || existing.text !== legacy.text) {
+          existing.read = legacy.read;
+          existing.text = legacy.text;
+          changed = true;
+        }
+      }
+      if (changed) storage.set("messages", all);
+      return changed;
+    };
+
+    // 1) Chargement initial depuis Supabase (rafraîchit le cache si périmé)
+    const loadInitial = async () => {
+      if (!sb) return;
+      try {
+        const sess = await sb.auth.getSession().catch(() => ({ data: { session: null } }));
+        if (!sess || !sess.data || !sess.data.session) return;
+        const { data, error } = await sb.from('messages')
+          .select('id, from_id, from_name, to_id, to_name, text, read, read_at, created_at')
+          .or(`from_id.eq.${uid},to_id.eq.${uid}`)
+          .order('created_at', { ascending: true })
+          .limit(500);
+        if (error) { console.warn('[REALTIME-CHAT] load:', error.message); return; }
+        if (mounted && ingestRows(data || [])) setTick(t => t + 1);
+      } catch (e) {
+        console.warn('[REALTIME-CHAT] load exception:', e.message);
+      }
+    };
+    loadInitial();
+
+    // 2) Abonnement Supabase Realtime — postgres_changes sur `messages`
+    if (sb) {
+      try {
+        const chanName = `legacy-chat-${uid}-${Math.random().toString(36).slice(2, 8)}`;
+        channelRef = sb
+          .channel(chanName)
+          // Messages reçus (to_id = moi)
+          .on('postgres_changes', {
+            event: 'INSERT', schema: 'public', table: 'messages',
+            filter: `to_id=eq.${uid}`,
+          }, (payload) => {
+            if (!mounted) return;
+            if (ingestRows([payload.new])) setTick(t => t + 1);
+            // Notif push si onglet caché
+            if (document.hidden && window.nexusPush) {
+              const m = payload.new;
+              window.nexusPush.sendLocal(
+                `💬 ${m.from_name || 'Message'}`,
+                (m.text || '').slice(0, 80),
+                `/messages/${m.from_id}`
+              );
+            }
+          })
+          // Echo de nos propres envois (au cas où l'envoi n'aurait pas mis le cache à jour)
+          .on('postgres_changes', {
+            event: 'INSERT', schema: 'public', table: 'messages',
+            filter: `from_id=eq.${uid}`,
+          }, (payload) => {
+            if (!mounted) return;
+            if (ingestRows([payload.new])) setTick(t => t + 1);
+          })
+          // Accusés de lecture : nos messages marqués lus par le destinataire
+          .on('postgres_changes', {
+            event: 'UPDATE', schema: 'public', table: 'messages',
+            filter: `from_id=eq.${uid}`,
+          }, (payload) => {
+            if (!mounted) return;
+            if (payload.new.read && !payload.old.read) {
+              if (ingestRows([payload.new])) setTick(t => t + 1);
+            }
+          })
+          .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+              console.info('[REALTIME-CHAT] Inline chat sync actif (' + chanName + ')');
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              console.warn('[REALTIME-CHAT] Realtime indisponible — fallback polling 60s (' + status + ')');
+            }
+          });
+      } catch (e) {
+        console.warn('[REALTIME-CHAT] subscribe exception:', e.message);
+      }
+    }
+
+    return () => {
+      mounted = false;
+      if (channelRef && sb) {
+        try { sb.removeChannel(channelRef); } catch (_) {}
+        channelRef = null;
+      }
+    };
+  }, [currentUser && currentUser.id]);
+
+  return tick;
+}
+
 // ══════════════════════════════════════════════════════════
 // VENDOR CHAT INLINE — Messagerie split-panel en page
 // ══════════════════════════════════════════════════════════
@@ -13208,15 +13347,13 @@ const VendorChatInline = ({ currentUser: currentUser2, addToast }) => {
   const bottomRef = React.useRef(null);
   const textareaRef = React.useRef(null);
 
-  // [PERF] Polling adaptatif — 3s si onglet visible, 15s si caché
+  // [REALTIME-CHAT] Branche Supabase Realtime — les nouveaux messages s'affichent
+  // instantanément (pas de rechargement nécessaire). Le polling 60s ci-dessous
+  // n'est qu'un filet de sécurité si Realtime tombe.
+  useRealtimeMessagesSync(currentUser2);
   React.useEffect(() => {
-    let iv = setInterval(() => setTick(t => t + 1), 15000); // [PERF] 3s→15s
-    const onVisibility = () => {
-      clearInterval(iv);
-      iv = setInterval(() => setTick(t => t + 1), document.hidden ? 60000 : 15000); // [PERF]
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVisibility); };
+    const iv = setInterval(() => setTick(t => t + 1), 60000);
+    return () => clearInterval(iv);
   }, []);
 
   // Auto-scroll to bottom on new message
@@ -13230,7 +13367,12 @@ const VendorChatInline = ({ currentUser: currentUser2, addToast }) => {
     const all = storage.getArray("messages");
     let changed = false;
     all.forEach(m => { if (m.to === currentUser2.id && m.from === activePartnerId && !m.read) { m.read = true; changed = true; } });
-    if (changed) storage.set("messages", all);
+    if (changed) {
+      storage.set("messages", all);
+      // [REALTIME-CHAT] Synchroniser côté serveur pour que le vendeur/acheteur
+      // d'en face reçoive l'UPDATE Realtime et voie le double-check bleu.
+      DataService.markMessageRead(null, activePartnerId).catch(() => {});
+    }
   }, [activePartnerId, tick]);
 
   const allMsgs = storage.getArray("messages");
@@ -15779,64 +15921,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setComposeRecipient({ id: order.vendor, name: order.vendorName });
       setShowComposeMessage(true);
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => generateInvoicePDF(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Facture PDF"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => printOrderSlip(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-print" }), " Imprimer"), order.status === "delivered" && !order.returnStatus && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowReturnOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour"), !order.disputeId && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "#dc2626", color: "#dc2626" }, onClick: () => setShowDisputeOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige"), order.disputeId && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center", fontSize: "0.72rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige ", order.disputeStatus === "open" ? "en cours" : "r\xE9solu"), order.returnStatus && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour ", order.returnStatus === "requested" ? "en cours" : order.returnStatus), ["pending_payment", "processing"].includes(order.status) && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowCancelOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Annuler"))));
-  }))), view === "messages" && /* @__PURE__ */ React.createElement("div", { className: "card" },
-  /* @__PURE__ */ React.createElement("div", { className: "card-header" },
-    /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-comments text-primary" }), " Messages"),
-    /* @__PURE__ */ React.createElement("span", { style:{fontSize:"0.78rem",color:"var(--text-secondary)"} }, "Cliquez sur un contact pour ouvrir la conversation")
-  ),
-  (() => {
-    const allMsgs = [];  // Messages chargés depuis Supabase — pas localStorage
-    const myMsgs = allMsgs.filter(m => m.from === currentUser2.id || m.to === currentUser2.id);
-    // Group by conversation partner
-    const threads = {};
-    myMsgs.forEach(m => {
-      const partnerId = m.from === currentUser2.id ? m.to : m.from;
-      const partnerName = m.from === currentUser2.id ? m.toName : m.fromName;
-      if (!threads[partnerId]) threads[partnerId] = { partnerId, partnerName, messages:[], unread:0 };
-      threads[partnerId].messages.push(m);
-      if (m.to === currentUser2.id && !m.read) threads[partnerId].unread++;
-    });
-    const threadList = Object.values(threads).sort((a,b) => {
-      const la = a.messages[a.messages.length-1]?.date || "";
-      const lb = b.messages[b.messages.length-1]?.date || "";
-      return lb.localeCompare(la);
-    });
-    if (threadList.length === 0) return /* @__PURE__ */ React.createElement("div", { className:"empty-state" },
-      /* @__PURE__ */ React.createElement("i", { className:"fas fa-comments" }),
-      /* @__PURE__ */ React.createElement("h3", null, "Aucun message"),
-      /* @__PURE__ */ React.createElement("p", null, "Vos échanges avec les vendeurs apparaîtront ici. Utilisez le bouton \"Vendeur\" sur une commande pour démarrer une conversation.")
-    );
-    return /* @__PURE__ */ React.createElement("div", { style:{display:"flex",flexDirection:"column",gap:"0.5rem"} },
-      threadList.map(th => {
-        const last = th.messages[th.messages.length-1];
-        const isMine = last.from === currentUser2.id;
-        return /* @__PURE__ */ React.createElement("div", { key:th.partnerId,
-          onClick:() => { setComposeRecipient({id:th.partnerId,name:th.partnerName}); setShowComposeMessage(true); },
-          style:{display:"flex",alignItems:"center",gap:"1rem",padding:"0.85rem 1rem",borderRadius:"12px",border:"1px solid var(--border)",background:"white",cursor:"pointer",transition:"all 0.2s"},
-          onMouseEnter:e=>e.currentTarget.style.background="var(--bg-light)",
-          onMouseLeave:e=>e.currentTarget.style.background="white"
-        },
-          /* @__PURE__ */ React.createElement("div", { style:{width:"42px",height:"42px",borderRadius:"50%",background:"linear-gradient(135deg,var(--primary),var(--primary-light))",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0} },
-            (th.partnerName||"?")[0].toUpperCase()
-          ),
-          /* @__PURE__ */ React.createElement("div", { style:{flex:1,minWidth:0} },
-            /* @__PURE__ */ React.createElement("div", { style:{fontWeight:th.unread>0?700:600,fontSize:"0.92rem",display:"flex",alignItems:"center",gap:"0.5rem"} },
-              th.partnerName,
-              th.unread > 0 && /* @__PURE__ */ React.createElement("span", { className:"badge badge-danger", style:{fontSize:"0.68rem"} }, th.unread)
-            ),
-            /* @__PURE__ */ React.createElement("div", { style:{fontSize:"0.8rem",color:"var(--text-secondary)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:"0.15rem"} },
-              isMine ? "Vous : " : "", last.text.slice(0,60), last.text.length>60?"…":""
-            )
-          ),
-          /* @__PURE__ */ React.createElement("div", { style:{fontSize:"0.72rem",color:"var(--text-secondary)",flexShrink:0,textAlign:"right"} },
-            new Date(last.date).toLocaleDateString("fr-FR",{day:"numeric",month:"short"}),
-            /* @__PURE__ */ React.createElement("div", null, new Date(last.date).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}))
-          )
-        );
-      })
-    );
-  })()
-  ), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
+  }))), view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
     // [FIX #7] Fetch loyalty depuis GET /api/loyalty — tier + historique réel
     const LoyaltyHist = () => {
       const [ld, setLd] = React.useState(null);
