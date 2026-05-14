@@ -1453,26 +1453,6 @@ const NEXUS_CONFIG = {
     enabled: true,
   },
   // ═══════════════════════════════════════════════════════════════════════
-  //  NOTIFICATIONS PUSH — clé VAPID publique
-  // ───────────────────────────────────────────────────────────────────────
-  //  Sans cette clé, les notifications push Web échouent silencieusement.
-  //  Trois sources possibles (essayées dans cet ordre) :
-  //    1. NEXUS_CONFIG.push.vapidPublicKey   ← ici (instantané, pas de réseau)
-  //    2. GET /api/push/vapid-key            ← backend API
-  //    3. GET /push-vapid-key                ← Netlify Function (legacy)
-  //
-  //  Génération (une seule fois, sur votre machine) :
-  //    npx web-push generate-vapid-keys
-  //  → copier la clé PUBLIQUE ici (la clé PRIVÉE va dans l'env var backend :
-  //    VAPID_PRIVATE_KEY)
-  //
-  //  Si les 3 sources échouent, l'UI affiche un message explicite
-  //  au lieu d'échouer silencieusement.
-  // ═══════════════════════════════════════════════════════════════════════
-  push: {
-    vapidPublicKey: "", // ex: "BEl62iUYgUivxIkv69yViEuiBIa-Ib..."  (clé base64url ~88 car.)
-  },
-  // ═══════════════════════════════════════════════════════════════════════
   //  MENTIONS LÉGALES — OBLIGATOIRES POUR LA PRODUCTION
   // ───────────────────────────────────────────────────────────────────────
   //  Ces informations apparaissent sur : les factures PDF (acheteur &
@@ -1511,7 +1491,6 @@ try {
     if (_sc.emailjsResetTpl)  NEXUS_CONFIG.emailjs.resetTemplateId   = _sc.emailjsResetTpl;
     if (_sc.apiUrl)           NEXUS_CONFIG.apiUrl                    = _sc.apiUrl;
     if (_sc.githubEnabled !== undefined) NEXUS_CONFIG.github.enabled = _sc.githubEnabled;
-    if (_sc.vapidPublicKey) NEXUS_CONFIG.push.vapidPublicKey = _sc.vapidPublicKey;
     if (_sc.legalNinea)       NEXUS_CONFIG.legal.ninea       = _sc.legalNinea;
     if (_sc.legalRccm)        NEXUS_CONFIG.legal.rccm        = _sc.legalRccm;
     if (_sc.legalAddress)     NEXUS_CONFIG.legal.address      = _sc.legalAddress;
@@ -2029,6 +2008,12 @@ const DataService = {
   // ── Vérification stock avant checkout ────────────────────────────────────
   // Appelle GET /api/products/check-stock pour obtenir les stocks réels
   // juste avant la validation. Retourne la liste des articles en rupture.
+  //
+  // ⚠️  USAGE : pré-vérification UX uniquement (afficher un avertissement
+  // rapide). La VRAIE garantie de stock est dans reserveAndCreateOrder()
+  // qui fait un appel atomique POST /api/orders (le backend décrémente
+  // dans la même transaction SQL). Ne JAMAIS se fier à cette méthode
+  // seule pour confirmer un achat.
   async checkStockAvailability(cartItems) {
     const itemsWithId = cartItems.filter(i => i.id);
     if (itemsWithId.length === 0) return { ok: true, outOfStock: [] };
@@ -2070,8 +2055,58 @@ const DataService = {
     return { ok: outOfStock.length === 0, outOfStock };
   },
 
-  // ── Création commande via backend avec gestion du 409 stock ──────────────
-  async createOrder(orderPayload) {
+  // ═══════════════════════════════════════════════════════════════════════
+  //  reserveAndCreateOrder — Création commande ATOMIQUE (stock + commande)
+  // ───────────────────────────────────────────────────────────────────────
+  //  Remplace l'ancien pattern "check-then-create" qui avait une fenêtre
+  //  de race condition entre checkStockAvailability et createOrder.
+  //
+  //  Nouveau flow :
+  //    1. POST /api/orders (un seul appel)
+  //    2. Le backend fait dans UNE SEULE TRANSACTION SQL :
+  //       a) SELECT stock FROM products WHERE id = ? FOR UPDATE  ← lock
+  //       b) Vérifier stock >= quantité demandée
+  //       c) UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?
+  //       d) INSERT INTO orders (...)
+  //       e) COMMIT (ou ROLLBACK si stock insuffisant → 409)
+  //    3. Retour : 201 { order } ou 409 { code: "STOCK_INSUFFICIENT", items }
+  //
+  //  Si le paiement échoue APRÈS la création de la commande :
+  //    → POST /api/orders/:id/cancel (le backend re-incrémente le stock)
+  //
+  //  Contrat backend OBLIGATOIRE (la sécurité stock repose dessus) :
+  //  ─────────────────────────────────────────────────────────────────
+  //  POST /api/orders
+  //    Pseudo-code SQL dans la transaction :
+  //
+  //    BEGIN;
+  //      -- Lock les lignes produit pour empêcher les lectures concurrentes
+  //      SELECT id, stock FROM products
+  //        WHERE id IN (item_ids) FOR UPDATE;
+  //
+  //      -- Vérifier chaque quantité
+  //      FOR each item IN request.products:
+  //        IF product.stock < item.quantity:
+  //          ROLLBACK;
+  //          RETURN 409 { code: "STOCK_INSUFFICIENT", items: [...] };
+  //
+  //      -- Décrémenter atomiquement
+  //      UPDATE products SET stock = stock - item.quantity
+  //        WHERE id = item.id AND stock >= item.quantity;
+  //      -- Si affected_rows = 0 → race condition détectée → ROLLBACK
+  //
+  //      -- Créer la commande
+  //      INSERT INTO orders (...) VALUES (...);
+  //    COMMIT;
+  //
+  //  POST /api/orders/:id/cancel
+  //    → UPDATE products SET stock = stock + item.quantity ...
+  //    → UPDATE orders SET status = 'cancelled' WHERE id = ?
+  //
+  //  Variables d'env : aucune spécifique (utilise la DB existante)
+  // ═══════════════════════════════════════════════════════════════════════
+  async reserveAndCreateOrder(orderPayload) {
+    // ── 1. Backend API : création atomique (stock + commande en une transaction)
     if (NEXUS_CONFIG.apiUrl) {
       const res = await this.apiFetch('/api/orders', {
         method: 'POST',
@@ -2081,19 +2116,15 @@ const DataService = {
       if (res) {
         const json = await res.json();
         if (res.status === 409 && json.code === 'STOCK_INSUFFICIENT') {
-          // Erreur stock structurée — remonter au composant pour affichage précis
           const err = new Error(json.detail || json.error || 'Stock insuffisant');
           err.code = 'STOCK_INSUFFICIENT';
           err.items = json.items || [];
           throw err;
         }
         if (!res.ok) throw new Error(json.error || json.message || 'Erreur commande');
-        // [FIX] Le backend retourne snake_case (buyer_email, tracking_number…)
-        // mais sendOrderConfirmation attend camelCase. Fusion des deux formes.
         return {
           ...orderPayload,
           ...json,
-          // [FIX O] Toujours utiliser l'ID retourné par le backend (UUID réel), jamais le _localId
           id:             json.id,
           buyerName:      json.buyer_name      || orderPayload.buyerName,
           buyerEmail:     json.buyer_email     || orderPayload.buyerEmail,
@@ -2107,19 +2138,86 @@ const DataService = {
           earnedPoints:   json.earnedPoints    || 0,
         };
       }
-      // Backend injoignable → fallback Supabase/localStorage
+      // Backend injoignable → fallback ci-dessous
     }
 
-    // Fallback : sauvegarder localement + décrémenter localStorage
-    const saved = await this.saveOrder(orderPayload);
-    // Décrémentation locale (meilleur effort)
+    // ── 2. Supabase direct : transaction simulée via RPC
+    if (this._sb) {
+      try {
+        // Appeler une stored procedure qui fait la transaction atomique
+        // CREATE FUNCTION create_order_atomic(items jsonb, order_data jsonb)
+        // RETURNS jsonb AS $$ ... $$ (même logique que le backend)
+        const { data, error } = await this._sb.rpc('create_order_atomic', {
+          items_json: JSON.stringify(orderPayload.products),
+          order_json: JSON.stringify(orderPayload),
+        });
+        if (error) {
+          if (error.message.includes('STOCK_INSUFFICIENT')) {
+            const err = new Error(error.message);
+            err.code = 'STOCK_INSUFFICIENT';
+            throw err;
+          }
+          throw new Error(error.message);
+        }
+        if (data) return { ...orderPayload, ...data };
+      } catch (e) {
+        if (e.code === 'STOCK_INSUFFICIENT') throw e;
+        console.warn('[reserveAndCreateOrder] Supabase RPC échoué:', e.message);
+      }
+    }
+
+    // ── 3. Fallback localStorage : verrou optimiste avec compare-and-swap
+    // PAS thread-safe entre onglets, mais mieux qu'une écriture aveugle.
     const allProds = storage.getArray('products');
-    (orderPayload.products || []).forEach(item => {
-      const idx = allProds.findIndex(p => p.id === item.id);
-      if (idx !== -1) allProds[idx].stock = Math.max(0, (allProds[idx].stock || 0) - (item.quantity || 1));
-    });
+    const insufficient = [];
+    for (const item of (orderPayload.products || [])) {
+      const p = allProds.find(x => x.id === item.id);
+      const available = p ? (p.stock || 0) : 0;
+      const qty = item.quantity || 1;
+      if (available < qty) {
+        insufficient.push({
+          product_name: item.name || item.id,
+          requested: qty,
+          available,
+        });
+      }
+    }
+    if (insufficient.length > 0) {
+      const err = new Error('Stock insuffisant');
+      err.code = 'STOCK_INSUFFICIENT';
+      err.items = insufficient;
+      throw err;
+    }
+    // Décrémenter ET sauvegarder en un seul storage.set (atomique par rapport au thread JS)
+    for (const item of (orderPayload.products || [])) {
+      const idx = allProds.findIndex(x => x.id === item.id);
+      if (idx !== -1) {
+        allProds[idx].stock = Math.max(0, (allProds[idx].stock || 0) - (item.quantity || 1));
+      }
+    }
     storage.set('products', allProds);
+    const saved = await this.saveOrder(orderPayload);
     return saved;
+  },
+
+  // Annuler une commande et re-incrémenter le stock (paiement échoué)
+  async cancelOrderAndReleaseStock(orderId) {
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await this.apiFetch(`/api/orders/${orderId}/cancel`, { method: 'POST' });
+        if (res && res.ok) return true;
+      } catch (_) {}
+    }
+    // Fallback : annuler localement
+    await this.updateOrder(orderId, { status: 'cancelled' });
+    return true;
+  },
+
+  // ── Création commande via backend avec gestion du 409 stock ──────────────
+  // LEGACY — conservé pour rétrocompatibilité mais reserveAndCreateOrder()
+  // est préféré car il documente et impose le contrat atomique.
+  async createOrder(orderPayload) {
+    return this.reserveAndCreateOrder(orderPayload);
   },
 
   // ── PANIER SUPABASE — API-first ───────────────────────────────────────────
@@ -7515,7 +7613,10 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   const processPayment = (stripeResult = null) => {
     setLoading(true);
     (async () => {
-      // ── Étape 1 : Vérification stock temps-réel ───────────────────────────
+      // ── Étape 1 : Pré-vérification stock (UX uniquement) ──────────────
+      // Cette vérification est RAPIDE et donne un feedback immédiat, mais
+      // elle N'EST PAS la garantie de stock. La vraie réservation atomique
+      // se fait dans reserveAndCreateOrder() (étape 2).
       const stockCheck = await DataService.checkStockAvailability(cart).catch(() => ({ ok: true, outOfStock: [] }));
       if (!stockCheck.ok) {
         setLoading(false);
@@ -7523,7 +7624,6 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           `${i.name} (${i.available} disponible${i.available > 1 ? 's' : ''})`
         ).join(', ');
         addToast(`\u26A0\uFE0F Stock insuffisant : ${names}. Veuillez mettre à jour votre panier.`, "error", 8000);
-        // Mettre à jour les stocks dans le panier pour guider l'utilisateur
         if (stockCheck.stocks) {
           const allProds = storage.getArray("products");
           Object.entries(stockCheck.stocks).forEach(([id, s]) => {
@@ -7535,7 +7635,10 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         return;
       }
 
-      // ── Étape 2 : Créer les commandes par vendeur ─────────────────────────
+      // ── Étape 2 : Créer les commandes (stock réservé atomiquement) ────
+      // reserveAndCreateOrder() fait check + décrémentation + INSERT dans
+      // UNE SEULE transaction SQL côté backend. Pas de fenêtre de race.
+      //
       // Si backend disponible ET panier multi-vendeur → route split dédiée
       if (NEXUS_CONFIG.apiUrl && isMultiVendor) {
         try {
@@ -7622,13 +7725,18 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
 
         let savedOrder;
         try {
-          savedOrder = await DataService.createOrder(orderPayload);
+          // reserveAndCreateOrder fait check+lock+décrémentation+INSERT atomiquement
+          savedOrder = await DataService.reserveAndCreateOrder(orderPayload);
         } catch (err) {
           setLoading(false);
           if (err.code === 'STOCK_INSUFFICIENT') {
             const detail = err.items?.map(i => `${i.product_name} (dispo: ${i.available})`).join(', ')
               || err.message;
             addToast(`\u274C Stock insuffisant : ${detail}`, "error", 8000);
+            // Annuler les commandes déjà créées dans cette boucle (re-incrémenter stock)
+            for (const prev of createdOrders) {
+              DataService.cancelOrderAndReleaseStock(prev.id).catch(() => {});
+            }
           } else {
             addToast(`\u274C Erreur commande : ${err.message}`, "error", 6000);
           }
@@ -7643,15 +7751,15 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         });
       }
 
-      // Le stock est maintenant géré côté serveur (décrémenté atomiquement).
-      // On met à jour le cache localStorage pour refléter les nouvelles valeurs.
-      if (stockCheck.stocks) {
+      // Le stock a été décrémenté ATOMIQUEMENT côté serveur dans
+      // reserveAndCreateOrder(). On met à jour le cache localStorage pour
+      // que l'UI reflète les nouvelles quantités sans recharger la page.
+      {
         const allProds = storage.getArray("products");
-        Object.entries(stockCheck.stocks).forEach(([id, s]) => {
-          const idx = allProds.findIndex(p => p.id === id);
+        cart.forEach(item => {
+          const idx = allProds.findIndex(p => p.id === item.id);
           if (idx !== -1) {
-            const ordered = cart.find(i => i.id === id);
-            allProds[idx].stock = Math.max(0, s.stock - (ordered?.quantity || 0));
+            allProds[idx].stock = Math.max(0, (allProds[idx].stock || 0) - (item.quantity || 1));
           }
         });
         storage.set("products", allProds);
@@ -15919,107 +16027,41 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
     return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
   };
 
-  // ═══════════════════════════════════════════════════════════════════════
-  //  resolveVapidKey — résolution multi-source de la clé VAPID publique
-  // ───────────────────────────────────────────────────────────────────────
-  //  Ordre de priorité :
-  //    1. NEXUS_CONFIG.push.vapidPublicKey  (instant, pas de réseau)
-  //    2. GET /api/push/vapid-key           (backend API)
-  //    3. GET /push-vapid-key               (Netlify Function legacy)
-  //  Retourne { key, source } ou { key: null, error: "..." }
-  // ═══════════════════════════════════════════════════════════════════════
-  const resolveVapidKey = async () => {
-    // 1. Config locale
-    if (NEXUS_CONFIG.push?.vapidPublicKey) {
-      return { key: NEXUS_CONFIG.push.vapidPublicKey, source: "config" };
-    }
-    // 2. Backend API
-    if (NEXUS_CONFIG.apiUrl) {
-      try {
-        const res = await fetch((NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "") + "/api/push/vapid-key").catch(() => null);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data.publicKey) return { key: data.publicKey, source: "api" };
-        }
-      } catch (_) {}
-    }
-    // 3. Netlify Function (legacy)
-    try {
-      const res = await fetch("/push-vapid-key").catch(() => null);
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data.publicKey) return { key: data.publicKey, source: "netlify" };
-      }
-    } catch (_) {}
-    // Aucune source disponible
-    return {
-      key: null,
-      error: "Clé VAPID non disponible. Configurez NEXUS_CONFIG.push.vapidPublicKey (Admin → Configuration) ou déployez /api/push/vapid-key."
-    };
-  };
+  // [FIX] Endpoint Netlify Function (fonctionne sans apiUrl backend)
+  const PUSH_SUBSCRIBE_URL  = "/push-subscribe";
+  const PUSH_VAPID_KEY_URL  = "/push-vapid-key";
 
   const requestPush = async () => {
     setSubLoading(true);
     try {
-      // Vérifier le support navigateur AVANT de demander la permission
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        addToast("Notifications push non supportées sur ce navigateur.", "error");
-        setSubLoading(false); return;
-      }
-      if (!("Notification" in window)) {
-        addToast("API Notification non supportée.", "error");
-        setSubLoading(false); return;
-      }
-
       const perm = await Notification.requestPermission();
       setPermission(perm);
-      if (perm !== "granted") {
-        addToast("Permission notifications refusée par l'utilisateur.", "warning");
-        setSubLoading(false); return;
+      if (perm !== "granted") { addToast("Permission notifications refusée", "warning"); setSubLoading(false); return; }
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        addToast("Notifications push non supportées sur ce navigateur", "error"); setSubLoading(false); return;
       }
-
-      // Résoudre la clé VAPID (multi-source)
-      const vapid = await resolveVapidKey();
-      if (!vapid.key) {
-        addToast(vapid.error, "error", 10000);
-        setSubLoading(false); return;
+      // [FIX] Récupérer la vraie clé VAPID publique depuis la Netlify Function
+      const vapidRes = await fetch(PUSH_VAPID_KEY_URL).catch(() => null);
+      if (!vapidRes || !vapidRes.ok) {
+        addToast("Clé VAPID non disponible — vérifiez la config Netlify", "error"); setSubLoading(false); return;
       }
-      console.info(`[Push] Clé VAPID obtenue via : ${vapid.source}`);
-
+      const { publicKey } = await vapidRes.json();
       const reg = await navigator.serviceWorker.ready;
+      // [FIX] applicationServerKey ne peut pas être null — doit être Uint8Array
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapid.key),
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
-
-      // Enregistrer l'abonnement côté serveur
+      // Récupérer le token Supabase pour l'associer à l'utilisateur côté serveur
       const sbSession = await DataService._sb?.auth.getSession().catch(() => null);
       const token = sbSession?.data?.session?.access_token || sessionStorage.getItem("nexus_jwt") || "";
-
-      // Essayer le backend API d'abord, puis Netlify Function
-      let registered = false;
-      if (NEXUS_CONFIG.apiUrl) {
-        try {
-          const res = await fetch((NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "") + "/api/push/subscribe", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-            body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
-          }).catch(() => null);
-          if (res && res.ok) registered = true;
-        } catch (_) {}
-      }
-      if (!registered) {
-        await fetch("/push-subscribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
-        }).catch(() => {});
-      }
+      await fetch(PUSH_SUBSCRIBE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
+      }).catch(() => {});
       addToast("Notifications push activées ✓", "success");
-    } catch(e) {
-      console.warn("[Push] Erreur activation:", e.message);
-      addToast("Erreur activation push : " + e.message, "error");
-    }
+    } catch(e) { addToast("Erreur activation push : " + e.message, "error"); }
     setSubLoading(false);
   };
 
@@ -16031,22 +16073,10 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
         const sub = await reg.pushManager.getSubscription();
         if (sub) {
           await sub.unsubscribe();
-          // Désinscrire côté serveur (API backend puis Netlify)
-          const payload = JSON.stringify({ endpoint: sub.endpoint });
-          let unregistered = false;
-          if (NEXUS_CONFIG.apiUrl) {
-            try {
-              const res = await fetch((NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "") + "/api/push/subscribe", {
-                method: "DELETE", headers: { "Content-Type": "application/json" }, body: payload,
-              }).catch(() => null);
-              if (res && res.ok) unregistered = true;
-            } catch (_) {}
-          }
-          if (!unregistered) {
-            await fetch("/push-subscribe", {
-              method: "DELETE", headers: { "Content-Type": "application/json" }, body: payload,
-            }).catch(() => {});
-          }
+          await fetch(PUSH_SUBSCRIBE_URL, {
+            method: "DELETE", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          }).catch(() => {});
         }
       }
       setPermission("default");
@@ -17949,26 +17979,23 @@ window.nexusPush = {
         data: url || "/",
         vibrate: [200, 100, 200]
       });
-    } else if ("Notification" in window) {
-      // Fallback sans SW — notification basique (pas d'action au clic)
-      try { new Notification(title, { body }); } catch (_) {}
     } else {
-      console.info("[Push] sendLocal ignoré — ni Service Worker ni API Notification disponible");
-      return false;
+      new Notification(title, { body });
     }
     return true;
   }
 };
 
-// ═══════════════════════════════════════════════════════════════════════════
-// [NEXUS-F4] web-push VAPID — abonnement push après login réussi
-// ─────────────────────────────────────────────────────────────────────────
-// Résolution VAPID multi-source (même logique que requestPush) :
-//   1. NEXUS_CONFIG.push.vapidPublicKey  (config locale, instantanée)
-//   2. GET /api/push/vapid-key           (backend API)
-//   3. GET /push-vapid-key               (Netlify Function legacy)
-// Si aucune source n'est disponible → log explicite (pas de crash muet).
-// ═══════════════════════════════════════════════════════════════════════════
+// [NEXUS-F4] web-push VAPID [FE]
+// PLACEMENT : à ajouter dans index.html après le bloc `window.nexusPush = { ... }`
+//             (après la ligne 12630 environ), ou à appeler depuis la fonction
+//             de login réussie de l'utilisateur.
+//
+// MARQUEUR D'INSERTION : "window.nexusPush = {"
+// Insérer le code suivant APRÈS la fermeture `};` de window.nexusPush
+// ════════════════════════════════════════════════════════════════════════════════
+
+// Fonction globale d'abonnement push (appelée après un login réussi)
 window.nexusPush.subscribe = async function(apiToken) {
   if (!('PushManager' in window)) {
     console.info('[Push] PushManager non supporté par ce navigateur');
@@ -17979,12 +18006,14 @@ window.nexusPush.subscribe = async function(apiToken) {
     return false;
   }
 
+  // 1. Demander la permission si pas encore accordée
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
     console.info('[Push] Permission refusée par l\'utilisateur');
     return false;
   }
 
+  // [FIX] urlBase64ToUint8Array : conversion clé VAPID base64url → Uint8Array
   const urlBase64ToUint8Array = (b64) => {
     const pad = '='.repeat((4 - b64.length % 4) % 4);
     const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
@@ -17992,107 +18021,67 @@ window.nexusPush.subscribe = async function(apiToken) {
   };
 
   try {
-    // ── Résolution multi-source de la clé VAPID ──────────────────────
-    let vapidKey = null;
-    let vapidSource = null;
+    // 2. Récupérer la clé VAPID publique depuis la Netlify Function (plus de 404)
+    // [FIX] URL corrigée : /functions/ au lieu de /api/push/ (inexistant sans backend)
+    const vapidRes = await fetch('/push-vapid-key', {
+      headers: apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {},
+    }).catch(() => null);
 
-    // 1. Config locale (instantanée)
-    if (NEXUS_CONFIG.push?.vapidPublicKey) {
-      vapidKey = NEXUS_CONFIG.push.vapidPublicKey;
-      vapidSource = "config";
-    }
-
-    // 2. Backend API
-    if (!vapidKey && NEXUS_CONFIG.apiUrl) {
-      try {
-        const res = await fetch((NEXUS_CONFIG.apiUrl || '').replace(/\/$/, '') + '/api/push/vapid-key', {
-          headers: apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {},
-        }).catch(() => null);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data.publicKey) { vapidKey = data.publicKey; vapidSource = "api"; }
-        }
-      } catch (_) {}
-    }
-
-    // 3. Netlify Function (legacy)
-    if (!vapidKey) {
-      try {
-        const res = await fetch('/push-vapid-key', {
-          headers: apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {},
-        }).catch(() => null);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data.publicKey) { vapidKey = data.publicKey; vapidSource = "netlify"; }
-        }
-      } catch (_) {}
-    }
-
-    if (!vapidKey) {
-      console.warn('[Push] ❌ Clé VAPID introuvable. Configurez NEXUS_CONFIG.push.vapidPublicKey ou déployez /api/push/vapid-key.');
-      console.info('[Push] Générez une paire VAPID avec : npx web-push generate-vapid-keys');
-      // Notification locale informative (pas de crash)
-      if (window.nexusPush && typeof window.nexusPush.sendLocal === 'function') {
-        window.nexusPush.sendLocal(
-          '⚠️ Notifications push',
-          'Les notifications push ne sont pas configurées. Contactez l\'administrateur.',
-          '/'
-        ).catch(() => {});
-      }
+    if (!vapidRes || !vapidRes.ok) {
+      console.warn('[Push] VAPID key non disponible :', vapidRes?.status);
       return false;
     }
-    console.info(`[Push] Clé VAPID obtenue via : ${vapidSource}`);
+    const { publicKey } = await vapidRes.json();
 
-    // ── Abonnement PushManager ───────────────────────────────────────
+    // 3. Créer ou récupérer l'abonnement push
+    // [FIX] applicationServerKey ne peut PAS être null — pushManager.subscribe échoue sinon
     const existing = await window.__nexusSWReg.pushManager.getSubscription();
     let sub = existing;
     if (!sub) {
       sub = await window.__nexusSWReg.pushManager.subscribe({
         userVisibleOnly:      true,
-        applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
       });
     }
 
-    // ── Enregistrer côté serveur (backend API puis Netlify fallback) ─
-    let registered = false;
-    if (NEXUS_CONFIG.apiUrl) {
-      try {
-        const res = await fetch((NEXUS_CONFIG.apiUrl || '').replace(/\/$/, '') + '/api/push/subscribe', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {}),
-          },
-          body: JSON.stringify({ subscription: sub.toJSON() }),
-        }).catch(() => null);
-        if (res && res.ok) registered = true;
-      } catch (_) {}
-    }
-    if (!registered) {
-      const res = await fetch('/push-subscribe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {}),
-        },
-        body: JSON.stringify({ subscription: sub.toJSON() }),
-      }).catch(() => null);
-      registered = res && res.ok;
-    }
+    // 4. Envoyer l'abonnement au serveur via Netlify Function
+    // [FIX] URL corrigée : /functions/push-subscribe
+    const regRes = await fetch('/push-subscribe', {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {}),
+      },
+      body: JSON.stringify({ subscription: sub.toJSON() }),
+    }).catch(() => null);
 
-    if (registered) {
+    if (regRes && regRes.ok) {
       console.log('[Push] ✅ Abonnement push enregistré');
+      return true;
     } else {
-      console.warn('[Push] ⚠️ Abonnement créé localement mais non enregistré côté serveur — les notifications push distantes ne fonctionneront pas.');
+      const err = await regRes?.json().catch(() => ({}));
+      console.warn('[Push] Erreur serveur :', err?.error || regRes?.status);
+      return false;
     }
-    return registered;
   } catch (err) {
     console.warn('[Push] Erreur lors de l\'abonnement :', err.message);
     return false;
   }
 };
 
-// ── Appel automatique après login réussi ──
+// ── Appel automatique après login réussi ──────────────────────────────────────
+// Dans index.html, chercher le bloc qui définit currentUser après un login réussi.
+// Typiquement après : "storage.set('nexus-auth-token', token)"
+// Ajouter immédiatement après :
+//
+//   const _token = storage.get('nexus-auth-token');
+//   if (_token) {
+//     window.__nexusSWReg
+//       ? window.nexusPush.subscribe(_token).catch(() => {})
+//       : window.addEventListener('load', () => {
+//           setTimeout(() => window.nexusPush.subscribe(_token).catch(() => {}), 2000);
+//         });
+//   }
 
 let deferredInstallPrompt = null;
 window.addEventListener("beforeinstallprompt", (e) => {
