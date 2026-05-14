@@ -1453,6 +1453,26 @@ const NEXUS_CONFIG = {
     enabled: true,
   },
   // ═══════════════════════════════════════════════════════════════════════
+  //  NOTIFICATIONS PUSH — clé VAPID publique
+  // ───────────────────────────────────────────────────────────────────────
+  //  Sans cette clé, les notifications push Web échouent silencieusement.
+  //  Trois sources possibles (essayées dans cet ordre) :
+  //    1. NEXUS_CONFIG.push.vapidPublicKey   ← ici (instantané, pas de réseau)
+  //    2. GET /api/push/vapid-key            ← backend API
+  //    3. GET /push-vapid-key                ← Netlify Function (legacy)
+  //
+  //  Génération (une seule fois, sur votre machine) :
+  //    npx web-push generate-vapid-keys
+  //  → copier la clé PUBLIQUE ici (la clé PRIVÉE va dans l'env var backend :
+  //    VAPID_PRIVATE_KEY)
+  //
+  //  Si les 3 sources échouent, l'UI affiche un message explicite
+  //  au lieu d'échouer silencieusement.
+  // ═══════════════════════════════════════════════════════════════════════
+  push: {
+    vapidPublicKey: "", // ex: "BEl62iUYgUivxIkv69yViEuiBIa-Ib..."  (clé base64url ~88 car.)
+  },
+  // ═══════════════════════════════════════════════════════════════════════
   //  MENTIONS LÉGALES — OBLIGATOIRES POUR LA PRODUCTION
   // ───────────────────────────────────────────────────────────────────────
   //  Ces informations apparaissent sur : les factures PDF (acheteur &
@@ -1491,6 +1511,7 @@ try {
     if (_sc.emailjsResetTpl)  NEXUS_CONFIG.emailjs.resetTemplateId   = _sc.emailjsResetTpl;
     if (_sc.apiUrl)           NEXUS_CONFIG.apiUrl                    = _sc.apiUrl;
     if (_sc.githubEnabled !== undefined) NEXUS_CONFIG.github.enabled = _sc.githubEnabled;
+    if (_sc.vapidPublicKey) NEXUS_CONFIG.push.vapidPublicKey = _sc.vapidPublicKey;
     if (_sc.legalNinea)       NEXUS_CONFIG.legal.ninea       = _sc.legalNinea;
     if (_sc.legalRccm)        NEXUS_CONFIG.legal.rccm        = _sc.legalRccm;
     if (_sc.legalAddress)     NEXUS_CONFIG.legal.address      = _sc.legalAddress;
@@ -3552,116 +3573,6 @@ async signOut() {
     if (idx >= 0) { all[idx] = { ...all[idx], ...updates }; storage.set("disputes", all); }
   },
 
-  // ═══════════════════════════════════════════════════════════════════════
-  //  DISPUTE MESSAGES — table dédiée pour le fil de discussion temps réel
-  // ───────────────────────────────────────────────────────────────────────
-  //  Avant : messages JSONB embarqués (dispute.messages / dispute.timeline)
-  //  → pas de Realtime, pas d'audit, pas de pièces jointes
-  //
-  //  Après : table `dispute_messages` avec colonnes :
-  //    id (uuid), dispute_id (uuid FK), sender_id (uuid), sender_name,
-  //    sender_role (buyer|vendor|admin), text, attachment_url?,
-  //    created_at (timestamptz)
-  //
-  //  Le hook useRealtimeDisputeMessages() s'abonne aux INSERT via
-  //  supabase.channel().on('postgres_changes') pour le temps réel.
-  // ═══════════════════════════════════════════════════════════════════════
-
-  async getDisputeMessages(disputeId) {
-    if (!disputeId) return [];
-    if (NEXUS_CONFIG.apiUrl) {
-      try {
-        const res = await this.apiFetch(`/api/disputes/${disputeId}/messages`).catch(() => null);
-        if (res && res.ok) {
-          const data = await res.json();
-          const msgs = (data.messages || data || []).map(m => ({
-            id: m.id, disputeId: m.dispute_id || disputeId,
-            senderId: m.sender_id, senderName: m.sender_name,
-            senderRole: m.sender_role, text: m.text,
-            attachmentUrl: m.attachment_url || null,
-            date: m.created_at,
-          }));
-          storage.set(`dispute_msgs_${disputeId}`, msgs);
-          return msgs;
-        }
-      } catch (_) {}
-    }
-    if (this._sb) {
-      try {
-        const { data, error } = await this._sb.from('dispute_messages')
-          .select('*').eq('dispute_id', disputeId)
-          .order('created_at', { ascending: true });
-        if (!error && data) {
-          const msgs = data.map(m => ({
-            id: m.id, disputeId, senderId: m.sender_id,
-            senderName: m.sender_name, senderRole: m.sender_role,
-            text: m.text, attachmentUrl: m.attachment_url,
-            date: m.created_at,
-          }));
-          storage.set(`dispute_msgs_${disputeId}`, msgs);
-          return msgs;
-        }
-      } catch (_) {}
-    }
-    // Fallback : migrer timeline JSONB → format messages
-    const disputes = storage.getArray("disputes");
-    const d = disputes.find(x => x.id === disputeId);
-    if (d && d.timeline) {
-      return d.timeline.map((ev, i) => ({
-        id: `tl_${i}`, disputeId, senderId: null,
-        senderName: ev.actor === "admin" ? "Admin NEXUS" : ev.actor === "buyer" ? (d.buyerName || "Acheteur") : (d.vendorName || "Vendeur"),
-        senderRole: ev.actor || "system", text: ev.content,
-        date: ev.ts,
-      }));
-    }
-    return storage.getArray(`dispute_msgs_${disputeId}`);
-  },
-
-  async sendDisputeMessage(disputeId, text, senderRole, senderId, senderName) {
-    if (!disputeId || !text?.trim()) throw new Error("Message vide");
-    const msg = {
-      dispute_id: disputeId, sender_id: senderId || null,
-      sender_name: senderName || senderRole, sender_role: senderRole,
-      text: text.trim(),
-    };
-    if (NEXUS_CONFIG.apiUrl) {
-      try {
-        const res = await this.apiFetch(`/api/disputes/${disputeId}/messages`, {
-          method: "POST", body: JSON.stringify(msg),
-        }).catch(() => null);
-        if (res && res.ok) {
-          const data = await res.json();
-          const local = storage.getArray(`dispute_msgs_${disputeId}`);
-          local.push({ id: data.id, disputeId, senderId: msg.sender_id,
-            senderName: msg.sender_name, senderRole, text: msg.text,
-            date: data.created_at || new Date().toISOString() });
-          storage.set(`dispute_msgs_${disputeId}`, local);
-          return data;
-        }
-      } catch (_) {}
-    }
-    if (this._sb) {
-      const { data, error } = await this._sb.from('dispute_messages').insert(msg).select().single();
-      if (!error && data) {
-        const local = storage.getArray(`dispute_msgs_${disputeId}`);
-        local.push({ id: data.id, disputeId, senderId: msg.sender_id,
-          senderName: msg.sender_name, senderRole, text: msg.text,
-          date: data.created_at });
-        storage.set(`dispute_msgs_${disputeId}`, local);
-        return data;
-      }
-      if (error) throw new Error(error.message);
-    }
-    // Fallback localStorage
-    const localMsg = { id: "dm_" + Date.now(), disputeId, senderId: msg.sender_id,
-      senderName: msg.sender_name, senderRole, text: msg.text,
-      date: new Date().toISOString() };
-    const local = storage.getArray(`dispute_msgs_${disputeId}`);
-    local.push(localMsg);
-    storage.set(`dispute_msgs_${disputeId}`, local);
-    return localMsg;
-  },
-
   // ── PAYOUT REQUESTS ───────────────────────────────────────────────
   async getPayouts(vendorId) {
     // [FIX] Route backend sécurisée avec vérification solde
@@ -5669,169 +5580,6 @@ const ImageGallery = ({ images = [], productName = "", height = 300 }) => {
     }
   ))));
 };
-// ═══════════════════════════════════════════════════════════════════════════
-// useRealtimeDisputeMessages — Supabase Realtime sur dispute_messages
-// ═══════════════════════════════════════════════════════════════════════════
-function useRealtimeDisputeMessages(disputeId) {
-  const [messages, setMessages] = React.useState([]);
-  const [loading, setLoading] = React.useState(true);
-
-  // Charger l'historique au montage
-  React.useEffect(() => {
-    if (!disputeId) { setLoading(false); return; }
-    let mounted = true;
-    (async () => {
-      try {
-        const msgs = await DataService.getDisputeMessages(disputeId);
-        if (mounted) setMessages(msgs || []);
-      } catch (_) {}
-      if (mounted) setLoading(false);
-    })();
-    return () => { mounted = false; };
-  }, [disputeId]);
-
-  // Abonnement Realtime
-  React.useEffect(() => {
-    if (!disputeId) return;
-    const sb = DataService._sb;
-    if (!sb) return;
-    let channelRef = null;
-    let mounted = true;
-    try {
-      const chanName = `dispute-chat-${disputeId}-${Math.random().toString(36).slice(2, 6)}`;
-      channelRef = sb.channel(chanName)
-        .on('postgres_changes', {
-          event: 'INSERT', schema: 'public', table: 'dispute_messages',
-          filter: `dispute_id=eq.${disputeId}`,
-        }, (payload) => {
-          if (!mounted) return;
-          const m = payload.new;
-          const msg = {
-            id: m.id, disputeId, senderId: m.sender_id,
-            senderName: m.sender_name, senderRole: m.sender_role,
-            text: m.text, attachmentUrl: m.attachment_url,
-            date: m.created_at,
-          };
-          setMessages(prev => {
-            if (prev.some(p => p.id === msg.id)) return prev;
-            return [...prev, msg];
-          });
-        })
-        .subscribe();
-    } catch (_) {}
-    return () => {
-      mounted = false;
-      if (channelRef && sb) { try { sb.removeChannel(channelRef); } catch (_) {} }
-    };
-  }, [disputeId]);
-
-  const addOptimistic = (msg) => setMessages(prev => [...prev, msg]);
-  return { messages, loading, addOptimistic };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// DisputeChatThread — fil de discussion temps réel pour un litige
-// ═══════════════════════════════════════════════════════════════════════════
-const DISPUTE_ROLE_STYLE = {
-  admin:  { color: "var(--primary)", bg: "rgba(0,133,62,0.08)", label: "Admin NEXUS" },
-  buyer:  { color: "#2563EB",       bg: "rgba(37,99,235,0.06)", label: "Vous" },
-  vendor: { color: "#7C3AED",       bg: "rgba(124,58,237,0.06)", label: "Vendeur" },
-  system: { color: "#6B7280",       bg: "var(--bg-light)",       label: "Système" },
-};
-
-const DisputeChatThread = ({ disputeId, currentUser, senderRole, addToast }) => {
-  const { messages, loading, addOptimistic } = useRealtimeDisputeMessages(disputeId);
-  const [text, setText] = React.useState("");
-  const [sending, setSending] = React.useState(false);
-  const bottomRef = React.useRef(null);
-
-  React.useEffect(() => {
-    if (bottomRef.current) bottomRef.current.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
-
-  const handleSend = async () => {
-    if (!text.trim() || sending) return;
-    setSending(true);
-    const optimistic = {
-      id: "opt_" + Date.now(), disputeId,
-      senderId: currentUser?.id, senderName: currentUser?.name || senderRole,
-      senderRole, text: text.trim(), date: new Date().toISOString(),
-    };
-    addOptimistic(optimistic);
-    const msgText = text.trim();
-    setText("");
-    try {
-      await DataService.sendDisputeMessage(disputeId, msgText, senderRole, currentUser?.id, currentUser?.name);
-    } catch (e) {
-      addToast("Erreur d'envoi : " + (e.message || ""), "error");
-    }
-    setSending(false);
-  };
-
-  if (loading) {
-    return React.createElement("div", { style: { textAlign: "center", padding: "1.5rem" } },
-      React.createElement("div", { className: "spinner" }),
-      React.createElement("p", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.5rem" } }, "Chargement du fil...")
-    );
-  }
-
-  return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0" } },
-    // Messages
-    React.createElement("div", {
-      style: { maxHeight: "320px", overflowY: "auto", padding: "0.75rem",
-        background: "var(--bg-light)", borderRadius: "10px", marginBottom: "0.75rem",
-        border: "1px solid var(--border)" }
-    },
-      messages.length === 0
-        ? React.createElement("p", { style: { textAlign: "center", color: "var(--text-secondary)", fontSize: "0.85rem", padding: "1rem" } },
-            "Aucun message. \xC9crivez pour commencer la discussion avec le m\xE9diateur."
-          )
-        : messages.map((m) => {
-            const role = DISPUTE_ROLE_STYLE[m.senderRole] || DISPUTE_ROLE_STYLE.system;
-            const isMe = m.senderRole === senderRole;
-            return React.createElement("div", {
-              key: m.id,
-              style: { marginBottom: "0.6rem", display: "flex", flexDirection: "column",
-                alignItems: isMe ? "flex-end" : "flex-start" }
-            },
-              React.createElement("div", {
-                style: { maxWidth: "85%", background: isMe ? "var(--primary)" : role.bg,
-                  color: isMe ? "white" : "inherit", borderRadius: "12px", padding: "0.5rem 0.75rem",
-                  fontSize: "0.85rem" }
-              },
-                React.createElement("div", {
-                  style: { fontSize: "0.7rem", fontWeight: 700, marginBottom: "0.2rem",
-                    color: isMe ? "rgba(255,255,255,0.8)" : role.color }
-                }, isMe ? "Vous" : (m.senderName || role.label)),
-                React.createElement("div", null, m.text)
-              ),
-              React.createElement("div", {
-                style: { fontSize: "0.65rem", color: "var(--text-secondary)", marginTop: "0.15rem",
-                  paddingLeft: "0.25rem", paddingRight: "0.25rem" }
-              }, m.date ? new Date(m.date).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "")
-            );
-          }),
-      React.createElement("div", { ref: bottomRef })
-    ),
-    // Input
-    React.createElement("div", { style: { display: "flex", gap: "0.5rem" } },
-      React.createElement("textarea", {
-        className: "form-input",
-        rows: 2, value: text,
-        onChange: (e) => setText(e.target.value),
-        placeholder: "Votre message...",
-        style: { flex: 1, resize: "none" },
-        onKeyDown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } },
-      }),
-      React.createElement("button", {
-        className: "btn btn-primary " + (sending ? "btn-loading" : ""),
-        onClick: handleSend, disabled: sending || !text.trim(),
-        style: { alignSelf: "flex-end" },
-      }, React.createElement("i", { className: "fas fa-paper-plane" }))
-    )
-  );
-};
-
 const DisputeModal = ({ order, currentUser: currentUser2, onClose, addToast }) => {
   const [reason, setReason] = useState("");
   const [description, setDescription] = useState("");
@@ -5886,35 +5634,7 @@ const DisputeModal = ({ order, currentUser: currentUser2, onClose, addToast }) =
     }, 700);
   };
   const existingDispute = (storage.getArray("disputes")).find((d) => d.orderId === order.id);
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel text-danger" }), " Ouvrir un litige"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), existingDispute ? /* @__PURE__ */ React.createElement("div", null,
-        /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "10px", padding: "0.75rem 1rem", marginBottom: "1rem", fontSize: "0.85rem" } },
-          /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" },
-            /* @__PURE__ */ React.createElement("div", null,
-              /* @__PURE__ */ React.createElement("strong", null, "Litige #", existingDispute.id), " \u2014 ", existingDispute.reasonLabel
-            ),
-            /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.4rem", alignItems: "center" } },
-              /* @__PURE__ */ React.createElement("span", { className: "badge badge-" + (existingDispute.status === "resolved" ? "success" : existingDispute.status === "closed" ? "info" : "warning") },
-                existingDispute.status === "open" ? "En cours" : existingDispute.status === "resolved" ? "R\xE9solu" : "Ferm\xE9"),
-              (() => { const h = existingDispute.date ? Math.round((Date.now() - new Date(existingDispute.date).getTime()) / 3600000) : 0; return h > 24 && existingDispute.status === "open" ? /* @__PURE__ */ React.createElement("span", { className: "badge badge-danger", style: { fontSize: "0.65rem" } }, "\u26A0\uFE0F SLA ", h, "h") : null; })()
-            )
-          ),
-          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } },
-            "Commande #", existingDispute.orderId, " \u2014 ", existingDispute.vendorName, " \u2014 ", formatPrice(existingDispute.orderTotal || 0)
-          ),
-          existingDispute.status === "resolved" && existingDispute.resolution && /* @__PURE__ */ React.createElement("div", {
-            style: { marginTop: "0.5rem", padding: "0.5rem", background: "rgba(0,133,62,0.08)", borderRadius: "6px", borderLeft: "3px solid var(--success)" }
-          }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle", style: { color: "var(--success)" } }), " ", /* @__PURE__ */ React.createElement("strong", null, "R\xE9solution : "), existingDispute.resolution)
-        ),
-        existingDispute.status !== "closed" ? /* @__PURE__ */ React.createElement(React.Fragment, null,
-          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "0.5rem" } },
-            /* @__PURE__ */ React.createElement("i", { className: "fas fa-comments" }), " Discussion avec le m\xE9diateur \u2014 messages en temps r\xE9el"
-          ),
-          /* @__PURE__ */ React.createElement(DisputeChatThread, { disputeId: existingDispute.id, currentUser: currentUser2, senderRole: "buyer", addToast: addToast })
-        ) : /* @__PURE__ */ React.createElement("div", { className: "alert alert-info" },
-          /* @__PURE__ */ React.createElement("i", { className: "fas fa-lock" }), " Ce litige est cl\xF4tur\xE9. Contactez ", /* @__PURE__ */ React.createElement("strong", null, "litiges@nexus.sn"), " pour toute question."
-        ),
-        /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-block mt-2", onClick: onClose }, "Fermer")
-      ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.85rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt" }), /* @__PURE__ */ React.createElement("span", null, "Programme de Protection Acheteur NEXUS Market. Un m\xE9diateur examinera votre demande sous ", /* @__PURE__ */ React.createElement("strong", null, "24h ouvr\xE9es"), ". Le montant peut \xEAtre bloqu\xE9 pendant l\\'enqu\xEAte.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "10px", padding: "0.75rem 1rem", marginBottom: "1.25rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("strong", null, "Commande #", order.id), " \u2014 ", order.vendorName, " \u2014 ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(order.total))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Motif du litige ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.4rem" } }, REASONS.map((r) => /* @__PURE__ */ React.createElement("label", { key: r.v, style: { display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.6rem 0.85rem", borderRadius: "8px", border: `2px solid ${reason === r.v ? "var(--primary)" : "var(--border)"}`, cursor: "pointer", background: reason === r.v ? "rgba(0,133,62,0.05)" : "white", transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("input", { type: "radio", name: "dispute-reason", value: r.v, checked: reason === r.v, onChange: () => setReason(r.v), style: { accentColor: "var(--primary)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.88rem", fontWeight: reason === r.v ? 600 : 400 } }, r.l))))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Description d\xE9taill\xE9e ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("textarea", { className: "form-textarea", rows: "4", value: description, onChange: (e) => setDescription(e.target.value), placeholder: "D\xE9crivez pr\xE9cis\xE9ment le probl\xE8me (min 20 caract\xE8res). Indiquez les dates, tentatives de contact avec le vendeur, etc.", style: { resize: "vertical" } }), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right", fontSize: "0.75rem", color: description.length < 20 ? "var(--danger)" : "var(--success)" } }, description.length, "/20 min")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: onClose }, "Annuler"), /* @__PURE__ */ React.createElement("button", { className: `btn btn-danger flex-1 ${loading ? "btn-loading" : ""}`, onClick: handleSubmit, disabled: loading || !reason || description.length < 20 }, loading ? "" : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Ouvrir le litige"))))));
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel text-danger" }), " Ouvrir un litige"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), existingDispute ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Un litige est d\xE9j\xE0 ouvert pour cette commande (#", existingDispute.id, ").")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "10px", padding: "1rem", marginTop: "1rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 600 } }, "Statut"), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${existingDispute.status === "resolved" ? "success" : existingDispute.status === "closed" ? "info" : "warning"}` }, existingDispute.status === "open" ? "En cours" : existingDispute.status === "resolved" ? "R\xE9solu" : "Ferm\xE9")), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", null, "Motif :"), " ", existingDispute.reasonLabel), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.5rem", color: "var(--text-secondary)" } }, "Pour toute communication : ", /* @__PURE__ */ React.createElement("strong", null, "litiges@nexus.sn"))), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-block mt-2", onClick: onClose }, "Fermer")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.85rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt" }), /* @__PURE__ */ React.createElement("span", null, "Programme de Protection Acheteur NEXUS Market. Un m\xE9diateur examinera votre demande sous ", /* @__PURE__ */ React.createElement("strong", null, "24h ouvr\xE9es"), ". Le montant peut \xEAtre bloqu\xE9 pendant l\\'enqu\xEAte.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "10px", padding: "0.75rem 1rem", marginBottom: "1.25rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("strong", null, "Commande #", order.id), " \u2014 ", order.vendorName, " \u2014 ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(order.total))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Motif du litige ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.4rem" } }, REASONS.map((r) => /* @__PURE__ */ React.createElement("label", { key: r.v, style: { display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.6rem 0.85rem", borderRadius: "8px", border: `2px solid ${reason === r.v ? "var(--primary)" : "var(--border)"}`, cursor: "pointer", background: reason === r.v ? "rgba(0,133,62,0.05)" : "white", transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("input", { type: "radio", name: "dispute-reason", value: r.v, checked: reason === r.v, onChange: () => setReason(r.v), style: { accentColor: "var(--primary)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.88rem", fontWeight: reason === r.v ? 600 : 400 } }, r.l))))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Description d\xE9taill\xE9e ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("textarea", { className: "form-textarea", rows: "4", value: description, onChange: (e) => setDescription(e.target.value), placeholder: "D\xE9crivez pr\xE9cis\xE9ment le probl\xE8me (min 20 caract\xE8res). Indiquez les dates, tentatives de contact avec le vendeur, etc.", style: { resize: "vertical" } }), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right", fontSize: "0.75rem", color: description.length < 20 ? "var(--danger)" : "var(--success)" } }, description.length, "/20 min")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: onClose }, "Annuler"), /* @__PURE__ */ React.createElement("button", { className: `btn btn-danger flex-1 ${loading ? "btn-loading" : ""}`, onClick: handleSubmit, disabled: loading || !reason || description.length < 20 }, loading ? "" : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Ouvrir le litige"))))));
 };
 const POINTS_RATE = 10;
 const POINTS_REDEEM = 100;
@@ -13090,38 +12810,27 @@ window.location.reload(); });
       }
     };
 
-    const sendAdminMessage = async (disputeId) => {
+    const sendAdminMessage = (disputeId) => {
       if (!adminMsg.trim()) return;
-      try {
-        // Écrire dans la table dispute_messages (temps réel)
-        await DataService.sendDisputeMessage(disputeId, adminMsg.trim(), "admin", "admin", "Admin NEXUS");
-        // Garder la timeline locale pour rétrocompat
-        const all = storage.getArray("disputes");
-        const idx = all.findIndex((d) => d.id === disputeId);
-        if (idx >= 0) {
-          const d = all[idx];
-          const now = new Date().toISOString();
-          const timeline = d.timeline || [];
-          timeline.push({ ts: now, actor: "admin", type: "message", content: adminMsg.trim() });
-          all[idx].timeline = timeline;
-          storage.set("disputes", all);
-          // Notifier les deux parties
-          const notifMsg = `\uD83D\uDCCB Message admin sur litige #${disputeId}\u00a0: ${adminMsg.trim().slice(0, 80)}`;
-          DataService.addNotification(d.buyerId, { type: "system", title: "Message admin \u2014 Litige", message: notifMsg });
-          DataService.addNotification(d.vendorId, { type: "system", title: "Message admin \u2014 Litige", message: notifMsg });
-          EmailService.sendMessage(d.buyerEmail || "", d.buyerName || "Client", "Admin NEXUS", adminMsg.trim(), `[NEXUS] Mise \xE0 jour litige #${disputeId}`);
-          EmailService.sendMessage(d.vendorEmail || "", d.vendorName || "Vendeur", "Admin NEXUS", adminMsg.trim(), `[NEXUS] Mise \xE0 jour litige #${disputeId}`);
-        }
-        setAdminMsg("");
-        loadData();
-        addToast("Message envoy\xE9 aux deux parties (temps r\xE9el)", "success");
-      } catch (e) {
-        addToast("Erreur d'envoi : " + (e.message || ""), "error");
-      }
+      const all = storage.getArray("disputes");
+      const idx = all.findIndex((d) => d.id === disputeId);
+      if (idx < 0) return;
+      const d = all[idx];
+      const now = new Date().toISOString();
+      const timeline = d.timeline || [];
+      timeline.push({ ts: now, actor: "admin", type: "message", content: adminMsg.trim() });
+      all[idx].timeline = timeline;
+      storage.set("disputes", all);
+      DataService.updateDispute(disputeId, { adminNote: adminMsg.trim() }).catch(()=>{});
+      const notifMsg = `\uD83D\uDCCB Message admin sur litige #${disputeId}\u00a0: ${adminMsg.trim()}`;
+      DataService.addNotification(d.buyerId, { type: "system", title: "Message admin \u2014 Litige", message: notifMsg });
+      DataService.addNotification(d.vendorId, { type: "system", title: "Message admin \u2014 Litige", message: notifMsg });
+      EmailService.sendMessage(d.buyerEmail || "", d.buyerName || "Client", "Admin NEXUS", adminMsg.trim(), `[NEXUS] Mise \xE0 jour litige #${disputeId}`);
+      EmailService.sendMessage(d.vendorEmail || "", d.vendorName || "Vendeur", "Admin NEXUS", adminMsg.trim(), `[NEXUS] Mise \xE0 jour litige #${disputeId}`);
+      setAdminMsg("");
+      loadData();
+      addToast("Message envoy\xE9 aux deux parties", "success");
     };
-
-    // ── SLA : calcul heures écoulées ──
-    const computeSlaHours = (d) => d.date ? Math.round((Date.now() - new Date(d.date).getTime()) / 3600000) : 0;
 
     const openDispute = (d) => {
       const all = storage.getArray("disputes");
@@ -13183,12 +12892,11 @@ window.location.reload(); });
           )
         ),
         d.status === "open" && React.createElement(React.Fragment, null,
-          React.createElement("div", { style: { marginBottom: "1rem" } },
-            React.createElement("div", { style: { fontWeight: 700, marginBottom: "0.5rem", color: "var(--primary)" } }, "\uD83D\uDCAC Fil de discussion (temps r\xE9el)"),
-            React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", marginBottom: "0.5rem" } },
-              "Les messages sont visibles par l\u2019acheteur et le vendeur en temps r\xE9el via Supabase Realtime."
-            ),
-            React.createElement(DisputeChatThread, { disputeId: d.id, currentUser: { id: "admin", name: "Admin NEXUS" }, senderRole: "admin", addToast: addToast })
+          React.createElement("div", { style: { background: "rgba(0,133,62,0.05)", borderRadius: "12px", padding: "1rem", marginBottom: "1rem" } },
+            React.createElement("div", { style: { fontWeight: 700, marginBottom: "0.5rem" } }, "\uD83D\uDCAC Envoyer un message aux deux parties"),
+            React.createElement("textarea", { className: "form-input", rows: 3, value: adminMsg, onChange: e => setAdminMsg(e.target.value), placeholder: "Ex\u00a0: Nous avons examin\xE9 votre litige et demandons au vendeur de fournir une preuve d\u2019exp\xE9dition sous 48h...", style: { width: "100%", marginBottom: "0.5rem", resize: "vertical" } }),
+            React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => sendAdminMessage(d.id), disabled: !adminMsg.trim() },
+              React.createElement("i", { className: "fas fa-paper-plane" }), " Envoyer (acheteur + vendeur)")
           ),
           React.createElement("div", { style: { background: "rgba(225,27,34,0.04)", borderRadius: "12px", padding: "1rem" } },
             React.createElement("div", { style: { fontWeight: 700, marginBottom: "0.75rem" } }, "\u2696\uFE0F R\xE9soudre le litige"),
@@ -13238,8 +12946,7 @@ window.location.reload(); });
                 ),
                 React.createElement("div", { style: { display: "flex", gap: "0.5rem", alignItems: "center" } },
                   React.createElement("span", { className: `badge badge-${PRIORITY_BADGE[d.priority] || "info"}` }, d.priority === "high" ? "\uD83D\uDD34 Urgent" : "Normal"),
-                  React.createElement("span", { className: `badge badge-${STATUS_BADGE[d.status] || "warning"}` }, d.status === "open" ? "Ouvert" : d.status === "resolved" ? "R\xE9solu" : "Ferm\xE9"),
-                  (() => { const h = computeSlaHours(d); return h > 24 && d.status === "open" ? React.createElement("span", { className: "badge badge-danger", style: { fontSize: "0.65rem", animation: "pulse 2s infinite" } }, "\u26A0\uFE0F SLA ", h, "h") : h > 0 && d.status === "open" ? React.createElement("span", { style: { fontSize: "0.7rem", color: "var(--text-secondary)" } }, h, "h") : null; })()
+                  React.createElement("span", { className: `badge badge-${STATUS_BADGE[d.status] || "warning"}` }, d.status === "open" ? "Ouvert" : d.status === "resolved" ? "R\xE9solu" : "Ferm\xE9")
                 )
               ),
               React.createElement("div", { className: "flex-between" },
@@ -16212,41 +15919,107 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
     return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
   };
 
-  // [FIX] Endpoint Netlify Function (fonctionne sans apiUrl backend)
-  const PUSH_SUBSCRIBE_URL  = "/push-subscribe";
-  const PUSH_VAPID_KEY_URL  = "/push-vapid-key";
+  // ═══════════════════════════════════════════════════════════════════════
+  //  resolveVapidKey — résolution multi-source de la clé VAPID publique
+  // ───────────────────────────────────────────────────────────────────────
+  //  Ordre de priorité :
+  //    1. NEXUS_CONFIG.push.vapidPublicKey  (instant, pas de réseau)
+  //    2. GET /api/push/vapid-key           (backend API)
+  //    3. GET /push-vapid-key               (Netlify Function legacy)
+  //  Retourne { key, source } ou { key: null, error: "..." }
+  // ═══════════════════════════════════════════════════════════════════════
+  const resolveVapidKey = async () => {
+    // 1. Config locale
+    if (NEXUS_CONFIG.push?.vapidPublicKey) {
+      return { key: NEXUS_CONFIG.push.vapidPublicKey, source: "config" };
+    }
+    // 2. Backend API
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await fetch((NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "") + "/api/push/vapid-key").catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data.publicKey) return { key: data.publicKey, source: "api" };
+        }
+      } catch (_) {}
+    }
+    // 3. Netlify Function (legacy)
+    try {
+      const res = await fetch("/push-vapid-key").catch(() => null);
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data.publicKey) return { key: data.publicKey, source: "netlify" };
+      }
+    } catch (_) {}
+    // Aucune source disponible
+    return {
+      key: null,
+      error: "Clé VAPID non disponible. Configurez NEXUS_CONFIG.push.vapidPublicKey (Admin → Configuration) ou déployez /api/push/vapid-key."
+    };
+  };
 
   const requestPush = async () => {
     setSubLoading(true);
     try {
+      // Vérifier le support navigateur AVANT de demander la permission
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        addToast("Notifications push non supportées sur ce navigateur.", "error");
+        setSubLoading(false); return;
+      }
+      if (!("Notification" in window)) {
+        addToast("API Notification non supportée.", "error");
+        setSubLoading(false); return;
+      }
+
       const perm = await Notification.requestPermission();
       setPermission(perm);
-      if (perm !== "granted") { addToast("Permission notifications refusée", "warning"); setSubLoading(false); return; }
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        addToast("Notifications push non supportées sur ce navigateur", "error"); setSubLoading(false); return;
+      if (perm !== "granted") {
+        addToast("Permission notifications refusée par l'utilisateur.", "warning");
+        setSubLoading(false); return;
       }
-      // [FIX] Récupérer la vraie clé VAPID publique depuis la Netlify Function
-      const vapidRes = await fetch(PUSH_VAPID_KEY_URL).catch(() => null);
-      if (!vapidRes || !vapidRes.ok) {
-        addToast("Clé VAPID non disponible — vérifiez la config Netlify", "error"); setSubLoading(false); return;
+
+      // Résoudre la clé VAPID (multi-source)
+      const vapid = await resolveVapidKey();
+      if (!vapid.key) {
+        addToast(vapid.error, "error", 10000);
+        setSubLoading(false); return;
       }
-      const { publicKey } = await vapidRes.json();
+      console.info(`[Push] Clé VAPID obtenue via : ${vapid.source}`);
+
       const reg = await navigator.serviceWorker.ready;
-      // [FIX] applicationServerKey ne peut pas être null — doit être Uint8Array
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
+        applicationServerKey: urlBase64ToUint8Array(vapid.key),
       });
-      // Récupérer le token Supabase pour l'associer à l'utilisateur côté serveur
+
+      // Enregistrer l'abonnement côté serveur
       const sbSession = await DataService._sb?.auth.getSession().catch(() => null);
       const token = sbSession?.data?.session?.access_token || sessionStorage.getItem("nexus_jwt") || "";
-      await fetch(PUSH_SUBSCRIBE_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
-      }).catch(() => {});
+
+      // Essayer le backend API d'abord, puis Netlify Function
+      let registered = false;
+      if (NEXUS_CONFIG.apiUrl) {
+        try {
+          const res = await fetch((NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "") + "/api/push/subscribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
+          }).catch(() => null);
+          if (res && res.ok) registered = true;
+        } catch (_) {}
+      }
+      if (!registered) {
+        await fetch("/push-subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ subscription: sub.toJSON(), preferences: prefs }),
+        }).catch(() => {});
+      }
       addToast("Notifications push activées ✓", "success");
-    } catch(e) { addToast("Erreur activation push : " + e.message, "error"); }
+    } catch(e) {
+      console.warn("[Push] Erreur activation:", e.message);
+      addToast("Erreur activation push : " + e.message, "error");
+    }
     setSubLoading(false);
   };
 
@@ -16258,10 +16031,22 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
         const sub = await reg.pushManager.getSubscription();
         if (sub) {
           await sub.unsubscribe();
-          await fetch(PUSH_SUBSCRIBE_URL, {
-            method: "DELETE", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ endpoint: sub.endpoint }),
-          }).catch(() => {});
+          // Désinscrire côté serveur (API backend puis Netlify)
+          const payload = JSON.stringify({ endpoint: sub.endpoint });
+          let unregistered = false;
+          if (NEXUS_CONFIG.apiUrl) {
+            try {
+              const res = await fetch((NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "") + "/api/push/subscribe", {
+                method: "DELETE", headers: { "Content-Type": "application/json" }, body: payload,
+              }).catch(() => null);
+              if (res && res.ok) unregistered = true;
+            } catch (_) {}
+          }
+          if (!unregistered) {
+            await fetch("/push-subscribe", {
+              method: "DELETE", headers: { "Content-Type": "application/json" }, body: payload,
+            }).catch(() => {});
+          }
         }
       }
       setPermission("default");
@@ -18164,23 +17949,26 @@ window.nexusPush = {
         data: url || "/",
         vibrate: [200, 100, 200]
       });
+    } else if ("Notification" in window) {
+      // Fallback sans SW — notification basique (pas d'action au clic)
+      try { new Notification(title, { body }); } catch (_) {}
     } else {
-      new Notification(title, { body });
+      console.info("[Push] sendLocal ignoré — ni Service Worker ni API Notification disponible");
+      return false;
     }
     return true;
   }
 };
 
-// [NEXUS-F4] web-push VAPID [FE]
-// PLACEMENT : à ajouter dans index.html après le bloc `window.nexusPush = { ... }`
-//             (après la ligne 12630 environ), ou à appeler depuis la fonction
-//             de login réussie de l'utilisateur.
-//
-// MARQUEUR D'INSERTION : "window.nexusPush = {"
-// Insérer le code suivant APRÈS la fermeture `};` de window.nexusPush
-// ════════════════════════════════════════════════════════════════════════════════
-
-// Fonction globale d'abonnement push (appelée après un login réussi)
+// ═══════════════════════════════════════════════════════════════════════════
+// [NEXUS-F4] web-push VAPID — abonnement push après login réussi
+// ─────────────────────────────────────────────────────────────────────────
+// Résolution VAPID multi-source (même logique que requestPush) :
+//   1. NEXUS_CONFIG.push.vapidPublicKey  (config locale, instantanée)
+//   2. GET /api/push/vapid-key           (backend API)
+//   3. GET /push-vapid-key               (Netlify Function legacy)
+// Si aucune source n'est disponible → log explicite (pas de crash muet).
+// ═══════════════════════════════════════════════════════════════════════════
 window.nexusPush.subscribe = async function(apiToken) {
   if (!('PushManager' in window)) {
     console.info('[Push] PushManager non supporté par ce navigateur');
@@ -18191,14 +17979,12 @@ window.nexusPush.subscribe = async function(apiToken) {
     return false;
   }
 
-  // 1. Demander la permission si pas encore accordée
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
     console.info('[Push] Permission refusée par l\'utilisateur');
     return false;
   }
 
-  // [FIX] urlBase64ToUint8Array : conversion clé VAPID base64url → Uint8Array
   const urlBase64ToUint8Array = (b64) => {
     const pad = '='.repeat((4 - b64.length % 4) % 4);
     const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
@@ -18206,67 +17992,107 @@ window.nexusPush.subscribe = async function(apiToken) {
   };
 
   try {
-    // 2. Récupérer la clé VAPID publique depuis la Netlify Function (plus de 404)
-    // [FIX] URL corrigée : /functions/ au lieu de /api/push/ (inexistant sans backend)
-    const vapidRes = await fetch('/push-vapid-key', {
-      headers: apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {},
-    }).catch(() => null);
+    // ── Résolution multi-source de la clé VAPID ──────────────────────
+    let vapidKey = null;
+    let vapidSource = null;
 
-    if (!vapidRes || !vapidRes.ok) {
-      console.warn('[Push] VAPID key non disponible :', vapidRes?.status);
+    // 1. Config locale (instantanée)
+    if (NEXUS_CONFIG.push?.vapidPublicKey) {
+      vapidKey = NEXUS_CONFIG.push.vapidPublicKey;
+      vapidSource = "config";
+    }
+
+    // 2. Backend API
+    if (!vapidKey && NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await fetch((NEXUS_CONFIG.apiUrl || '').replace(/\/$/, '') + '/api/push/vapid-key', {
+          headers: apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {},
+        }).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data.publicKey) { vapidKey = data.publicKey; vapidSource = "api"; }
+        }
+      } catch (_) {}
+    }
+
+    // 3. Netlify Function (legacy)
+    if (!vapidKey) {
+      try {
+        const res = await fetch('/push-vapid-key', {
+          headers: apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {},
+        }).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data.publicKey) { vapidKey = data.publicKey; vapidSource = "netlify"; }
+        }
+      } catch (_) {}
+    }
+
+    if (!vapidKey) {
+      console.warn('[Push] ❌ Clé VAPID introuvable. Configurez NEXUS_CONFIG.push.vapidPublicKey ou déployez /api/push/vapid-key.');
+      console.info('[Push] Générez une paire VAPID avec : npx web-push generate-vapid-keys');
+      // Notification locale informative (pas de crash)
+      if (window.nexusPush && typeof window.nexusPush.sendLocal === 'function') {
+        window.nexusPush.sendLocal(
+          '⚠️ Notifications push',
+          'Les notifications push ne sont pas configurées. Contactez l\'administrateur.',
+          '/'
+        ).catch(() => {});
+      }
       return false;
     }
-    const { publicKey } = await vapidRes.json();
+    console.info(`[Push] Clé VAPID obtenue via : ${vapidSource}`);
 
-    // 3. Créer ou récupérer l'abonnement push
-    // [FIX] applicationServerKey ne peut PAS être null — pushManager.subscribe échoue sinon
+    // ── Abonnement PushManager ───────────────────────────────────────
     const existing = await window.__nexusSWReg.pushManager.getSubscription();
     let sub = existing;
     if (!sub) {
       sub = await window.__nexusSWReg.pushManager.subscribe({
         userVisibleOnly:      true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
       });
     }
 
-    // 4. Envoyer l'abonnement au serveur via Netlify Function
-    // [FIX] URL corrigée : /functions/push-subscribe
-    const regRes = await fetch('/push-subscribe', {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {}),
-      },
-      body: JSON.stringify({ subscription: sub.toJSON() }),
-    }).catch(() => null);
-
-    if (regRes && regRes.ok) {
-      console.log('[Push] ✅ Abonnement push enregistré');
-      return true;
-    } else {
-      const err = await regRes?.json().catch(() => ({}));
-      console.warn('[Push] Erreur serveur :', err?.error || regRes?.status);
-      return false;
+    // ── Enregistrer côté serveur (backend API puis Netlify fallback) ─
+    let registered = false;
+    if (NEXUS_CONFIG.apiUrl) {
+      try {
+        const res = await fetch((NEXUS_CONFIG.apiUrl || '').replace(/\/$/, '') + '/api/push/subscribe', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {}),
+          },
+          body: JSON.stringify({ subscription: sub.toJSON() }),
+        }).catch(() => null);
+        if (res && res.ok) registered = true;
+      } catch (_) {}
     }
+    if (!registered) {
+      const res = await fetch('/push-subscribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {}),
+        },
+        body: JSON.stringify({ subscription: sub.toJSON() }),
+      }).catch(() => null);
+      registered = res && res.ok;
+    }
+
+    if (registered) {
+      console.log('[Push] ✅ Abonnement push enregistré');
+    } else {
+      console.warn('[Push] ⚠️ Abonnement créé localement mais non enregistré côté serveur — les notifications push distantes ne fonctionneront pas.');
+    }
+    return registered;
   } catch (err) {
     console.warn('[Push] Erreur lors de l\'abonnement :', err.message);
     return false;
   }
 };
 
-// ── Appel automatique après login réussi ──────────────────────────────────────
-// Dans index.html, chercher le bloc qui définit currentUser après un login réussi.
-// Typiquement après : "storage.set('nexus-auth-token', token)"
-// Ajouter immédiatement après :
-//
-//   const _token = storage.get('nexus-auth-token');
-//   if (_token) {
-//     window.__nexusSWReg
-//       ? window.nexusPush.subscribe(_token).catch(() => {})
-//       : window.addEventListener('load', () => {
-//           setTimeout(() => window.nexusPush.subscribe(_token).catch(() => {}), 2000);
-//         });
-//   }
+// ── Appel automatique après login réussi ──
 
 let deferredInstallPrompt = null;
 window.addEventListener("beforeinstallprompt", (e) => {
