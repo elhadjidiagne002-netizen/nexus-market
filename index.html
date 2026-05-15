@@ -12738,6 +12738,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const [emailLogs, setEmailLogs] = React.useState([]);
   const [emailLoading, setEmailLoading] = React.useState(true);
   const [emailTotal, setEmailTotal] = React.useState(0);
+  // [FIX #310] États hissés depuis l'IIFE "sms"
+  const [smsLog, setSmsLog] = React.useState([]);
+  const [smsCount, setSmsCount] = React.useState(0);
+  const [smsFilter, setSmsFilter] = React.useState('all');
   useEffect(() => {
     loadData();
   }, []);
@@ -12755,6 +12759,13 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       .then(d => { setEmailLogs(d.logs || []); setEmailTotal(d.total || 0); })
       .catch(() => {})
       .finally(() => setEmailLoading(false));
+  }, []);
+  // [FIX #310] useEffect hissé depuis l'IIFE "sms"
+  React.useEffect(() => {
+    if (window.NexusSmsService) {
+      setSmsLog(NexusSmsService.getSessionLog());
+      setSmsCount(NexusSmsService.getCount());
+    }
   }, []);
   // [PERF] debounce 80ms — évite les lectures répétées en cascade lors d'actions multiples
   const _loadDataTimer = React.useRef(null);
@@ -15143,12 +15154,9 @@ Vous avez re\xE7u un message de TechZone S\xE9n\xE9gal :
       /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", fontWeight: selectedTpl.id === t.id ? 700 : 400 } }, t.label)
     )), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", padding: "0.75rem", background: IS_EMAILJS_CONFIGURED ? "rgba(0,133,62,0.07)" : "rgba(245,158,11,0.07)", borderRadius: "8px", fontSize: "0.75rem", color: IS_EMAILJS_CONFIGURED ? "var(--success)" : "var(--warning)" } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${IS_EMAILJS_CONFIGURED ? "check-circle" : "exclamation-triangle"}` }), "\xA0", IS_EMAILJS_CONFIGURED ? "EmailJS actif \u2014 envoi r\xE9el" : "Mode simulation \u2014 configurer EmailJS")), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1rem", padding: "0.75rem 1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginBottom: "0.2rem" } }, "Sujet :"), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.9rem" } }, selectedTpl.subject)), /* @__PURE__ */ React.createElement("div", { style: { background: "white", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", fontFamily: "monospace", fontSize: "0.85rem", lineHeight: 1.8, whiteSpace: "pre-wrap", color: "var(--text-primary)", minHeight: "200px" } }, selectedTpl.preview), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", fontSize: "0.78rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), "\xA0 Pour personnaliser ce template, configurez les templates dans votre compte EmailJS (", /* @__PURE__ */ React.createElement("a", { href: "https://www.emailjs.com", target: "_blank", style: { color: "var(--primary)" } }, "emailjs.com"), ") avec les variables correspondantes.")));
   })(), view === "sms" && (() => {
-    var [smsLog, setSmsLog]     = React.useState([]);
-    var [smsCount, setSmsCount] = React.useState(0);
-    var [filter, setFilter]     = React.useState('all');
-    React.useEffect(function(){
-      if (window.NexusSmsService){ setSmsLog(NexusSmsService.getSessionLog()); setSmsCount(NexusSmsService.getCount()); }
-    }, []);
+    // [FIX #310] États hissés au niveau AdminDashboard (smsLog, smsCount, smsFilter)
+    var filter = smsFilter;
+    var setFilter = setSmsFilter;
     var TYPE_LABELS = { order_confirmation:'Confirmation', status_in_transit:'En transit', status_delivered:'Livré', status_cancelled:'Annulé', otp:'OTP', delivery_alert:'Alerte livreur', vendor_new_order:'Vendeur (cmd)', offer_accepted:'Offre acceptée' };
     var filtered = filter === 'all' ? smsLog : smsLog.filter(function(l){ return l.type === filter; });
     return React.createElement('div', null,
