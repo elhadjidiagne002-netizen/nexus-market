@@ -12883,14 +12883,49 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const approveVendor = async (vendorId) => {
     const vendor = pendingVendors.find((v) => v.id === vendorId);
 
-    // [FIX] Seul le backend (service_role) peut écrire dans profiles — la clé anon est bloquée par RLS.
-    // Le fallback Supabase direct a été supprimé : il retournait toujours 401 "permission denied for table profiles".
-    // Toutes les opérations d'approbation passent exclusivement par PATCH /api/admin/vendors/:id/approve.
+    // ── Stratégie d'approbation (3 niveaux) ─────────────────────────────────
+    // 1. Backend API  → PATCH /api/admin/vendors/:id/approve  (service_role, idéal)
+    // 2. Supabase RPC → approve_vendor(vendor_id, approved)   (SECURITY DEFINER,
+    //    contourne le RLS qui bloque la clé anon sur la table profiles)
+    // 3. Aucune option → message d'erreur avec SQL à exécuter
+    //
+    // SQL à exécuter UNE FOIS dans Supabase Dashboard → SQL Editor :
+    // ─────────────────────────────────────────────────────────────────────────
+    // CREATE OR REPLACE FUNCTION public.approve_vendor(
+    //   vendor_id uuid,
+    //   approved  boolean
+    // )
+    // RETURNS void
+    // LANGUAGE plpgsql
+    // SECURITY DEFINER          -- tourne avec les droits du propriétaire DB
+    // SET search_path = public   -- sécurité : évite l'injection via search_path
+    // AS $$
+    // BEGIN
+    //   IF approved THEN
+    //     UPDATE profiles
+    //        SET status = 'active',
+    //            role   = 'vendor',
+    //            updated_at = now()
+    //      WHERE id = vendor_id;
+    //   ELSE
+    //     UPDATE profiles
+    //        SET status = 'rejected',
+    //            updated_at = now()
+    //      WHERE id = vendor_id;
+    //   END IF;
+    // END;
+    // $$;
+    // GRANT EXECUTE ON FUNCTION public.approve_vendor(uuid, boolean)
+    //   TO anon, authenticated;
+    // ─────────────────────────────────────────────────────────────────────────
+
     if (!NEXUS_CONFIG.apiUrl && !DataService._sb) {
       addToast("Ni API ni Supabase disponibles.", "danger");
       return;
     }
+
     if (NEXUS_CONFIG.apiUrl) {
+      // ── 1. Backend API ────────────────────────────────────────────────────
       try {
         const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH", body: JSON.stringify({ approved: true }),
@@ -12901,10 +12936,29 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           addToast(err?.error || "Erreur approbation.", "danger"); return;
         }
       } catch (e) { addToast("Erreur réseau.", "danger"); return; }
-    } else {
-      const { error } = await DataService._sb.from("profiles")
-        .update({ status: "active", role: "vendor" }).eq("id", vendorId);
-      if (error) { addToast("Supabase : " + error.message, "danger"); return; }
+
+    } else if (DataService._sb) {
+      // ── 2. Supabase RPC SECURITY DEFINER (contourne le RLS) ──────────────
+      // La clé anon ne peut PAS écrire dans profiles directement (RLS).
+      // La fonction approve_vendor tourne avec les droits du propriétaire DB
+      // et effectue l'UPDATE en toute sécurité.
+      const { error } = await DataService._sb.rpc('approve_vendor', {
+        vendor_id: vendorId,
+        approved:  true,
+      });
+      if (error) {
+        if (error.code === '42883' || (error.message && error.message.includes('does not exist'))) {
+          // La fonction RPC n'a pas encore été créée dans Supabase
+          addToast(
+            "⚠️ Fonction RPC manquante. Créez approve_vendor() dans Supabase SQL Editor " +
+            "(copiez le SQL dans le commentaire du code source, ligne approveVendor).",
+            "danger"
+          );
+        } else {
+          addToast("Supabase : " + error.message, "danger");
+        }
+        return;
+      }
     }
 
     // Mise à jour locale immédiate après succès API
@@ -12922,11 +12976,15 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const rejectVendor = async (vendorId) => {
     const vendor = pendingVendors.find((v) => v.id === vendorId);
 
+    // Même stratégie 3 niveaux que approveVendor (voir commentaire SQL ci-dessus).
+
     if (!NEXUS_CONFIG.apiUrl && !DataService._sb) {
       addToast("Ni API ni Supabase disponibles.", "danger");
       return;
     }
+
     if (NEXUS_CONFIG.apiUrl) {
+      // ── 1. Backend API ────────────────────────────────────────────────────
       try {
         const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH", body: JSON.stringify({ approved: false }),
@@ -12941,10 +12999,25 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         addToast("Erreur réseau lors du refus.", "danger");
         return;
       }
+
     } else if (DataService._sb) {
-      const { error } = await DataService._sb.from("profiles")
-        .update({ status: "rejected" }).eq("id", vendorId);
-      if (error) { addToast("Supabase : " + error.message, "danger"); return; }
+      // ── 2. Supabase RPC SECURITY DEFINER (contourne le RLS) ──────────────
+      const { error } = await DataService._sb.rpc('approve_vendor', {
+        vendor_id: vendorId,
+        approved:  false,
+      });
+      if (error) {
+        if (error.code === '42883' || (error.message && error.message.includes('does not exist'))) {
+          addToast(
+            "⚠️ Fonction RPC manquante. Créez approve_vendor() dans Supabase SQL Editor " +
+            "(copiez le SQL dans le commentaire du code source, ligne approveVendor).",
+            "danger"
+          );
+        } else {
+          addToast("Supabase : " + error.message, "danger");
+        }
+        return;
+      }
     }
 
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
