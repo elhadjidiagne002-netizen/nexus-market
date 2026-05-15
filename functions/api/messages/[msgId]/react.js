@@ -1,6 +1,6 @@
 // PATCH /api/messages/:msgId/react  { emoji }
 // Toggle emoji reaction sur un message. Stocké dans messages.reactions (JSONB).
-import { requireRole, jsonOk, jsonErr } from "../../../../_lib/auth.js";
+import { requireRole, jsonOk, jsonErr } from "../../../_lib/auth.js";
 
 export async function onRequestPatch(context) {
   const { request, env, params } = context;

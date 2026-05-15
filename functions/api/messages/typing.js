@@ -1,7 +1,7 @@
 // POST /api/messages/typing  { convId }
 // Enregistre un indicateur "en train de taper" (TTL 5 s via expires_at).
 // GET  /api/messages/typing/:convId  → renvoie qui est en train de taper.
-import { requireRole, jsonOk, jsonErr, sbInsert } from "../../../_lib/auth.js";
+import { requireRole, jsonOk, jsonErr, sbInsert } from "../../_lib/auth.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;

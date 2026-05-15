@@ -1,5 +1,5 @@
 // GET /api/admin/logs?limit=100&action=&page=1
-import { requireRole, jsonOk, jsonErr, sbSelect } from "../../../_lib/auth.js";
+import { requireRole, jsonOk, jsonErr, sbSelect } from "../../_lib/auth.js";
 
 export async function onRequestGet(context) {
   const { request, env } = context;

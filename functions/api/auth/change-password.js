@@ -1,6 +1,6 @@
 // ── POST /api/auth/change-password  { currentPassword, newPassword } ──────
 // Change le mot de passe via Supabase Admin API (vérifie d'abord l'ancien).
-import { resolveUser, jsonOk, jsonErr } from "../../../_lib/auth.js";
+import { resolveUser, jsonOk, jsonErr } from "../../_lib/auth.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;

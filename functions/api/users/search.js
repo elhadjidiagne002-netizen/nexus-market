@@ -1,5 +1,5 @@
 // GET /api/users/search?q=&limit=8
-import { requireRole, jsonOk, jsonErr } from "../../../_lib/auth.js";
+import { requireRole, jsonOk, jsonErr } from "../../_lib/auth.js";
 
 export async function onRequestGet(context) {
   const { request, env } = context;

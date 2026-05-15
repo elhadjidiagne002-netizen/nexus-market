@@ -1,6 +1,6 @@
 // functions/_lib/auth.js
 // ── Shared auth helper — resolves JWT → { id, role, email } ──────────────────
-// Usage : import { resolveUser, requireRole } from "../../../_lib/auth.js";
+// Usage : import { resolveUser, requireRole } from "auth.js";
 
 export async function resolveUser(request, env) {
   const SB_URL = env.SUPABASE_URL;

@@ -1,6 +1,6 @@
 // ── POST /api/auth/reset-password  { email } ──────────────────────────────
 // Envoie un email de réinitialisation via Supabase Auth (built-in flow).
-import { jsonOk, jsonErr } from "../../../_lib/auth.js";
+import { jsonOk, jsonErr } from "../../_lib/auth.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;

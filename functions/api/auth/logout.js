@@ -1,6 +1,6 @@
 // ── POST /api/auth/logout ──────────────────────────────────────────────────
 // Révoque la session Supabase côté serveur (invalidation du refresh token).
-import { resolveUser, jsonOk } from "../../../_lib/auth.js";
+import { resolveUser, jsonOk } from "../../_lib/auth.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;

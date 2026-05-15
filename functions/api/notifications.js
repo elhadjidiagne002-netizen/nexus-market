@@ -1,7 +1,7 @@
 // POST /api/notifications  { userId, type, title, message }
 // Insert une notification pour n'importe quel utilisateur (service_role — contourne RLS).
 // Appelé par le frontend quand l'insert Supabase direct échoue (RLS 403).
-import { jsonOk, jsonErr, sbInsert } from "../../_lib/auth.js";
+import { jsonOk, jsonErr, sbInsert } from "../_lib/auth.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;

@@ -2,7 +2,7 @@
 // Crée une commande par vendeur de façon atomique via create_order_atomic().
 // Corps : { cart, customerInfo, shippingCity, paymentMethod, discountAmount }
 // Réponse : { ok, orders: [...] }
-import { requireRole, jsonOk, jsonErr } from "../../../_lib/auth.js";
+import { requireRole, jsonOk, jsonErr } from "../../_lib/auth.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;

@@ -1,5 +1,5 @@
 // PATCH /api/orders/:id/status  { status: "processing"|"in_transit"|"delivered"|"cancelled" }
-import { requireRole, jsonOk, jsonErr, sbPatch, logAdminAction } from "../../../../_lib/auth.js";
+import { requireRole, jsonOk, jsonErr, sbPatch, logAdminAction } from "../../../_lib/auth.js";
 
 const VALID_STATUSES = ["processing", "in_transit", "delivered", "cancelled", "paid", "failed"];
 

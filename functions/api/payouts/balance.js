@@ -1,6 +1,6 @@
 // GET /api/payouts/balance
 // Retourne le solde disponible du vendeur authentifié.
-import { requireRole, jsonOk, jsonErr, sbSelect } from "../../../_lib/auth.js";
+import { requireRole, jsonOk, jsonErr, sbSelect } from "../../_lib/auth.js";
 
 export async function onRequestGet(context) {
   const { request, env } = context;

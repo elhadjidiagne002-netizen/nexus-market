@@ -1,7 +1,7 @@
 // ── /api/auth/me ──────────────────────────────────────────────────────────────
 // GET  → profil de l'utilisateur connecté (depuis profiles + auth.users)
 // Cloudflare Pages Function.
-import { resolveUser, jsonOk, jsonErr, sbSelect } from "../../../_lib/auth.js";
+import { resolveUser, jsonOk, jsonErr, sbSelect } from "../../_lib/auth.js";
 
 export async function onRequestGet(context) {
   const { request, env } = context;
