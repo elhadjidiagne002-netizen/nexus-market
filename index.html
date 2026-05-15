@@ -1441,6 +1441,7 @@ const NEXUS_CONFIG = {
     get vendorAdminTemplateId() { return this.universalTemplateId; },
   },
   imgbb: { apiKey: "" },  // Clé imgBB (gratuit — https://api.imgbb.com) pour hébergement images sans Supabase
+  sms: { enabled: true, defaultCountryCode: '+221', senderId: 'NEXUS', alwaysSmsAboveFcfa: 5000 },
   analytics: {
     ga4Id: ""  // Google Analytics 4 Measurement ID — ex: "G-XXXXXXXXXX" (gratuit sur analytics.google.com)
   },
@@ -4629,6 +4630,229 @@ const initStripe = () => {
   }
   return stripeInstance;
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// NexusSmsService — SMS transactionnels (Sénégal-first)
+// ────────────────────────────────────────────────────────────────────────────
+// Architecture 3 niveaux :
+//   1. Backend  POST /api/sms/send  — provider réel (AT / Orange / Twilio)
+//   2. Simulation locale            — console.info + toast (mode démo)
+//
+// Providers supportés côté serveur :
+//   Africa's Talking : ~25 FCFA/SMS, sandbox gratuit, meilleure couverture SN
+//   Orange SMS API   : opérateur local, délivrance prioritaire réseau Orange SN
+//   Twilio           : international, fallback fiable, ~60 FCFA/SMS
+//
+// Normalisation numéros sénégalais :
+//   "771234567"        → "+221771234567"
+//   "00221771234567"   → "+221771234567"
+//   "+221 77 123 45 67"→ "+221771234567"
+//
+// DDL Supabase (table logs, optionnelle) :
+//   CREATE TABLE sms_logs (
+//     id        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+//     to_number TEXT NOT NULL,
+//     type      TEXT NOT NULL,
+//     preview   TEXT,
+//     status    TEXT DEFAULT 'sent',
+//     sent_at   TIMESTAMPTZ DEFAULT now()
+//   );
+// ════════════════════════════════════════════════════════════════════════════
+const NexusSmsService = {
+  _sessionLog: [],    // max 200 entrées, visible dans le panel admin SMS
+  _sendCount:  0,     // compteur session
+
+  // ── Normalisation E.164 ──────────────────────────────────────────────────
+  normalizePhone(raw) {
+    if (!raw) return null;
+    let n = String(raw).replace(/[\s\-\.\(\)]/g, '');
+    if (n.startsWith('00')) n = '+' + n.slice(2);
+    if (!n.startsWith('+')) {
+      const cc = (NEXUS_CONFIG.sms && NEXUS_CONFIG.sms.defaultCountryCode) || '+221';
+      n = cc + (n.startsWith('0') ? n.slice(1) : n);
+    }
+    return /^\+\d{8,15}$/.test(n) ? n : null;
+  },
+
+  // ── Envoi via backend (prioritaire) ─────────────────────────────────────
+  async _sendBackend(to, message) {
+    if (!NEXUS_CONFIG.apiUrl) return false;
+    const token = DataService?._token
+      || sessionStorage.getItem('nexus_jwt')
+      || localStorage.getItem('nexus_jwt');
+    try {
+      const ctrl = new AbortController();
+      const tid  = setTimeout(() => ctrl.abort(), 12000);
+      const res  = await fetch(`${NEXUS_CONFIG.apiUrl}/api/sms/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          to,
+          message,
+          senderId: (NEXUS_CONFIG.sms && NEXUS_CONFIG.sms.senderId) || 'NEXUS',
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(tid);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.warn('[SMS] Backend HTTP', res.status, err.error || '');
+        return false;
+      }
+      const data = await res.json();
+      console.info('[SMS] \u2705 Envoyé via backend →', to, '| provider:', data.provider || '?');
+      return true;
+    } catch (e) {
+      if (e.name !== 'AbortError') console.warn('[SMS] Backend indisponible:', e.message);
+      return false;
+    }
+  },
+
+  // ── Simulation (offline / démo) ──────────────────────────────────────────
+  _simulate(to, message, type) {
+    const masked = to.slice(0, 4) + '·'.repeat(Math.max(0, to.length - 7)) + to.slice(-3);
+    console.info(`\u{1F4F1}[SMS SIM] ${type} → ${masked}\n${message}`);
+    if (window.__nexusToast)
+      window.__nexusToast(`📱 SMS simulé (${type}) → ${masked}`, 'info', 3200);
+    return true;
+  },
+
+  // ── Enregistrer dans Supabase (non bloquant) ─────────────────────────────
+  _persistLog(to, type, preview, status) {
+    if (DataService && DataService._sb) {
+      DataService._sb.from('sms_logs').insert({
+        to_number: to, type, preview: preview.slice(0, 80), status, sent_at: new Date().toISOString(),
+      }).catch(() => {});
+    }
+  },
+
+  // ── Méthode principale ───────────────────────────────────────────────────
+  async send(rawPhone, message, type = 'transactional') {
+    const cfg = NEXUS_CONFIG.sms || {};
+    if (!cfg.enabled) return false;
+
+    const to = this.normalizePhone(rawPhone);
+    if (!to) {
+      console.warn('[SMS] Numéro invalide ou manquant:', rawPhone);
+      return false;
+    }
+
+    // Déduplication : ne pas renvoyer le même type pour la même commande dans la même session
+    const dedupeKey = `${type}:${to}`;
+    if (this._dedupe && this._dedupe.has(dedupeKey)) return false;
+    if (!this._dedupe) this._dedupe = new Set();
+    this._dedupe.add(dedupeKey);
+    setTimeout(() => this._dedupe && this._dedupe.delete(dedupeKey), 60000);
+
+    const preview = message.slice(0, 80);
+    this._sendCount++;
+    this._sessionLog.unshift({ ts: Date.now(), to, type, preview, status: 'pending' });
+    if (this._sessionLog.length > 200) this._sessionLog.length = 200;
+
+    let ok = false;
+    try {
+      ok = await this._sendBackend(to, message);
+    } catch (_) {}
+
+    if (!ok) ok = this._simulate(to, message, type);
+
+    this._sessionLog[0].status = ok ? 'sent' : 'failed';
+    this._persistLog(to, type, preview, ok ? 'sent' : 'failed');
+    return ok;
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TEMPLATES TRANSACTIONNELS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** Confirmation commande (acheteur → SMS immédiat à la validation) */
+  async sendOrderConfirmation(order) {
+    const phone = order.buyerPhone || order.buyer_phone;
+    if (!phone) return false;
+    const priceFcfa = Math.round((order.total || 0) * EUR_TO_FCFA);
+    const shortId   = (order.id || '').slice(-8).toUpperCase();
+    const items     = order.products || [];
+    const summary   = items.length === 1
+      ? items[0].name.slice(0, 30)
+      : `${items.length} articles`;
+    const tracking  = order.trackingNumber && order.trackingNumber !== '—'
+      ? `\nSuivi : ${order.trackingNumber}` : '';
+    const msg = `NEXUS Market\nCommande #${shortId} confirmée !\n${summary}\nMontant : ${priceFcfa.toLocaleString('fr-FR')} FCFA${tracking}\nMerci de votre confiance.`;
+    return this.send(phone, msg, 'order_confirmation');
+  },
+
+  /** Mise à jour statut (in_transit / delivered / cancelled) */
+  async sendStatusUpdate(order, newStatus) {
+    const phone = order.buyerPhone || order.buyer_phone;
+    if (!phone) return false;
+    const shortId   = (order.id || '').slice(-8).toUpperCase();
+    const priceFcfa = Math.round((order.total || 0) * EUR_TO_FCFA);
+    const tracking  = order.trackingNumber || order.tracking_number || '';
+    const msgs = {
+      in_transit:
+        `NEXUS Market\nCommande #${shortId} en route !` +
+        (tracking && tracking !== '—' ? `\nSuivi : ${tracking}` : '') +
+        `\nLivraison : 2-5 jours ouvrés.`,
+      delivered:
+        `NEXUS Market\nCommande #${shortId} livrée !\n` +
+        `Montant réglé : ${priceFcfa.toLocaleString('fr-FR')} FCFA\n` +
+        `Laissez un avis sur nexus.sn`,
+      cancelled:
+        `NEXUS Market\nCommande #${shortId} annulée.\n` +
+        `Remboursement sous 3-5 jours ouvrés.\n` +
+        `Contact : sav@nexus.sn`,
+    };
+    const msg = msgs[newStatus];
+    if (!msg) return false;
+    return this.send(phone, msg, `status_${newStatus}`);
+  },
+
+  /** OTP réinitialisation mot de passe / 2FA (10 chiffres, lisible à voix haute) */
+  async sendOtp(rawPhone, code, expiresMin = 10) {
+    const msg = `NEXUS Market\nCode de verification :\n${code}\nValide ${expiresMin} min.\nNe le communiquez jamais.`;
+    return this.send(rawPhone, msg, 'otp');
+  },
+
+  /** Alerte livreur en route (déclenché par l'admin ou le livreur) */
+  async sendDeliveryAlert(order, etaMinutes = null) {
+    const phone = order.buyerPhone || order.buyer_phone;
+    if (!phone) return false;
+    const shortId = (order.id || '').slice(-8).toUpperCase();
+    const eta = etaMinutes ? `\nArrivée estimée : ${etaMinutes} min.` : '';
+    const msg = `NEXUS Market\nVotre livreur est en route pour la commande #${shortId} !${eta}\nRestez disponible à votre adresse.`;
+    return this.send(phone, msg, 'delivery_alert');
+  },
+
+  /** Nouvelle commande → vendeur */
+  async sendVendorNewOrder(vendorPhone, order) {
+    if (!vendorPhone) return false;
+    const shortId   = (order.id || '').slice(-8).toUpperCase();
+    const priceFcfa = Math.round((order.total || 0) * EUR_TO_FCFA);
+    const items     = order.products || [];
+    const summary   = items.length === 1 ? items[0].name.slice(0, 28) : `${items.length} articles`;
+    const msg = `NEXUS Market\nNouvelle commande #${shortId}\n${summary}\n${priceFcfa.toLocaleString('fr-FR')} FCFA\nExpédiez sous 48h.`;
+    return this.send(vendorPhone, msg, 'vendor_new_order');
+  },
+
+  /** Offre acheteur acceptée par le vendeur */
+  async sendOfferAccepted(buyerPhone, offer) {
+    if (!buyerPhone) return false;
+    const priceFcfa = Math.round((offer.offeredPrice || 0) * EUR_TO_FCFA);
+    const name = (offer.productName || '').slice(0, 30);
+    const msg = `NEXUS Market\nOffre acceptée !\n"${name}"\n${priceFcfa.toLocaleString('fr-FR')} FCFA\nConnectez-vous pour finaliser.`;
+    return this.send(buyerPhone, msg, 'offer_accepted');
+  },
+
+  /** Logs de la session courante (pour le panel admin) */
+  getSessionLog() { return this._sessionLog; },
+  getCount()      { return this._sendCount; },
+};
+
+window.NexusSmsService = NexusSmsService;
+
 const EmailService = {
   _initialized: false,
   // BUG FIX: reset() permet de réinitialiser le service après une mise à jour de config
@@ -8283,6 +8507,8 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       }
       if (createdOrders.length > 0) {
         EmailService.sendOrderConfirmation(createdOrders[0], cart);
+        NexusSmsService.sendOrderConfirmation(createdOrders[0]).catch(function(){});
+        try { var _vi=createdOrders[0].vendorId||createdOrders[0].vendor; if(_vi) resolveVendorPhone(_vi).then(function(vp){ if(vp) NexusSmsService.sendVendorNewOrder(vp,createdOrders[0]).catch(function(){}); }).catch(function(){}); } catch(_){}
         // ── Auto-génération des factures (non bloquant) ───────────────
         if (NEXUS_CONFIG.apiUrl) {
           createdOrders.forEach(ord => {
@@ -9769,6 +9995,7 @@ const ForgotPasswordModal = ({ onBack, onCancel }) => {
         setLoading(false);
         setStep(2);
         addToast(`\u{1F4E7} Email de r\xE9initialisation envoy\xE9 \xE0 ${email}. V\xE9rifiez votre bo\xEEte mail.`, "info", 8000);
+        try { var _pu=(storage.getArray('users')||[]).find(function(u){return u.email===email.trim().toLowerCase();}); if(_pu&&_pu.phone) NexusSmsService.sendOtp(_pu.phone,String(Math.floor(100000+Math.random()*900000)),10).catch(function(){}); } catch(_){}
         return;
       } catch (fetchErr) {
         // Réseau ko → fallback Supabase direct
@@ -12736,6 +12963,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       }
     }
 
+    try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
     // Déclenchement unique sur "delivered". Idempotent : vérifie en DB qu'aucun
     // crédit "earn" n'existe déjà pour cette commande avant de créditer.
@@ -12842,6 +13070,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
     { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: stats.stockAlerts ?? (storage.getArray("stock_alerts")).length },
     { id: "email_templates", icon: "file-alt", label: "Templates email" },
+    { id: "sms",    icon: "sms",      label: "SMS" },
     { id: "emails", icon: "envelope", label: "Emails envoy\xE9s" },
     { id: "payouts", icon: "money-bill-wave", label: "Paiements vendeurs" },
     { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: stats.pendingPayouts ?? storage.getArray("payout_requests").filter((r) => r.status === "pending").length },
@@ -14912,7 +15141,67 @@ Vous avez re\xE7u un message de TechZone S\xE9n\xE9gal :
       /* @__PURE__ */ React.createElement("i", { className: `fas fa-${t.icon}`, style: { color: t.color, width: "16px" } }),
       /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", fontWeight: selectedTpl.id === t.id ? 700 : 400 } }, t.label)
     )), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", padding: "0.75rem", background: IS_EMAILJS_CONFIGURED ? "rgba(0,133,62,0.07)" : "rgba(245,158,11,0.07)", borderRadius: "8px", fontSize: "0.75rem", color: IS_EMAILJS_CONFIGURED ? "var(--success)" : "var(--warning)" } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${IS_EMAILJS_CONFIGURED ? "check-circle" : "exclamation-triangle"}` }), "\xA0", IS_EMAILJS_CONFIGURED ? "EmailJS actif \u2014 envoi r\xE9el" : "Mode simulation \u2014 configurer EmailJS")), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1rem", padding: "0.75rem 1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginBottom: "0.2rem" } }, "Sujet :"), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.9rem" } }, selectedTpl.subject)), /* @__PURE__ */ React.createElement("div", { style: { background: "white", border: "1px solid var(--border)", borderRadius: "10px", padding: "1.25rem", fontFamily: "monospace", fontSize: "0.85rem", lineHeight: 1.8, whiteSpace: "pre-wrap", color: "var(--text-primary)", minHeight: "200px" } }, selectedTpl.preview), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", fontSize: "0.78rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), "\xA0 Pour personnaliser ce template, configurez les templates dans votre compte EmailJS (", /* @__PURE__ */ React.createElement("a", { href: "https://www.emailjs.com", target: "_blank", style: { color: "var(--primary)" } }, "emailjs.com"), ") avec les variables correspondantes.")));
-  })(), view === "emails" && (() => {
+  })(), view === "sms" && (() => {
+    var [smsLog, setSmsLog]     = React.useState([]);
+    var [smsCount, setSmsCount] = React.useState(0);
+    var [filter, setFilter]     = React.useState('all');
+    React.useEffect(function(){
+      if (window.NexusSmsService){ setSmsLog(NexusSmsService.getSessionLog()); setSmsCount(NexusSmsService.getCount()); }
+    }, []);
+    var TYPE_LABELS = { order_confirmation:'Confirmation', status_in_transit:'En transit', status_delivered:'Livré', status_cancelled:'Annulé', otp:'OTP', delivery_alert:'Alerte livreur', vendor_new_order:'Vendeur (cmd)', offer_accepted:'Offre acceptée' };
+    var filtered = filter === 'all' ? smsLog : smsLog.filter(function(l){ return l.type === filter; });
+    return React.createElement('div', null,
+      React.createElement('div', { className: 'stats-grid', style: { marginBottom: '1.5rem' } },
+        [
+          ['Envoyés (session)', String(smsCount)],
+          ['Provider', NEXUS_CONFIG.apiUrl ? 'Backend' : 'Simulation'],
+          ['Indicatif', NEXUS_CONFIG.sms.defaultCountryCode],
+          ['Statut', NEXUS_CONFIG.sms.enabled ? 'Activé' : 'Désactivé'],
+        ].map(function(s, i){ return React.createElement('div', { key: i, className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, s[0]), React.createElement('div', { className: 'stat-value', style: { fontSize: '1rem' } }, s[1])); })
+      ),
+      React.createElement('div', { className: 'card', style: { marginBottom: '1.5rem' } },
+        React.createElement('div', { className: 'card-header' }, React.createElement('h2', { className: 'card-title' }, 'Providers SMS')),
+        React.createElement('div', { style: { padding: '1rem', lineHeight: 2 } },
+          React.createElement('div', null, React.createElement('strong', null, '🌍 Africa\'s Talking'), ' — ~25 FCFA/SMS, sandbox gratuit. Env: ', React.createElement('code', null, 'SMS_PROVIDER=africas_talking + AT_API_KEY + AT_USERNAME')),
+          React.createElement('div', null, React.createElement('strong', null, '🟠 Orange SMS API'), ' — ~30 FCFA/SMS, opérateur local SN. Env: ', React.createElement('code', null, 'ORANGE_SMS_TOKEN=Bearer_...')),
+          React.createElement('div', null, React.createElement('strong', null, '🌐 Twilio'), ' — ~60 FCFA/SMS, international. Env: ', React.createElement('code', null, 'TWILIO_SID + TWILIO_TOKEN + TWILIO_FROM'))
+        )
+      ),
+      React.createElement('div', { className: 'card' },
+        React.createElement('div', { className: 'card-header' },
+          React.createElement('h2', { className: 'card-title' }, 'Logs session (' + filtered.length + ')'),
+          React.createElement('div', { style: { display: 'flex', gap: '0.5rem' } },
+            React.createElement('select', { className: 'form-select', style: { padding: '0.3rem 0.5rem', fontSize: '0.8rem', width: 'auto' }, value: filter, onChange: function(e){ setFilter(e.target.value); } },
+              [React.createElement('option', { key: 'all', value: 'all' }, 'Tous')].concat(Object.keys(TYPE_LABELS).map(function(k){ return React.createElement('option', { key: k, value: k }, TYPE_LABELS[k]); }))
+            ),
+            React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: function(){ if(window.NexusSmsService){ setSmsLog([].concat(NexusSmsService.getSessionLog())); setSmsCount(NexusSmsService.getCount()); } } }, '↺ Actualiser')
+          )
+        ),
+        filtered.length === 0
+          ? React.createElement('div', { className: 'empty-state' }, React.createElement('p', null, 'Aucun SMS envoyé cette session.'))
+          : React.createElement('div', { className: 'table-wrapper' },
+              React.createElement('table', { className: 'data-table' },
+                React.createElement('thead', null, React.createElement('tr', null, React.createElement('th', null, 'Heure'), React.createElement('th', null, 'Type'), React.createElement('th', null, 'Destinataire'), React.createElement('th', null, 'Aperçu'), React.createElement('th', null, 'Statut'))),
+                React.createElement('tbody', null,
+                  filtered.slice(0, 50).map(function(l, i){
+                    var masked = l.to ? l.to.slice(0,4) + Array(Math.max(0,l.to.length-7)+1).join('\u00b7') + l.to.slice(-3) : '\u2014';
+                    var bclass = 'badge badge-' + (l.status==='sent'?'success':l.status==='failed'?'danger':'warning');
+                    return React.createElement('tr', { key: i },
+                      React.createElement('td', null, React.createElement('code', { style: { fontSize:'0.72rem' } }, new Date(l.ts).toLocaleTimeString('fr-FR'))),
+                      React.createElement('td', null, TYPE_LABELS[l.type] || l.type),
+                      React.createElement('td', null, React.createElement('code', { style: { fontSize:'0.75rem' } }, masked)),
+                      React.createElement('td', null, React.createElement('span', { style: { fontSize:'0.78rem', color:'var(--text-secondary)' } }, l.preview)),
+                      React.createElement('td', null, React.createElement('span', { className: bclass }, l.status || '\u2026'))
+                    );
+                  })
+                )
+              )
+            )
+      )
+    );
+  })(),
+
+  view === "emails" && (() => {
     // [FIX #310] États hissés au niveau AdminDashboard (emailLogs, emailLoading, emailTotal)
     const logs = emailLogs;
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Journaux Emails (", emailLoading ? "…" : emailTotal, ")"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_EMAILJS_CONFIGURED ? /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" }), " EmailJS actif") : /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), " Mode simulation"))), !IS_EMAILJS_CONFIGURED && /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Pour activer l\\'envoi r\xE9el, configurez EmailJS dans ", /* @__PURE__ */ React.createElement("code", null, "NEXUS_CONFIG.emailjs"), " en haut du fichier HTML.")), emailLoading ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }), /* @__PURE__ */ React.createElement("p", null, "Chargement\u2026")) : logs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun email enregistr\xE9")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Destinataire"), /* @__PURE__ */ React.createElement("th", null, "Sujet"), /* @__PURE__ */ React.createElement("th", null, "Fournisseur"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Date/Heure"))), /* @__PURE__ */ React.createElement("tbody", null, logs.map((e) => /* @__PURE__ */ React.createElement("tr", { key: e.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Destinataire" }, /* @__PURE__ */ React.createElement("strong", null, e.to)), /* @__PURE__ */ React.createElement("td", { "data-label": "Sujet", style: { fontSize: "0.85rem" } }, e.subject), /* @__PURE__ */ React.createElement("td", { "data-label": "Fournisseur" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, e.provider)), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${e.status === 'sent' ? 'success' : e.status === 'error' ? 'danger' : 'warning'}` }, e.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(e.sentAt).toLocaleString("fr-FR"))))))));
@@ -16217,6 +16506,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       }
     }
 
+    try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
     // Identique au flux admin. Idempotent via vérification cashback_transactions.
     if (newStatus === "delivered") {
@@ -16312,6 +16602,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (idx !== -1) { allOffers[idx].status = accept ? "accepted" : "rejected"; storage.set("offers", allOffers); }
 
     if (!offer) { loadData(); return; }
+    if (accept && offer.buyerPhone) NexusSmsService.sendOfferAccepted(offer.buyerPhone, offer).catch(function(){});
 
     DataService.addNotification(offer.buyerId, accept
       ? { type: "offer", title: "\u2705 Offre accept\xE9e !", message: `Votre offre pour "${offer.productName}" a \xE9t\xE9 accept\xE9e par ${currentUser2.name}.` }
