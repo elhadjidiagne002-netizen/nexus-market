@@ -3112,6 +3112,17 @@ async signOut() {
   },
   // ── Session expiry check ─────────────────────────────────────────────────
   isSessionExpired() {
+    // [SUPABASE-ONLY FIX] Si aucun token backend n'a jamais été émis (mode Supabase-only,
+    // pas de /api/auth/login), il n'y a ni nexus_jwt ni nexus_refresh_token en storage.
+    // Dans ce cas, Supabase gère son propre refresh automatiquement → on n'est jamais
+    // "expiré" ici. Le token Supabase sera récupéré plus loin dans apiFetch() via getSession().
+    const hasBackendToken = !!(
+      sessionStorage.getItem("nexus_jwt") ||
+      localStorage.getItem("nexus_jwt") ||
+      localStorage.getItem("nexus_refresh_token")
+    );
+    if (!hasBackendToken) return false;
+
     // [JWT-REFRESH] La session est considérée expirée uniquement si le REFRESH
     // token est absent ou expiré. Un access token expiré est silencieusement
     // renouvelé par _refreshAccessToken() dans apiFetch().
@@ -3120,7 +3131,6 @@ async signOut() {
 
     // Pas de refresh token → tomber sur l'expiration de l'access token (comportement legacy)
     const accExp = sessionStorage.getItem("nexus_jwt_exp") || localStorage.getItem("nexus_jwt_exp");
-    // [JWT-FIX] Aucun token = session inexistante → considérer comme expirée
     if (!accExp) return true;
     return Date.now() > parseInt(accExp, 10);
   },
