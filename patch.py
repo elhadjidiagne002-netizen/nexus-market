@@ -1,21 +1,18 @@
 import os
 import shutil
 
-# Dossier racine du projet (à adapter si nécessaire)
-project_root = "votre-projet"
-
-# Dossier racine des fonctions (à adapter si nécessaire)
+# Dossier racine des fonctions (déjà existant)
 functions_root = "functions"
 
-# Liste des fichiers et leurs destinations
+# Liste des fichiers et leurs destinations (tout sous functions/)
 files_mapping = {
     "stripe-create-intent.js": os.path.join(functions_root, "api", "payments", "stripe", "create-intent.js"),
     "payout-request.js": os.path.join(functions_root, "api", "payout", "request.js"),
-    "health.js": os.path.join(project_root, "functions", "api", "health.js"),
+    "health.js": os.path.join(functions_root, "api", "health.js"),
     "payout-history.js": os.path.join(functions_root, "api", "payout", "history.js"),
-    "paytech-ipn.js": os.path.join(project_root, "functions", "api", "payments", "paytech", "ipn.js"),
-    "paytech-init.js": os.path.join(project_root, "functions", "api", "payments", "paytech", "init.js"),
-    "paytech-verify-[orderId].js": os.path.join(project_root, "functions", "api", "payments", "paytech", "verify", "[orderId].js"),
+    "paytech-ipn.js": os.path.join(functions_root, "api", "payments", "paytech", "ipn.js"),
+    "paytech-init.js": os.path.join(functions_root, "api", "payments", "paytech", "init.js"),
+    "paytech-verify-[orderId].js": os.path.join(functions_root, "api", "payments", "paytech", "verify", "[orderId].js"),
     "stripe-webhook.js": os.path.join(functions_root, "api", "webhooks", "stripe.js"),
 }
 
