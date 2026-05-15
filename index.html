@@ -3470,24 +3470,27 @@ async signOut() {
               github_avatar: authUser.app_metadata?.provider === 'github' ? ghAvatar : null,
             };
 
-            // [FIX 409] Le upsert sur 'id' peut retourner 409 si la contrainte PRIMARY KEY
-            // n'est pas reconnue par PostgREST. Stratégie : INSERT d'abord, si conflit (row
-            // existante) on fait un SELECT pour récupérer le profil existant.
+            // [FIX 409] SELECT d'abord — INSERT seulement si profil vraiment absent
             let created = null;
             try {
-              const { data: ins, error: insErr } = await this._sb
-                .from('profiles')
-                .insert(newProfileRow)
-                .select()
-                .single();
-              if (!insErr) {
-                created = ins;
-              } else if (insErr.code === '23505' || insErr.message?.includes('duplicate') || insErr.message?.includes('conflict') || insErr.code === 'PGRST116') {
-                // Doublon → récupérer le profil existant
-                const { data: existing } = await this._sb.from('profiles').select('*').eq('id', uid).maybeSingle();
+              const { data: existing } = await this._sb.from('profiles').select('*').eq('id', uid).maybeSingle();
+              if (existing) {
                 created = existing;
               } else {
-                console.warn('[onAuthStateChange] insert profil:', insErr.message);
+                const { data: ins, error: insErr } = await this._sb
+                  .from('profiles')
+                  .insert(newProfileRow)
+                  .select()
+                  .single();
+                if (!insErr) {
+                  created = ins;
+                } else if (insErr.code === '23505') {
+                  // Race condition — profil créé entre le SELECT et l'INSERT
+                  const { data: ex2 } = await this._sb.from('profiles').select('*').eq('id', uid).maybeSingle();
+                  created = ex2;
+                } else {
+                  console.warn('[onAuthStateChange] insert profil:', insErr.message);
+                }
               }
             } catch (_e) { /* non bloquant */ }
 
