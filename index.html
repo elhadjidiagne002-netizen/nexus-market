@@ -2735,15 +2735,12 @@ const DataService = {
         commission_rate: user.commission || user.commission_rate || null,
       };
       Object.keys(row).forEach(k => row[k] === null && delete row[k]);
-      // [FIX 409] upsert → UPDATE si profil existe, INSERT sinon (évite RLS 409)
+      // [FIX 409] Toujours UPDATE — un utilisateur connecté a forcément un profil.
+      // Si l'UPDATE n'affecte aucune ligne (profil absent — cas anormal), on ignore.
       try {
-        const { data: existing } = await this._sb.from('profiles').select('id').eq('id', row.id).maybeSingle();
-        if (existing) {
-          const { id: _id, ...upd } = row;
+        const { id: _id, ...upd } = row;
+        if (Object.keys(upd).length > 0) {
           await this._sb.from('profiles').update(upd).eq('id', row.id);
-        } else {
-          const { error: insErr } = await this._sb.from('profiles').insert(row);
-          if (insErr && insErr.code !== '23505') console.warn('[saveUser] insert:', insErr.message);
         }
       } catch (e) { console.warn('[saveUser]', e.message); }
       return;
@@ -3017,20 +3014,18 @@ const DataService = {
     if (this._sb) {
       const { data, error } = await this._sb.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
       if (!error && data?.user) {
+        // [FIX 409] signIn = lecture seule. AUCUN INSERT sur profiles.
+        // Le profil existe déjà (créé à l'inscription). Si _fetchProfile échoue
+        // (JWT stale, timeout), on utilise les métadonnées auth directement.
         let prof = await this._fetchProfile(data.user.id);
         if (!prof) {
+          // Retry — le JWT peut ne pas être propagé immédiatement
+          await new Promise(r => setTimeout(r, 500));
+          prof = await this._fetchProfile(data.user.id);
+        }
+        if (!prof) {
+          // Toujours pas lisible — construire un profil temporaire depuis auth
           prof = this._buildProfileFromAuthUser(data.user);
-          // [FIX] Supabase v2 PostgrestFilterBuilder n'est pas une Promise native → .catch() n'existe pas.
-          // [FIX 409] ignoreDuplicates non supporté → SELECT d'abord, INSERT seulement si absent
-          try {
-            const { data: existing } = await this._sb.from('profiles').select('id').eq('id', prof.id).maybeSingle();
-            if (!existing) {
-              const { error: insErr } = await this._sb.from('profiles').insert(prof);
-              if (insErr && insErr.code !== '23505') {
-                console.warn('[signIn] profiles insert:', insErr.message);
-              }
-            }
-          } catch (_) {}
         }
         return prof;
       }
