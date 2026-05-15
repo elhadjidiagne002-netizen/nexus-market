@@ -2735,10 +2735,17 @@ const DataService = {
         commission_rate: user.commission || user.commission_rate || null,
       };
       Object.keys(row).forEach(k => row[k] === null && delete row[k]);
-      // [FIX 409] ignoreDuplicates:false pour écrire les mises à jour, mais avec gestion silencieuse du 409
-      const { error: _upsErr } = await this._sb.from("profiles").upsert(row, { onConflict: 'id' });
-      if (_upsErr && _upsErr.code !== '23505' && !_upsErr.message?.includes('409'))
-        console.warn("[saveUser] profiles upsert:", _upsErr.message);
+      // [FIX 409] upsert → UPDATE si profil existe, INSERT sinon (évite RLS 409)
+      try {
+        const { data: existing } = await this._sb.from('profiles').select('id').eq('id', row.id).maybeSingle();
+        if (existing) {
+          const { id: _id, ...upd } = row;
+          await this._sb.from('profiles').update(upd).eq('id', row.id);
+        } else {
+          const { error: insErr } = await this._sb.from('profiles').insert(row);
+          if (insErr && insErr.code !== '23505') console.warn('[saveUser] insert:', insErr.message);
+        }
+      } catch (e) { console.warn('[saveUser]', e.message); }
       return;
     }
     // Sans Supabase ni backend configuré — pas de persistance possible
@@ -2916,10 +2923,11 @@ const DataService = {
       // Session active — INSERT profiles autorisé par RLS (auth.uid() = uid)
       const fullProfile = { id: uid, email: sanitizedEmail, role: profile.role || 'buyer', avatar, ...profile };
       delete fullProfile.password;
-      const { error: upsertError } = await this._sb.from('profiles').upsert(fullProfile, { onConflict: 'id' });
-      if (upsertError) {
-        console.warn('[signUp] profiles upsert error:', upsertError.message);
-      }
+      // [FIX 409] INSERT uniquement à l'inscription — le profil ne doit pas encore exister
+      try {
+        const { error: insErr } = await this._sb.from('profiles').insert(fullProfile);
+        if (insErr && insErr.code !== '23505') console.warn('[signUp] profiles insert:', insErr.message);
+      } catch (_) {}
       return fullProfile;
     }
     // Ni backend ni Supabase disponibles — impossible de créer un compte
@@ -8857,7 +8865,7 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       // Supabase — mettre à jour le rôle dans profiles
       if (DataService._sb) {
         const updatedUser = { ...user, role, status: role === 'vendor' ? 'pending' : 'active' };
-        await DataService._sb.from('profiles').upsert({ id: updatedUser.id, role, status: updatedUser.status }, { onConflict: 'id' }).catch(() => {});
+        await DataService._sb.from('profiles').update({ role, status: updatedUser.status }).eq('id', updatedUser.id).catch(() => {});
         if (token) DataService.saveSession(token, expiresIn);
         onDone(updatedUser);
         return;
