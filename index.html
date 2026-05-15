@@ -3444,60 +3444,25 @@ async signOut() {
       const { data } = this._sb.auth.onAuthStateChange(async (event, session) => {
         if (event === "SIGNED_IN" && session) {
           const uid = session.user.id;
+
+          // [FIX 409] onAuthStateChange est souvent appelé AVANT que le JWT
+          // soit prêt (token refresh, page load). _fetchProfile peut échouer.
+          // On réessaie une fois après 500 ms, puis on utilise les métadonnées auth.
+          // AUCUN INSERT ici — la création de profil appartient à signUp() uniquement.
           let prof = await this._fetchProfile(uid);
-
-          // Nouveau compte OAuth (GitHub, Google…) : profil absent → créer en base
           if (!prof) {
-            const authUser = session.user;
-            const meta  = authUser.user_metadata || {};
-            const email = (authUser.email || meta.email || '').toLowerCase();
-            const name  = meta.full_name || meta.name || meta.user_name || email.split('@')[0];
-            const ghId  = meta.provider_id || meta.sub || null;
-            const ghLogin = meta.user_name || meta.preferred_username || null;
-            const ghAvatar = meta.avatar_url || null;
-            const avatar  = name.slice(0, 2).toUpperCase();
+            // Retry après un court délai (JWT peut être en cours de refresh)
+            await new Promise(r => setTimeout(r, 600));
+            prof = await this._fetchProfile(uid);
+          }
 
-            const newProfileRow = {
-              id:            uid,
-              email,
-              name,
-              role:          'buyer',
-              avatar,
-              status:        'active',
-              password_hash: null,
-              github_id:     authUser.app_metadata?.provider === 'github' ? ghId : null,
-              github_login:  authUser.app_metadata?.provider === 'github' ? ghLogin : null,
-              github_avatar: authUser.app_metadata?.provider === 'github' ? ghAvatar : null,
-            };
+          if (!prof) {
+            // Le profil existe probablement mais n'est pas lisible (JWT stale).
+            // Utiliser les métadonnées auth pour ne pas bloquer le login.
+            prof = this._buildProfileFromAuthUser(session.user);
 
-            // [FIX 409] SELECT d'abord — INSERT seulement si profil vraiment absent
-            let created = null;
-            try {
-              const { data: existing } = await this._sb.from('profiles').select('*').eq('id', uid).maybeSingle();
-              if (existing) {
-                created = existing;
-              } else {
-                const { data: ins, error: insErr } = await this._sb
-                  .from('profiles')
-                  .insert(newProfileRow)
-                  .select()
-                  .single();
-                if (!insErr) {
-                  created = ins;
-                } else if (insErr.code === '23505') {
-                  // Race condition — profil créé entre le SELECT et l'INSERT
-                  const { data: ex2 } = await this._sb.from('profiles').select('*').eq('id', uid).maybeSingle();
-                  created = ex2;
-                } else {
-                  console.warn('[onAuthStateChange] insert profil:', insErr.message);
-                }
-              }
-            } catch (_e) { /* non bloquant */ }
-
-            prof = created || { ...newProfileRow, isNew: true };
-
-            // Marquer comme nouveau pour déclencher GitHubRoleModal côté App
-            if (authUser.app_metadata?.provider === 'github') {
+            // Marquer comme nouveau si GitHub OAuth (pour GitHubRoleModal)
+            if (session.user.app_metadata?.provider === 'github') {
               prof.isNewGithubUser = true;
             }
           }
