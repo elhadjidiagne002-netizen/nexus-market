@@ -6792,6 +6792,12 @@ const CompareModal = ({ productIds, products, onClose, onAddToCart }) => {
     return /* @__PURE__ */ React.createElement("div", { key: p.id, style: { padding: "0.5rem 0", borderTop: "1px solid var(--border)", textAlign: "center", fontWeight: isBest ? 700 : 400, color: isBest ? "var(--primary)" : "var(--text-primary)", fontSize: "0.88rem", position: "relative" } }, attr === "price" ? formatPrice(val) : attr === "rating" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Stars, { rating: val || 0 }), " ", val || 0) : val || "\u2014", isBest && /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: "4px", right: "4px", fontSize: "0.6rem", background: "var(--primary)", color: "white", borderRadius: "3px", padding: "1px 3px" } }, "\u2713"));
   }))))));
 };
+// [FIX #310] QuickReplies extrait au niveau module — défini dans le body de LiveChat causait l'erreur #310
+const QuickReplies = ({ items, onSend }) => items && items.length > 0
+  ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.4rem" } },
+      items.map((q, i) => React.createElement("button", { key: i, onClick: () => onSend(q), style: { background: "rgba(0,133,62,0.1)", border: "1px solid rgba(0,133,62,0.3)", color: "var(--primary)", borderRadius: "20px", padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer", fontFamily: "inherit" } }, q))
+    )
+  : null;
 const LiveChat = ({ currentUser: currentUser2 }) => {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([
@@ -6911,12 +6917,6 @@ Réponds uniquement aux questions liées à NEXUS Market ou au commerce en ligne
     }, 900 + Math.random() * 600);
   };
 
-  const QuickReplies = ({ items }) => items && items.length > 0
-    ? React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.4rem" } },
-        items.map((q, i) => React.createElement("button", { key: i, onClick: () => handleSend(q), style: { background: "rgba(0,133,62,0.1)", border: "1px solid rgba(0,133,62,0.3)", color: "var(--primary)", borderRadius: "20px", padding: "0.2rem 0.6rem", fontSize: "0.75rem", cursor: "pointer", fontFamily: "inherit" } }, q))
-      )
-    : null;
-
   return React.createElement(React.Fragment, null,
     React.createElement("button", {
       onClick: () => setOpen(o => !o),
@@ -6941,7 +6941,7 @@ Réponds uniquement aux questions liées à NEXUS Market ou au commerce en ligne
               m.ai && React.createElement("span", { style: { display: "block", fontSize: "0.65rem", opacity: 0.5, marginTop: "0.15rem" } }, "\u2728 R\xE9ponse IA"),
               React.createElement("div", { style: { fontSize: "0.65rem", opacity: 0.6, marginTop: "0.2rem", textAlign: "right" } }, new Date(m.time).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }))
             ),
-            m.from === "support" && React.createElement(QuickReplies, { items: m.quick })
+            m.from === "support" && React.createElement(QuickReplies, { items: m.quick, onSend: handleSend })
           )
         )),
         typing && React.createElement("div", { style: { display: "flex", gap: "4px", padding: "0.5rem 0.75rem", background: "var(--bg-light)", borderRadius: "12px 12px 12px 2px", width: "fit-content" } },
@@ -9081,6 +9081,95 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
     ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.25rem 0 1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" } }, "ou"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } })), /* @__PURE__ */ React.createElement(GitHubSignInButton, null)
     );
 };
+// [FIX #310] RoleHeader extrait au niveau module — défini dans RegisterForm causait un remontage à chaque render
+const RoleHeader = ({ role, onBack }) => {
+  const labels = {buyer:"\ud83d\uded2 Acheteur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",vendor:"\ud83c\udfea Vendeur"};
+  return React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--border)"}},
+    React.createElement("button",{onClick:onBack,style:{background:"none",border:"none",cursor:"pointer",color:"var(--text-secondary)",fontSize:"0.9rem",padding:"0.3rem"}},
+      React.createElement("i",{className:"fas fa-arrow-left"})
+    ),
+    React.createElement("span",{style:{fontWeight:700,color:"var(--primary)",fontSize:"0.92rem"}},labels[role])
+  );
+};
+// [FIX #310] ResendConfirmButton extrait au niveau module — défini dans RegisterForm causait l'erreur #310 (hooks dans un sous-composant recréé à chaque render)
+const ResendConfirmButton = ({ email, name }) => {
+  const [state, setState] = React.useState("idle");
+  const [cd, setCd]       = React.useState(0);
+  const cdRef = React.useRef(null);
+
+  const send = async () => {
+    if (state === "sending" || cd > 0) return;
+    setState("sending");
+    try {
+      const base = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
+      const res  = await fetch(base + "/api/auth/resend-confirmation", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ email, name: name || "" }),
+      });
+      if (res.ok) {
+        setState("sent");
+        setCd(60);
+        cdRef.current = setInterval(() => {
+          setCd(c => {
+            if (c <= 1) { clearInterval(cdRef.current); setState("idle"); return 0; }
+            return c - 1;
+          });
+        }, 1000);
+      } else {
+        setState("error");
+        setTimeout(() => setState("idle"), 3000);
+      }
+    } catch (_) {
+      setState("error");
+      setTimeout(() => setState("idle"), 3000);
+    }
+  };
+
+  if (state === "sent") {
+    return React.createElement("div", {
+      style: { marginTop:"1rem", padding:"0.75rem", background:"#ECFDF5",
+               borderRadius:"8px", border:"1px solid #A7F3D0",
+               fontSize:"0.85rem", color:"#065F46", textAlign:"center" }
+    },
+      React.createElement("i", { className:"fas fa-check-circle", style:{marginRight:"0.4rem"} }),
+      "Email renvoy\xe9 ! V\xe9rifiez votre bo\xeete mail et les spams."
+    );
+  }
+
+  return React.createElement("div", { style:{ marginTop:"1rem", textAlign:"center" } },
+    React.createElement("p", { style:{ fontSize:"0.82rem", color:"var(--text-secondary)", marginBottom:"0.4rem" } },
+      "Vous n'avez pas re\xe7u l'email ?"
+    ),
+    React.createElement("button", {
+      onClick:  send,
+      disabled: state === "sending" || cd > 0,
+      style: {
+        background:"none", border:"none", padding:0,
+        cursor: cd > 0 ? "not-allowed" : "pointer",
+        color:  cd > 0 ? "var(--text-secondary)" : "var(--primary)",
+        fontWeight:600, fontSize:"0.85rem", textDecoration:"underline"
+      }
+    },
+      state === "sending"
+        ? React.createElement(React.Fragment, null,
+            React.createElement("i", { className:"fas fa-spinner fa-spin", style:{marginRight:"0.35rem"} }),
+            "Envoi en cours\u2026"
+          )
+        : state === "error"
+        ? React.createElement(React.Fragment, null,
+            React.createElement("i", { className:"fas fa-exclamation-circle", style:{marginRight:"0.35rem",color:"var(--danger)"} }),
+            "Erreur \u2014 r\xe9essayez"
+          )
+        : cd > 0
+        ? "Renvoyer dans " + cd + "s"
+        : React.createElement(React.Fragment, null,
+            React.createElement("i", { className:"fas fa-redo", style:{marginRight:"0.35rem"} }),
+            "Renvoyer l'email de confirmation"
+          )
+    )
+  );
+};
 const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, preselectedRole = null }) => {
   const { addToast } = useToast();
   const [role, setRole] = React.useState(preselectedRole || ""); // "buyer" | "buyer_pro" | "vendor"
@@ -9398,6 +9487,7 @@ if (json.token || json.accessToken) {
   };
 
   // ─── helpers ─────────────────────────────────────────────
+  // Err/GeneralErr/Field : helpers purs sans hooks — pas de source d'erreur #310
   const Err = ({k}) => errors[k] ? React.createElement("p",{className:"form-error"},React.createElement("i",{className:"fas fa-exclamation-circle"})," ",errors[k]) : null;
   const GeneralErr = () => errors.general ? React.createElement("div",{className:"alert alert-danger",style:{marginBottom:"1rem"}},React.createElement("i",{className:"fas fa-exclamation-circle"})," ",errors.general) : null;
   const Field = ({id,label,req,children}) => React.createElement("div",{className:"form-group"},React.createElement("label",{className:"form-label",htmlFor:id},label,req&&React.createElement("span",{className:"required"}," *")),children,React.createElement(Err,{k:id}));
@@ -9437,85 +9527,8 @@ if (json.token || json.accessToken) {
   }
 
 
-  // ── ResendConfirmButton — renvoyer l'email de confirmation ─────────────────
-  const ResendConfirmButton = ({ email, name }) => {
-    const [state, setState] = React.useState("idle");
-    const [cd, setCd]       = React.useState(0);
-    const cdRef = React.useRef(null);
 
-    const send = async () => {
-      if (state === "sending" || cd > 0) return;
-      setState("sending");
-      try {
-        const base = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
-        const res  = await fetch(base + "/api/auth/resend-confirmation", {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ email, name: name || "" }),
-        });
-        if (res.ok) {
-          setState("sent");
-          setCd(60);
-          cdRef.current = setInterval(() => {
-            setCd(c => {
-              if (c <= 1) { clearInterval(cdRef.current); setState("idle"); return 0; }
-              return c - 1;
-            });
-          }, 1000);
-        } else {
-          setState("error");
-          setTimeout(() => setState("idle"), 3000);
-        }
-      } catch (_) {
-        setState("error");
-        setTimeout(() => setState("idle"), 3000);
-      }
-    };
-
-    if (state === "sent") {
-      return React.createElement("div", {
-        style: { marginTop:"1rem", padding:"0.75rem", background:"#ECFDF5",
-                 borderRadius:"8px", border:"1px solid #A7F3D0",
-                 fontSize:"0.85rem", color:"#065F46", textAlign:"center" }
-      },
-        React.createElement("i", { className:"fas fa-check-circle", style:{marginRight:"0.4rem"} }),
-        "Email renvoy\xe9 ! V\xe9rifiez votre bo\xeete mail et les spams."
-      );
-    }
-
-    return React.createElement("div", { style:{ marginTop:"1rem", textAlign:"center" } },
-      React.createElement("p", { style:{ fontSize:"0.82rem", color:"var(--text-secondary)", marginBottom:"0.4rem" } },
-        "Vous n'avez pas re\xe7u l'email ?"
-      ),
-      React.createElement("button", {
-        onClick:  send,
-        disabled: state === "sending" || cd > 0,
-        style: {
-          background:"none", border:"none", padding:0,
-          cursor: cd > 0 ? "not-allowed" : "pointer",
-          color:  cd > 0 ? "var(--text-secondary)" : "var(--primary)",
-          fontWeight:600, fontSize:"0.85rem", textDecoration:"underline"
-        }
-      },
-        state === "sending"
-          ? React.createElement(React.Fragment, null,
-              React.createElement("i", { className:"fas fa-spinner fa-spin", style:{marginRight:"0.35rem"} }),
-              "Envoi en cours\u2026"
-            )
-          : state === "error"
-          ? React.createElement(React.Fragment, null,
-              React.createElement("i", { className:"fas fa-exclamation-circle", style:{marginRight:"0.35rem",color:"var(--danger)"} }),
-              "Erreur \u2014 r\xe9essayez"
-            )
-          : cd > 0
-          ? "Renvoyer dans " + cd + "s"
-          : React.createElement(React.Fragment, null,
-              React.createElement("i", { className:"fas fa-redo", style:{marginRight:"0.35rem"} }),
-              "Renvoyer l'email de confirmation"
-            )
-      )
-    );
-  };
+  // [FIX #310] ResendConfirmButton extrait au niveau module — voir avant RegisterForm
 
   // ─── Render: vendor done screen ───────────────────────────
   if (done) {
@@ -9559,21 +9572,13 @@ if (json.token || json.accessToken) {
     );
   }
 
-  // ─── Back button + role label ─────────────────────────────
-  const RoleHeader = () => {
-    const labels = {buyer:"\ud83d\uded2 Acheteur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",vendor:"\ud83c\udfea Vendeur"};
-    return React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--border)"}},
-      React.createElement("button",{onClick:()=>{setRole("");setStep(1);setErrors({});},style:{background:"none",border:"none",cursor:"pointer",color:"var(--text-secondary)",fontSize:"0.9rem",padding:"0.3rem"}},
-        React.createElement("i",{className:"fas fa-arrow-left"})
-      ),
-      React.createElement("span",{style:{fontWeight:700,color:"var(--primary)",fontSize:"0.92rem"}},labels[role])
-    );
-  };
+  // [FIX #310] RoleHeader extrait au niveau module — voir avant RegisterForm
+  const _roleHeaderOnBack = () => { setRole(""); setStep(1); setErrors({}); };
 
   // ─── BUYER PARTICULIER ────────────────────────────────────
   if (role === "buyer") {
     return React.createElement(React.Fragment,null,
-      React.createElement(RoleHeader,null),
+      React.createElement(RoleHeader,{role:role,onBack:_roleHeaderOnBack}),
       React.createElement("div",{className:"form-group"},
         React.createElement("label",{className:"form-label",htmlFor:"b-name"},"Nom complet ",React.createElement("span",{className:"required"},"*")),
         inp("b-name","text","Fatou Diop",form.name,e=>setF("name",e.target.value),{autoFocus:true}),
@@ -9626,7 +9631,7 @@ if (json.token || json.accessToken) {
   if (role === "buyer_pro") {
     const steps = ["Identit\xe9","Entreprise","Compte"];
     return React.createElement(React.Fragment,null,
-      React.createElement(RoleHeader,null),
+      React.createElement(RoleHeader,{role:role,onBack:_roleHeaderOnBack}),
       // Progress
       React.createElement("div",{style:{display:"flex",gap:"0.4rem",marginBottom:"1.5rem"}},
         steps.map((s,i)=>React.createElement("div",{key:i,style:{flex:1}},
@@ -9738,7 +9743,7 @@ if (json.token || json.accessToken) {
   // ─── VENDEUR (5 steps) ────────────────────────────────────
   if (role === "vendor") {
     return React.createElement(React.Fragment,null,
-      React.createElement(RoleHeader,null),
+      React.createElement(RoleHeader,{role:role,onBack:_roleHeaderOnBack}),
       // Progress bar
       React.createElement("div",{style:{display:"flex",gap:"0.3rem",marginBottom:"1.5rem"}},
         VENDOR_STEPS.map((s,i)=>React.createElement("div",{key:i,style:{flex:1}},
@@ -13496,7 +13501,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   };
   const STATUS_MAP = { processing: { label: "En cours", badge: "warning" }, in_transit: { label: "En transit", badge: "info" }, delivered: { label: "Livr\xE9", badge: "success" }, cancelled: { label: "Annul\xE9", badge: "danger" } };
   const paginatedOrders = orders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE);
-  const SidebarContent = () => /* @__PURE__ */ React.createElement("ul", { className: "sidebar-menu", role: "menu" }, [
+  const renderSidebarContent = () => /* @__PURE__ */ React.createElement("ul", { className: "sidebar-menu", role: "menu" }, [
     { id: "overview", icon: "chart-line", label: "Vue d'ensemble" },
     { id: "analytics", icon: "chart-bar", label: "Analytics" },
     { id: "vendors", icon: "users", label: "Vendeurs", badge: pendingVendors.length },
@@ -13528,7 +13533,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-label": `${item.badge} en attente` }, item.badge)))));
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, id: "sidebar", "aria-label": "Menu administrateur" }, /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "overview" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "stats-grid", role: "list", "aria-label": "Statistiques g\xE9n\xE9rales" }, [
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, id: "sidebar", "aria-label": "Menu administrateur" }, renderSidebarContent()), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "overview" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "stats-grid", role: "list", "aria-label": "Statistiques g\xE9n\xE9rales" }, [
     { icon: "euro-sign", label: "Chiffre d'Affaires", value: formatPrice(stats.totalRevenue || 0), trend: "+12.5%" },
     { icon: "percent", label: "Commissions", value: formatPrice(stats.totalCommissions || 0), trend: "+8.3%" },
     { icon: "shopping-cart", label: "Commandes Aujourd'hui", value: stats.todayOrders || 0, trend: "+5" },
@@ -15642,6 +15647,37 @@ Vous avez re\xE7u un message de TechZone S\xE9n\xE9gal :
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Journaux Emails (", emailLoading ? "…" : emailTotal, ")"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_EMAILJS_CONFIGURED ? /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" }), " EmailJS actif") : /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), " Mode simulation"))), !IS_EMAILJS_CONFIGURED && /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Pour activer l\\'envoi r\xE9el, configurez EmailJS dans ", /* @__PURE__ */ React.createElement("code", null, "NEXUS_CONFIG.emailjs"), " en haut du fichier HTML.")), emailLoading ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }), /* @__PURE__ */ React.createElement("p", null, "Chargement\u2026")) : logs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun email enregistr\xE9")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Destinataire"), /* @__PURE__ */ React.createElement("th", null, "Sujet"), /* @__PURE__ */ React.createElement("th", null, "Fournisseur"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Date/Heure"))), /* @__PURE__ */ React.createElement("tbody", null, logs.map((e) => /* @__PURE__ */ React.createElement("tr", { key: e.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Destinataire" }, /* @__PURE__ */ React.createElement("strong", null, e.to)), /* @__PURE__ */ React.createElement("td", { "data-label": "Sujet", style: { fontSize: "0.85rem" } }, e.subject), /* @__PURE__ */ React.createElement("td", { "data-label": "Fournisseur" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, e.provider)), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${e.status === 'sent' ? 'success' : e.status === 'error' ? 'danger' : 'warning'}` }, e.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(e.sentAt).toLocaleString("fr-FR"))))))));
   })());
 };
+// [FIX #310] DeltaBadge extrait au niveau module
+const DeltaBadge = ({ d }) => {
+  if (!d) return null;
+  return React.createElement("span", { style: { fontSize: "0.72rem", fontWeight: 700, padding: "0.15rem 0.4rem", borderRadius: "6px", background: d.up ? "rgba(0,133,62,0.12)" : "rgba(225,27,34,0.1)", color: d.up ? "var(--success)" : "var(--danger)", marginLeft: "0.4rem" } },
+    React.createElement("i", { className: `fas fa-arrow-${d.up ? "up" : "down"}`, style: { fontSize: "0.6rem" } }), " ", d.pct, "%"
+  );
+};
+// [FIX #310] ComparisonChart extrait au niveau module — chartType et compareMode passés en props
+const ComparisonChart = ({ data, chartType, compareMode }) => {
+  const RC = getSafeRecharts();
+  if (!RC) return React.createElement(SafeLineChart, { data, dataKey: "ventes", label: "Revenus", color: "#00853E", type: chartType });
+  const ChartComp = chartType === "area" ? RC.AreaChart : RC.BarChart;
+  return React.createElement(RC.ResponsiveContainer, { width: "100%", height: 260 },
+    React.createElement(ChartComp, { data },
+      React.createElement(RC.CartesianGrid, { strokeDasharray: "3 3", stroke: "#f0f0f0" }),
+      React.createElement(RC.XAxis, { dataKey: "date", tick: { fontSize: 11 } }),
+      React.createElement(RC.YAxis, { tick: { fontSize: 11 } }),
+      React.createElement(RC.Tooltip, { formatter: (val, name) => [formatPrice(val), name === "ventes" ? "Période courante" : "Période précédente"] }),
+      React.createElement(RC.Legend, { formatter: v => v === "ventes" ? "Période courante" : "Période précédente" }),
+      chartType === "area"
+        ? React.createElement(React.Fragment, null,
+            React.createElement(RC.Area, { type: "monotone", dataKey: "ventes", stroke: "#00853E", fill: "#00853E26", strokeWidth: 3 }),
+            compareMode && React.createElement(RC.Area, { type: "monotone", dataKey: "ventes_prev", stroke: "#0284c7", fill: "#0284c726", strokeWidth: 2, strokeDasharray: "5 5" })
+          )
+        : React.createElement(React.Fragment, null,
+            React.createElement(RC.Bar, { dataKey: "ventes", fill: "#00853E", radius: [4, 4, 0, 0] }),
+            compareMode && React.createElement(RC.Bar, { dataKey: "ventes_prev", fill: "#0284c7", radius: [4, 4, 0, 0], opacity: 0.7 })
+          )
+    )
+  );
+};
 const VendorAnalyticsDashboard = ({ currentUser: currentUser2, orders, products, salesData, onRequestPayout, addToast }) => {
   const [period, setPeriod] = React.useState("30");
   const [analyticsData, setAnalyticsData] = React.useState(null);
@@ -15794,36 +15830,7 @@ const VendorAnalyticsDashboard = ({ currentUser: currentUser2, orders, products,
     addToast("Export JSON téléchargé !", "success");
   };
 
-  const DeltaBadge = ({ d }) => {
-    if (!d) return null;
-    return React.createElement("span", { style: { fontSize: "0.72rem", fontWeight: 700, padding: "0.15rem 0.4rem", borderRadius: "6px", background: d.up ? "rgba(0,133,62,0.12)" : "rgba(225,27,34,0.1)", color: d.up ? "var(--success)" : "var(--danger)", marginLeft: "0.4rem" } },
-      React.createElement("i", { className: `fas fa-arrow-${d.up ? "up" : "down"}`, style: { fontSize: "0.6rem" } }), " ", d.pct, "%"
-    );
-  };
-
-  const ComparisonChart = ({ data }) => {
-    const RC = getSafeRecharts();
-    if (!RC) return React.createElement(SafeLineChart, { data, dataKey: "ventes", label: "Revenus", color: "#00853E", type: chartType });
-    const ChartComp = chartType === "area" ? RC.AreaChart : RC.BarChart;
-    return React.createElement(RC.ResponsiveContainer, { width: "100%", height: 260 },
-      React.createElement(ChartComp, { data },
-        React.createElement(RC.CartesianGrid, { strokeDasharray: "3 3", stroke: "#f0f0f0" }),
-        React.createElement(RC.XAxis, { dataKey: "date", tick: { fontSize: 11 } }),
-        React.createElement(RC.YAxis, { tick: { fontSize: 11 } }),
-        React.createElement(RC.Tooltip, { formatter: (val, name) => [formatPrice(val), name === "ventes" ? "Période courante" : "Période précédente"] }),
-        React.createElement(RC.Legend, { formatter: v => v === "ventes" ? "Période courante" : "Période précédente" }),
-        chartType === "area"
-          ? React.createElement(React.Fragment, null,
-              React.createElement(RC.Area, { type: "monotone", dataKey: "ventes", stroke: "#00853E", fill: "#00853E26", strokeWidth: 3 }),
-              compareMode && React.createElement(RC.Area, { type: "monotone", dataKey: "ventes_prev", stroke: "#0284c7", fill: "#0284c726", strokeWidth: 2, strokeDasharray: "5 5" })
-            )
-          : React.createElement(React.Fragment, null,
-              React.createElement(RC.Bar, { dataKey: "ventes", fill: "#00853E", radius: [4, 4, 0, 0] }),
-              compareMode && React.createElement(RC.Bar, { dataKey: "ventes_prev", fill: "#0284c7", radius: [4, 4, 0, 0], opacity: 0.7 })
-            )
-      )
-    );
-  };
+  // [FIX #310] DeltaBadge et ComparisonChart extraits au niveau module — voir avant VendorAnalyticsDashboard
 
   const kpis = [
     { icon: "wallet", label: "Revenus bruts", value: formatPrice(revenue), sub: compareMode ? formatPrice(prevRevenue) + " pér. préc." : `Période ${period}j`, color: "var(--primary)", delta: revDelta },
@@ -15934,7 +15941,7 @@ const VendorAnalyticsDashboard = ({ currentUser: currentUser2, orders, products,
             React.createElement("i", { className: "fas fa-spinner fa-spin" }), " Chargement…"
           )
         ),
-        React.createElement(ComparisonChart, { data: displayChart })
+        React.createElement(ComparisonChart, { data: displayChart, chartType: chartType, compareMode: compareMode })
       ),
 
       // Orders table
@@ -17105,7 +17112,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     pendingOffers: offers.filter((o) => o.status === "pending").length
   };
   const STATUS_MAP = { processing: { label: "En cours", badge: "warning" }, in_transit: { label: "En transit", badge: "info" }, delivered: { label: "Livr\xE9", badge: "success" }, cancelled: { label: "Annul\xE9", badge: "danger" } };
-  const SidebarContent = () => /* @__PURE__ */ React.createElement("ul", { className: "sidebar-menu", role: "menu" }, [
+  const renderSidebarContent = () => /* @__PURE__ */ React.createElement("ul", { className: "sidebar-menu", role: "menu" }, [
     { id: "overview", icon: "chart-line", label: "Vue d'ensemble" },
     { id: "products", icon: "box", label: "Mes Produits" },
     { id: "orders", icon: "shopping-cart", label: "Commandes", badge: stats.pendingOrders },
@@ -17134,7 +17141,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))));
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu vendeur" }, /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 },
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu vendeur" }, renderSidebarContent()), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 },
 
     /* ── Bannière compte en attente d'approbation ── */
     vendorStatus !== 'approved' && /* @__PURE__ */ React.createElement("div", {
@@ -17420,6 +17427,28 @@ React.createElement("div", { className: "form-group" },
     }
   ));
 };
+// [FIX #310] RowCard extrait au niveau module — onSelect et onAddToCart passés en props
+const RowCard = ({ p, onSelect, onAddToCart }) => React.createElement('div', {
+  className: 'product-row-card', onClick: () => onSelect(p)
+},
+  React.createElement('div', { className: 'product-row-img' },
+    React.createElement(ProductImg, { product: p, height: 155 })
+  ),
+  React.createElement('div', { className: 'product-row-body' },
+    p.flashDiscount && React.createElement('span', { style: { background:'#e74c3c', color:'white', fontSize:'0.7rem', fontWeight:800, padding:'0.15rem 0.4rem', borderRadius:'4px', marginBottom:'0.3rem', display:'inline-block' } }, `-${p.flashDiscount}%`),
+    React.createElement('div', { className: 'product-row-name' }, p.name),
+    React.createElement('div', { className: 'product-row-vendor' }, '🏪 ', p.vendorName),
+    React.createElement('div', { className: 'product-row-rating' },
+      React.createElement('span', { className: 'product-row-stars' }, '★'.repeat(Math.round(p.rating || 0))),
+      React.createElement('span', null, `(${p.reviewsCount || 0})`)
+    ),
+    React.createElement('div', { className: 'product-row-price' }, formatPrice(p.price)),
+    React.createElement('button', {
+      className: 'product-row-add',
+      onClick: (e) => { e.stopPropagation(); onAddToCart(p); }
+    }, '🛒 Ajouter')
+  )
+);
 const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger }) => {
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
@@ -17595,28 +17624,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
   const totalPages = Math.ceil(filteredHome.length / ITEMS_PER_PAGE);
   const currentItems = filteredHome.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
-  // Mini product row card
-  const RowCard = ({ p }) => React.createElement('div', {
-    className: 'product-row-card', onClick: () => setSelectedProduct(p)
-  },
-    React.createElement('div', { className: 'product-row-img' },
-      React.createElement(ProductImg, { product: p, height: 155 })
-    ),
-    React.createElement('div', { className: 'product-row-body' },
-      p.flashDiscount && React.createElement('span', { style: { background:'#e74c3c', color:'white', fontSize:'0.7rem', fontWeight:800, padding:'0.15rem 0.4rem', borderRadius:'4px', marginBottom:'0.3rem', display:'inline-block' } }, `-${p.flashDiscount}%`),
-      React.createElement('div', { className: 'product-row-name' }, p.name),
-      React.createElement('div', { className: 'product-row-vendor' }, '🏪 ', p.vendorName),
-      React.createElement('div', { className: 'product-row-rating' },
-        React.createElement('span', { className: 'product-row-stars' }, '★'.repeat(Math.round(p.rating || 0))),
-        React.createElement('span', null, `(${p.reviewsCount || 0})`)
-      ),
-      React.createElement('div', { className: 'product-row-price' }, formatPrice(p.price)),
-      React.createElement('button', {
-        className: 'product-row-add',
-        onClick: (e) => { e.stopPropagation(); addToCart(p); }
-      }, '🛒 Ajouter')
-    )
-  );
+  // [FIX #310] RowCard extrait au niveau module — voir avant PublicCatalog
+  const _rowCardOnSelect = (p) => setSelectedProduct(p);
+  const _rowCardAddToCart = (p) => addToCart(p);
 
   return React.createElement('div', { className: 'home-page' },
 
@@ -17815,7 +17825,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
           React.createElement('button', { className: 'section-see-all', onClick: () => setSortBy('rating') }, 'Voir tout →')
         ),
         React.createElement('div', { className: 'product-row-scroll' },
-          topRated.map(p => React.createElement(RowCard, { key: p.id, p }))
+          topRated.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart }))
         )
       )
     ),
@@ -17831,7 +17841,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
           React.createElement('button', { className: 'section-see-all', onClick: () => setSortBy('default') }, 'Voir tout →')
         ),
         React.createElement('div', { className: 'product-row-scroll' },
-          newArrivals.map(p => React.createElement(RowCard, { key: p.id, p }))
+          newArrivals.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart }))
         )
       )
     ),
@@ -17847,7 +17857,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
           React.createElement('button', { className: 'section-see-all', onClick: () => setSortBy('price-asc') }, 'Voir tout →')
         ),
         React.createElement('div', { className: 'product-row-scroll' },
-          cheapest.map(p => React.createElement(RowCard, { key: p.id, p }))
+          cheapest.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart }))
         )
       )
     ),
@@ -18116,6 +18126,24 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
 // B2BProDashboard — tableau de bord dédié aux acheteurs professionnels
 // Rendu à l'intérieur de BuyerDashboard quand view === "b2b_profile" | "b2b_orders" | "b2b_statement"
 // ══════════════════════════════════════════════════════════════════════════
+// [FIX #310] NavTabs extrait au niveau module — activeTab et onTabChange passés en props
+const NavTabs = ({ activeTab, onTabChange }) => React.createElement('div', { style: { display:'flex', gap:'0.5rem', marginBottom:'1.5rem', borderBottom:'2px solid var(--border)', paddingBottom:'0.5rem' } },
+  [
+    { id:'b2b_profile',   icon:'building', label:'Profil Entreprise' },
+    { id:'b2b_orders',    icon:'file-invoice', label:'Commandes B2B' },
+    { id:'b2b_statement', icon:'file-pdf', label:'Relevé mensuel' },
+  ].map(tab => React.createElement('button', {
+    key: tab.id,
+    onClick: () => onTabChange(tab.id),
+    style: {
+      padding: '0.5rem 1rem', border: 'none', borderRadius: '6px 6px 0 0', cursor: 'pointer',
+      fontWeight: activeTab === tab.id ? 700 : 400, fontSize: '0.88rem',
+      background: activeTab === tab.id ? '#0284c7' : 'transparent',
+      color: activeTab === tab.id ? 'white' : 'var(--text-secondary)',
+      borderBottom: activeTab === tab.id ? '2px solid #0284c7' : 'none',
+    }
+  }, React.createElement('i', { className:`fas fa-${tab.icon}`, style:{marginRight:'0.4rem'} }), tab.label))
+);
 const B2BProDashboard = ({ currentUser: currentUser2, addToast, view: b2bView, setParentView }) => {
   const [b2bProfile, setB2bProfile]         = useState(null);
   const [discount, setDiscount]             = useState({ discountRate: 0, nineaVerified: false, message: '' });
@@ -18226,23 +18254,7 @@ const B2BProDashboard = ({ currentUser: currentUser2, addToast, view: b2bView, s
     pending_payment: { label: 'En attente', badge: 'warning' },
   };
 
-  const NavTabs = () => React.createElement('div', { style: { display:'flex', gap:'0.5rem', marginBottom:'1.5rem', borderBottom:'2px solid var(--border)', paddingBottom:'0.5rem' } },
-    [
-      { id:'b2b_profile',   icon:'building', label:'Profil Entreprise' },
-      { id:'b2b_orders',    icon:'file-invoice', label:'Commandes B2B' },
-      { id:'b2b_statement', icon:'file-pdf', label:'Relevé mensuel' },
-    ].map(tab => React.createElement('button', {
-      key: tab.id,
-      onClick: () => setParentView(tab.id),
-      style: {
-        padding: '0.5rem 1rem', border: 'none', borderRadius: '6px 6px 0 0', cursor: 'pointer',
-        fontWeight: b2bView === tab.id ? 700 : 400, fontSize: '0.88rem',
-        background: b2bView === tab.id ? '#0284c7' : 'transparent',
-        color: b2bView === tab.id ? 'white' : 'var(--text-secondary)',
-        borderBottom: b2bView === tab.id ? '2px solid #0284c7' : 'none',
-      }
-    }, React.createElement('i', { className:`fas fa-${tab.icon}`, style:{marginRight:'0.4rem'} }), tab.label))
-  );
+  // [FIX #310] NavTabs extrait au niveau module — voir avant B2BProDashboard
 
   if (loading) return React.createElement('div', { className:'card', style:{textAlign:'center',padding:'3rem'} },
     React.createElement('i', { className:'fas fa-spinner fa-spin', style:{fontSize:'2rem',color:'#0284c7'} }),
@@ -18251,7 +18263,7 @@ const B2BProDashboard = ({ currentUser: currentUser2, addToast, view: b2bView, s
 
   // ── VUE : Profil Entreprise ─────────────────────────────────────────────
   if (b2bView === 'b2b_profile') return React.createElement(React.Fragment, null,
-    React.createElement(NavTabs),
+    React.createElement(NavTabs,{activeTab:b2bView,onTabChange:setParentView}),
 
     // Bandeau statut NINEA
     React.createElement('div', {
@@ -18328,7 +18340,7 @@ const B2BProDashboard = ({ currentUser: currentUser2, addToast, view: b2bView, s
 
   // ── VUE : Commandes B2B ─────────────────────────────────────────────────
   if (b2bView === 'b2b_orders') return React.createElement(React.Fragment, null,
-    React.createElement(NavTabs),
+    React.createElement(NavTabs,{activeTab:b2bView,onTabChange:setParentView}),
     React.createElement('div', { className:'card' },
       React.createElement('div', { className:'card-header' },
         React.createElement('h2', { className:'card-title' }, React.createElement('i',{className:'fas fa-file-invoice',style:{marginRight:'0.5rem',color:'#0284c7'}}), `Commandes B2B (${ordersTotal})`),
@@ -18406,7 +18418,7 @@ const B2BProDashboard = ({ currentUser: currentUser2, addToast, view: b2bView, s
 
   // ── VUE : Relevé mensuel ────────────────────────────────────────────────
   return React.createElement(React.Fragment, null,
-    React.createElement(NavTabs),
+    React.createElement(NavTabs,{activeTab:b2bView,onTabChange:setParentView}),
     React.createElement('div', {className:'card'},
       React.createElement('div', {className:'card-header'},
         React.createElement('h2', {className:'card-title'}, React.createElement('i',{className:'fas fa-file-pdf',style:{marginRight:'0.5rem',color:'#dc2626'}}), 'Relevé mensuel des achats')
@@ -18794,7 +18806,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE);
   const currentItems = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
   const STATUS_MAP = { processing: { label: "En cours", badge: "warning", icon: "clock" }, in_transit: { label: "En transit", badge: "info", icon: "truck" }, delivered: { label: "Livr\xE9", badge: "success", icon: "check-circle" }, cancelled: { label: "Annul\xE9", badge: "danger", icon: "times-circle" } };
-  const SidebarContent = () => /* @__PURE__ */ React.createElement("ul", { className: "sidebar-menu", role: "menu" }, [
+  const renderSidebarContent = () => /* @__PURE__ */ React.createElement("ul", { className: "sidebar-menu", role: "menu" }, [
     { id: "catalog", icon: "store", label: "Catalogue" },
     { id: "wishlist", icon: "heart", label: "Ma Wishlist", badge: wishlist.length },
     { id: "orders", icon: "box", label: "Mes Commandes" },
@@ -18828,7 +18840,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   }, style: item.b2b ? { borderLeft: "3px solid #0284c7" } : undefined }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true", style: item.b2b ? { color: "#0284c7" } : undefined }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))), cart.length > 0 && /* @__PURE__ */ React.createElement("li", { role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: "sidebar-item", onClick: () => setShowCart(true), "aria-label": `Panier avec ${cart.length} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), "Panier", /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0)))));
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), /* @__PURE__ */ React.createElement(SidebarContent, null)), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(FlashSaleBanner, { products, onAddToCart: (p) => { addToCart(p); addToast("Ajouté au panier ⚡", "success"); }, onLoginClick: () => {} }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), renderSidebarContent()), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(FlashSaleBanner, { products, onAddToCart: (p) => { addToCart(p); addToast("Ajouté au panier ⚡", "success"); }, onLoginClick: () => {} }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
     SearchWithAutocomplete,
     {
       products,
