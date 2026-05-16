@@ -1,37 +1,63 @@
-export const CORS = {
-  "Access-Control-Allow-Origin":  "*",
+// functions/api/_lib/response.js
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Requested-With",
-  "Access-Control-Max-Age":       "86400",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
 };
 
-export function ok(data, status = 200) {
+/** Réponse JSON standard */
+export function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json" }
+    headers: { "Content-Type": "application/json", ...CORS },
   });
 }
 
-export function err(msg, status = 400, detail = null) {
-  return new Response(JSON.stringify({ error: msg, detail }), {
-    status,
-    headers: { ...CORS, "Content-Type": "application/json" }
+/** Alias ok() → json() avec status 200 */
+export function ok(data) {
+  return json(data, 200);
+}
+
+/** Réponse d'erreur JSON */
+export function errorResponse(message, status = 400) {
+  return json({ error: message }, status);
+}
+
+/** Alias err() → errorResponse() */
+export function err(message, status = 400) {
+  return errorResponse(message, status);
+}
+
+/** Réponse CSV téléchargeable */
+export function csvResponse(csvContent, filename = "export.csv") {
+  return new Response("\uFEFF" + csvContent, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      ...CORS,
+    },
   });
 }
 
-export function preflight() {
+/** Réponse preflight CORS */
+export function corsOptions() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
+/**
+ * Wrapper générique pour les handlers CF Pages Functions.
+ * Usage : export const onRequest = handle(async (ctx) => { ... })
+ */
 export function handle(fn) {
-  return async (context) => {
-    if (context.request.method === "OPTIONS") return preflight();
+  return async (ctx) => {
+    if (ctx.request.method === "OPTIONS") return corsOptions();
     try {
-      return await fn(context);
+      return await fn(ctx);
     } catch (e) {
-      if (e?.status) return err(e.message, e.status);
-      console.error(e);
-      return err("Erreur serveur interne", 500, e?.message);
+      console.error("[handle]", e);
+      return errorResponse(e.message ?? "Erreur interne", 500);
     }
   };
 }
