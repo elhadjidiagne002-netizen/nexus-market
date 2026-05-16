@@ -1,6 +1,6 @@
 import { adminClient } from "../../_lib/supabase.js";
 import { handle, ok, err } from "../../_lib/response.js";
-import { createHmac } from "crypto";
+import { createHmac } from "node:crypto";
 
 export const onRequest = handle(async ({ request, env }) => {
   if (request.method !== "POST") return err("POST requis", 405);
