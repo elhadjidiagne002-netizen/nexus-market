@@ -1811,28 +1811,22 @@ const NEXUS_TRANSLATIONS = {
     return;
   }
 
-  // [FIX Cloudflare Pages] apiUrl vide → pas de vérification backend
-  if (!NEXUS_CONFIG.apiUrl) {
-    window.__nexusBackendReady = true;
-    window.dispatchEvent(new Event('nexus:backend-ready'));
-    return;
-  }
+  // AbortController pour le health check (timeout 5s)
   const ctrl = new AbortController();
   const tid = setTimeout(() => ctrl.abort(), 5000);
-  // [FIX] Auto-détecter l'URL API sur Cloudflare Pages / tout domaine déployé
-  if (!NEXUS_CONFIG.apiUrl && typeof window !== 'undefined') {
-    const h = window.location.hostname;
-    const isLocal = h === 'localhost' || h === '127.0.0.1' || h.startsWith('192.168.') || h.endsWith('.local');
-    if (!isLocal) {
-      NEXUS_CONFIG.apiUrl = window.location.origin;
-      console.log('[NEXUS] apiUrl auto-détecté :', NEXUS_CONFIG.apiUrl);
-    }
-  }
   fetch(NEXUS_CONFIG.apiUrl + '/api/health', { signal: ctrl.signal, cache: 'no-store' })
-    .then(r => {
+    .then(async r => {
       clearTimeout(tid);
-      if (r.ok || r.status < 500) {
+      // [FIX] CF Pages renvoie index.html (200 HTML) pour les routes /api/* inexistantes.
+      // On vérifie que la réponse est bien du JSON avant de déclarer le backend disponible.
+      const ct = r.headers.get('content-type') || '';
+      const isJson = ct.includes('application/json');
+      if ((r.ok || r.status < 500) && isJson) {
         console.log('[NEXUS] ✅ Backend disponible :', NEXUS_CONFIG.apiUrl);
+      } else if (!isJson) {
+        // Le serveur retourne du HTML → pas de backend API sur ce domaine → mode Supabase
+        console.warn('[NEXUS] ⚠️  /api/health retourne du HTML (CF Pages sans Functions) — basculement mode Supabase');
+        NEXUS_CONFIG.apiUrl = '';
       } else {
         console.warn('[NEXUS] ⚠️  Backend répond avec status', r.status);
       }
@@ -1841,6 +1835,7 @@ const NEXUS_TRANSLATIONS = {
       clearTimeout(tid);
       if (err.name !== 'AbortError') {
         console.warn('[NEXUS] ⚠️  Backend inaccessible (' + NEXUS_CONFIG.apiUrl + ') :', err.message);
+        NEXUS_CONFIG.apiUrl = '';
       }
     })
     .finally(() => {
@@ -3384,6 +3379,20 @@ async signOut() {
         }
       }
 
+      // [FIX] CF Pages renvoie index.html (200 HTML) pour les routes /api/* inexistantes.
+      // Si la réponse n'est pas du JSON, on retourne null (fallback Supabase) et on
+      // efface apiUrl pour éviter les appels suivants inutiles.
+      if (res && res.ok) {
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json') && !ct.includes('text/plain')) {
+          if (!window.__nexusHtmlApiWarned) {
+            console.warn('[NEXUS] /api/* retourne du HTML — backend API absent sur ce domaine. Basculement Supabase.');
+            window.__nexusHtmlApiWarned = true;
+            NEXUS_CONFIG.apiUrl = '';
+          }
+          return null;
+        }
+      }
       return res;
     } catch (err) {
       clearTimeout(timeoutId);
@@ -3555,7 +3564,7 @@ async signOut() {
             description: req.description,
           }),
         });
-        if (res.ok) {
+        if (res && res.ok) {
           const data = await res.json();
           // Mettre à jour le cache localStorage avec la réponse serveur
           const all = storage.getArray("return_requests");
