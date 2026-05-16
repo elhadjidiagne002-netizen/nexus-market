@@ -6,7 +6,7 @@ export const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
 };
 
-/** Réponse JSON standard */
+// Reponse JSON standard
 export function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -14,22 +14,22 @@ export function json(data, status = 200) {
   });
 }
 
-/** Alias ok() → json() avec status 200 */
+// Alias ok() -> json() 200
 export function ok(data) {
   return json(data, 200);
 }
 
-/** Réponse d'erreur JSON */
+// Reponse d'erreur JSON
 export function errorResponse(message, status = 400) {
   return json({ error: message }, status);
 }
 
-/** Alias err() → errorResponse() */
+// Alias err() -> errorResponse()
 export function err(message, status = 400) {
   return errorResponse(message, status);
 }
 
-/** Réponse CSV téléchargeable */
+// Reponse CSV telechargeable
 export function csvResponse(csvContent, filename = "export.csv") {
   return new Response("\uFEFF" + csvContent, {
     status: 200,
@@ -41,15 +41,12 @@ export function csvResponse(csvContent, filename = "export.csv") {
   });
 }
 
-/** Réponse preflight CORS */
+// Reponse preflight CORS
 export function corsOptions() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
-/**
- * Wrapper générique pour les handlers CF Pages Functions.
- * Usage : export const onRequest = handle(async (ctx) => { ... })
- */
+// Wrapper generique pour CF Pages Functions
 export function handle(fn) {
   return async (ctx) => {
     if (ctx.request.method === "OPTIONS") return corsOptions();
