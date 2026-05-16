@@ -37,7 +37,7 @@ export async function requireAuth(env, request) {
 
   // 2. Recuperer le role depuis profiles (source de verite)
   const profRes = await fetch(
-    `${SB_URL}/rest/v1/profiles?id=eq.${authUser.id}&select=role,status,name`,
+    `${SB_URL}/rest/v1/profiles?email=eq.$\{authUser.email\}&select=role,status,name`,
     { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
   ).catch(() => null);
 

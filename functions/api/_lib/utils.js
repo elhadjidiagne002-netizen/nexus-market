@@ -85,7 +85,7 @@ export async function requireAdmin(request, env) {
     // Double-check in profiles table
     try {
       const sb = supabase(env);
-      const profiles = await sb.from('profiles').select('role', `id=eq.${user.id}`);
+      const profiles = await sb.from('profiles').select('role', \email=eq.\\)`);
       if (!profiles?.[0] || profiles[0].role !== 'admin') {
         return [null, err('Accès réservé aux admins', 403)];
       }
