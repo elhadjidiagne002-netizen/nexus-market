@@ -1,5 +1,4 @@
-// ─── Helpers partagés pour toutes les Cloudflare Functions ───────────────────
-
+// functions/api/_lib/utils.js
 export const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
@@ -21,10 +20,9 @@ export function err(message, status = 400) {
   return json({ error: message }, status);
 }
 
-// ─── Client Supabase léger (REST) ────────────────────────────────────────────
 export function supabase(env) {
-  const url  = env.SUPABASE_URL;
-  const key  = env.SUPABASE_SERVICE_KEY; // service_role — bypass RLS
+  const url = env.SUPABASE_URL;
+  const key = env.SUPABASE_SERVICE_KEY;
   if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_KEY manquants');
 
   const headers = (extra = {}) => ({
@@ -62,12 +60,11 @@ export function supabase(env) {
   };
 }
 
-// ─── Vérification JWT ─────────────────────────────────────────────────────────
+// requireAuth — lookup par EMAIL pour eviter mismatch id auth vs profiles
 export async function requireAuth(request, env) {
   const auth = request.headers.get('Authorization') || '';
   const token = auth.replace(/^Bearer\s+/i, '');
   if (!token) return [null, err('Token manquant', 401)];
-
   try {
     const sb = supabase(env);
     const user = await sb.auth.getUser(token);
@@ -81,23 +78,19 @@ export async function requireAuth(request, env) {
 export async function requireAdmin(request, env) {
   const [user, errResp] = await requireAuth(request, env);
   if (errResp) return [null, errResp];
-  if (user.role !== 'admin' && user.user_metadata?.role !== 'admin') {
-    // Double-check in profiles table
-    try {
-      const sb = supabase(env);
-      const profiles = await sb.from('profiles').select('role', \email=eq.\\)`);
-      if (!profiles?.[0] || profiles[0].role !== 'admin') {
-        return [null, err('Accès réservé aux admins', 403)];
-      }
-      return [{ ...user, role: 'admin' }, null];
-    } catch (e) {
-      return [null, err('Erreur vérification rôle', 500)];
+  try {
+    const sb = supabase(env);
+    // Lookup par email — robuste meme si l'id du profil differe de auth.users
+    const profiles = await sb.from('profiles').select('role', `email=eq.${encodeURIComponent(user.email)}`);
+    if (!profiles?.[0] || profiles[0].role !== 'admin') {
+      return [null, err('Acces reserve aux admins', 403)];
     }
+    return [{ ...user, role: 'admin' }, null];
+  } catch (e) {
+    return [null, err('Erreur verification role: ' + e.message, 500)];
   }
-  return [user, null];
 }
 
-// ─── Pagination helper ────────────────────────────────────────────────────────
 export function paginate(url) {
   const u = new URL(url);
   const page  = parseInt(u.searchParams.get('page')  || '1');
@@ -106,7 +99,6 @@ export function paginate(url) {
   return { page, limit, offset, qs: `limit=${limit}&offset=${offset}` };
 }
 
-// ─── Envoyer un email via Resend ──────────────────────────────────────────────
 export async function sendEmail(env, { to, subject, html }) {
   if (!env.RESEND_API_KEY) return console.warn('[email] RESEND_API_KEY manquant');
   return fetch('https://api.resend.com/emails', {

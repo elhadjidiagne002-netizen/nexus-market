@@ -1,7 +1,6 @@
 // functions/api/_lib/supabase.js
 import { createClient } from "@supabase/supabase-js";
 
-// Client admin (contourne RLS)
 export function adminClient(env) {
   return createClient(
     env.SUPABASE_URL,
@@ -11,14 +10,13 @@ export function adminClient(env) {
 }
 export const createSupabaseClient = adminClient;
 
-// Extraction du Bearer token
 export function extractToken(request) {
   return (request.headers.get("Authorization") ?? "")
     .replace(/^Bearer\s+/i, "")
     .trim();
 }
 
-// requireAuth — HTTP direct (meme approche que utils.js, prouvee fonctionnelle)
+// requireAuth — lookup profile par EMAIL (evite le mismatch id auth vs profiles)
 export async function requireAuth(env, request) {
   const token = extractToken(request);
   if (!token) throw jsonResponse({ error: "Non authentifie" }, 401);
@@ -26,18 +24,18 @@ export async function requireAuth(env, request) {
   const SB_URL = env.SUPABASE_URL;
   const SB_KEY = env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_KEY;
 
-  // 1. Valider le token via Supabase Auth
+  // 1. Valider le token
   const authRes = await fetch(`${SB_URL}/auth/v1/user`, {
     headers: { apikey: SB_KEY, Authorization: `Bearer ${token}` },
   }).catch(() => null);
 
   if (!authRes?.ok) throw jsonResponse({ error: "Token invalide ou expire" }, 401);
   const authUser = await authRes.json().catch(() => ({}));
-  if (!authUser.id) throw jsonResponse({ error: "Token invalide ou expire" }, 401);
+  if (!authUser.id || !authUser.email) throw jsonResponse({ error: "Token invalide ou expire" }, 401);
 
-  // 2. Recuperer le role depuis profiles (source de verite)
+  // 2. Recuperer le role par EMAIL (robuste meme si l'id du profil differe)
   const profRes = await fetch(
-    `${SB_URL}/rest/v1/profiles?email=eq.$\{authUser.email\}&select=role,status,name`,
+    `${SB_URL}/rest/v1/profiles?email=eq.${encodeURIComponent(authUser.email)}&select=role,status,name,id`,
     { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
   ).catch(() => null);
 
@@ -52,7 +50,6 @@ export async function requireAuth(env, request) {
   };
 }
 
-// requireAdmin
 export async function requireAdmin(env, request) {
   const { user, sb } = await requireAuth(env, request);
   if (user.role !== "admin")
@@ -60,7 +57,6 @@ export async function requireAdmin(env, request) {
   return { user, sb };
 }
 
-// requireRole — accepte string OU tableau
 export async function requireRole(env, request, role) {
   const { user, sb } = await requireAuth(env, request);
   const roles = Array.isArray(role) ? role : [role];
@@ -71,7 +67,6 @@ export async function requireRole(env, request, role) {
   return { user, sb };
 }
 
-// handle — wrapper try/catch pour onRequest
 export function handle(fn) {
   return async (ctx) => {
     try {
@@ -93,7 +88,6 @@ export function handle(fn) {
   };
 }
 
-// ok / err helpers
 export function ok(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -104,7 +98,6 @@ export function err(msg, status = 400) {
   return jsonResponse({ error: msg }, status);
 }
 
-// Helper interne
 function jsonResponse(body, status) {
   return new Response(JSON.stringify(body), {
     status,
