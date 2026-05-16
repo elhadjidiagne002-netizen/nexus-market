@@ -16,7 +16,14 @@ export function adminClient(env) {
 }
 
 /**
- * Vérifie que la requête contient un JWT Supabase valide.
+ * Extrait le Bearer token depuis l'en-tête Authorization.
+ * Retourne une string vide si absent.
+ */
+export function extractToken(request) {
+  const auth = request.headers.get("Authorization") ?? "";
+  return auth.replace(/^Bearer\s+/i, "").trim();
+}
+
  * Retourne null si OK, ou une Response 401 si non authentifié.
  */
 export async function requireAuth(ctx) {
