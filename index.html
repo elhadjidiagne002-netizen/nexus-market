@@ -4522,16 +4522,25 @@ async signOut() {
     return req;
   },
 
-  async getVendorOffers(requestId) {
+  async getVendorOffers(requestId, vendorId) {
     if (this._sb) {
-      const { data } = await this._sb.from("vendor_offers").select("*").eq("request_id", requestId).order("created_at", { ascending: false });
+      let q = this._sb.from("vendor_offers").select("*, profiles!vendor_id(name,shop_name,logo,rating,whatsapp_number,whatsapp_prefix,phone)").order("created_at", { ascending: false });
+      if (requestId) q = q.eq("original_offer_id", requestId);
+      if (vendorId)  q = q.eq("vendor_id", vendorId);
+      const { data } = await q;
       if (data) return data;
     }
-    return storage.getArray("vendor_offers").filter(o => o.request_id === requestId);
+    return storage.getArray("vendor_offers").filter(o => {
+      if (requestId && o.request_id !== requestId && o.original_offer_id !== requestId) return false;
+      if (vendorId && o.vendor_id !== vendorId) return false;
+      return true;
+    });
   },
 
   async createVendorOffer(payload) {
-    const offer = { id: crypto.randomUUID(), ...payload, status: "pending", created_at: new Date().toISOString() };
+    // Normalize field: use original_offer_id as the FK to buyer_requests
+    const { request_id, ...rest } = payload;
+    const offer = { id: crypto.randomUUID(), ...rest, original_offer_id: request_id || rest.original_offer_id, status: "pending", created_at: new Date().toISOString() };
     if (this._sb) {
       const { data, error } = await this._sb.from("vendor_offers").insert(offer).select().single();
       if (!error && data) return data;
@@ -4567,7 +4576,7 @@ async signOut() {
     let amb = await this.getAmbassador(user.id);
     if (!amb) {
       const code = (user.name || "").replace(/\s+/g,"").toUpperCase().slice(0,4) + Math.random().toString(36).slice(2,6).toUpperCase();
-      const newAmb = { id: crypto.randomUUID(), user_id: user.id, referral_code: code, level: "bronze", total_referrals: 0, total_sales: 0, total_earned: 0, commission_rate: 0.05, is_active: true, joined_at: new Date().toISOString() };
+      const newAmb = { id: crypto.randomUUID(), user_id: user.id, code: code, referral_code: code, level: "bronze", total_referrals: 0, total_sales: 0, total_earned: 0, commission_rate: 0.05, active: true, is_active: true, joined_at: new Date().toISOString() };
       if (this._sb) {
         const { data } = await this._sb.from("ambassadors").insert(newAmb).select().single();
         if (data) return data;
@@ -4581,7 +4590,7 @@ async signOut() {
 
   async getLeaderboard() {
     if (this._sb) {
-      const { data } = await this._sb.from("ambassadors").select("*, profiles(name,avatar_url)").order("total_earned", { ascending: false }).limit(20);
+      const { data } = await this._sb.from("ambassadors").select("*, profiles!user_id(name,avatar)").order("total_earned", { ascending: false }).limit(20);
       if (data) return data;
     }
     return storage.getArray("ambassadors").sort((a,b) => b.total_earned - a.total_earned).slice(0,20);
@@ -8422,7 +8431,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
               .select("id", { count: "exact", head: true })
               .eq("user_id", currentUser2.id);
 
-            if ((prevOrders || 0) <= 1) {
+            if (true) { // Commission on every order from referred user
               // ── 1. Commission ambassadeur (5% de la commande) ────────────────
               const orderTotal    = createdOrders.reduce((s, o) => s + (o.total || 0), 0);
               const orderTotalXof = Math.round(orderTotal * EUR_TO_FCFA);
@@ -17137,6 +17146,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       })() },
     { id: "messages", icon: "envelope", label: "Messages" },
     { id: "flash_sales_vendor", icon: "bolt", label: "Ventes Flash" },
+    { id: "ondemand_vendor", icon: "magic", label: "🔥 OnDemand", badge: 0 },
     { id: "analytics", icon: "chart-bar", label: "Statistiques" },
     { id: "reviews", icon: "star", label: "Avis clients" },
     { id: "qa", icon: "question-circle", label: "Q&R produits", badge: (() => {
@@ -17244,7 +17254,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       var _a;
       return /* @__PURE__ */ React.createElement("div", { key: q.id, style: { padding: "0.85rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--primary)", fontWeight: 600, marginBottom: "0.25rem" } }, q.productName), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-question text-primary", style: { fontSize: "0.75rem" } }), " ", q.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginBottom: "0.5rem" } }, "Pos\xE9 par ", q.userName, " \u2014 ", new Date(q.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: answer[q.id] || "", onChange: (e) => setAnswer((a) => __spreadProps(__spreadValues({}, a), { [q.id]: e.target.value })), placeholder: "Votre r\xE9ponse...", style: { flex: 1, fontSize: "0.85rem" }, onKeyDown: (e) => e.key === "Enter" && saveAnswer(q.id, q.productId) }), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => saveAnswer(q.id, q.productId), disabled: !((_a = answer[q.id]) == null ? void 0 : _a.trim()) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-reply" }), " R\xE9pondre")));
     }));
-  })(), view === "wallet" && React.createElement(PayoutHistoryView, { currentUser: currentUser2, addToast, onRequestPayout: () => setShowPayoutModal(true) }), view === "invoices" && /* @__PURE__ */ React.createElement(VendorInvoicesView, { currentUser: currentUser2, orders, addToast, downloadStatement: _downloadStatement }), view === "parrainage" && React.createElement(VendorReferralWidget, { currentUser: currentUser2 }), view === "profile" && /* @__PURE__ */ React.createElement(VendorProfileEditor, { currentUser: currentUser2, addToast }), view === "analytics" && /* @__PURE__ */ React.createElement(VendorAnalyticsDashboard, { currentUser: currentUser2, orders, products, salesData, onRequestPayout: () => setShowPayoutModal(true), addToast }), view === "returns" && (() => {
+  })(), view === "wallet" && React.createElement(PayoutHistoryView, { currentUser: currentUser2, addToast, onRequestPayout: () => setShowPayoutModal(true) }), view === "invoices" && /* @__PURE__ */ React.createElement(VendorInvoicesView, { currentUser: currentUser2, orders, addToast, downloadStatement: _downloadStatement }), view === "parrainage" && React.createElement(VendorReferralWidget, { currentUser: currentUser2 }), view === "profile" && /* @__PURE__ */ React.createElement(VendorProfileEditor, { currentUser: currentUser2, addToast }), view === "ondemand_vendor" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast }), view === "analytics" && /* @__PURE__ */ React.createElement(VendorAnalyticsDashboard, { currentUser: currentUser2, orders, products, salesData, onRequestPayout: () => setShowPayoutModal(true), addToast }), view === "returns" && (() => {
     // [FIX] Charger depuis GET /api/returns (filtré par le token côté serveur)
     const myReturns = _myReturns;
     const setMyReturns = _setMyReturns;
@@ -20101,327 +20111,700 @@ const AppWithUserSync = ({ onUserChange }) => {
 // ─── OnDemandPanel ─────────────────────────────────────────────────────────────
 const OnDemandPanel = ({ currentUser: currentUser2, addToast }) => {
   const CATS = ["Électronique","Mode & Vêtements","Alimentation","Maison & Déco","Beauté & Santé","Services","Informatique","Sport & Loisirs","Autres"];
-  const E2F = EUR_TO_FCFA;  // taux centralisé — NEXUS_CONFIG.currency.eurToFcfa
-  const [view, setView] = React.useState("list");
-  const [requests, setRequests] = React.useState([]);
-  const [loading, setLoading] = React.useState(true);
+  const [tab, setTab]             = React.useState("my");       // "my" | "marketplace"
+  const [view, setView]           = React.useState("list");     // "list" | "form" | "detail"
+  const [requests, setRequests]   = React.useState([]);
+  const [allRequests, setAllReqs] = React.useState([]);         // marketplace (all open)
+  const [loading, setLoading]     = React.useState(true);
+  const [selected, setSelected]   = React.useState(null);
+  const [offers, setOffers]       = React.useState([]);
+  const [offerForm, setOfferForm] = React.useState({ price:"", delivery_days:"", message:"" });
+  const [submitting, setSubmitting] = React.useState(false);
+  const [filterCat, setFilterCat] = React.useState("");
+  const [filterUrgency, setFilterUrgency] = React.useState("");
   const [form, setForm] = React.useState({ title:"", category:"", description:"", budget_max:"", quantity:1, urgency:"normal", localisation:"Dakar" });
-  const [selectedReq, setSelectedReq] = React.useState(null);
-  const [offers, setOffers] = React.useState([]);
-  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const upd = (k,v) => setForm(f=>({...f,[k]:v}));
 
-  React.useEffect(() => {
+  const isVendor = ["vendor","admin"].includes(currentUser2.role);
+
+  const load = React.useCallback(async () => {
     setLoading(true);
-    DataService.getBuyerRequests({ buyerId: currentUser2.id }).then(data => {
-      setRequests(data || []);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  }, [currentUser2.id]);
+    try {
+      if (isVendor) {
+        // Vendors see marketplace
+        const data = await DataService.getBuyerRequests({ status:"open", limit:100 });
+        setAllReqs(data||[]);
+        // Their submitted offers
+        const myOffers = await DataService.getVendorOffers(null, currentUser2.id);
+        setOffers(myOffers||[]);
+      } else {
+        // Buyers see their own requests
+        const data = await DataService.getBuyerRequests({ buyerId: currentUser2.id });
+        setRequests(data||[]);
+      }
+    } catch(e) { addToast("Erreur de chargement", "error"); }
+    finally { setLoading(false); }
+  }, [currentUser2.id, isVendor]);
 
-  const loadOffers = (req) => {
-    setSelectedReq(req);
-    setView("offers");
-    DataService.getVendorOffers(req.id).then(setOffers);
+  React.useEffect(() => { load(); }, [load]);
+
+  const openDetail = async (req) => {
+    setSelected(req);
+    setView("detail");
+    const data = await DataService.getVendorOffers(req.id);
+    setOffers(data||[]);
   };
 
   const submit = async () => {
     if (!form.title.trim()) { addToast("Décrivez le produit recherché.", "error"); return; }
+    setSubmitting(true);
     try {
       const req = await DataService.createBuyerRequest({
         buyer_id: currentUser2.id, buyer_name: currentUser2.name || currentUser2.email,
         ...form, budget_max: form.budget_max ? parseFloat(form.budget_max) : null,
-        quantity: parseInt(form.quantity) || 1,
+        quantity: parseInt(form.quantity)||1,
       });
-      setRequests(r => [req, ...r]);
+      setRequests(r=>[req,...r]);
       setForm({ title:"", category:"", description:"", budget_max:"", quantity:1, urgency:"normal", localisation:"Dakar" });
       setView("list");
-      addToast("Demande publiée ! Les vendeurs vont vous répondre.", "success");
-    } catch(e) { addToast("Erreur : " + e.message, "error"); }
+      addToast("Demande publiée ! Les vendeurs seront notifiés.", "success");
+    } catch(e) { addToast("Erreur : "+e.message, "error"); }
+    finally { setSubmitting(false); }
+  };
+
+  const submitVendorOffer = async () => {
+    if (!offerForm.price) { addToast("Indiquez votre prix.", "error"); return; }
+    setSubmitting(true);
+    try {
+      await DataService.createVendorOffer({
+        request_id: selected.id,
+        vendor_id:  currentUser2.id,
+        vendor_name: currentUser2.name,
+        price: parseFloat(offerForm.price),
+        delivery_days: offerForm.delivery_days ? parseInt(offerForm.delivery_days) : null,
+        message: offerForm.message || null,
+      });
+      addToast("Offre envoyée ! L'acheteur sera notifié.", "success");
+      setOfferForm({ price:"", delivery_days:"", message:"" });
+      setView(tab==="marketplace"?"marketplace":"list");
+      setSelected(null);
+      load();
+    } catch(e) { addToast(e.message||"Erreur", "error"); }
+    finally { setSubmitting(false); }
   };
 
   const acceptOffer = async (offer) => {
-    await DataService.acceptOffer(offer.id, selectedReq.id);
-    setOffers(prev => prev.map(o => o.id === offer.id ? {...o, status:"accepted"} : {...o, status:"rejected"}));
-    setRequests(prev => prev.map(r => r.id === selectedReq.id ? {...r, status:"accepted"} : r));
-    addToast("Offre acceptée ! Vous pouvez maintenant passer commande.", "success");
+    setSubmitting(true);
+    try {
+      await DataService.acceptOffer(offer.id, selected.id);
+      setOffers(prev=>prev.map(o=>o.id===offer.id?{...o,status:"accepted"}:{...o,status:"rejected"}));
+      setRequests(prev=>prev.map(r=>r.id===selected.id?{...r,status:"accepted"}:r));
+      addToast("Offre acceptée ! Vous pouvez passer commande.", "success");
+    } catch(e) { addToast("Erreur", "error"); }
+    finally { setSubmitting(false); }
   };
 
-  const urgencyBadge = { low:"🟢 Flexible", normal:"🟡 Normal", high:"🟠 Urgent", urgent:"🔴 Très urgent" };
-  const statusBadge  = { open:"Ouverte", offers_received:"Offres reçues", accepted:"Acceptée", expired:"Expirée", cancelled:"Annulée" };
-  const statusColor  = { open:"var(--primary)", offers_received:"#d97706", accepted:"#16a34a", expired:"#94a3b8", cancelled:"#dc2626" };
+  const cancelRequest = async (reqId) => {
+    try {
+      await DataService._sb?.from("buyer_requests").update({status:"cancelled"}).eq("id",reqId).eq("buyer_id",currentUser2.id);
+      setRequests(prev=>prev.map(r=>r.id===reqId?{...r,status:"cancelled"}:r));
+      addToast("Demande annulée","info");
+    } catch(e){}
+  };
 
-  return React.createElement("div", { style: { maxWidth: 800, margin: "0 auto" } },
-    // Header
-    React.createElement("div", { className: "card-header", style: { display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1rem" } },
-      React.createElement("div", null,
-        React.createElement("h2", { className: "card-title" }, "🔥 NEXUS OnDemand"),
-        React.createElement("p", { style: { fontSize:".85rem", color:"var(--text-secondary)", margin:0 } }, "Vous ne trouvez pas ce que vous cherchez ? Demandez-le !")
+  const URGENCY = { low:"🟢 Flexible", normal:"🟡 Normal", high:"🟠 Urgent", urgent:"🔴 Très urgent" };
+  const STATUS  = { open:"Ouverte", offers_received:"Offres reçues", accepted:"Acceptée", expired:"Expirée", cancelled:"Annulée" };
+  const SCOL    = { open:"var(--primary)", offers_received:"#d97706", accepted:"#16a34a", expired:"#94a3b8", cancelled:"#dc2626" };
+
+  // Marketplace filtered list
+  const filteredMarket = allRequests.filter(r=>{
+    if (filterCat && r.category !== filterCat) return false;
+    if (filterUrgency && r.urgency !== filterUrgency) return false;
+    return true;
+  });
+
+  // Check if vendor already offered on a request
+  const alreadyOffered = (reqId) => offers.some(o => (o.request_id||o.original_offer_id) === reqId);
+
+  const renderCard = (req, ctx="buyer") => React.createElement("div", {
+    key:req.id, className:"card",
+    style:{ cursor: (ctx==="buyer"&&req.offers_count>0)||ctx==="vendor"?"pointer":undefined,
+      border: req.status==="offers_received"?"2px solid #d97706":undefined,
+      marginBottom:".75rem" },
+    onClick: () => { if (ctx==="vendor"||req.offers_count>0) openDetail(req); }
+  },
+    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:".5rem"}},
+      React.createElement("div",{style:{flex:1}},
+        React.createElement("div",{style:{fontWeight:700,fontSize:"1rem",marginBottom:".25rem"}},req.title),
+        React.createElement("div",{style:{fontSize:".8rem",color:"var(--text-secondary)",display:"flex",gap:".75rem",flexWrap:"wrap",marginBottom:".3rem"}},
+          req.category&&React.createElement("span",null,"🏷 ",req.category),
+          req.budget_max&&React.createElement("span",null,"💰 ",Math.round(req.budget_max).toLocaleString("fr-FR")," FCFA max"),
+          req.quantity>1&&React.createElement("span",null,"📦 Qté: ",req.quantity),
+          React.createElement("span",null,URGENCY[req.urgency]||req.urgency),
+          req.localisation&&React.createElement("span",null,"📍 ",req.localisation)
+        ),
+        req.description&&React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)",marginTop:".25rem",fontStyle:"italic"}},
+          req.description.slice(0,120)+(req.description.length>120?"…":"")
+        ),
+        ctx==="buyer"&&req.buyer_name&&React.createElement("div",{style:{fontSize:".75rem",color:"var(--text-secondary)",marginTop:".25rem"}},
+          "Demandé par ",React.createElement("strong",null,req.buyer_name)
+        )
       ),
-      view === "list" && React.createElement("button", { className:"btn btn-primary", onClick: () => setView("form") },
-        React.createElement("i", { className:"fas fa-plus" }), " Nouvelle demande"
+      React.createElement("div",{style:{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:".35rem"}},
+        React.createElement("span",{style:{background:SCOL[req.status]||"var(--primary)",color:"white",borderRadius:"99px",padding:"2px 10px",fontSize:".75rem",fontWeight:600}},
+          STATUS[req.status]||req.status
+        ),
+        (req.offers_count>0)&&React.createElement("span",{style:{color:"#d97706",fontSize:".8rem",fontWeight:600}},
+          React.createElement("i",{className:"fas fa-tag"})," ",(req.offers_count||req.vendor_offers_count)," offre",(req.offers_count>1?"s":"")
+        ),
+        ctx==="vendor"&&alreadyOffered(req.id)&&React.createElement("span",{style:{color:"var(--primary)",fontSize:".75rem"}},
+          React.createElement("i",{className:"fas fa-check"})," Offre soumise"
+        ),
+        ctx==="buyer"&&req.status==="open"&&React.createElement("button",{
+          className:"btn btn-secondary btn-sm",
+          onClick:(e)=>{e.stopPropagation();cancelRequest(req.id);}
+        },"Annuler")
+      )
+    )
+  );
+
+  if (loading) return React.createElement("div",{className:"empty-state"},React.createElement("i",{className:"fas fa-spinner fa-spin"}),React.createElement("p",null,"Chargement..."));
+
+  return React.createElement("div",{style:{maxWidth:820,margin:"0 auto"}},
+    // Header
+    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}},
+      React.createElement("div",null,
+        React.createElement("h2",{className:"card-title"},"🔥 NEXUS OnDemand"),
+        React.createElement("p",{style:{fontSize:".85rem",color:"var(--text-secondary)",margin:0}},
+          isVendor ? "Répondez aux demandes des acheteurs et développez votre activité." : "Vous ne trouvez pas ce que vous cherchez ? Demandez-le !"
+        )
+      ),
+      !isVendor&&view==="list"&&React.createElement("button",{className:"btn btn-primary",onClick:()=>setView("form")},
+        React.createElement("i",{className:"fas fa-plus"})," Nouvelle demande"
       )
     ),
 
-    // Navigation tabs
-    React.createElement("div", { style: { display:"flex", gap:".5rem", marginBottom:"1rem" } },
-      [["list","📋 Mes demandes"], ["form","✏️ Créer"]].map(([id, label]) =>
-        React.createElement("button", { key:id, className:`btn ${view===id?"btn-primary":"btn-secondary"} btn-sm`, onClick: () => setView(id) }, label)
+    // Tabs (vendor only)
+    isVendor&&React.createElement("div",{style:{display:"flex",gap:".5rem",marginBottom:"1rem"}},
+      [["marketplace","🛒 Demandes ouvertes"],["my_offers","📋 Mes offres"]].map(([id,label])=>
+        React.createElement("button",{key:id,className:`btn btn-sm ${tab===id?"btn-primary":"btn-secondary"}`,onClick:()=>{setTab(id);setView("list");}},label)
       )
     ),
 
-    // FORM VIEW
-    view === "form" && React.createElement("div", { className:"card" },
-      React.createElement("div", { className:"card-header" }, React.createElement("h3", { className:"card-title" }, "📝 Décrire votre besoin")),
-      React.createElement("div", { className:"card-body" },
-        React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:".75rem" } },
-          React.createElement("div", { style:{ gridColumn:"span 2" } },
-            React.createElement("label", { className:"form-label" }, "Produit recherché *"),
-            React.createElement("input", { className:"form-input", value:form.title, onChange: e=>upd("title",e.target.value), placeholder:"ex: Smartphone Samsung Galaxy A55..." })
-          ),
-          React.createElement("div", null,
-            React.createElement("label", { className:"form-label" }, "Catégorie"),
-            React.createElement("select", { className:"form-select", value:form.category, onChange: e=>upd("category",e.target.value) },
-              React.createElement("option", { value:"" }, "— Choisir"),
-              ...CATS.map(cat => React.createElement("option", { key:cat, value:cat }, cat))
-            )
-          ),
-          React.createElement("div", null,
-            React.createElement("label", { className:"form-label" }, "Urgence"),
-            React.createElement("select", { className:"form-select", value:form.urgency, onChange: e=>upd("urgency",e.target.value) },
-              React.createElement("option", { value:"low" }, "🟢 Flexible"),
-              React.createElement("option", { value:"normal" }, "🟡 Normal"),
-              React.createElement("option", { value:"high" }, "🟠 Urgent"),
-              React.createElement("option", { value:"urgent" }, "🔴 Très urgent")
-            )
-          ),
-          React.createElement("div", null,
-            React.createElement("label", { className:"form-label" }, "Budget max (FCFA)"),
-            React.createElement("input", { className:"form-input", type:"number", value:form.budget_max, onChange: e=>upd("budget_max",e.target.value), placeholder:"ex: 50000" }),
-            form.budget_max && React.createElement("small", { style:{color:"var(--text-secondary)"} }, "≈ ", parseFloat(form.budget_max).toLocaleString("fr-FR"), " FCFA")
-          ),
-          React.createElement("div", null,
-            React.createElement("label", { className:"form-label" }, "Quantité"),
-            React.createElement("input", { className:"form-input", type:"number", min:1, value:form.quantity, onChange: e=>upd("quantity",e.target.value) })
-          ),
-          React.createElement("div", null,
-            React.createElement("label", { className:"form-label" }, "Localisation"),
-            React.createElement("input", { className:"form-input", value:form.localisation, onChange: e=>upd("localisation",e.target.value), placeholder:"ex: Dakar, Plateau" })
-          ),
-          React.createElement("div", { style:{ gridColumn:"span 2" } },
-            React.createElement("label", { className:"form-label" }, "Description détaillée"),
-            React.createElement("textarea", { className:"form-input", rows:3, value:form.description, onChange: e=>upd("description",e.target.value), placeholder:"Décrivez précisément ce que vous cherchez : couleur, taille, marque préférée..." })
+    // BUYER: Form view
+    !isVendor&&view==="form"&&React.createElement("div",{className:"card"},
+      React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"📝 Décrire votre besoin")),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".75rem",padding:"1rem"}},
+        React.createElement("div",{style:{gridColumn:"span 2"}},
+          React.createElement("label",{className:"form-label"},"Produit recherché *"),
+          React.createElement("input",{className:"form-input",value:form.title,onChange:e=>upd("title",e.target.value),placeholder:"ex: iPhone 14 Pro 256GB..."})
+        ),
+        React.createElement("div",null,
+          React.createElement("label",{className:"form-label"},"Catégorie"),
+          React.createElement("select",{className:"form-select",value:form.category,onChange:e=>upd("category",e.target.value)},
+            React.createElement("option",{value:""},"— Choisir"),
+            ...CATS.map(c=>React.createElement("option",{key:c,value:c},c))
           )
         ),
-        React.createElement("div", { style:{ display:"flex", gap:".75rem", marginTop:"1rem" } },
-          React.createElement("button", { className:"btn btn-primary", onClick: submit },
-            React.createElement("i", { className:"fas fa-paper-plane" }), " Publier la demande"
+        React.createElement("div",null,
+          React.createElement("label",{className:"form-label"},"Urgence"),
+          React.createElement("select",{className:"form-select",value:form.urgency,onChange:e=>upd("urgency",e.target.value)},
+            React.createElement("option",{value:"low"},"🟢 Flexible"),React.createElement("option",{value:"normal"},"🟡 Normal"),
+            React.createElement("option",{value:"high"},"🟠 Urgent"),React.createElement("option",{value:"urgent"},"🔴 Très urgent")
+          )
+        ),
+        React.createElement("div",null,
+          React.createElement("label",{className:"form-label"},"Budget max (FCFA)"),
+          React.createElement("input",{className:"form-input",type:"number",value:form.budget_max,onChange:e=>upd("budget_max",e.target.value),placeholder:"ex: 150000"})
+        ),
+        React.createElement("div",null,
+          React.createElement("label",{className:"form-label"},"Quantité"),
+          React.createElement("input",{className:"form-input",type:"number",min:1,value:form.quantity,onChange:e=>upd("quantity",e.target.value)})
+        ),
+        React.createElement("div",null,
+          React.createElement("label",{className:"form-label"},"Ville / Localisation"),
+          React.createElement("input",{className:"form-input",value:form.localisation,onChange:e=>upd("localisation",e.target.value),placeholder:"ex: Dakar, Plateau"})
+        ),
+        React.createElement("div",{style:{gridColumn:"span 2"}},
+          React.createElement("label",{className:"form-label"},"Description détaillée"),
+          React.createElement("textarea",{className:"form-input",rows:3,value:form.description,onChange:e=>upd("description",e.target.value),placeholder:"Couleur, marque, modèle précis, état (neuf/occasion)..."})
+        ),
+        React.createElement("div",{style:{gridColumn:"span 2",display:"flex",gap:".75rem"}},
+          React.createElement("button",{className:"btn btn-primary",onClick:submit,disabled:submitting},
+            submitting?React.createElement("i",{className:"fas fa-spinner fa-spin"}):React.createElement(React.Fragment,null,React.createElement("i",{className:"fas fa-paper-plane"})," Publier la demande")
           ),
-          React.createElement("button", { className:"btn btn-secondary", onClick: () => setView("list") }, "Annuler")
+          React.createElement("button",{className:"btn btn-secondary",onClick:()=>setView("list")},"Annuler")
         )
       )
     ),
 
-    // LIST VIEW
-    view === "list" && React.createElement("div", null,
-      loading ? React.createElement("div", { className:"empty-state" }, React.createElement("i", { className:"fas fa-spinner fa-spin" }), React.createElement("p", null, "Chargement...")) :
-      requests.length === 0 ? React.createElement("div", { className:"empty-state" },
-        React.createElement("div", { style:{ fontSize:"3rem", marginBottom:".75rem" } }, "🔍"),
-        React.createElement("h3", null, "Aucune demande"),
-        React.createElement("p", null, "Créez votre première demande OnDemand"),
-        React.createElement("button", { className:"btn btn-primary", onClick: () => setView("form") },
-          React.createElement("i", { className:"fas fa-plus" }), " Créer une demande"
-        )
-      ) :
-      React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:".75rem" } },
-        ...requests.map(req =>
-          React.createElement("div", { key:req.id, className:"card", style:{ cursor:"pointer", border: req.status==="offers_received" ? "2px solid #d97706" : undefined },
-            onClick: () => req.offers_count > 0 && loadOffers(req) },
-            React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:".5rem" } },
-              React.createElement("div", { style:{ flex:1 } },
-                React.createElement("div", { style:{ fontWeight:700, fontSize:"1rem", marginBottom:".25rem" } }, req.title),
-                React.createElement("div", { style:{ fontSize:".8rem", color:"var(--text-secondary)", display:"flex", gap:".75rem", flexWrap:"wrap" } },
-                  req.category && React.createElement("span", null, "🏷 ", req.category),
-                  req.budget_max && React.createElement("span", null, "💰 ", Math.round(req.budget_max).toLocaleString("fr-FR"), " FCFA max"),
-                  React.createElement("span", null, urgencyBadge[req.urgency] || req.urgency),
-                  req.localisation && React.createElement("span", null, "📍 ", req.localisation)
-                )
-              ),
-              React.createElement("div", { style:{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:".25rem" } },
-                React.createElement("span", { style:{ background: statusColor[req.status] || "var(--primary)", color:"white", borderRadius:"99px", padding:"2px 10px", fontSize:".75rem", fontWeight:600 } },
-                  statusBadge[req.status] || req.status
-                ),
-                req.offers_count > 0 && React.createElement("span", { style:{ color:"#d97706", fontSize:".8rem", fontWeight:600 } },
-                  React.createElement("i", { className:"fas fa-tag" }), " ", req.offers_count, " offre", req.offers_count > 1 ? "s" : "", " reçue", req.offers_count > 1 ? "s" : ""
-                )
-              )
-            )
-          )
-        )
-      )
+    // BUYER: My requests list
+    !isVendor&&view==="list"&&React.createElement("div",null,
+      requests.length===0?React.createElement("div",{className:"empty-state"},
+        React.createElement("div",{style:{fontSize:"3rem",marginBottom:".75rem"}},"🔍"),
+        React.createElement("h3",null,"Aucune demande"),
+        React.createElement("p",null,"Créez votre première demande OnDemand — les vendeurs vous répondront en moins de 24h."),
+        React.createElement("button",{className:"btn btn-primary",onClick:()=>setView("form")},React.createElement("i",{className:"fas fa-plus"})," Créer une demande")
+      ):requests.map(r=>renderCard(r,"buyer"))
     ),
 
-    // OFFERS VIEW
-    view === "offers" && selectedReq && React.createElement("div", null,
-      React.createElement("button", { className:"btn btn-secondary btn-sm", onClick: () => setView("list"), style:{ marginBottom:"1rem" } },
-        React.createElement("i", { className:"fas fa-arrow-left" }), " Retour"
+    // VENDOR: Marketplace
+    isVendor&&tab==="marketplace"&&view==="list"&&React.createElement("div",null,
+      React.createElement("div",{style:{display:"flex",gap:".75rem",marginBottom:"1rem",flexWrap:"wrap",alignItems:"center"}},
+        React.createElement("select",{className:"form-select",style:{width:"auto"},value:filterCat,onChange:e=>setFilterCat(e.target.value)},
+          React.createElement("option",{value:""},"Toutes catégories"),
+          ...CATS.map(c=>React.createElement("option",{key:c,value:c},c))
+        ),
+        React.createElement("select",{className:"form-select",style:{width:"auto"},value:filterUrgency,onChange:e=>setFilterUrgency(e.target.value)},
+          React.createElement("option",{value:""},"Toute urgence"),
+          React.createElement("option",{value:"urgent"},"🔴 Très urgent"),
+          React.createElement("option",{value:"high"},"🟠 Urgent"),
+          React.createElement("option",{value:"normal"},"🟡 Normal"),
+          React.createElement("option",{value:"low"},"🟢 Flexible")
+        ),
+        React.createElement("span",{style:{fontSize:".85rem",color:"var(--text-secondary)"}},(filteredMarket.length)," demande"+(filteredMarket.length!==1?"s":"")+" ouverte"+(filteredMarket.length!==1?"s":""))
       ),
-      React.createElement("div", { className:"card", style:{ marginBottom:"1rem" } },
-        React.createElement("div", { className:"card-header" },
-          React.createElement("h3", { className:"card-title" }, "📬 Offres pour : ", selectedReq.title)
+      filteredMarket.length===0?React.createElement("div",{className:"empty-state"},
+        React.createElement("div",{style:{fontSize:"3rem"}},"🔍"),
+        React.createElement("h3",null,"Aucune demande ouverte"),
+        React.createElement("p",null,"Aucune demande ne correspond à vos filtres. Revenez régulièrement !")
+      ):filteredMarket.map(r=>renderCard(r,"vendor"))
+    ),
+
+    // VENDOR: My offers list
+    isVendor&&tab==="my_offers"&&view==="list"&&React.createElement("div",null,
+      offers.length===0?React.createElement("div",{className:"empty-state"},
+        React.createElement("div",{style:{fontSize:"3rem"}},"💼"),
+        React.createElement("h3",null,"Aucune offre soumise"),
+        React.createElement("p",null,"Parcourez le marketplace et répondez aux demandes des acheteurs.")
+      ):offers.map(o=>React.createElement("div",{key:o.id,className:"card",style:{marginBottom:".75rem"}},
+        React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:".5rem"}},
+          React.createElement("div",null,
+            React.createElement("div",{style:{fontWeight:700}},"Offre de ",Math.round(o.counter_price||o.price).toLocaleString("fr-FR")," FCFA"),
+            o.delivery_days&&React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)"}},React.createElement("i",{className:"fas fa-truck"})," Livraison en ",o.delivery_days,"j"),
+            o.message&&React.createElement("div",{style:{fontSize:".82rem",fontStyle:"italic",marginTop:".25rem"}},o.message)
+          ),
+          React.createElement("span",{style:{
+            background:o.status==="accepted"?"#16a34a":o.status==="rejected"?"#dc2626":"#d97706",
+            color:"white",borderRadius:"99px",padding:"2px 10px",fontSize:".75rem",fontWeight:600
+          }},o.status==="accepted"?"✅ Acceptée":o.status==="rejected"?"❌ Refusée":"⏳ En attente")
         )
+      ))
+    ),
+
+    // DETAIL VIEW (both buyer and vendor)
+    view==="detail"&&selected&&React.createElement("div",null,
+      React.createElement("button",{className:"btn btn-secondary btn-sm",onClick:()=>{setView("list");setSelected(null);},style:{marginBottom:"1rem"}},
+        React.createElement("i",{className:"fas fa-arrow-left"})," Retour"
       ),
-      offers.length === 0 ? React.createElement("div", { className:"empty-state" }, React.createElement("p", null, "Aucune offre reçue pour l'instant. Les vendeurs sont notifiés.")) :
-      React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:".75rem" } },
-        ...offers.map(offer =>
-          React.createElement("div", { key:offer.id, className:"card", style:{ border: offer.status==="accepted" ? "2px solid var(--primary)" : undefined } },
-            React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:".75rem" } },
-              React.createElement("div", { style:{ flex:1 } },
-                React.createElement("div", { style:{ fontWeight:700 } }, offer.vendor_name || "Vendeur"),
-                React.createElement("div", { style:{ fontSize:"1.1rem", color:"var(--primary)", fontWeight:700, margin:".25rem 0" } },
-                  Math.round(offer.price).toLocaleString("fr-FR"), " FCFA"
-                ),
-                offer.delivery_days && React.createElement("div", { style:{ fontSize:".82rem", color:"var(--text-secondary)" } },
-                  React.createElement("i", { className:"fas fa-truck" }), " Livraison en ", offer.delivery_days, " jour(s)"
-                ),
-                offer.message && React.createElement("div", { style:{ fontSize:".85rem", marginTop:".5rem", padding:".5rem", background:"var(--bg-light)", borderRadius:"8px" } }, offer.message)
-              ),
-              React.createElement("div", { style:{ display:"flex", flexDirection:"column", gap:".5rem" } },
-                offer.status === "accepted" ? React.createElement("span", { style:{ color:"var(--primary)", fontWeight:700 } }, "✅ Acceptée") :
-                offer.status === "rejected" ? React.createElement("span", { style:{ color:"#dc2626" } }, "❌ Refusée") :
-                selectedReq.status === "open" || selectedReq.status === "offers_received" ?
-                React.createElement("button", { className:"btn btn-primary btn-sm", onClick: () => acceptOffer(offer) },
-                  React.createElement("i", { className:"fas fa-check" }), " Accepter"
-                ) : null,
-                React.createElement("button", { className:"btn btn-secondary btn-sm", onClick: async () => {
-                  // [FIX] Résolution du numéro réel du vendeur via profiles
-                  const phone = await resolveVendorPhone(offer.vendor_id);
-                  const link  = buildProductDeepLink(selectedReq?.id ? `request_${selectedReq.id}` : null);
-                  const msg   = encodeURIComponent(
-                    `Bonjour 👋, j'ai vu votre offre sur *NEXUS OnDemand* !\n\n` +
-                    `📋 *Demande :* ${selectedReq?.title || ""}\n` +
-                    `💰 *Votre offre :* ${(offer.price || 0).toLocaleString("fr-FR")} FCFA\n` +
-                    `🔗 ${link}\n\n` +
-                    `Je voudrais discuter des détails. Merci !`
-                  );
-                  window.open((phone ? `https://wa.me/${phone}` : `https://wa.me`) + `?text=${msg}`, "_blank");
-                }}, React.createElement("i", { className:"fab fa-whatsapp", style:{color:"#25D366"} }), " Discuter")
-              )
-            )
+
+      // Request summary
+      React.createElement("div",{className:"card",style:{marginBottom:"1rem"}},
+        React.createElement("div",{className:"card-header"},
+          React.createElement("h3",{className:"card-title"},selected.title),
+          React.createElement("span",{style:{background:SCOL[selected.status]||"var(--primary)",color:"white",borderRadius:"99px",padding:"2px 12px",fontSize:".8rem",fontWeight:600}},
+            STATUS[selected.status]||selected.status
+          )
+        ),
+        React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:".75rem",fontSize:".85rem",color:"var(--text-secondary)",padding:"0 .5rem .5rem"}},
+          selected.category&&React.createElement("span",null,"🏷 ",selected.category),
+          selected.budget_max&&React.createElement("span",null,"💰 ",Math.round(selected.budget_max).toLocaleString("fr-FR")," FCFA max"),
+          selected.quantity>1&&React.createElement("span",null,"📦 Qté: ",selected.quantity),
+          React.createElement("span",null,URGENCY[selected.urgency]||selected.urgency),
+          selected.localisation&&React.createElement("span",null,"📍 ",selected.localisation)
+        ),
+        selected.description&&React.createElement("div",{style:{padding:".5rem",fontSize:".9rem"}},selected.description)
+      ),
+
+      // VENDOR: Submit offer form
+      isVendor&&selected.status==="open"&&!alreadyOffered(selected.id)&&React.createElement("div",{className:"card",style:{marginBottom:"1rem"}},
+        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"💼 Soumettre votre offre")),
+        React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".75rem",padding:".75rem"}},
+          React.createElement("div",null,
+            React.createElement("label",{className:"form-label"},"Votre prix (FCFA) *"),
+            React.createElement("input",{className:"form-input",type:"number",value:offerForm.price,onChange:e=>setOfferForm(f=>({...f,price:e.target.value})),placeholder:selected.budget_max?`max ${Math.round(selected.budget_max).toLocaleString("fr-FR")}`:"Prix proposé"})
+          ),
+          React.createElement("div",null,
+            React.createElement("label",{className:"form-label"},"Délai de livraison (jours)"),
+            React.createElement("input",{className:"form-input",type:"number",min:1,value:offerForm.delivery_days,onChange:e=>setOfferForm(f=>({...f,delivery_days:e.target.value})),placeholder:"ex: 2"})
+          ),
+          React.createElement("div",{style:{gridColumn:"span 2"}},
+            React.createElement("label",{className:"form-label"},"Message pour l'acheteur"),
+            React.createElement("textarea",{className:"form-input",rows:2,value:offerForm.message,onChange:e=>setOfferForm(f=>({...f,message:e.target.value})),placeholder:"Décrivez votre offre : marque, état, garantie..."})
+          ),
+          React.createElement("div",{style:{gridColumn:"span 2",display:"flex",gap:".75rem"}},
+            React.createElement("button",{className:"btn btn-primary",onClick:submitVendorOffer,disabled:submitting||!offerForm.price},
+              submitting?React.createElement("i",{className:"fas fa-spinner fa-spin"}):React.createElement(React.Fragment,null,React.createElement("i",{className:"fas fa-paper-plane"})," Envoyer l'offre")
+            ),
+            React.createElement("button",{className:"btn btn-secondary",onClick:()=>{setView(tab==="marketplace"?"marketplace":"list");setSelected(null);}},"Annuler")
           )
         )
+      ),
+
+      isVendor&&alreadyOffered(selected.id)&&React.createElement("div",{className:"alert alert-info",style:{marginBottom:"1rem"}},
+        React.createElement("i",{className:"fas fa-check-circle"}),
+        React.createElement("span",null," Vous avez déjà soumis une offre pour cette demande.")
+      ),
+
+      // BUYER: Offers list
+      !isVendor&&React.createElement("div",null,
+        React.createElement("h3",{style:{fontWeight:700,marginBottom:".75rem"}},"📬 Offres reçues (",offers.length,")"),
+        offers.length===0?React.createElement("div",{className:"empty-state"},
+          React.createElement("i",{className:"fas fa-clock"}),
+          React.createElement("p",null,"Aucune offre pour l'instant. Les vendeurs notifiés vont vous répondre bientôt.")
+        ):offers.map(offer=>React.createElement("div",{key:offer.id,className:"card",style:{marginBottom:".75rem",border:offer.status==="accepted"?"2px solid var(--primary)":undefined}},
+          React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:".75rem"}},
+            React.createElement("div",{style:{flex:1}},
+              React.createElement("div",{style:{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}},
+                React.createElement("div",{style:{fontWeight:700,fontSize:".95rem"}},offer.vendor_name||"Vendeur"),
+                offer.vendor_rating&&React.createElement("span",{style:{fontSize:".78rem",color:"#d97706"}},"⭐ ",parseFloat(offer.vendor_rating).toFixed(1))
+              ),
+              React.createElement("div",{style:{fontSize:"1.15rem",color:"var(--primary)",fontWeight:800,margin:".2rem 0"}},
+                Math.round(offer.counter_price||offer.price).toLocaleString("fr-FR")," FCFA"
+              ),
+              offer.delivery_days&&React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)"}},
+                React.createElement("i",{className:"fas fa-truck"})," Livraison en ",offer.delivery_days," jour(s)"
+              ),
+              offer.message&&React.createElement("div",{style:{fontSize:".85rem",marginTop:".5rem",padding:".5rem",background:"var(--bg-light)",borderRadius:"8px"}},offer.message)
+            ),
+            React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:".5rem"}},
+              offer.status==="accepted"?React.createElement("span",{style:{color:"var(--primary)",fontWeight:700,fontSize:".9rem"}},"✅ Acceptée"):
+              offer.status==="rejected"?React.createElement("span",{style:{color:"#dc2626",fontSize:".9rem"}},"❌ Refusée"):
+              (selected.status==="open"||selected.status==="offers_received")&&React.createElement("button",{className:"btn btn-primary btn-sm",onClick:()=>acceptOffer(offer),disabled:submitting},
+                React.createElement("i",{className:"fas fa-check"})," Accepter"
+              ),
+              React.createElement("button",{className:"btn btn-secondary btn-sm",onClick:async()=>{
+                const vProfile = offer.vendor_id ? (await DataService._sb?.from("profiles").select("whatsapp_number,whatsapp_prefix,phone").eq("id",offer.vendor_id).single().catch(()=>({data:null})))?.data : null;
+                const wn = vProfile?.whatsapp_number || vProfile?.phone || "";
+                const prefix = vProfile?.whatsapp_prefix || "+221";
+                const fullNum = wn ? (prefix + wn.replace(/\D/g,"")).replace(/^\+221221/,"+221") : "";
+                const msg = encodeURIComponent(`Bonjour 👋, j'ai vu votre offre sur *NEXUS OnDemand* !\n\n📋 *Demande :* ${selected?.title||""}\n💰 *Votre offre :* ${Math.round(offer.counter_price||offer.price||0).toLocaleString("fr-FR")} FCFA\n\nJe voudrais discuter des détails.`);
+                window.open((fullNum?`https://wa.me/${fullNum.replace(/\D/g,"")}`:"https://wa.me")+`?text=${msg}`,"_blank");
+              }},React.createElement("i",{className:"fab fa-whatsapp",style:{color:"#25D366"}}),"\u00a0Discuter")
+            )
+          )
+        ))
       )
     )
   );
 };
 
-// ─── AmbassadorPanel ───────────────────────────────────────────────────────────
 const AmbassadorPanel = ({ currentUser: currentUser2, addToast }) => {
-  const [amb, setAmb] = React.useState(null);
+  const [tab, setTab]               = React.useState("overview"); // overview | referrals | commissions | withdraw
+  const [amb, setAmb]               = React.useState(null);
   const [leaderboard, setLeaderboard] = React.useState([]);
-  const [loading, setLoading] = React.useState(true);
-  const [copied, setCopied] = React.useState(false);
-  const [cashback, setCashback] = React.useState(0);
+  const [referrals, setReferrals]   = React.useState([]);
+  const [commissions, setCommissions] = React.useState([]);
+  const [cashbackHistory, setCashbackHistory] = React.useState([]);
+  const [loading, setLoading]       = React.useState(true);
+  const [copied, setCopied]         = React.useState(false);
+  const [withdrawForm, setWithdrawForm] = React.useState({ amount:"", phone:"", provider:"orange" });
+  const [withdrawing, setWithdrawing] = React.useState(false);
 
-  React.useEffect(() => {
-    Promise.all([
-      DataService.ensureAmbassador(currentUser2),
-      DataService.getLeaderboard(),
-      DataService.getCashbackBalance(currentUser2.id),
-    ]).then(([a, lb, cb]) => {
-      setAmb(a); setLeaderboard(lb || []); setCashback(cb || 0); setLoading(false);
-    }).catch(() => setLoading(false));
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const [a, lb] = await Promise.all([
+        DataService.ensureAmbassador(currentUser2),
+        DataService.getLeaderboard(),
+      ]);
+      setAmb(a); setLeaderboard(lb||[]);
+    } catch(e) {}
+    finally { setLoading(false); }
   }, [currentUser2.id]);
 
-  const copyCode = () => {
+  React.useEffect(() => { load(); }, [load]);
+
+  const loadReferrals = React.useCallback(async () => {
     if (!amb) return;
-    navigator.clipboard.writeText(amb.referral_code).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
-    addToast("Code copié !", "success");
+    const { data } = await (DataService._sb?.from("ambassador_referrals")
+      .select("*, profiles!referred_user_id(name,email,created_at,role)")
+      .eq("ambassador_id", amb.id)
+      .order("created_at",{ascending:false}) || Promise.resolve({data:[]}));
+    setReferrals(data||[]);
+  }, [amb?.id]);
+
+  const loadCommissions = React.useCallback(async () => {
+    if (!amb) return;
+    const [refData, cbData] = await Promise.all([
+      DataService._sb?.from("ambassador_referrals").select("*, orders!order_id(id,total,status,created_at)").eq("ambassador_id",amb.id).in("status",["confirmed","paid"]).order("created_at",{ascending:false}).then(r=>r?.data||[]).catch(()=>[]),
+      DataService._sb?.from("cashback_transactions").select("*").eq("user_id",currentUser2.id).order("created_at",{ascending:false}).then(r=>r?.data||[]).catch(()=>[]),
+    ]);
+    setCommissions(refData||[]);
+    setCashbackHistory(cbData||[]);
+  }, [amb?.id, currentUser2.id]);
+
+  React.useEffect(() => {
+    if (tab==="referrals")   loadReferrals();
+    if (tab==="commissions") loadCommissions();
+  }, [tab, loadReferrals, loadCommissions]);
+
+  const copyCode = () => {
+    if (!amb?.code && !amb?.referral_code) return;
+    navigator.clipboard.writeText(amb.code||amb.referral_code);
+    setCopied(true); setTimeout(()=>setCopied(false),2000);
+    addToast("Code copié !","success");
   };
 
   const shareWA = () => {
-    if (!amb) return;
-    const msg = encodeURIComponent(
-      "🛍️ Rejoins NEXUS Market avec mon code *" + amb.referral_code + "* et bénéficie de 5% de réduction sur ta première commande !\n🔗 https://nexus-market-asb.pages.dev?ref=" + amb.referral_code
-    );
-    window.open("https://wa.me/?text=" + msg, "_blank");
+    const code = amb?.code||amb?.referral_code;
+    if (!code) return;
+    const msg = encodeURIComponent(`🛍️ Rejoins NEXUS Market avec mon code *${code}* et bénéficie de 5% de réduction sur ta première commande !\n🔗 https://nexus-market-asb.pages.dev?ref=${code}\n\n✨ Paiement Orange Money & Wave · Livraison partout au Sénégal`);
+    window.open("https://wa.me/?text="+msg,"_blank");
   };
 
-  const LEVELS = { bronze:"🥉 Bronze", silver:"🥈 Argent", gold:"🥇 Or", platinum:"💎 Platine" };
-  const NEXT_LEVEL = { bronze: { label:"Argent", target: 10 }, silver: { label:"Or", target: 50 }, gold: { label:"Platine", target: 200 }, platinum: { label:"Platine MAX", target: 999 } };
+  const withdraw = async () => {
+    if (!withdrawForm.amount || parseFloat(withdrawForm.amount)<2000) { addToast("Montant minimum 2 000 FCFA","error"); return; }
+    if (!withdrawForm.phone) { addToast("Numéro de téléphone requis","error"); return; }
+    setWithdrawing(true);
+    try {
+      await DataService._sb?.from("payout_requests").insert({
+        vendor_id:  currentUser2.id,
+        amount:     parseFloat(withdrawForm.amount),
+        method:     "mobile",
+        phone:      withdrawForm.phone,
+        provider:   withdrawForm.provider,
+        status:     "pending"
+      });
+      await DataService._sb?.from("cashback_transactions").insert({
+        user_id: currentUser2.id,
+        amount_fcfa: parseFloat(withdrawForm.amount),
+        transaction_type: "redeem",
+        status: "withdrawn",
+        description: "Retrait cashback ambassadeur"
+      });
+      setWithdrawForm({amount:"",phone:"",provider:"orange"});
+      addToast("Demande de retrait envoyée ! Traitement sous 24-48h.","success");
+      load();
+    } catch(e) { addToast(e.message||"Erreur","error"); }
+    finally { setWithdrawing(false); }
+  };
 
-  if (loading) return React.createElement("div", { className:"empty-state" }, React.createElement("i", { className:"fas fa-spinner fa-spin" }), React.createElement("p", null, "Chargement..."));
+  const LEVELS = { bronze:{label:"🥉 Bronze",color:"#CD7F32",next:"Argent",nextMin:50000}, silver:{label:"🥈 Argent",color:"#C0C0C0",next:"Or",nextMin:200000}, gold:{label:"🥇 Or",color:"#FFD700",next:"Platine",nextMin:500000}, platinum:{label:"💎 Platine",color:"#B9F2FF",next:null,nextMin:null} };
+  const lvl = LEVELS[amb?.level]||LEVELS.bronze;
+  const progress = lvl.nextMin ? Math.min(100, Math.round(((amb?.total_earned||0)/lvl.nextMin)*100)) : 100;
+  const cashback = (cashbackHistory).filter(t=>["earn","bonus"].includes(t.transaction_type)&&t.status!=="withdrawn").reduce((s,t)=>s+(t.amount_fcfa||0),0)
+                 - (cashbackHistory).filter(t=>t.transaction_type==="redeem"&&t.status==="withdrawn").reduce((s,t)=>s+(t.amount_fcfa||0),0);
+  const code = amb?.code||amb?.referral_code||"—";
 
-  const progress = amb ? Math.min(100, Math.round((amb.total_referrals / (NEXT_LEVEL[amb.level]?.target || 1)) * 100)) : 0;
+  if (loading) return React.createElement("div",{className:"empty-state"},React.createElement("i",{className:"fas fa-spinner fa-spin"}),React.createElement("p",null,"Chargement..."));
 
-  return React.createElement("div", { style:{ maxWidth:800, margin:"0 auto" } },
-    React.createElement("div", { className:"card-header", style:{marginBottom:"1rem"} },
-      React.createElement("h2", { className:"card-title" }, "🏆 Programme Ambassadeur"),
-      React.createElement("p", { style:{ fontSize:".85rem", color:"var(--text-secondary)", margin:0 } }, "Partagez NEXUS et gagnez des commissions sur chaque vente !")
+  return React.createElement("div",{style:{maxWidth:820,margin:"0 auto"}},
+    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}},
+      React.createElement("div",null,
+        React.createElement("h2",{className:"card-title"},"🏆 Programme Ambassadeur"),
+        React.createElement("p",{style:{fontSize:".85rem",color:"var(--text-secondary)",margin:0}},"Parrainez et gagnez des commissions sur chaque vente de vos filleuls.")
+      ),
+      React.createElement("span",{style:{background:lvl.color,color:"#1a1a1a",borderRadius:"99px",padding:"4px 16px",fontWeight:800,fontSize:".85rem"}},lvl.label)
     ),
 
-    // Stats cards
-    React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:"1rem", marginBottom:"1.25rem" } },
+    // KPI cards
+    React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:".75rem",marginBottom:"1.25rem"}},
       [
-        ["Niveau", amb ? LEVELS[amb.level] || amb.level : "—", "award"],
-        ["Parrainages", amb ? amb.total_referrals : 0, "users"],
-        ["Commissions", amb ? Math.round(amb.total_earned).toLocaleString("fr-FR")+" FCFA" : "0 FCFA", "coins"],
-        ["Cashback dispo", Math.round(cashback).toLocaleString("fr-FR")+" FCFA", "wallet"],
-      ].map(([label, value, icon]) =>
-        React.createElement("div", { key:label, className:"stat-card" },
-          React.createElement("div", { className:"stat-icon" }, React.createElement("i", { className:`fas fa-${icon}` })),
-          React.createElement("div", { className:"stat-value" }, value),
-          React.createElement("div", { className:"stat-label" }, label)
-        )
+        ["Parrainages",amb?.total_referrals||0,"users"],
+        ["Commissions gagnées",Math.round(amb?.total_earned||0).toLocaleString("fr-FR")+" FCFA","coins"],
+        ["Ventes générées",Math.round(amb?.total_sales||0).toLocaleString("fr-FR")+" FCFA","shopping-bag"],
+        ["Cashback dispo",Math.max(0,Math.round(cashback)).toLocaleString("fr-FR")+" FCFA","wallet"],
+      ].map(([label,value,icon])=>React.createElement("div",{key:label,className:"stat-card"},
+        React.createElement("div",{className:"stat-icon"},React.createElement("i",{className:`fas fa-${icon}`})),
+        React.createElement("div",{className:"stat-value",style:{fontSize:"1rem"}},value),
+        React.createElement("div",{className:"stat-label"},label)
+      ))
+    ),
+
+    // Tabs
+    React.createElement("div",{style:{display:"flex",gap:".4rem",marginBottom:"1rem",borderBottom:"2px solid var(--border)",paddingBottom:".4rem",flexWrap:"wrap"}},
+      [["overview","🎯 Mon code"],["referrals","👥 Filleuls"],["commissions","💰 Commissions"],["withdraw","🏧 Retrait"],["leaderboard","🏅 Classement"]].map(([id,label])=>
+        React.createElement("button",{key:id,className:`btn btn-sm ${tab===id?"btn-primary":"btn-secondary"}`,onClick:()=>setTab(id)},label)
       )
     ),
 
-    // Referral code card
-    React.createElement("div", { className:"card", style:{ marginBottom:"1.25rem" } },
-      React.createElement("div", { className:"card-header" }, React.createElement("h3", { className:"card-title" }, "🎯 Votre code de parrainage")),
-      React.createElement("div", { className:"card-body" },
-        React.createElement("div", { style:{ textAlign:"center", padding:"1rem", background:"linear-gradient(135deg,rgba(0,133,62,.07),rgba(253,239,66,.07))", border:"2px dashed rgba(0,133,62,.3)", borderRadius:"12px", marginBottom:"1rem" } },
-          React.createElement("div", { style:{ fontFamily:"monospace", fontSize:"2rem", fontWeight:800, letterSpacing:".2rem", color:"var(--primary)", marginBottom:".75rem" } },
-            amb ? amb.referral_code : "—"
+    // ── OVERVIEW ──
+    tab==="overview"&&React.createElement("div",null,
+      React.createElement("div",{className:"card",style:{marginBottom:"1.25rem"}},
+        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"🎯 Votre code de parrainage")),
+        React.createElement("div",{style:{textAlign:"center",padding:"1.5rem",background:`linear-gradient(135deg,${lvl.color}22,rgba(0,133,62,.06))`,border:"2px dashed rgba(0,133,62,.3)",borderRadius:"12px",margin:"0 .5rem .75rem"}},
+          React.createElement("div",{style:{fontFamily:"monospace",fontSize:"2rem",fontWeight:800,letterSpacing:".2rem",color:"var(--primary)",marginBottom:".5rem"}},code),
+          React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)",marginBottom:"1rem"}},
+            "Vos amis obtiennent ",React.createElement("strong",null,"5% de réduction"),", vous gagnez ",React.createElement("strong",null,"commission sur chaque commande"),"."
           ),
-          React.createElement("div", { style:{ fontSize:".82rem", color:"var(--text-secondary)", marginBottom:"1rem" } },
-            "Vos amis obtiennent ", React.createElement("strong", null, "5% de réduction"), ", vous gagnez ", React.createElement("strong", null, "2 000 FCFA"), " de commission."
-          ),
-          React.createElement("div", { style:{ display:"flex", gap:".75rem", justifyContent:"center", flexWrap:"wrap" } },
-            React.createElement("button", { className:"btn btn-secondary", onClick: copyCode },
-              React.createElement("i", { className:`fas fa-${copied?"check":"copy"}` }), " ", copied ? "Copié !" : "Copier"
+          React.createElement("div",{style:{display:"flex",gap:".75rem",justifyContent:"center",flexWrap:"wrap"}},
+            React.createElement("button",{className:"btn btn-secondary",onClick:copyCode},
+              React.createElement("i",{className:`fas fa-${copied?"check":"copy"}`})," ",copied?"Copié !":"Copier"
             ),
-            React.createElement("button", { className:"btn btn-primary", onClick: shareWA },
-              React.createElement("i", { className:"fab fa-whatsapp" }), " Partager sur WhatsApp"
-            )
+            React.createElement("button",{className:"btn btn-primary",onClick:shareWA},
+              React.createElement("i",{className:"fab fa-whatsapp"})," WhatsApp"
+            ),
+            React.createElement("button",{className:"btn btn-secondary",onClick:()=>{
+              const url = `https://nexus-market-asb.pages.dev?ref=${code}`;
+              const msg = encodeURIComponent(`🛍️ NEXUS Market Sénégal — Code: ${code}\n${url}`);
+              window.open("sms:?body="+msg,"_blank");
+            }},React.createElement("i",{className:"fas fa-sms"})," SMS")
           )
         ),
-        // Level progress
-        React.createElement("div", null,
-          React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", fontSize:".82rem", marginBottom:".25rem" } },
-            React.createElement("span", null, "Progression vers ", NEXT_LEVEL[amb?.level]?.label || "Platine"),
-            React.createElement("span", { style:{ fontWeight:600 } }, amb?.total_referrals || 0, " / ", NEXT_LEVEL[amb?.level]?.target || 10)
+        // Progress bar
+        React.createElement("div",{style:{padding:"0 .5rem .5rem"}},
+          React.createElement("div",{style:{display:"flex",justifyContent:"space-between",fontSize:".82rem",marginBottom:".3rem"}},
+            React.createElement("span",null,"Progression vers ",lvl.next||"MAX"),
+            React.createElement("span",{style:{fontWeight:600}},Math.round(amb?.total_earned||0).toLocaleString("fr-FR")," / ",lvl.nextMin?.toLocaleString("fr-FR")||"∞"," FCFA")
           ),
-          React.createElement("div", { style:{ background:"var(--bg-light)", borderRadius:"99px", height:8 } },
-            React.createElement("div", { style:{ background:"var(--primary)", height:8, borderRadius:"99px", width:progress+"%", transition:"width .5s" } })
+          React.createElement("div",{style:{background:"var(--bg-light)",borderRadius:"99px",height:10}},
+            React.createElement("div",{style:{background:`linear-gradient(90deg,var(--primary),${lvl.color})`,height:10,borderRadius:"99px",width:progress+"%",transition:"width .6s"}})
+          ),
+          lvl.nextMin&&React.createElement("div",{style:{fontSize:".75rem",color:"var(--text-secondary)",marginTop:".3rem",textAlign:"right"}},
+            Math.max(0,lvl.nextMin-(amb?.total_earned||0)).toLocaleString("fr-FR")," FCFA pour atteindre ",lvl.next
+          )
+        )
+      ),
+      // How it works
+      React.createElement("div",{className:"card"},
+        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"📋 Comment ça marche")),
+        React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:".5rem",padding:".5rem"}},
+          [["1","Partagez votre code","Envoyez votre lien de parrainage à vos contacts."],
+           ["2","Ils s'inscrivent","Votre contact crée un compte avec votre code."],
+           ["3","Ils passent commande","À chaque commande de votre filleul, vous gagnez 5% de commission."],
+           ["4","Montez de niveau","Plus vous parrainez, plus votre taux de commission augmente !"],
+          ].map(([num,title,desc])=>React.createElement("div",{key:num,style:{display:"flex",gap:"1rem",alignItems:"flex-start",padding:".6rem",background:"var(--bg-light)",borderRadius:"8px"}},
+            React.createElement("div",{style:{width:28,height:28,background:"var(--primary)",color:"white",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,flexShrink:0}},num),
+            React.createElement("div",null,
+              React.createElement("div",{style:{fontWeight:600,fontSize:".9rem"}},title),
+              React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)"}},desc)
+            )
+          ))
+        )
+      )
+    ),
+
+    // ── REFERRALS ──
+    tab==="referrals"&&React.createElement("div",{className:"card"},
+      React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"👥 Mes filleuls")),
+      referrals.length===0?React.createElement("div",{className:"empty-state"},
+        React.createElement("i",{className:"fas fa-users"}),
+        React.createElement("p",null,"Aucun filleul pour l'instant. Partagez votre code pour commencer !")
+      ):React.createElement("div",{className:"table-wrapper"},
+        React.createElement("table",{className:"data-table"},
+          React.createElement("thead",null,React.createElement("tr",null,
+            React.createElement("th",null,"Filleul"),React.createElement("th",null,"Date"),
+            React.createElement("th",null,"Rôle"),React.createElement("th",null,"Statut"),React.createElement("th",null,"Commission")
+          )),
+          React.createElement("tbody",null,referrals.map(r=>React.createElement("tr",{key:r.id},
+            React.createElement("td",null,React.createElement("strong",null,r.profiles?.name||"—")," ",React.createElement("span",{style:{fontSize:".75rem",color:"var(--text-secondary)"}},r.profiles?.email||"")),
+            React.createElement("td",null,r.created_at?new Date(r.created_at).toLocaleDateString("fr-FR"):"—"),
+            React.createElement("td",null,React.createElement("span",{className:"badge badge-info"},r.profiles?.role||"—")),
+            React.createElement("td",null,React.createElement("span",{className:`badge badge-${r.status==="paid"?"success":r.status==="confirmed"?"info":"warning"}`},
+              r.status==="paid"?"✅ Payé":r.status==="confirmed"?"✔ Confirmé":"⏳ En attente"
+            )),
+            React.createElement("td",null,r.commission?React.createElement("strong",{style:{color:"var(--primary)"}},Math.round(r.commission).toLocaleString("fr-FR")," FCFA"):"—")
+          )))
+        )
+      )
+    ),
+
+    // ── COMMISSIONS ──
+    tab==="commissions"&&React.createElement("div",null,
+      React.createElement("div",{className:"card",style:{marginBottom:"1rem"}},
+        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"💰 Historique des commissions")),
+        commissions.length===0?React.createElement("div",{className:"empty-state"},
+          React.createElement("i",{className:"fas fa-coins"}),
+          React.createElement("p",null,"Aucune commission pour l'instant.")
+        ):React.createElement("div",{className:"table-wrapper"},
+          React.createElement("table",{className:"data-table"},
+            React.createElement("thead",null,React.createElement("tr",null,
+              React.createElement("th",null,"Commande"),React.createElement("th",null,"Date"),
+              React.createElement("th",null,"Montant commande"),React.createElement("th",null,"Commission"),React.createElement("th",null,"Statut")
+            )),
+            React.createElement("tbody",null,commissions.map(c=>React.createElement("tr",{key:c.id},
+              React.createElement("td",null,React.createElement("code",null,(c.order_id||c.id||"").slice(-8))),
+              React.createElement("td",null,c.created_at?new Date(c.created_at).toLocaleDateString("fr-FR"):"—"),
+              React.createElement("td",null,c.order_amount?Math.round(c.order_amount).toLocaleString("fr-FR")+" FCFA":"—"),
+              React.createElement("td",null,React.createElement("strong",{style:{color:"var(--primary)"}},Math.round(c.commission||0).toLocaleString("fr-FR")," FCFA")),
+              React.createElement("td",null,React.createElement("span",{className:"badge badge-success"},"Crédité"))
+            )))
+          )
+        )
+      ),
+      React.createElement("div",{className:"card"},
+        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"📊 Cashback & Transactions")),
+        cashbackHistory.length===0?React.createElement("div",{className:"empty-state"},React.createElement("p",null,"Aucune transaction.")):
+        React.createElement("div",{className:"table-wrapper"},
+          React.createElement("table",{className:"data-table"},
+            React.createElement("thead",null,React.createElement("tr",null,
+              React.createElement("th",null,"Date"),React.createElement("th",null,"Description"),React.createElement("th",null,"Montant"),React.createElement("th",null,"Statut")
+            )),
+            React.createElement("tbody",null,cashbackHistory.map(t=>React.createElement("tr",{key:t.id},
+              React.createElement("td",null,new Date(t.created_at).toLocaleDateString("fr-FR")),
+              React.createElement("td",null,t.description||t.transaction_type),
+              React.createElement("td",null,
+                React.createElement("strong",{style:{color:["earn","bonus"].includes(t.transaction_type)?"var(--success)":"var(--danger)"}},
+                  (["earn","bonus"].includes(t.transaction_type)?"+":"-"),Math.round(t.amount_fcfa||0).toLocaleString("fr-FR")," FCFA"
+                )
+              ),
+              React.createElement("td",null,React.createElement("span",{className:`badge badge-${t.status==="credited"||t.status==="earned"?"success":t.status==="withdrawn"?"info":"warning"}`},t.status||"—"))
+            )))
           )
         )
       )
     ),
 
-    // Leaderboard
-    leaderboard.length > 0 && React.createElement("div", { className:"card" },
-      React.createElement("div", { className:"card-header" }, React.createElement("h3", { className:"card-title" }, "🏅 Classement Ambassadeurs")),
-      React.createElement("div", { className:"card-body" },
-        React.createElement("div", { role:"list" },
-          ...leaderboard.slice(0,10).map((a, i) =>
-            React.createElement("div", { key:a.id, role:"listitem", style:{ display:"flex", alignItems:"center", gap:".75rem", padding:".6rem 0", borderBottom:"1px solid var(--border)" } },
-              React.createElement("div", { style:{ width:28, height:28, borderRadius:"50%", background: i===0?"#FFD700":i===1?"#C0C0C0":i===2?"#CD7F32":"var(--bg-light)", display:"flex", alignItems:"center", justifyContent:"center", fontWeight:800, fontSize:".85rem", flexShrink:0 } }, i+1),
-              React.createElement("div", { style:{ flex:1, fontWeight: a.user_id === currentUser2.id ? 700 : 400 } }, a.profiles?.name || "Ambassadeur", a.user_id === currentUser2.id && React.createElement("span", { style:{ color:"var(--primary)", fontSize:".75rem", marginLeft:".4rem" } }, "(vous)")),
-              React.createElement("div", { style:{ fontSize:".82rem", color:"var(--text-secondary)" } }, a.total_referrals, " parrainages"),
-              React.createElement("div", { style:{ fontWeight:700, color:"var(--primary)" } }, Math.round(a.total_earned).toLocaleString("fr-FR"), " FCFA")
-            )
+    // ── WITHDRAW ──
+    tab==="withdraw"&&React.createElement("div",{className:"card"},
+      React.createElement("div",{className:"card-header"},
+        React.createElement("h3",{className:"card-title"},"🏧 Retirer mon cashback"),
+        React.createElement("span",{style:{fontWeight:700,color:"var(--primary)"}},Math.max(0,Math.round(cashback)).toLocaleString("fr-FR")," FCFA disponibles")
+      ),
+      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".75rem",padding:".75rem"}},
+        React.createElement("div",{style:{gridColumn:"span 2"}},
+          React.createElement("label",{className:"form-label"},"Montant à retirer (FCFA, min 2 000)"),
+          React.createElement("input",{className:"form-input",type:"number",min:2000,max:Math.max(0,cashback),value:withdrawForm.amount,onChange:e=>setWithdrawForm(f=>({...f,amount:e.target.value})),placeholder:"ex: 5000"})
+        ),
+        React.createElement("div",null,
+          React.createElement("label",{className:"form-label"},"Opérateur"),
+          React.createElement("select",{className:"form-select",value:withdrawForm.provider,onChange:e=>setWithdrawForm(f=>({...f,provider:e.target.value}))},
+            React.createElement("option",{value:"orange"},"🟠 Orange Money"),
+            React.createElement("option",{value:"wave"},"🔵 Wave"),
+            React.createElement("option",{value:"free"},"🟣 Free Money")
+          )
+        ),
+        React.createElement("div",null,
+          React.createElement("label",{className:"form-label"},"Numéro de téléphone"),
+          React.createElement("input",{className:"form-input",type:"tel",value:withdrawForm.phone,onChange:e=>setWithdrawForm(f=>({...f,phone:e.target.value})),placeholder:"77 123 45 67"})
+        ),
+        React.createElement("div",{style:{gridColumn:"span 2"}},
+          React.createElement("div",{className:"alert alert-info",style:{fontSize:".82rem"}},
+            React.createElement("i",{className:"fas fa-info-circle"}),
+            React.createElement("span",null," Le retrait est traité sous 24-48h ouvrables. Minimum 2 000 FCFA.")
+          ),
+          React.createElement("button",{className:"btn btn-primary",onClick:withdraw,disabled:withdrawing||!withdrawForm.amount||!withdrawForm.phone||parseFloat(withdrawForm.amount)<2000||parseFloat(withdrawForm.amount)>Math.max(0,cashback)},
+            withdrawing?React.createElement("i",{className:"fas fa-spinner fa-spin"}):React.createElement(React.Fragment,null,React.createElement("i",{className:"fas fa-paper-plane"})," Demander le retrait")
           )
         )
+      )
+    ),
+
+    // ── LEADERBOARD ──
+    tab==="leaderboard"&&React.createElement("div",{className:"card"},
+      React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"🏅 Classement des ambassadeurs")),
+      leaderboard.length===0?React.createElement("div",{className:"empty-state"},React.createElement("p",null,"Aucun ambassadeur pour l'instant. Soyez le premier !")):
+      React.createElement("div",null,
+        leaderboard.slice(0,10).map((a,i)=>React.createElement("div",{key:a.id||i,style:{display:"flex",alignItems:"center",gap:".75rem",padding:".65rem",borderBottom:"1px solid var(--border)",background:a.user_id===currentUser2.id?"rgba(0,133,62,.05)":"transparent"}},
+          React.createElement("div",{style:{width:30,height:30,borderRadius:"50%",background:i===0?"#FFD700":i===1?"#C0C0C0":i===2?"#CD7F32":"var(--bg-light)",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:".85rem",flexShrink:0,color:i<3?"#1a1a1a":"var(--text-secondary)"}},i+1),
+          React.createElement("div",{style:{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,var(--primary),var(--primary-light))",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0}},
+            (a.profiles?.name||"?")[0]?.toUpperCase()
+          ),
+          React.createElement("div",{style:{flex:1}},
+            React.createElement("div",{style:{fontWeight:a.user_id===currentUser2.id?700:500,fontSize:".9rem"}},
+              a.profiles?.name||"Ambassadeur",
+              a.user_id===currentUser2.id&&React.createElement("span",{style:{color:"var(--primary)",fontSize:".72rem",marginLeft:".3rem"}},"(vous)")
+            ),
+            React.createElement("div",{style:{fontSize:".75rem",color:"var(--text-secondary)"}},
+              LEVELS[a.level]?.label||a.level," · ",a.total_referrals||0," filleul"+(a.total_referrals!==1?"s":"")
+            )
+          ),
+          React.createElement("div",{style:{textAlign:"right"}},
+            React.createElement("div",{style:{fontWeight:800,color:"var(--primary)",fontSize:".9rem"}},Math.round(a.total_earned||0).toLocaleString("fr-FR")," FCFA"),
+            React.createElement("div",{style:{fontSize:".72rem",color:"var(--text-secondary)"}},Math.round(a.total_sales||0).toLocaleString("fr-FR")," FCFA de ventes")
+          )
+        ))
       )
     )
   );
