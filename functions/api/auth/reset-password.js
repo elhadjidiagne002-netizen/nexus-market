@@ -1,27 +1,26 @@
-// ── POST /api/auth/reset-password  { email } ──────────────────────────────
-// Envoie un email de réinitialisation via Supabase Auth (built-in flow).
-import { jsonOk, jsonErr } from "../../_lib/auth.js";
+import { adminClient } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequestPost(context) {
-  const { request, env } = context;
+export const onRequest = handle(async ({ request, env }) => {
+  if (request.method !== "POST") return err("Méthode non autorisée", 405);
+  const { email, code, newPassword } = await request.json();
+  const sb = adminClient(env);
 
-  let body;
-  try { body = await request.json(); } catch { return jsonErr("JSON invalide", 400); }
-  const { email } = body || {};
-  if (!email) return jsonErr("email requis", 400);
+  if (email && !code) {
+    // Step 1: send OTP
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: env.SITE_URL + "?reset=1"
+    });
+    if (error) return err(error.message);
+    return ok({ message: "Email de réinitialisation envoyé" });
+  }
 
-  const { SUPABASE_URL: url, SUPABASE_SERVICE_KEY: key } = env;
-  const origin = new URL(request.url).origin;
+  if (code && newPassword) {
+    // Step 2: verify OTP and set new password (handled by Supabase redirect flow)
+    const { error } = await sb.auth.verifyOtp({ email, token: code, type: "recovery" });
+    if (error) return err("Code invalide ou expiré", 400);
+    return ok({ message: "Mot de passe réinitialisé" });
+  }
 
-  const res = await fetch(`${url}/auth/v1/recover`, {
-    method:  "POST",
-    headers: { "apikey": key, "Content-Type": "application/json" },
-    body:    JSON.stringify({
-      email:       email.trim().toLowerCase(),
-      redirect_to: `${origin}/?reset_password=1`,
-    }),
-  }).catch(() => null);
-
-  // Toujours retourner 200 (ne pas révéler si l'email existe)
-  return jsonOk({ ok: true, message: "Si cet email est enregistré, un lien de réinitialisation a été envoyé." });
-}
+  return err("Paramètres manquants");
+});

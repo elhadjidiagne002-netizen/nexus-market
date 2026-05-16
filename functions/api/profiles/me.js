@@ -1,59 +1,21 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../_lib/utils.js';
+import { adminClient, requireAuth } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequest({ request, env }) {
-  if (request.method === 'OPTIONS') return options();
+export const onRequest = handle(async ({ request, env }) => {
+  const { user } = await requireAuth(env, request);
+  const sb = adminClient(env);
 
-  try {
-    const [user, authError] = await requireAuth(request, env);
-    if (authError) return authError;
-
-    const sb = supabase(env);
-
-    if (request.method === 'GET') {
-      const { data, error } = await sb
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
-      if (error) throw error;
-      if (!data) return err('Profil non trouvé', 404);
-      return json(data);
-    }
-
-    if (request.method === 'PUT') {
-      const body = await request.json();
-      const { data: updated, error } = await sb
-        .from('profiles')
-        .update({
-          name: body.name,
-          email: body.email,
-          phone: body.phone,
-          address: body.address,
-          city: body.city,
-          country: body.country,
-          bio: body.bio,
-          avatar: body.avatar,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', user.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return json(updated);
-    }
-
-    return err('Méthode non supportée', 405);
-  } catch (error) {
-    return err(error.message, error.status || 500);
+  if (request.method === "GET") {
+    const { data } = await sb.from("profiles").select("*").eq("id", user.id).single();
+    return ok(data);
   }
-}
-
-
-
-
-
-
-
-
+  if (request.method === "PATCH" || request.method === "PUT") {
+    const body = await request.json();
+    const allowed = ["name","phone","avatar","bio","logo","shop_name","shop_category","whatsapp_number","opening_hours","return_policy"];
+    const update = Object.fromEntries(Object.entries(body).filter(([k]) => allowed.includes(k)));
+    const { data, error } = await sb.from("profiles").update(update).eq("id", user.id).select().single();
+    if (error) return err(error.message);
+    return ok(data);
+  }
+  return err("Méthode non autorisée", 405);
+});

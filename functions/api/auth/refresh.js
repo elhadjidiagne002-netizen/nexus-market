@@ -1,28 +1,12 @@
-import { CORS, options, json, err } from '../_lib/utils.js';
+import { adminClient, extractToken } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequest({ request, env }) {
-  if (request.method === 'OPTIONS') return options();
-  try {
-    const { refreshToken } = await request.json();
-    if (!refreshToken) return err('refreshToken manquant', 400);
-    const res = await fetch(`${env.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-      method: 'POST',
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    const data = await res.json();
-    if (!res.ok) return err(data.error_description || 'Token invalide', 401);
-    return json({ accessToken: data.access_token, refreshToken: data.refresh_token, expiresIn: data.expires_in });
-  } catch (e) { return err(e.message, 500); }
-}
-
-
-
-
-
-
-
-
-
-
-
+export const onRequest = handle(async ({ request, env }) => {
+  if (request.method !== "POST") return err("Méthode non autorisée", 405);
+  const { refresh_token } = await request.json().catch(() => ({}));
+  if (!refresh_token) return err("refresh_token manquant");
+  const sb = adminClient(env);
+  const { data, error } = await sb.auth.refreshSession({ refresh_token });
+  if (error) return err(error.message, 401);
+  return ok(data.session);
+});

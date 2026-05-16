@@ -1,116 +1,39 @@
-// ── POST /api/payout/request ───────────────────────────────────────────────
-// Crée une demande de virement pour le vendeur authentifié.
-// Vérifie que le solde disponible est suffisant avant d'enregistrer.
-// Cloudflare Pages Function.
-//
-// Corps attendu (JSON) :
-//   { amount (FCFA), method, provider, destination, vendorName? }
-//
-// Réponse 200 : { id, status: "pending", amount, … }
+import { adminClient, requireRole } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequestPost(context) {
-  const { request, env } = context;
+export const onRequest = handle(async ({ request, env }) => {
+  if (request.method !== "POST") return err("Méthode non autorisée", 405);
+  const { user } = await requireRole(env, request, ["vendor","admin"]);
+  const { amount, method, phone, provider, iban } = await request.json();
+  if (!amount || amount < 1000) return err("Montant minimum 1 000 FCFA");
 
-  const SB_URL  = env.SUPABASE_URL;
-  const SB_KEY  = env.SUPABASE_SERVICE_KEY;
+  const sb = adminClient(env);
 
-  if (!SB_URL || !SB_KEY) return jsonResponse({ error: "Supabase non configuré" }, 500);
+  // Check available balance
+  const { data: orders } = await sb.from("orders").select("total").eq("vendor_id", user.id).eq("status", "delivered").eq("paid_out", false);
+  const balance = (orders || []).reduce((s, o) => s + (o.total * 0.85), 0); // 15% commission
+  if (amount > balance) return err("Solde insuffisant (disponible: " + Math.round(balance) + " FCFA)");
 
-  // ── Authentification ──────────────────────────────────────────────────────
-  const jwt = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
-  if (!jwt) return jsonResponse({ error: "Non authentifié" }, 401);
+  const { data, error } = await sb.from("payout_requests").insert({
+    vendor_id: user.id, amount, method, phone, provider, iban, status: "pending"
+  }).select().single();
+  if (error) return err(error.message);
 
-  const userRes = await fetch(`${SB_URL}/auth/v1/user`, {
-    headers: { "apikey": SB_KEY, "Authorization": `Bearer ${jwt}` },
-  }).catch(() => null);
-  if (!userRes?.ok) return jsonResponse({ error: "Token invalide" }, 401);
-
-  const { id: vendorId, email } = await userRes.json();
-  if (!vendorId) return jsonResponse({ error: "Utilisateur introuvable" }, 401);
-
-  // ── Corps ─────────────────────────────────────────────────────────────────
-  let body;
-  try { body = await request.json(); }
-  catch { return jsonResponse({ error: "Corps JSON invalide" }, 400); }
-
-  const { amount, method = "mobile", provider, destination, vendorName } = body || {};
-
-  if (!amount || typeof amount !== "number" || amount < 500) {
-    return jsonResponse({ error: "Montant invalide (minimum 500 FCFA)" }, 400);
-  }
-  if (!destination) {
-    return jsonResponse({ error: "Destination (numéro / IBAN) requise" }, 400);
+  // Call PayTech payout API if configured
+  const PAYTECH_API_KEY = env.PAYTECH_API_KEY;
+  let paytech_ok = false;
+  if (PAYTECH_API_KEY && method === "mobile") {
+    const res = await fetch("https://paytech.sn/api/payout/create", {
+      method: "POST",
+      headers: { "API_KEY": PAYTECH_API_KEY, "API_SECRET": env.PAYTECH_SECRET_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ phone, amount, currency: "XOF", description: "Retrait vendeur NEXUS #" + data.id })
+    }).catch(() => null);
+    if (res?.ok) {
+      const r = await res.json();
+      paytech_ok = r.success === 1;
+      await sb.from("payout_requests").update({ paytech_ref: r.ref, status: paytech_ok ? "processing" : "pending" }).eq("id", data.id);
+    }
   }
 
-  // ── Vérifier le solde disponible ──────────────────────────────────────────
-  const cbRes = await fetch(
-    `${SB_URL}/rest/v1/cashback_transactions?user_id=eq.${vendorId}&select=amount_xof,type`,
-    { headers: { "apikey": SB_KEY, "Authorization": `Bearer ${SB_KEY}` } }
-  ).catch(() => null);
-
-  const cashbacks = cbRes?.ok ? await cbRes.json() : [];
-  const cashbackBalance = cashbacks.reduce((sum, t) =>
-    (t.type === "earn" || t.type === "bonus") ? sum + (t.amount_xof || 0) : sum - (t.amount_xof || 0)
-  , 0);
-
-  const payoutsRes = await fetch(
-    `${SB_URL}/rest/v1/payout_requests?vendor_id=eq.${vendorId}&status=in.(pending,approved,processing)&select=amount`,
-    { headers: { "apikey": SB_KEY, "Authorization": `Bearer ${SB_KEY}` } }
-  ).catch(() => null);
-
-  const inFlight = payoutsRes?.ok ? await payoutsRes.json() : [];
-  const reservedXof = inFlight.reduce((s, p) => s + (p.amount || 0), 0);
-  const paidRes = await fetch(
-    `${SB_URL}/rest/v1/payout_requests?vendor_id=eq.${vendorId}&status=eq.paid&select=amount`,
-    { headers: { "apikey": SB_KEY, "Authorization": `Bearer ${SB_KEY}` } }
-  ).catch(() => null);
-  const paidRows = paidRes?.ok ? await paidRes.json() : [];
-  const paidXof = paidRows.reduce((s, p) => s + (p.amount || 0), 0);
-
-  const available = Math.max(0, cashbackBalance - reservedXof - paidXof);
-
-  if (amount > available) {
-    return jsonResponse({
-      error: `Solde insuffisant. Disponible : ${Math.round(available).toLocaleString("fr-FR")} FCFA`,
-    }, 422);
-  }
-
-  // ── Insérer la demande ────────────────────────────────────────────────────
-  const row = {
-    vendor_id:   vendorId,
-    vendor_name: vendorName || email || "Vendeur",
-    amount,
-    method,
-    provider:    provider || method,
-    destination,
-    status:      "pending",
-    created_at:  new Date().toISOString(),
-    updated_at:  new Date().toISOString(),
-  };
-
-  const insRes = await fetch(`${SB_URL}/rest/v1/payout_requests`, {
-    method:  "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "apikey":        SB_KEY,
-      "Authorization": `Bearer ${SB_KEY}`,
-      "Prefer":        "return=representation",
-    },
-    body: JSON.stringify(row),
-  }).catch(() => null);
-
-  if (!insRes?.ok) {
-    const err = await insRes?.text().catch(() => "");
-    return jsonResponse({ error: `Erreur Supabase : ${err}` }, 502);
-  }
-
-  const [created] = await insRes.json();
-  return jsonResponse(created, 201);
-}
-
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-  });
-}
+  return ok({ ...data, paytech_ok }, 201);
+});

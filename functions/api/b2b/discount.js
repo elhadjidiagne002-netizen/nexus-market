@@ -1,26 +1,9 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../_lib/utils.js';
+import { adminClient, requireAuth } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequest({ request, env }) {
-  if (request.method === 'OPTIONS') return options();
-  if (request.method !== 'POST') return err('POST requis', 405);
-  try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
-    if (user.role !== 'buyer_pro') return err('Réservé aux acheteurs professionnels', 403);
-    const { total } = await request.json();
-    // Remise B2B progressive
-    const discount = total >= 10000 ? 0.15 : total >= 5000 ? 0.10 : total >= 1000 ? 0.05 : 0;
-    return json({ discount, discountPct: Math.round(discount * 100), amount: Math.round(total * discount * 100) / 100 });
-  } catch (e) { return err(e.message, 500); }
-}
-
-
-
-
-
-
-
-
-
-
-
+export const onRequest = handle(async ({ request, env }) => {
+  const { user } = await requireAuth(env, request);
+  const sb = adminClient(env);
+  const { data } = await sb.from("b2b_profiles").select("discount_rate,verified,tier").eq("user_id", user.id).single();
+  return ok({ discount: data?.discount_rate || 0, verified: data?.verified || false, tier: data?.tier || "standard" });
+});

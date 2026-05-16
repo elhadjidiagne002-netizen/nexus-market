@@ -1,30 +1,14 @@
-import { CORS, options, requireAdmin, supabase } from '../_lib/utils.js';
+import { adminClient, requireRole } from "../../_lib/supabase.js";
+import { handle, err } from "../../_lib/response.js";
+import { CORS } from "../../_lib/response.js";
 
-export async function onRequest({ request, env }) {
-  if (request.method === 'OPTIONS') return options();
-  try {
-    const [admin, e] = await requireAdmin(request, env);
-    if (e) return e;
-    const sb = supabase(env);
-    const data = await sb.from('orders').select('*', 'order=created_at.desc&limit=5000');
-    const rows = ['ID,Acheteur,Vendeur,Total,Commission,Statut,Paiement,Date'];
-    (data || []).forEach(o => {
-      rows.push([o.id, `"${o.buyer_name||''}"`, `"${o.vendor_name||''}"`, o.total, o.commission, o.status, o.payment_method, o.created_at].join(','));
-    });
-    return new Response(rows.join('\n'), { headers: { ...CORS, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="nexus_orders.csv"' } });
-  } catch (e) {
-    const { err: errFn } = await import('../_lib/utils.js');
-    return errFn(e.message, 500);
-  }
-}
-
-
-
-
-
-
-
-
-
-
-
+export const onRequest = handle(async ({ request, env }) => {
+  await requireRole(env, request, ["admin"]);
+  const sb = adminClient(env);
+  const { data } = await sb.from("orders").select("*").order("created_at", { ascending: false });
+  const headers = ["id","created_at","buyer_id","vendor_id","total","status","payment_method","customer_name","customer_email","shipping_address"];
+  const rows = (data||[]).map(o => headers.map(h => JSON.stringify(o[h]||"")).join(","));
+  const csv = [headers.join(","), ...rows].join("
+");
+  return new Response(csv, { headers: { ...CORS, "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=nexus_orders.csv" } });
+});

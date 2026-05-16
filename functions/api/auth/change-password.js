@@ -1,49 +1,18 @@
-// ── POST /api/auth/change-password  { currentPassword, newPassword } ──────
-// Change le mot de passe via Supabase Admin API (vérifie d'abord l'ancien).
-import { resolveUser, jsonOk, jsonErr } from "../../_lib/auth.js";
+import { adminClient, requireAuth } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequestPost(context) {
-  const { request, env } = context;
-  const user = await resolveUser(request, env);
-  if (!user) return jsonErr("Non authentifié", 401);
+export const onRequest = handle(async ({ request, env }) => {
+  if (request.method !== "POST") return err("Méthode non autorisée", 405);
+  const { user } = await requireAuth(env, request);
+  const { current, newPw } = await request.json();
+  if (!newPw || newPw.length < 8) return err("Mot de passe trop court (min 8 caractères)");
 
-  let body;
-  try { body = await request.json(); } catch { return jsonErr("JSON invalide", 400); }
-  const { currentPassword, newPassword } = body || {};
-  if (!newPassword || newPassword.length < 8) {
-    return jsonErr("Le nouveau mot de passe doit contenir au moins 8 caractères", 400);
-  }
+  const sb = adminClient(env);
+  // Verify current password
+  const { error: loginErr } = await sb.auth.signInWithPassword({ email: user.email, password: current });
+  if (loginErr) return err("Mot de passe actuel incorrect", 401);
 
-  const { SUPABASE_URL: url, SUPABASE_SERVICE_KEY: key } = env;
-
-  // Vérifier l'ancien mot de passe via signInWithPassword
-  if (currentPassword) {
-    const checkRes = await fetch(`${url}/auth/v1/token?grant_type=password`, {
-      method:  "POST",
-      headers: { "apikey": key, "Content-Type": "application/json" },
-      body:    JSON.stringify({ email: user.email, password: currentPassword }),
-    }).catch(() => null);
-
-    if (!checkRes?.ok) {
-      return jsonErr("Mot de passe actuel incorrect", 401);
-    }
-  }
-
-  // Mettre à jour le mot de passe via Admin API
-  const updateRes = await fetch(`${url}/auth/v1/admin/users/${user.id}`, {
-    method:  "PUT",
-    headers: {
-      "Content-Type":  "application/json",
-      "apikey":        key,
-      "Authorization": `Bearer ${key}`,
-    },
-    body: JSON.stringify({ password: newPassword }),
-  }).catch(() => null);
-
-  if (!updateRes?.ok) {
-    const err = await updateRes?.text().catch(() => "");
-    return jsonErr(`Erreur Supabase : ${err}`, 502);
-  }
-
-  return jsonOk({ ok: true, message: "Mot de passe modifié avec succès" });
-}
+  const { error } = await sb.auth.admin.updateUserById(user.id, { password: newPw });
+  if (error) return err(error.message);
+  return ok({ message: "Mot de passe modifié" });
+});

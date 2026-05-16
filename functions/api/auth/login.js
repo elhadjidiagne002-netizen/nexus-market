@@ -1,44 +1,18 @@
-import { CORS, options, json, err } from '../_lib/utils.js';
+import { adminClient } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequest({ request, env }) {
-  if (request.method === 'OPTIONS') return options();
-  try {
-    const { email, password } = await request.json();
-    if (!email || !password) return err('Email et mot de passe requis', 400);
+export const onRequest = handle(async ({ request, env }) => {
+  if (request.method !== "POST") return err("Méthode non autorisée", 405);
+  const { email, password } = await request.json();
+  if (!email || !password) return err("Email et mot de passe requis");
 
-    const res = await fetch(`${env.SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) return err(data.error_description || 'Identifiants invalides', 401);
+  const sb = adminClient(env);
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) return err(error.message, 401);
 
-    // Récupérer le profil complet
-    const profRes = await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${data.user.id}&select=*`, {
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` },
-    });
-    const profiles = await profRes.json();
-    const profile = profiles?.[0] || {};
-
-    return json({
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      expiresIn: data.expires_in,
-      user: { ...data.user, ...profile },
-    });
-  } catch (e) { return err(e.message, 500); }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
+  const { data: profile } = await sb.from("profiles").select("*").eq("id", data.user.id).single();
+  return ok({
+    user: { ...data.user, ...profile },
+    session: data.session
+  });
+});

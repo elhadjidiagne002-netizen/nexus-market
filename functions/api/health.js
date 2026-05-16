@@ -1,10 +1,4 @@
-// ── GET /api/health ────────────────────────────────────────────────────────
-// Endpoint de santé requis par NEXUS_CONFIG._verifyBackend().
-// Cloudflare Pages Function — runtime Workers (V8, pas Node.js).
-
-export async function onRequestGet() {
-  return new Response(JSON.stringify({ ok: true, ts: Date.now() }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
-}
+import { handle, ok } from "./_lib/response.js";
+export const onRequest = handle(async ({ env }) => {
+  return ok({ status: "ok", timestamp: new Date().toISOString(), version: "1.0.0" });
+});

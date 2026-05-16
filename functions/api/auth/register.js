@@ -1,43 +1,33 @@
-import { CORS, options, json, err, supabase, sendEmail } from '../_lib/utils.js';
+import { adminClient } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequest({ request, env }) {
-  if (request.method === 'OPTIONS') return options();
-  try {
-    const { email, password, name, role = 'buyer', avatar = '🛒', ...rest } = await request.json();
-    if (!email || !password || !name) return err('Champs requis manquants', 400);
-    if (password.length < 8) return err('Mot de passe trop court', 400);
+export const onRequest = handle(async ({ request, env }) => {
+  if (request.method !== "POST") return err("Méthode non autorisée", 405);
+  const body = await request.json();
+  const { email, password, name, role = "buyer", shopName, shopCategory, ninea, rc, phone } = body;
+  if (!email || !password || !name) return err("Champs requis manquants");
 
-    // Créer user via Supabase Auth Admin
-    const res = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users`, {
-      method: 'POST',
-      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { name, role, avatar } }),
-    });
-    const user = await res.json();
-    if (!res.ok) return err(user.message || 'Erreur création compte', res.status);
+  const sb = adminClient(env);
 
-    // Insérer profil
-    const sb = supabase(env);
-    await sb.from('profiles').upsert({ id: user.id, email, name, role, avatar, ...rest }, 'id');
+  // Create auth user
+  const { data, error } = await sb.auth.admin.createUser({
+    email, password, email_confirm: false,
+    user_metadata: { name, role }
+  });
+  if (error) return err(error.message, 400);
 
-    // Email de bienvenue
-    await sendEmail(env, {
-      to: email,
-      subject: 'Bienvenue sur NEXUS Market !',
-      html: `<h2>Bonjour ${name} !</h2><p>Votre compte NEXUS Market a été créé avec succès.</p>`,
-    });
+  const userId = data.user.id;
 
-    return json({ success: true, userId: user.id }, 201);
-  } catch (e) { return err(e.message, 500); }
-}
+  // Create profile
+  const profileData = { id: userId, email, name, role, phone: phone || null };
+  if (role === "vendor") {
+    Object.assign(profileData, { shop_name: shopName, shop_category: shopCategory, ninea, rc, status: "pending" });
+    await sb.from("pending_vendors").insert({ user_id: userId, name, email, shop_name: shopName, shop_category: shopCategory, ninea, rc, phone });
+  }
+  await sb.from("profiles").upsert(profileData);
 
+  // Send confirmation email via Supabase
+  await sb.auth.admin.generateLink({ type: "signup", email }).catch(() => {});
 
-
-
-
-
-
-
-
-
-
+  return ok({ message: "Compte créé", userId }, 201);
+});

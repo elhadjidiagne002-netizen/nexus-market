@@ -1,31 +1,24 @@
-import { CORS, options, json, err, supabase, requireAuth } from '../_lib/utils.js';
+import { adminClient, requireAuth } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
-export async function onRequest({ request, env }) {
-  if (request.method === 'OPTIONS') return options();
-  if (request.method !== 'POST') return err('POST requis', 405);
-  try {
-    const [user, e] = await requireAuth(request, env);
-    if (e) return e;
-    const { code, total } = await request.json();
-    if (!code) return err('Code requis', 400);
-    const sb = supabase(env);
-    const coupons = await sb.from('coupons').select('*', `code=eq.${code.toUpperCase()}&active=eq.true`);
-    if (!coupons?.length) return err('Code invalide ou expiré', 404);
-    const coupon = coupons[0];
-    if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) return err('Code expiré', 400);
-    if (coupon.max_uses && coupon.used_count >= coupon.max_uses) return err('Code épuisé', 400);
-    const discount = Math.round((total || 0) * coupon.discount / 100);
-    return json({ valid: true, discount: coupon.discount, amount: discount, coupon });
-  } catch (e) { return err(e.message, 500); }
-}
+export const onRequest = handle(async ({ request, env }) => {
+  if (request.method !== "POST") return err("Méthode non autorisée", 405);
+  const { user } = await requireAuth(env, request);
+  const { code, cartTotal } = await request.json();
+  if (!code) return err("Code requis");
 
+  const sb = adminClient(env);
+  const { data: coupon } = await sb.from("coupons").select("*").eq("code", code.toUpperCase()).eq("active", true).single();
+  if (!coupon) return err("Code promo invalide ou expiré");
 
+  const now = new Date();
+  if (coupon.expires_at && new Date(coupon.expires_at) < now) return err("Code promo expiré");
+  if (coupon.max_uses && coupon.used_count >= coupon.max_uses) return err("Code promo épuisé");
+  if (coupon.min_cart_fcfa && cartTotal < coupon.min_cart_fcfa) return err("Minimum de commande non atteint (" + coupon.min_cart_fcfa + " FCFA)");
 
+  const discount = coupon.type === "percent"
+    ? Math.round(cartTotal * coupon.value / 100)
+    : coupon.value;
 
-
-
-
-
-
-
-
+  return ok({ valid: true, coupon, discount });
+});
