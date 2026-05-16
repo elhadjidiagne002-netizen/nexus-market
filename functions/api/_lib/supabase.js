@@ -1,7 +1,6 @@
-// functions/api/_lib/supabase.js
+﻿// functions/api/_lib/supabase.js
 import { createClient } from "@supabase/supabase-js";
 
-// Client Supabase avec service_role key (contourne RLS)
 export function adminClient(env) {
   return createClient(
     env.SUPABASE_URL,
@@ -9,58 +8,58 @@ export function adminClient(env) {
     { auth: { persistSession: false } }
   );
 }
+export const createSupabaseClient = adminClient;
 
-// Alias
-export function createSupabaseClient(env) {
-  return adminClient(env);
-}
-
-// Extrait le Bearer token depuis Authorization.
 export function extractToken(request) {
-  const auth = request.headers.get("Authorization") ?? "";
-  return auth.replace(/^Bearer\s+/i, "").trim();
+  return (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
 }
 
-// requireAuth(env, request) — signature originale utilisee par les fonctions
-// Retourne { user, sb } ou leve une Response 401
+async function verifySupabaseJWT(token, jwtSecret) {
+  const [h, p, s] = token.split(".");
+  if (!h || !p || !s) return null;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(jwtSecret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  const sig = Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")), c => c.charCodeAt(0));
+  const valid = await crypto.subtle.verify("HMAC", key, sig, enc.encode(`${h}.${p}`));
+  if (!valid) return null;
+  const payload = JSON.parse(atob(p.replace(/-/g,"+").replace(/_/g,"/")));
+  if (payload.exp && payload.exp < Math.floor(Date.now()/1000)) return null;
+  return payload;
+}
+
 export async function requireAuth(env, request) {
   const token = extractToken(request);
-  if (!token) {
-    throw new Response(JSON.stringify({ error: "Non authentifie" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+  if (!token) throw jsonResponse({ error: "Non authentifie" }, 401);
+  const jwtSecret = env.SUPABASE_JWT_SECRET;
+  let userId, userEmail, userRole;
+  if (jwtSecret) {
+    const payload = await verifySupabaseJWT(token, jwtSecret);
+    if (!payload?.sub) throw jsonResponse({ error: "Token invalide ou expire" }, 401);
+    userId = payload.sub; userEmail = payload.email; userRole = payload.role ?? null;
+  } else {
+    const sb = adminClient(env);
+    const { data: { user }, error } = await sb.auth.getUser(token);
+    if (error || !user) throw jsonResponse({ error: "Token invalide ou expire" }, 401);
+    userId = user.id; userEmail = user.email;
   }
   const sb = adminClient(env);
-  const { data: { user }, error } = await sb.auth.getUser(token);
-  if (error || !user) {
-    throw new Response(JSON.stringify({ error: "Token invalide ou expire" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+  if (!userRole) {
+    const { data: profile } = await sb.from("profiles").select("role,status").eq("id", userId).single();
+    userRole = profile?.role ?? "buyer";
   }
-  return { user, sb };
+  return { user: { id: userId, email: userEmail, role: userRole }, sb };
 }
 
-// requireAdmin(env, request) — verifie role admin
 export async function requireAdmin(env, request) {
   const { user, sb } = await requireAuth(env, request);
-  const { data: profile } = await sb
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-  if (!profile || profile.role !== "admin") {
-    throw new Response(JSON.stringify({ error: "Acces refuse - admin requis" }), {
-      status: 403,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
-  }
-  return { user, sb };
-}
-
-// requireRole(env, request, role)
-export async function requireRole(env, request, role) {
+  if (export async function requireRole(env, request, role) {
   if (role === "admin") return requireAdmin(env, request);
   return requireAuth(env, request);
+}
+
+function jsonResponse(body, status) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+  });
 }
