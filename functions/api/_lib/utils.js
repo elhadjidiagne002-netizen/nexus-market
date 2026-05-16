@@ -24,7 +24,7 @@ export function err(message, status = 400) {
 // ─── Client Supabase léger (REST) ────────────────────────────────────────────
 export function supabase(env) {
   const url  = env.SUPABASE_URL;
-  const key  = env.SUPABASE_SERVICE_ROLE_KEY; // service_role — bypass RLS
+  const key  = env.SUPABASE_SERVICE_KEY; // service_role — bypass RLS
   if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_KEY manquants');
 
   const headers = (extra = {}) => ({
