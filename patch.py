@@ -1,251 +1,155 @@
 #!/usr/bin/env python3
 """
-deploy_functions.py
+fix_import_paths.py
 ───────────────────
-Copie tous les fichiers générés par Claude vers leur destination
-dans le projet Cloudflare Pages existant.
+Corrige les chemins relatifs vers _lib/auth.js dans tous les fichiers
+JS des CF Functions.
 
-Usage :
-    python deploy_functions.py
+Wrangler résout les imports depuis l'emplacement réel du fichier sur
+disque — les chemins générés avaient un niveau de trop.
 
-    # Spécifier un répertoire de projet différent :
-    python deploy_functions.py --project /chemin/vers/mon-projet
-
-    # Aperçu sans rien copier :
-    python deploy_functions.py --dry-run
-
-Structure de destination :
-    <project>/
-    ├── index.html
-    └── functions/
-        ├── _lib/auth.js
-        └── api/
-            ├── health.js
-            ├── notifications.js
-            ├── auth/
-            │   ├── me.js
-            │   ├── logout.js
-            │   ├── change-password.js
-            │   └── reset-password.js
-            ├── admin/
-            │   ├── logs.js
-            │   ├── users/[id]/ban.js
-            │   └── vendors/[id]/approve.js
-            ├── email/
-            │   └── logs.js
-            ├── messages/
-            │   ├── typing.js
-            │   └── [msgId]/react.js
-            ├── orders/
-            │   ├── split.js
-            │   └── [id]/status.js
-            ├── payments/
-            │   ├── paytech/
-            │   │   ├── init.js
-            │   │   ├── ipn.js
-            │   │   └── verify/[orderId].js
-            │   └── stripe/
-            │       └── create-intent.js
-            ├── payout/
-            │   ├── history.js
-            │   └── request.js
-            ├── payouts/
-            │   ├── balance.js
-            │   └── process/[id]/index.js
-            ├── users/
-            │   └── search.js
-            └── webhooks/
-                └── stripe.js
+Usage (depuis la racine du projet) :
+    python fix_import_paths.py
+    python fix_import_paths.py --functions-dir chemin/vers/functions
+    python fix_import_paths.py --dry-run
 """
 
 import argparse
 import os
-import shutil
+import re
 import sys
 from pathlib import Path
 
-# ── Répertoire source (fichiers téléchargés depuis Claude) ───────────────────
-# Modifiez SOURCE_DIR si vos fichiers sont dans un autre dossier.
-SOURCE_DIR = Path(__file__).parent
-
-# ── Table de correspondance : nom de fichier source → chemin de destination ──
-# Chemin relatif à la racine du projet (PROJECT_DIR).
-FILE_MAP = {
-    # ── Fichier principal ─────────────────────────────────────────────────────
-    "index.html": "index.html",
-
-    # ── Bibliothèque partagée ─────────────────────────────────────────────────
-    "lib-auth.js": "functions/_lib/auth.js",
-
-    # ── Route santé ──────────────────────────────────────────────────────────
-    "health.js": "functions/api/health.js",
-
-    # ── Notifications cross-user ─────────────────────────────────────────────
-    "notifications.js": "functions/api/notifications.js",
-
-    # ── Admin ─────────────────────────────────────────────────────────────────
-    "admin-logs.js":           "functions/api/admin/logs.js",
-    "admin-users-ban.js":      "functions/api/admin/users/[id]/ban.js",
-    "admin-vendors-approve.js":"functions/api/admin/vendors/[id]/approve.js",
-
-    # ── Email ─────────────────────────────────────────────────────────────────
-    "email-logs.js": "functions/api/email/logs.js",
-
-    # ── Messages ─────────────────────────────────────────────────────────────
-    "messages-typing.js":  "functions/api/messages/typing.js",
-    "messages-react.js":   "functions/api/messages/[msgId]/react.js",
-
-    # ── Commandes ────────────────────────────────────────────────────────────
-    "orders-split.js":  "functions/api/orders/split.js",
-    "orders-status.js": "functions/api/orders/[id]/status.js",
-
-    # ── Paiements PayTech ────────────────────────────────────────────────────
-    "paytech-init.js":              "functions/api/payments/paytech/init.js",
-    "paytech-ipn.js":               "functions/api/payments/paytech/ipn.js",
-    "paytech-verify-[orderId].js":  "functions/api/payments/paytech/verify/[orderId].js",
-
-    # ── Paiements Stripe ─────────────────────────────────────────────────────
-    "stripe-create-intent.js": "functions/api/payments/stripe/create-intent.js",
-    "stripe-webhook.js":        "functions/api/webhooks/stripe.js",
-
-    # ── Portefeuille vendeur (payout = demandes, payouts = admin) ────────────
-    "payout-history.js":  "functions/api/payout/history.js",
-    "payout-request.js":  "functions/api/payout/request.js",
-    "payouts-balance.js": "functions/api/payouts/balance.js",
-    "payouts-process.js": "functions/api/payouts/process/[id]/index.js",
-
-    # ── Recherche utilisateurs ────────────────────────────────────────────────
-    "users-search.js": "functions/api/users/search.js",
-
-    # ── Auth (Supabase Auth proxy — CF Pages) ─────────────────────────────────
-    "auth-me.js":              "functions/api/auth/me.js",
-    "auth-logout.js":          "functions/api/auth/logout.js",
-    "auth-change-password.js": "functions/api/auth/change-password.js",
-    "auth-reset-password.js":  "functions/api/auth/reset-password.js",
-}
-
-# ── Fichiers SQL (copiés à la racine du projet pour référence) ────────────────
-SQL_FILES = [
-    "nexus_ambassador_migration.sql",
-    "nexus_backend_tables.sql",
-    "nexus_rpc_migration.sql",
-    "nexus_stripe_migration.sql",
-    "nexus_tables_migration.sql",
-]
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 def color(code, text):
     return f"\033[{code}m{text}\033[0m" if sys.stdout.isatty() else text
 
-OK    = lambda t: color("32", f"  ✅  {t}")
-SKIP  = lambda t: color("33", f"  ⚠️   {t}")
-ERR   = lambda t: color("31", f"  ❌  {t}")
-INFO  = lambda t: color("36", f"  ℹ️   {t}")
-HEAD  = lambda t: color("1",  f"\n{t}")
+OK   = lambda t: color("32", f"  ✅  {t}")
+FIX  = lambda t: color("33", f"  🔧  {t}")
+SKIP = lambda t: color("36", f"  –   {t}")
+ERR  = lambda t: color("31", f"  ❌  {t}")
+HEAD = lambda t: color("1",  f"\n{t}")
 
-def copy_file(src: Path, dst: Path, dry_run: bool) -> str:
-    """Copie src → dst. Retourne 'created', 'replaced' ou lève une exception."""
-    existed = dst.exists()
+
+def correct_import_path(js_file: Path, functions_root: Path) -> str:
+    """
+    Calcule le chemin relatif correct de js_file vers
+    functions_root/_lib/auth.js.
+    """
+    lib_path   = functions_root / "_lib" / "auth.js"
+    rel        = os.path.relpath(lib_path, js_file.parent)
+    # os.path.relpath renvoie des backslashes sur Windows → normaliser
+    return rel.replace("\\", "/")
+
+
+# Regex qui capture n'importe quelle référence à _lib/auth.js
+# (peu importe le nombre de ../ devant)
+IMPORT_RE = re.compile(
+    r"""(from\s+["'])([^"']*/_lib/auth\.js)(["'])""",
+    re.MULTILINE,
+)
+
+
+def fix_file(js_file: Path, functions_root: Path, dry_run: bool) -> str:
+    """
+    Lit js_file, corrige les imports _lib/auth.js, écrit si modifié.
+    Retourne : 'fixed' | 'ok' | 'no_import'
+    """
+    content = js_file.read_text(encoding="utf-8")
+
+    if "_lib/auth.js" not in content:
+        return "no_import"
+
+    correct = correct_import_path(js_file, functions_root)
+
+    def replacer(m):
+        current = m.group(2)
+        if current == correct:
+            return m.group(0)          # déjà correct
+        return f"{m.group(1)}{correct}{m.group(3)}"
+
+    new_content = IMPORT_RE.sub(replacer, content)
+
+    if new_content == content:
+        return "ok"
+
     if not dry_run:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-    return "replaced" if existed else "created"
+        js_file.write_text(new_content, encoding="utf-8")
+    return "fixed"
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Déploie les CF Functions NEXUS dans le projet.")
-    parser.add_argument("--project", default=".", metavar="DIR",
-                        help="Répertoire racine du projet Cloudflare Pages (défaut : .)")
-    parser.add_argument("--source",  default=str(SOURCE_DIR), metavar="DIR",
-                        help="Répertoire contenant les fichiers générés par Claude")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Affiche les opérations sans rien copier")
-    parser.add_argument("--skip-html", action="store_true",
-                        help="Ne pas copier index.html")
-    parser.add_argument("--skip-sql",  action="store_true",
-                        help="Ne pas copier les fichiers SQL")
+    parser = argparse.ArgumentParser(
+        description="Corrige les chemins _lib/auth.js dans les CF Functions."
+    )
+    parser.add_argument(
+        "--functions-dir", default="functions", metavar="DIR",
+        help="Dossier functions/ du projet (défaut : ./functions)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Affiche les corrections sans modifier les fichiers"
+    )
     args = parser.parse_args()
 
-    project = Path(args.project).resolve()
-    source  = Path(args.source).resolve()
+    functions_root = Path(args.functions_dir).resolve()
 
-    print(HEAD("NEXUS Market — Déploiement des CF Functions"))
-    print(INFO(f"Source  : {source}"))
-    print(INFO(f"Projet  : {project}"))
+    if not functions_root.exists():
+        print(ERR(f"Dossier introuvable : {functions_root}"))
+        sys.exit(1)
+
+    print(HEAD("Fix des chemins _lib/auth.js — CF Pages Functions"))
+    print(f"  Dossier : {functions_root}")
     if args.dry_run:
         print(color("33", "  Mode dry-run — aucun fichier ne sera modifié\n"))
 
-    if not project.exists():
-        print(ERR(f"Répertoire projet introuvable : {project}"))
+    fixed = ok = skipped = errors = 0
+
+    js_files = sorted(functions_root.rglob("*.js"))
+    if not js_files:
+        print(ERR("Aucun fichier .js trouvé dans le dossier functions/."))
         sys.exit(1)
 
-    created = replaced = skipped = errors = 0
+    for js_file in js_files:
+        rel = js_file.relative_to(functions_root)
 
-    # ── Fichiers JS ───────────────────────────────────────────────────────────
-    print(HEAD("Fonctions Cloudflare Pages (.js)"))
-    for src_name, dst_rel in FILE_MAP.items():
-        if args.skip_html and src_name == "index.html":
-            continue
-
-        src_path = source / src_name
-        dst_path = project / dst_rel
-
-        if not src_path.exists():
-            print(SKIP(f"Source absente, ignorée : {src_name}"))
+        # Ne jamais patcher le fichier _lib/auth.js lui-même
+        if js_file == functions_root / "_lib" / "auth.js":
             skipped += 1
             continue
 
         try:
-            result = copy_file(src_path, dst_path, args.dry_run)
-            verb   = "→ remplacé" if result == "replaced" else "→ créé"
-            print(OK(f"{src_name:<45} {verb}  ({dst_rel})"))
-            if result == "replaced":
-                replaced += 1
+            result = fix_file(js_file, functions_root, args.dry_run)
+            if result == "fixed":
+                correct = correct_import_path(js_file, functions_root)
+                print(FIX(f"{rel}  →  import corrigé vers  {correct}"))
+                fixed += 1
+            elif result == "ok":
+                print(SKIP(f"{rel}  (chemin déjà correct)"))
+                ok += 1
             else:
-                created += 1
-        except Exception as exc:
-            print(ERR(f"{src_name} : {exc}"))
+                skipped += 1   # pas d'import _lib, silencieux
+        except Exception as e:
+            print(ERR(f"{rel} : {e}"))
             errors += 1
 
-    # ── Fichiers SQL ──────────────────────────────────────────────────────────
-    if not args.skip_sql:
-        print(HEAD("Scripts SQL (référence)"))
-        sql_dir = project / "sql"
-        for sql_name in SQL_FILES:
-            src_path = source / sql_name
-            if not src_path.exists():
-                print(SKIP(f"Source absente, ignorée : {sql_name}"))
-                skipped += 1
-                continue
-            dst_path = sql_dir / sql_name
-            try:
-                result = copy_file(src_path, dst_path, args.dry_run)
-                verb   = "→ remplacé" if result == "replaced" else "→ créé"
-                print(OK(f"{sql_name:<45} {verb}  (sql/{sql_name})"))
-                if result == "replaced":
-                    replaced += 1
-                else:
-                    created += 1
-            except Exception as exc:
-                print(ERR(f"{sql_name} : {exc}"))
-                errors += 1
-
-    # ── Résumé ────────────────────────────────────────────────────────────────
     print(HEAD("Résumé"))
-    print(f"  Créés    : {created}")
-    print(f"  Remplacés: {replaced}")
-    print(f"  Ignorés  : {skipped}")
-    print(f"  Erreurs  : {errors}")
+    print(f"  Corrigés  : {fixed}")
+    print(f"  Déjà OK   : {ok}")
+    print(f"  Sans import: {skipped}")
+    print(f"  Erreurs   : {errors}")
 
     if errors:
-        print(color("31", "\nDes erreurs sont survenues — vérifiez les chemins."))
+        print(color("31", "\nErreurs détectées — vérifiez les fichiers ci-dessus."))
         sys.exit(1)
+    elif fixed == 0:
+        print(color("32", "\nTous les chemins sont déjà corrects ✅"))
     elif args.dry_run:
-        print(color("33", "\nDry-run terminé — relancez sans --dry-run pour appliquer."))
+        print(color("33", f"\nDry-run terminé — {fixed} fichier(s) à corriger."
+                           "\nRelancez sans --dry-run pour appliquer."))
     else:
-        print(color("32", "\nDéploiement terminé ✅"))
-        print(INFO("Commitez et poussez sur Cloudflare Pages pour déclencher le build."))
+        print(color("32", f"\n{fixed} fichier(s) corrigé(s) ✅"))
+        print(color("36",  "  Commitez et poussez pour relancer le build Cloudflare."))
 
 
 if __name__ == "__main__":
