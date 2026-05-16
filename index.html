@@ -13100,9 +13100,45 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const [smsLog, setSmsLog] = React.useState([]);
   const [smsCount, setSmsCount] = React.useState(0);
   const [smsFilter, setSmsFilter] = React.useState('all');
+  // [FIX #310] États hissés depuis l'IIFE "ab_tests"
+  const [abForm, setAbForm] = React.useState({ id: '', label: '', variants: 'control,variant', hypothesis: '', active: true });
+  const [abStats, setAbStats] = React.useState([]);
+  // [FIX #310] États hissés depuis l'IIFE "seo"
+  const [sitemapPages, setSitemapPages] = React.useState([]);
+  // [FIX #310] États hissés depuis l'IIFE "invoice_sequences"
+  const [seqStats, setSeqStats] = React.useState(null);
+  const [resetForm, setResetForm] = React.useState({ prefix: 'FA', year: new Date().getFullYear(), value: '' });
+  const [resetConfirm, setResetConfirm] = React.useState(false);
   useEffect(() => {
     loadData();
   }, []);
+  // [FIX #310] useEffects hissés depuis les IIFEs conditionnelles
+  React.useEffect(() => {
+    setAbStats(window.nexusAB ? window.nexusAB.getStats() : []);
+  }, []);
+  React.useEffect(() => {
+    if (view !== 'seo') return;
+    const prods = storage.getArray("products").filter(p => p.moderated !== false);
+    const base  = window.location.origin + window.location.pathname;
+    setSitemapPages([
+      { loc: base, changefreq: 'daily',   priority: '1.0', label: 'Accueil' },
+      { loc: base + '?view=catalog', changefreq: 'daily', priority: '0.9', label: 'Catalogue' },
+      ...prods.slice(0, 500).map(p => ({
+        loc: base + `?product=${p.id}`,
+        changefreq: 'weekly',
+        priority: '0.8',
+        label: p.name,
+        image: p.imageUrl,
+        lastmod: (p.updatedAt || p.createdAt || '').slice(0, 10),
+      }))
+    ]);
+  }, [view]);
+  React.useEffect(() => {
+    if (view !== 'invoice_sequences') return;
+    if (window.NexusInvoiceSeq) {
+      NexusInvoiceSeq.getStats().then(setSeqStats).catch(() => {});
+    }
+  }, [view]);
   // [FIX #310] useEffects hissés depuis les IIFEs
   React.useEffect(() => {
     _setLogLoad(true);
@@ -14019,11 +14055,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       )
     );
   })(), view === "ab_tests" && (() => {
-    const [abForm, setAbForm] = React.useState({ id: '', label: '', variants: 'control,variant', hypothesis: '', active: true });
-    const [abStats, setAbStats] = React.useState([]);
-    React.useEffect(() => {
-      setAbStats(window.nexusAB ? window.nexusAB.getStats() : []);
-    }, []);
+    // [FIX #310] abForm, abStats, useEffect hissés au niveau AdminDashboard
     const refresh = () => setAbStats(window.nexusAB ? window.nexusAB.getStats() : []);
     const createExp = () => {
       if (!abForm.id.trim() || !abForm.label.trim()) return;
@@ -14146,24 +14178,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   })(),
 
   view === "seo" && (() => {
-    const [sitemapPages, setSitemapPages] = React.useState([]);
-    React.useEffect(() => {
-      const prods = storage.getArray("products").filter(p => p.moderated !== false);
-      const base  = window.location.origin + window.location.pathname;
-      setSitemapPages([
-        { loc: base, changefreq: 'daily',   priority: '1.0', label: 'Accueil' },
-        { loc: base + '?view=catalog', changefreq: 'daily', priority: '0.9', label: 'Catalogue' },
-        ...prods.slice(0, 500).map(p => ({
-          loc: base + `?product=${p.id}`,
-          changefreq: 'weekly',
-          priority: '0.8',
-          label: p.name,
-          image: p.imageUrl,
-          lastmod: (p.updatedAt || p.createdAt || '').slice(0, 10),
-        }))
-      ]);
-    }, []);
-
+    // [FIX #310] sitemapPages, useEffect hissés au niveau AdminDashboard
     const downloadSitemap = () => {
       const lines = ['<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">'];
@@ -14248,15 +14263,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   })(),
 
   view === "invoice_sequences" && (() => {
-    const [seqStats, setSeqStats] = React.useState(null);
-    const [resetForm, setResetForm] = React.useState({ prefix: 'FA', year: new Date().getFullYear(), value: '' });
-    const [resetConfirm, setResetConfirm] = React.useState(false);
-
-    React.useEffect(() => {
-      if (window.NexusInvoiceSeq) {
-        NexusInvoiceSeq.getStats().then(setSeqStats).catch(() => {});
-      }
-    }, []);
+    // [FIX #310] seqStats, resetForm, resetConfirm, useEffect hissés au niveau AdminDashboard
 
     const doReset = () => {
       if (!resetConfirm) { setResetConfirm(true); return; }
@@ -16805,6 +16812,12 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   const [showReturnOrder, setShowReturnOrder2] = useState(null);
   const [showCancelOrder, setShowCancelOrder2] = useState(null);
   const [priceRange2, setPriceRange] = useState([0, 1e3]);
+  // [FIX #310] États hissés depuis le sous-composant LoyaltyHist (IIFE loyalty)
+  const [_loyaltyData, _setLoyaltyData] = React.useState(null);
+  React.useEffect(() => {
+    if (view !== 'loyalty') return;
+    DataService.getLoyaltyPoints && DataService.getLoyaltyPoints(currentUser2.id).then(d => _setLoyaltyData(d)).catch(() => {});
+  }, [view]);
   const [showVendorPage2, setShowVendorPage2] = useState(null);
   const [appliedCoupon, setAppliedCoupon] = useState(null);
   const [salesData, setSalesData] = useState([]);
@@ -18891,11 +18904,9 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setShowComposeMessage(true);
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => generateInvoicePDF(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Facture PDF"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => printOrderSlip(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-print" }), " Imprimer"), order.status === "delivered" && !order.returnStatus && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowReturnOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour"), !order.disputeId && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "#dc2626", color: "#dc2626" }, onClick: () => setShowDisputeOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige"), order.disputeId && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center", fontSize: "0.72rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige ", order.disputeStatus === "open" ? "en cours" : "r\xE9solu"), order.returnStatus && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour ", order.returnStatus === "requested" ? "en cours" : order.returnStatus), ["pending_payment", "processing"].includes(order.status) && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowCancelOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Annuler"))));
   }))), view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
-    // [FIX #7] Fetch loyalty depuis GET /api/loyalty — tier + historique réel
-    const LoyaltyHist = () => {
-      const [ld, setLd] = React.useState(null);
-      React.useEffect(() => { DataService.getLoyaltyPoints && DataService.getLoyaltyPoints(currentUser2.id).then(d => setLd(d)).catch(() => {}); }, []);
-      const pts2 = ld?.points ?? 0;  // Points lus depuis Supabase via getLoyaltyPoints
+    // [FIX #310] LoyaltyHist supprimé — états hissés dans BuyerDashboard (_loyaltyData)
+    const ld = _loyaltyData;
+      const pts2 = ld?.points ?? 0;
       const tier = ld?.tier || "Bronze";
       const hist = ld?.history || [];
       const tierC = { Bronze: "#cd7f32", Silver: "#9ca3af", Gold: "#ffd700" };
@@ -18914,8 +18925,6 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star" }), /* @__PURE__ */ React.createElement("h3", null, "Pas encore de points"), /* @__PURE__ */ React.createElement("p", null, "Passez votre premi\xE8re commande pour commencer \xE0 gagner des points !"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "D\xE9couvrir le catalogue"))
           : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Type"), /* @__PURE__ */ React.createElement("th", null, "Description"), /* @__PURE__ */ React.createElement("th", null, "Points"), /* @__PURE__ */ React.createElement("th", null, "Date"))), /* @__PURE__ */ React.createElement("tbody", null, hist.slice(0, 20).map((h, i2) => /* @__PURE__ */ React.createElement("tr", { key: i2 }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${h.type==="earn"?"success":h.type==="redeem"?"warning":"danger"}` }, h.type==="earn"?"Gagn\xE9":h.type==="redeem"?"Utilis\xE9":"Expir\xE9")), /* @__PURE__ */ React.createElement("td", null, h.description||h.orderId||"-"), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", { style: { color: h.type==="earn"?"var(--success)":"var(--danger)" } }, h.type==="earn"?"+":"-", Math.abs(h.points||0), " pts")), /* @__PURE__ */ React.createElement("td", null, h.date ? new Date(h.date).toLocaleDateString("fr-FR") : "-"))))))
       );
-    };
-    return /* @__PURE__ */ React.createElement(LoyaltyHist, null);
   })())), view === "referral" && /* @__PURE__ */ React.createElement(ReferralWidget, { currentUser: currentUser2 }), (view === "b2b_profile" || view === "b2b_orders" || view === "b2b_statement") && /* @__PURE__ */ React.createElement(B2BProDashboard, { currentUser: currentUser2, addToast, view, setParentView: setView }), view === "push_settings" && /* @__PURE__ */ React.createElement(PushNotificationSettings, { currentUser: currentUser2, addToast }), view === "profile" && /* @__PURE__ */ React.createElement(ProfileEditor, { currentUser: currentUser2, addToast })), cart.length > 0 && view !== "orders" && /* @__PURE__ */ React.createElement("button", { className: "floating-cart", onClick: () => setShowCart(true), "aria-label": `Panier: ${cart.reduce((s, i) => s + i.quantity, 0)} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0))), selectedProduct && /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: () => setSelectedProduct(null) }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "prod-detail-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "prod-detail-title" }, selectedProduct.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: () => setSelectedProduct(null), "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-detail-grid" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: selectedProduct, height: 280 }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(selectedProduct);
