@@ -1,14 +1,46 @@
-import { adminClient, requireRole } from "../../../../_lib/supabase.js";
-import { handle, ok, err } from "../../../../_lib/response.js";
+import { createSupabaseClient, requireAdmin } from "../../../_lib/supabase.js";
+import { json, errorResponse } from "../../../_lib/response.js";
 
-export const onRequest = handle(async ({ request, env, params }) => {
-  if (request.method !== "POST") return err("Méthode non autorisée", 405);
-  await requireRole(env, request, ["admin"]);
-  const { uid } = params;
-  const { banned, reason } = await request.json();
-  const sb = adminClient(env);
-  await sb.from("profiles").update({ banned, ban_reason: reason || null }).eq("id", uid);
-  if (banned) await sb.auth.admin.updateUserById(uid, { ban_duration: "876600h" }).catch(() => {});
-  else await sb.auth.admin.updateUserById(uid, { ban_duration: "none" }).catch(() => {});
-  return ok({ banned });
-});
+export async function onRequestPost(ctx) {
+  try {
+    const authErr = await requireAdmin(ctx);
+    if (authErr) return authErr;
+
+    const uid = ctx.params.uid;
+    if (!uid) return errorResponse("uid manquant", 400);
+
+    const sb = createSupabaseClient(ctx.env);
+    const { error } = await sb
+      .from("profiles")
+      .update({ is_banned: true, banned_at: new Date().toISOString() })
+      .eq("id", uid);
+
+    if (error) return errorResponse(error.message, 500);
+
+    return json({ ok: true, message: `Utilisateur ${uid} banni.` });
+  } catch (e) {
+    return errorResponse(e.message, 500);
+  }
+}
+
+export async function onRequestDelete(ctx) {
+  try {
+    const authErr = await requireAdmin(ctx);
+    if (authErr) return authErr;
+
+    const uid = ctx.params.uid;
+    if (!uid) return errorResponse("uid manquant", 400);
+
+    const sb = createSupabaseClient(ctx.env);
+    const { error } = await sb
+      .from("profiles")
+      .update({ is_banned: false, banned_at: null })
+      .eq("id", uid);
+
+    if (error) return errorResponse(error.message, 500);
+
+    return json({ ok: true, message: `Utilisateur ${uid} débanni.` });
+  } catch (e) {
+    return errorResponse(e.message, 500);
+  }
+}
