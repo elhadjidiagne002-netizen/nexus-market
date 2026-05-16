@@ -1,8 +1,8 @@
 // functions/api/_lib/supabase.js
 import { createClient } from "@supabase/supabase-js";
 
-// Client Supabase avec la service_role key (contourne RLS)
-export function createSupabaseClient(env) {
+// Client Supabase avec service_role key (contourne RLS)
+export function adminClient(env) {
   return createClient(
     env.SUPABASE_URL,
     env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_ANON_KEY,
@@ -10,60 +10,57 @@ export function createSupabaseClient(env) {
   );
 }
 
-// Alias pour compatibilite avec l'ancien code
-export function adminClient(env) {
-  return createSupabaseClient(env);
+// Alias
+export function createSupabaseClient(env) {
+  return adminClient(env);
 }
 
-// Extrait le Bearer token depuis Authorization. Retourne "" si absent.
+// Extrait le Bearer token depuis Authorization.
 export function extractToken(request) {
   const auth = request.headers.get("Authorization") ?? "";
   return auth.replace(/^Bearer\s+/i, "").trim();
 }
 
-// Verifie JWT Supabase. Retourne null si OK, Response 401 sinon.
-export async function requireAuth(ctx) {
-  const token = extractToken(ctx.request);
+// requireAuth(env, request) — signature originale utilisee par les fonctions
+// Retourne { user, sb } ou leve une Response 401
+export async function requireAuth(env, request) {
+  const token = extractToken(request);
   if (!token) {
-    return new Response(JSON.stringify({ error: "Non authentifie" }), {
+    throw new Response(JSON.stringify({ error: "Non authentifie" }), {
       status: 401,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
   }
-  const sb = createSupabaseClient(ctx.env);
+  const sb = adminClient(env);
   const { data: { user }, error } = await sb.auth.getUser(token);
   if (error || !user) {
-    return new Response(JSON.stringify({ error: "Token invalide ou expire" }), {
+    throw new Response(JSON.stringify({ error: "Token invalide ou expire" }), {
       status: 401,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
   }
-  ctx.user = user;
-  ctx.supabase = sb;
-  return null;
+  return { user, sb };
 }
 
-// Verifie role admin. Retourne null si OK, Response 403 sinon.
-export async function requireAdmin(ctx) {
-  const authErr = await requireAuth(ctx);
-  if (authErr) return authErr;
-  const sb = ctx.supabase ?? createSupabaseClient(ctx.env);
+// requireAdmin(env, request) — verifie role admin
+export async function requireAdmin(env, request) {
+  const { user, sb } = await requireAuth(env, request);
   const { data: profile } = await sb
     .from("profiles")
     .select("role")
-    .eq("id", ctx.user.id)
+    .eq("id", user.id)
     .single();
   if (!profile || profile.role !== "admin") {
-    return new Response(JSON.stringify({ error: "Acces refuse - admin requis" }), {
+    throw new Response(JSON.stringify({ error: "Acces refuse - admin requis" }), {
       status: 403,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
   }
-  return null;
+  return { user, sb };
 }
 
-// Verifie un role specifique.
-export async function requireRole(ctx, role) {
-  if (role === "admin") return requireAdmin(ctx);
-  return requireAuth(ctx);
+// requireRole(env, request, role)
+export async function requireRole(env, request, role) {
+  if (role === "admin") return requireAdmin(env, request);
+  return requireAuth(env, request);
 }
