@@ -1,4 +1,4 @@
-﻿// Feature 19 : Flash sales — CRUD complet
+// Feature 19 : Flash sales — CRUD complet
 import { options, json, err, supabase, requireAuth } from '../_lib/utils.js';
 
 export async function onRequest({ request, env }) {
@@ -28,16 +28,16 @@ export async function onRequest({ request, env }) {
     const [user, e] = await requireAuth(request, env);
     if (e) return e;
     if (request.method === 'POST') {
-      if (!['admin','vendor'].includes(user.role)) return err('Acces refuse', 403);
+      if (!['admin','vendor'].includes(user.role)) return err('Accès refusé', 403);
       const { productId, title, discountPercent, discount, startsAt, endsAt, maxUses } = await request.json().catch(() => ({}));
       const pct = discountPercent || discount;
       if (!productId || !pct || !endsAt) return err('productId, discountPercent et endsAt requis', 400);
       if (pct < 1 || pct > 99) return err('discountPercent entre 1 et 99', 400);
       const starts = startsAt || now;
-      if (new Date(starts) >= new Date(endsAt)) return err('startsAt doit etre avant endsAt', 400);
+      if (new Date(starts) >= new Date(endsAt)) return err('startsAt doit être avant endsAt', 400);
       if (user.role === 'vendor') {
         const prods = await sb.from('products').select('id', `id=eq.${productId}&vendor_id=eq.${user.id}`);
-        if (!prods?.length) return err('Produit non autorise', 403);
+        if (!prods?.length) return err('Produit non autorisé', 403);
       }
       const sale = await sb.from('flash_sales').insert({
         product_id: productId, vendor_id: user.id,
@@ -55,6 +55,6 @@ export async function onRequest({ request, env }) {
       await sb.from('flash_sales').update({ active }, filter);
       return json({ ok: true });
     }
-    return err('Methode non supportee', 405);
+    return err('Méthode non supportée', 405);
   } catch (e) { return err(e.message, e.status || 500); }
 }

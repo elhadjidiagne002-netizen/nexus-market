@@ -1,5 +1,5 @@
-﻿// Feature 13 : Recherche avancee avec filtres PostgREST + facettes
-import { options, err } from '../_lib/utils.js';
+// Feature 13 : Recherche avancée avec filtres PostgREST + facettes
+import { options, json, err } from '../_lib/utils.js';
 
 export async function onRequestGet({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -11,7 +11,7 @@ export async function onRequestGet({ request, env }) {
     const category = p.get('category'); const location = p.get('location');
     const minRating = p.get('min_rating'); const inStock = p.get('in_stock') === '1';
     const vendorId = p.get('vendor_id');
-    const sortBy = ['price','rating','created_at','name','stock'].includes(p.get('sort')) ? p.get('sort') : 'created_at';
+    const sortBy = ['price','rating','created_at','name','stock'].includes(p.get('sort'")) ? p.get('sort'") : 'created_at';
     const order = p.get('order') === 'asc' ? 'asc' : 'desc';
     const page  = Math.max(1, parseInt(p.get('page') || '1'));
     const limit = Math.min(100, Math.max(1, parseInt(p.get('limit') || '20')));
@@ -29,13 +29,12 @@ export async function onRequestGet({ request, env }) {
     const select = 'id,name,slug,description,price,compare_price,images,rating,rating_count,stock,location,tags,created_at,vendor_id,category_id';
     const res = await fetch(`${SB}/rest/v1/products?select=${encodeURIComponent(select)}&${filters.join('&')}&order=${sortBy}.${order}&limit=${limit}&offset=${offset}`,
       { headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, Prefer: 'count=exact' } });
-    if (!res.ok) return err('Recherche echouee', 500);
+    if (!res.ok) return err('Recherche échouée', 500);
     const data  = await res.json();
     const total = parseInt(res.headers.get('content-range')?.split('/')[1] || '0');
     const prices = data.map(d => d.price).filter(Boolean);
     return new Response(JSON.stringify({
-      results: data,
-      query: { q, filters: { minPrice, maxPrice, category, location, minRating, inStock } },
+      results: data, query: { q, filters: { minPrice, maxPrice, category, location, minRating, inStock } },
       facets: { locations: [...new Set(data.map(d=>d.location).filter(Boolean))].slice(0,10),
         price_range: prices.length ? { min: Math.min(...prices), max: Math.max(...prices) } : null },
       pagination: { page, limit, total, pages: Math.ceil(total/limit), has_more: offset+data.length < total },

@@ -1,4 +1,4 @@
-// Feature 17 : Vérification NINEA via API APIX Sénégal
+﻿// Feature 17 : Verification NINEA via API APIX Senegal
 import { options, json, err, supabase, requireAuth } from '../../../_lib/utils.js';
 
 export async function onRequest({ request, env, params }) {
@@ -19,7 +19,7 @@ export async function onRequest({ request, env, params }) {
     if (request.method === 'POST') {
       const [user, e] = await requireAuth(request, env);
       if (e) return e;
-      if (!['vendor','admin','b2b'].includes(user.role)) return err('Accès refusé', 403);
+      if (!['vendor','admin','b2b'].includes(user.role)) return err('Acces refuse', 403);
       const { ninea, rccm } = await request.json().catch(() => ({}));
       if (!ninea) return err('NINEA requis', 400);
       const cleaned = ninea.replace(/\s/g,'').toUpperCase();
@@ -45,20 +45,20 @@ export async function onRequest({ request, env, params }) {
         legal_form: data.legal_form, activity: data.activity, address: data.address,
         tax_status: data.tax_status }, verified: true, cached: !!cached?.length });
     }
-    return err('Méthode non supportée', 405);
+    return err('Methode non supportee', 405);
   } catch (e) { return err(e.message, e.status || 500); }
 }
 
 async function callApix(env, ninea, rccm) {
   if (!env.APIX_API_KEY) {
     if (ninea.startsWith('000') || env.ENVIRONMENT !== 'production')
-      return { ok: true, data: { company_name: 'Société Test SARL', legal_form: 'SARL', activity: 'Commerce', address: 'Dakar', tax_status: 'active' } };
-    return { ok: false, error: 'APIX_API_KEY manquant — configurer sur https://apix.sn', status: 503 };
+      return { ok: true, data: { company_name: 'Societe Test SARL', legal_form: 'SARL', activity: 'Commerce', address: 'Dakar', tax_status: 'active' } };
+    return { ok: false, error: 'APIX_API_KEY manquant - configurer sur https://apix.sn', status: 503 };
   }
   try {
     const res = await fetch(`https://api.apix.sn/v2/tax/ninea/${ninea}`,
       { headers: { 'X-API-Key': env.APIX_API_KEY, Accept: 'application/json' } });
-    if (res.status === 404) return { ok: false, error: 'NINEA non trouvé', status: 404 };
+    if (res.status === 404) return { ok: false, error: 'NINEA non trouve', status: 404 };
     if (!res.ok) return { ok: false, error: `APIX error ${res.status}`, status: res.status };
     const d = await res.json();
     return { ok: true, data: { company_name: d.denomination||d.raisonSociale||d.nom,

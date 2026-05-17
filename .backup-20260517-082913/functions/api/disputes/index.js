@@ -1,5 +1,5 @@
-﻿// Feature 20 : Litiges — workflow complet
-import { options, json, err, supabase, requireAuth } from '../_lib/utils.js';
+// Feature 20 : Litiges — workflow complet
+import { options, json, err, supabase, requireAuth, sendEmail } from '../_lib/utils.js';
 
 const REASONS = ['not_received','not_as_described','defective','wrong_item','unauthorized','other'];
 
@@ -15,7 +15,7 @@ export async function onRequest({ request, env }) {
       const base   = user.role === 'admin'
         ? 'order=created_at.desc'
         : `or=(buyer_id.eq.${user.id},vendor_id.eq.${user.id})&order=created_at.desc`;
-      const qs = status ? `${base}&status=eq.${status}` : base;
+      const qs   = status ? `${base}&status=eq.${status}` : base;
       return json(await sb.from('disputes').select('*', qs + '&limit=50') || []);
     }
     if (request.method === 'POST') {
@@ -29,9 +29,9 @@ export async function onRequest({ request, env }) {
       if (!orders?.length) return err('Commande introuvable', 404);
       const order = orders[0];
       if (!['delivered','shipped','completed'].includes(order.status))
-        return err('Litige possible uniquement pour commandes expediees ou livrees', 400);
+        return err('Litige possible uniquement pour commandes expédiées ou livrées', 400);
       const existing = await sb.from('disputes').select('id', `order_id=eq.${orderId}&status=in.(open,in_review,escalated)`);
-      if (existing?.length) return err('Un litige est deja ouvert sur cette commande', 409);
+      if (existing?.length) return err('Un litige est déjà ouvert sur cette commande', 409);
       const dispute = await sb.from('disputes').insert({
         order_id: orderId, buyer_id: user.id, buyer_name: user.name || user.email,
         vendor_id: vendorId || order.vendor_id, vendor_name: vendorName || '',
@@ -43,13 +43,13 @@ export async function onRequest({ request, env }) {
       const vId = vendorId || order.vendor_id;
       if (vId) {
         await sb.from('notifications').insert({
-          user_id: vId, type: 'dispute_opened', title: 'Nouveau litige',
-          message: `Litige sur commande #${orderId.slice(0,8)} - ${reason}`,
+          user_id: vId, type: 'dispute_opened', title: '⚠️ Nouveau litige',
+          message: `Litige sur commande #${orderId.slice(0,8)} — ${reason}`,
           metadata: { order_id: orderId }, created_at: new Date().toISOString(),
         }).catch(() => {});
       }
       return json(Array.isArray(dispute) ? dispute[0] : dispute, 201);
     }
-    return err('Methode non supportee', 405);
+    return err('Méthode non supportée', 405);
   } catch (e) { return err(e.message, e.status || 500); }
 }

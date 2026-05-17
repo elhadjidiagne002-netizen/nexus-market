@@ -1,4 +1,4 @@
-// Feature 26 : Messagerie live Supabase Realtime
+﻿// Feature 26 : Messagerie live Supabase Realtime
 import { options, json, err, supabase, requireAuth } from '../_lib/utils.js';
 
 export async function onRequest({ request, env, params }) {
@@ -28,7 +28,7 @@ export async function onRequest({ request, env, params }) {
             last_message_at: new Date().toISOString(), created_at: new Date().toISOString() });
           const sess = Array.isArray(s) ? s[0] : s;
           await sb.from('notifications').insert({ user_id: participantId, type:'live_session_started',
-            title:'💬 Nouveau message', message:`${user.name||'Quelqu'un'} vous a écrit`,
+            title:'Nouveau message', message:`${user.name||"Quelquun"} vous a ecrit`,
             metadata:{session_id:sess.id,from:user.id}, created_at: new Date().toISOString() }).catch(()=>{});
           return json({ session: sess, realtime: rt(sess.id, env), joined: false }, 201);
         }
@@ -50,7 +50,7 @@ export async function onRequest({ request, env, params }) {
             text:text?.trim()||null, type, media_url:mediaUrl||null, reply_to_id:replyToId||null,
             read:false, created_at: new Date().toISOString() });
           await sb.from('live_sessions').update({ last_message_at: new Date().toISOString(),
-            last_message: text?.slice(0,100)||'📎',
+            last_message: text?.slice(0,100)||'[fichier]',
             [isA?'unread_count_b':'unread_count_a']: ((isA?sess.unread_count_b:sess.unread_count_a)||0)+1 }, `id=eq.${seg1}`);
           return json(Array.isArray(msg) ? msg[0] : msg, 201);
         }
@@ -87,6 +87,8 @@ export async function onRequest({ request, env, params }) {
 
 function rt(sessionId, env) {
   return { url: `${env.SUPABASE_URL}/realtime/v1`, key: env.SUPABASE_ANON_KEY,
-    channels: [{ name:`live_messages:${sessionId}`, table:'live_messages', filter:`session_id=eq.${sessionId}`, events:['INSERT'] },
-      { name:`typing:${sessionId}`, table:'typing_status', filter:`session_id=eq.${sessionId}`, events:['INSERT','UPDATE'] }] };
+    channels: [
+      { name:`live_messages:${sessionId}`, table:'live_messages', filter:`session_id=eq.${sessionId}`, events:['INSERT'] },
+      { name:`typing:${sessionId}`, table:'typing_status', filter:`session_id=eq.${sessionId}`, events:['INSERT','UPDATE'] }
+    ] };
 }

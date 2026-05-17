@@ -1,4 +1,4 @@
-﻿// Feature 25 : Stripe webhook — verification HMAC SHA-256
+// Feature 25 : Stripe webhook — vérification HMAC SHA-256
 import { adminClient } from '../../_lib/supabase.js';
 import { ok, err } from '../../_lib/response.js';
 
@@ -22,8 +22,8 @@ export async function onRequest({ request, env }) {
             stripe_payment_intent: pi.id, paid_at: new Date().toISOString() }).eq('id', orderId);
           const { data: ord } = await sb.from('orders').select('buyer_id,total').eq('id', orderId).single();
           if (ord?.buyer_id) await sb.from('notifications').insert({
-            user_id: ord.buyer_id, type: 'payment_received', title: 'Paiement confirme',
-            message: `${(ord.total||0).toLocaleString()} FCFA recu via Stripe`,
+            user_id: ord.buyer_id, type: 'payment_received', title: '✅ Paiement confirmé',
+            message: `${(ord.total||0).toLocaleString()} FCFA reçu via Stripe`,
             metadata: { order_id: orderId }, created_at: new Date().toISOString() });
         }
         break;
@@ -50,7 +50,7 @@ export async function onRequest({ request, env }) {
           refunded_amount: c.amount_refunded }).eq('id', orderId);
         break;
       }
-      default: console.log('[stripe-webhook] Non gere:', event.type);
+      default: console.log('[stripe-webhook] Non géré:', event.type);
     }
   } catch (e) { console.error('[stripe-webhook]', e.message); }
   return ok({ received: true });
