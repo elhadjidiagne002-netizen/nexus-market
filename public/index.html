@@ -3351,9 +3351,26 @@ async signOut() {
         } catch (_) {}
 
         // TOKEN_REVOKED (blacklist) ou pas de refresh token → déconnexion immédiate
-        if (errCode === "TOKEN_REVOKED" || !this._refreshToken) {
+        if (errCode === "TOKEN_REVOKED") {
           window.dispatchEvent(new CustomEvent("nexus:session-expired"));
           throw new Error("SESSION_EXPIRED");
+        }
+        if (!this._refreshToken && this._sb) {
+          try {
+            const { data } = await this._sb.auth.refreshSession();
+            if (data && data.session && data.session.access_token) {
+              this._token = data.session.access_token;
+              sessionStorage.setItem("nexus_jwt", data.session.access_token);
+              localStorage.setItem("nexus_jwt", data.session.access_token);
+            } else {
+              window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+              throw new Error("SESSION_EXPIRED");
+            }
+          } catch(e) {
+            if (e.message === "SESSION_EXPIRED") throw e;
+            window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+            throw new Error("SESSION_EXPIRED");
+          }
         }
 
         // Tentative de refresh
