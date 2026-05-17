@@ -1,11 +1,13 @@
-import { adminClient, extractToken } from "../_lib/supabase.js";
-import { handle, ok } from "../_lib/response.js";
+// functions/api/auth/logout.js
+import { adminClient, requireAuth } from "../_lib/supabase.js";
+import { handle, ok, err } from "../_lib/response.js";
 
 export const onRequest = handle(async ({ request, env }) => {
-  const token = extractToken(request);
-  if (token) {
+  if (request.method !== "POST") return err("POST requis", 405);
+  try {
+    const { user } = await requireAuth(env, request).catch(() => ({ user: null }));
     const sb = adminClient(env);
-    await sb.auth.admin.signOut(token).catch(() => {});
-  }
-  return ok({ message: "Déconnecté" });
+    if (user) await sb.auth.admin.signOut(user.id).catch(() => {});
+  } catch (_) {}
+  return ok({ success: true, message: "Deconnecte" });
 });
