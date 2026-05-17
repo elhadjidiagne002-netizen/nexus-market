@@ -61,11 +61,11 @@ export const onRequest = handle(async ({ request, env }) => {
     // Notification + detection montee de niveau
     const oldTier   = getTier(lp?.total_earned||0).name;
     const newTierNm = getTier((lp?.total_earned||0)+pts).name;
-    await sb.from('notifications').insert({ user_id:userId, type:'loyalty_points_earned', title:'Points fidelite', message:`+${pts} points (${tier.name})`, metadata:{ points:pts, order_id:orderId }, created_at:new Date().toISOString() }).catch(() => {});
+    await sb.from('notifications').insert({ user_id:userId, type:'loyalty_points_earned', title:'Points fidelite', message:`+${pts} points (${tier.title})`, metadata:{ points:pts, order_id:orderId }, created_at:new Date().toISOString() }).catch(() => {});
     if (oldTier !== newTierNm) {
       await sb.from('notifications').insert({ user_id:userId, type:'loyalty_tier_up', title:`Niveau ${newTierNm} atteint !`, message:`Vous etes maintenant ${newTierNm}.`, metadata:{ old_tier:oldTier, new_tier:newTierNm }, created_at:new Date().toISOString() }).catch(() => {});
     }
-    return ok({ points_added:pts, tier:tier.name, mult:tier.mult });
+    return ok({ points_added:pts, tier:tier.title, mult:tier.mult });
   }
 
   // Routes authentifiees
@@ -92,8 +92,8 @@ export const onRequest = handle(async ({ request, env }) => {
     return ok({
       rewards: (rewards||[]).map(r => ({
         ...r,
-        can_redeem: userPoints >= r.points_cost && (r.stock == null || r.stock > 0),
-        value_label: r.type === 'discount_percent' ? `-${r.value}%` : r.type === 'discount_fixed' ? `-${r.value?.toLocaleString('fr-FR')} FCFA` : 'Livraison gratuite',
+        can_redeem: userPoints >= r.points_required && (r.stock == null || r.stock > 0),
+        value_label: r.reward_type === 'discount_percent' ? `-${r.reward_value}%` : r.reward_type === 'discount_fixed' ? `-${r.reward_value?.toLocaleString('fr-FR')} FCFA` : 'Livraison gratuite',
       })),
       user_points: userPoints,
       user_tier: getTier(lp?.total_earned||0).name,
@@ -109,18 +109,18 @@ export const onRequest = handle(async ({ request, env }) => {
     const { data: reward } = await sb.from('loyalty_rewards').select('*').eq('id', rewardId).eq('active', true).single().catch(() => ({ data:null }));
     if (!reward) return err('Recompense introuvable', 404);
     if (reward.stock != null && reward.stock <= 0) return err('Recompense epuisee', 400);
-    if (userPoints < reward.points_cost) return err(`Points insuffisants. ${reward.points_cost - userPoints} manquants.`, 400);
-    const newPoints = userPoints - reward.points_cost;
-    await sb.from('loyalty_points').update({ points:newPoints, total_redeemed:(lp?.total_redeemed||0)+reward.points_cost, updated_at:new Date().toISOString() }).eq('user_id', user.id).catch(() => {});
-    await sb.from('loyalty_history').insert({ user_id:user.id, delta:-reward.points_cost, reason:'redeem', note:`Echange: ${reward.name}`, order_id:orderId||null, created_at:new Date().toISOString() }).catch(() => {});
+    if (userPoints < reward.points_required) return err(`Points insuffisants. ${reward.points_required - userPoints} manquants.`, 400);
+    const newPoints = userPoints - reward.points_required;
+    await sb.from('loyalty_points').update({ points:newPoints, total_redeemed:(lp?.total_redeemed||0)+reward.points_required, updated_at:new Date().toISOString() }).eq('user_id', user.id).catch(() => {});
+    await sb.from('loyalty_history').insert({ user_id:user.id, delta:-reward.points_required, reason:'redeem', note:`Echange: ${reward.title}`, order_id:orderId||null, created_at:new Date().toISOString() }).catch(() => {});
     let couponCode = null;
-    if (['discount_percent','discount_fixed','free_shipping'].includes(reward.type)) {
+    if (['discount_percent','discount_fixed','free_shipping'].includes(reward.reward_type)) {
       couponCode = `LOYAL${Math.random().toString(36).slice(2,8).toUpperCase()}`;
-      await sb.from('coupons').insert({ code:couponCode, type:reward.type==='discount_percent'?'percent':reward.type==='discount_fixed'?'fixed':'free_shipping', value:reward.value||0, max_uses:1, once_per_user:true, user_id:user.id, expires_at:new Date(Date.now()+30*86400000).toISOString(), active:true, source:'loyalty', created_at:new Date().toISOString() }).catch(() => {});
+      await sb.from('coupons').insert({ code:couponCode, type:reward.reward_type==='discount_percent'?'percent':reward.reward_type==='discount_fixed'?'fixed':'free_shipping', value:reward.reward_value||0, max_uses:1, once_per_user:true, user_id:user.id, expires_at:new Date(Date.now()+30*86400000).toISOString(), active:true, source:'loyalty', created_at:new Date().toISOString() }).catch(() => {});
     }
     if (reward.stock != null) await sb.from('loyalty_rewards').update({ stock:reward.stock-1 }).eq('id', rewardId).catch(() => {});
-    await sb.from('notifications').insert({ user_id:user.id, type:'loyalty_redeem', title:'Recompense debloquee', message:`${reward.points_cost} pts -> "${reward.name}"${couponCode?`. Code: ${couponCode}`:''}`, metadata:{ reward_id:rewardId, coupon_code:couponCode }, created_at:new Date().toISOString() }).catch(() => {});
-    return ok({ success:true, reward:reward.name, points_spent:reward.points_cost, points_left:newPoints, coupon_code:couponCode });
+    await sb.from('notifications').insert({ user_id:user.id, type:'loyalty_redeem', title:'Recompense debloquee', message:`${reward.points_required} pts -> "${reward.title}"${couponCode?`. Code: ${couponCode}`:''}`, metadata:{ reward_id:rewardId, coupon_code:couponCode }, created_at:new Date().toISOString() }).catch(() => {});
+    return ok({ success:true, reward:reward.title, points_spent:reward.points_required, points_left:newPoints, coupon_code:couponCode });
   }
 
   // ── POST /api/loyalty/check → calculer remise avant achat ────────────
