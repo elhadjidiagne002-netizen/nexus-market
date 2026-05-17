@@ -1,4 +1,4 @@
-﻿// functions/api/ambassador/withdraw.js
+/ functions/api/ambassador/withdraw.js
 import { adminClient, requireAuth, handle, ok, err } from '../_lib/supabase.js';
 
 const MIN = 2000;

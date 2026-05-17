@@ -1,4 +1,4 @@
-﻿// functions/api/ambassador/leaderboard.js
+/ functions/api/ambassador/leaderboard.js
 import { adminClient, handle, ok, err } from '../_lib/supabase.js';
 
 const BADGES = { bronze:'🥉', silver:'🥈', gold:'🥇', platinum:'💎' };

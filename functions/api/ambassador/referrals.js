@@ -1,4 +1,4 @@
-﻿// functions/api/ambassador/referrals.js
+/ functions/api/ambassador/referrals.js
 import { adminClient, requireAuth, handle, ok, err } from '../_lib/supabase.js';
 
 export const onRequest = handle(async ({ request, env }) => {

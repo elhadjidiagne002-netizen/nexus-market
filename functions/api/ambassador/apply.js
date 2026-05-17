@@ -1,4 +1,4 @@
-﻿// functions/api/ambassador/apply.js
+/ functions/api/ambassador/apply.js
 import { adminClient, requireAuth, requireAdmin, handle, ok, err } from '../_lib/supabase.js';
 
 const RATES = { bronze:0.05, silver:0.07, gold:0.10, platinum:0.12 };
