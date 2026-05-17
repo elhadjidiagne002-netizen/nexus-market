@@ -14,7 +14,7 @@ ENV_FILE="$(dirname "$0")/../.env"
 push() {
   local name="$1"; local val="${2:-}"
   [[ -z "$val" ]] && { warn "IGNORÉ (vide): $name"; return; }
-  echo "$val" | wrangler secret put "$name" 2>/dev/null && ok "$name" || warn "ÉCHEC: $name"
+  echo "$val" | wrangler pages secret put "$name" 2>/dev/null && ok "$name" || warn "ÉCHEC: $name"
 }
 
 echo -e "\n🔐  Injection secrets Cloudflare...\n"
