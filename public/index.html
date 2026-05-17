@@ -3025,6 +3025,15 @@ const DataService = {
       const { data, error } = await this._sb.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
       if (!error && data?.user) {
         // [FIX 409] signIn = lecture seule. AUCUN INSERT sur profiles.
+        // [FIX CF Pages] Sauvegarder le token Supabase dans nexus_jwt
+        if (data.session && data.session.access_token) {
+          this._saveTokens(
+            data.session.access_token,
+            data.session.expires_in || 3600,
+            data.session.refresh_token || null,
+            30 * 24 * 3600
+          );
+        }
         // Le profil existe déjà (créé à l'inscription). Si _fetchProfile échoue
         // (JWT stale, timeout), on utilise les métadonnées auth directement.
         let prof = await this._fetchProfile(data.user.id);
