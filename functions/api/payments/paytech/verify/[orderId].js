@@ -1,68 +1,69 @@
-// ── GET /api/payments/paytech/verify/:orderId ──────────────────────────────
-// Interroge Supabase pour savoir si une commande a été payée.
-// Cloudflare Pages Function — runtime Workers (V8, pas Node.js).
-//
-// Réponse 200 :
-//   { paid: bool, failed: bool, reason?: string, amount?: number }
-//
-// ⚠️  paid=true UNIQUEMENT après réception et vérification de l'IPN PayTech.
-//     Jamais sur la simple URL de retour (forgeable).
-
+/**
+ * GET /api/payments/paytech/verify/:orderId
+ * Vérifie le statut d'un paiement PayTech (sécurisé côté serveur, sans exposer les clés).
+ *
+ * Le paramètre dynamique [orderId] vient du nom de fichier [orderId].js (convention Pages Functions).
+ *
+ * Variables d'environnement :
+ *   PAYTECH_API_KEY, PAYTECH_API_SECRET, SUPABASE_URL, SUPABASE_SERVICE_KEY
+ */
 export async function onRequestGet(context) {
-  const { params, env } = context;
-
+  const { request, env, params } = context;
   const orderId = params.orderId;
-  const SB_URL  = env.SUPABASE_URL;
-  const SB_KEY  = env.SUPABASE_SERVICE_KEY;
+
+  if (!env.PAYTECH_API_KEY || !env.PAYTECH_API_SECRET) {
+    return json({ error: 'PayTech non configuré' }, 503);
+  }
+
+  const auth = request.headers.get('Authorization');
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return json({ error: 'Non authentifié' }, 401);
+  }
 
   if (!orderId) {
-    return jsonResponse({ error: "orderId manquant" }, 400);
+    return json({ error: 'orderId manquant' }, 400);
   }
 
-  if (!SB_URL || !SB_KEY) {
-    return jsonResponse({ paid: false, failed: false, reason: "Supabase non configuré" });
-  }
+  // ── Récupération du statut depuis Supabase ───────────────────────────────
+  // L'IPN PayTech doit mettre à jour la table `orders` avec payment_status.
+  // On lit depuis Supabase plutôt que d'interroger PayTech (qui n'a pas
+  // forcément d'endpoint "get-status" public et stable).
+  if (env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY) {
+    try {
+      const sbRes = await fetch(
+        `${env.SUPABASE_URL}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=id,payment_status,payment_ref,total,currency`,
+        {
+          headers: {
+            'apikey': env.SUPABASE_SERVICE_KEY,
+            'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`
+          }
+        }
+      );
+      const rows = await sbRes.json();
+      const order = Array.isArray(rows) ? rows[0] : null;
 
-  // ── Lecture en base ───────────────────────────────────────────────────────
-  let order = null;
-  try {
-    const res = await fetch(
-      `${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=status,paid_amount_fcfa,failure_reason`,
-      {
-        headers: {
-          "apikey":        SB_KEY,
-          "Authorization": `Bearer ${SB_KEY}`,
-        },
+      if (!order) {
+        return json({ error: 'Commande introuvable' }, 404);
       }
-    );
-    if (!res.ok) {
-      return jsonResponse({ paid: false, failed: false, reason: "Erreur Supabase" });
+
+      return json({
+        order_id: order.id,
+        status: order.payment_status || 'pending',
+        payment_ref: order.payment_ref || null,
+        amount: order.total,
+        currency: order.currency
+      });
+    } catch (e) {
+      return json({ error: 'Erreur Supabase', detail: e.message }, 502);
     }
-    const data = await res.json();
-    order = Array.isArray(data) ? data[0] : null;
-  } catch (e) {
-    return jsonResponse({ paid: false, failed: false, reason: e.message });
   }
 
-  if (!order) {
-    return jsonResponse({ paid: false, failed: false, reason: "Commande introuvable" });
-  }
-
-  return jsonResponse({
-    paid:   order.status === "paid",
-    failed: ["cancelled", "failed"].includes(order.status),
-    reason: order.failure_reason || null,
-    amount: order.paid_amount_fcfa || null,
-  });
+  return json({ error: 'Supabase non configuré côté serveur' }, 503);
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
+function json(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
     status,
-    headers: {
-      "Content-Type":                "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
+    headers: { 'Content-Type': 'application/json' }
   });
 }

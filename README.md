@@ -1,170 +1,127 @@
-# NEXUS Market — Migration Netlify → Cloudflare Pages
+# NEXUS Market — Phase 1 (Bloquants prod & Sécurité critique)
 
-## Structure du projet
+Ce paquet contient toutes les corrections de la **Phase 1** du plan d'action.
+
+## Contenu
 
 ```
-/
-├── functions/                     ← Cloudflare Pages Functions (équivalent /.netlify/functions/)
-│   ├── _middleware.js             ← Middleware partagé (CORS automatique sur toutes les routes)
-│   ├── loyalty.js                 ← Programme de fidélité
-│   ├── payout-history.js          ← Historique et solde des retraits vendeur
-│   ├── payout-request.js          ← Demande de retrait PayTech
-│   ├── paytech-payout-webhook.js  ← IPN PayTech (retraits)
-│   ├── paytech-webhook.js         ← IPN PayTech (paiements commandes)
-│   ├── payments-mobile-money.js   ← Initiation paiement Mobile Money
-│   ├── push-send.js               ← Envoi notifications Web Push
-│   ├── push-subscribe.js          ← Abonnement / désabonnement push
-│   └── push-vapid-key.js          ← Clé publique VAPID
-├── _routes.json                   ← Règles de routage Cloudflare Pages
-├── wrangler.toml                  ← Configuration Cloudflare (compat, vars)
-└── package.json
+nexus-phase1/
+├── install.sh              ← Script d'installation + push GitHub automatique
+├── index.html              ← Frontend corrigé (1.5 Mo, -262 lignes, -210 ko)
+├── sw.js                   ← Service Worker (offline, cache assets)
+├── _headers                ← Headers sécurité Cloudflare (CSP, HSTS, etc.)
+└── functions/api/
+    ├── ping.js                              ← GET — test si Functions actif
+    ├── health.js                            ← GET — health check (utilisé par frontend)
+    ├── sms/send.js                          ← POST — SMS Twilio / Orange
+    ├── auth/refresh.js                      ← POST — refresh JWT Supabase
+    ├── upload/index.js                      ← POST — proxy imgBB sécurisé
+    └── payments/paytech/
+        ├── init.js                          ← POST — init paiement
+        ├── ipn.js                           ← POST — webhook PayTech
+        └── verify/[orderId].js              ← GET — vérifier statut commande
 ```
 
----
+## Installation rapide
 
-## Différences clés Netlify → Cloudflare
-
-| Netlify Functions | Cloudflare Pages Functions |
-|---|---|
-| `exports.handler = async (event) => {}` | `export async function onRequest(context) {}` |
-| `event.httpMethod` | `context.request.method` |
-| `event.headers["x-header"]` | `context.request.headers.get("x-header")` |
-| `event.body` (string) | `await context.request.json()` ou `.text()` |
-| `process.env.MA_VAR` | `context.env.MA_VAR` |
-| `return { statusCode, headers, body }` | `return new Response(body, { status, headers })` |
-| Module `https` (Node.js) | `fetch()` natif (Web API) |
-| Module `crypto` (Node.js) | `crypto.subtle` (Web Crypto API) |
-| `/.netlify/functions/nom` | `/functions/nom` |
-
----
-
-## Installation et déploiement
-
-### 1. Prérequis
 ```bash
-npm install
+# 1. Télécharge et extrais ce paquet à côté de ton dépôt
+unzip nexus-phase1.zip
+
+# 2. Va dans ton dépôt git local NEXUS
+cd /chemin/vers/ton-depot
+
+# 3. Lance le script (il va copier, commiter et pusher)
+bash ../nexus-phase1/install.sh
 ```
 
-### 2. Générer les clés VAPID (si pas encore fait)
+Le script :
+1. ✅ Vérifie que tu es dans un dépôt git
+2. ✅ Sauvegarde ton ancien `index.html` (`.before-phase1.<timestamp>`)
+3. ✅ Copie tous les fichiers
+4. ✅ Affiche `git status` pour vérification
+5. ✅ Te demande confirmation avant de pusher
+6. ✅ Commit + push avec un message détaillé
+7. ✅ Affiche les variables d'env à configurer sur Cloudflare
+
+## Que corrige cette Phase 1 ?
+
+### Bloquants production
+- **Duplication CSS/JS supprimée** (`nexus-nav-patch-v2` × 2 → 1) : −262 lignes
+- **Favicon base64 triplé** (216 ko) → SVG inline de 200 octets
+- **OG image cassé** (base64 invalide pour FB/Twitter) → URL placehold.co
+- **74 routes /api/* manquantes** → 8 routes critiques créées
+- **Sessions qui cassent à 15 min** → `/api/auth/refresh` opérationnel
+
+### Sécurité
+- **Sentry désactivé** → stub avec capture dans `window.__nexusErrors`
+- **187 console.log en prod** → silencieux sauf en debug
+- **Pas de CSP** → headers stricts dans `_headers`
+- **Clé imgBB exposée** → proxy via `/api/upload`
+
+## Après installation : à faire absolument
+
+### 1. Variables d'environnement Cloudflare
+
+Dashboard Pages → ton projet → Settings → Environment variables
+
+| Variable | Production | Notes |
+|---|---|---|
+| `SUPABASE_URL` | ✅ Requis | `https://pqcqbstbdujzaclsiosv.supabase.co` |
+| `SUPABASE_SERVICE_KEY` | ✅ Requis | Service role key Supabase |
+| `SUPABASE_ANON_KEY` | ✅ Requis | Anon key (même que dans index.html) |
+| `PAYTECH_API_KEY` | ✅ Requis | **Régénérer** sur paytech.sn |
+| `PAYTECH_API_SECRET` | ✅ Requis | **Régénérer** aussi |
+| `PAYTECH_ENV` | ✅ Requis | `test` au début, `prod` ensuite |
+| `SMS_PROVIDER` | ✅ Requis | `simulate`, `twilio`, ou `orange` |
+| `IMGBB_API_KEY` | ✅ Requis | **Régénérer** sur imgbb.com |
+| `TWILIO_SID/TOKEN/FROM` | si twilio | |
+| `ORANGE_CLIENT_ID/SECRET/SENDER_ADDR` | si orange | |
+
+### 2. Test après déploiement
+
 ```bash
-npx web-push generate-vapid-keys
-# Copier les clés dans les variables d'environnement
+# Doit retourner du JSON (pas du HTML)
+curl https://5d15ae2f.nexus-market-asb.pages.dev/api/ping
+curl https://5d15ae2f.nexus-market-asb.pages.dev/api/health
 ```
 
-### 3. Configurer les variables d'environnement secrètes
-```bash
-# Via CLI (une par une)
-npx wrangler pages secret put SUPABASE_SERVICE_KEY
-npx wrangler pages secret put PAYTECH_API_KEY
-npx wrangler pages secret put PAYTECH_API_SECRET
-npx wrangler pages secret put PAYTECH_SECRET_KEY
-npx wrangler pages secret put VAPID_PUBLIC_KEY
-npx wrangler pages secret put VAPID_PRIVATE_KEY
-```
+### 3. Audit RLS Supabase
 
-Ou via le **Dashboard Cloudflare** :
-`Pages → nexus-market → Settings → Environment variables`
+Dans le SQL Editor Supabase :
 
-### 4. Variables non-secrètes (déjà dans wrangler.toml)
-Ces variables peuvent être éditées directement dans `wrangler.toml` :
-- `PAYTECH_ENV` → `"prod"` ou `"test"`
-- `SITE_URL` → URL de production du site
-- `FRONTEND_URL` → même valeur que SITE_URL
-- `VAPID_EMAIL` → email de contact VAPID
-- `NEXUS_COMMISSION` → `"0.15"` (15%)
-- `EUR_TO_XOF` → `"655.957"`
-
-### 5. Développement local
-```bash
-npm run dev
-# Démarre sur http://localhost:8788
-# Les Functions sont disponibles sur http://localhost:8788/functions/loyalty etc.
-```
-
-### 6. Déploiement
-```bash
-npm run deploy
-```
-
----
-
-## Mise à jour du frontend (index.html)
-
-Les URLs des fonctions changent. Remplacer dans `index.html` et les fichiers JS client :
-
-```js
-// AVANT (Netlify)
-/.netlify/functions/loyalty
-/.netlify/functions/payout-history
-/.netlify/functions/payout-request
-/.netlify/functions/paytech-payout-webhook
-/.netlify/functions/paytech-webhook
-/.netlify/functions/payments-mobile-money
-/.netlify/functions/push-send
-/.netlify/functions/push-subscribe
-/.netlify/functions/push-vapid-key
-
-// APRÈS (Cloudflare Pages)
-/functions/loyalty
-/functions/payout-history
-/functions/payout-request
-/functions/paytech-payout-webhook
-/functions/paytech-webhook
-/functions/payments-mobile-money
-/functions/push-send
-/functions/push-subscribe
-/functions/push-vapid-key
-```
-
-Commande sed pour remplacer automatiquement :
-```bash
-sed -i 's|/.netlify/functions/|/functions/|g' index.html
-```
-
----
-
-## Mettre à jour les IPN PayTech
-
-Dans votre dashboard PayTech, mettre à jour les URLs de webhook :
-- Paiements : `https://nexus-market.pages.dev/functions/paytech-webhook`
-- Retraits   : `https://nexus-market.pages.dev/functions/paytech-payout-webhook`
-
----
-
-## Tables Supabase requises
-
-Aucun changement de schéma nécessaire. Les tables utilisées restent :
-- `loyalty_points` — solde points par utilisateur
-- `loyalty_history` — historique des transactions points
-- `orders` — commandes (champs : `total`, `commission`, `vendor`, `status`, `user_id`, `paytech_token`)
-- `payout_requests` — demandes de retrait vendeur
-- `push_subscriptions` — abonnements Web Push
-- `notifications` — notifications in-app
-- `users` — profils utilisateurs
-
-### Fonction SQL requise (inchangée)
 ```sql
--- add_loyalty_points(p_user_id, p_delta, p_reason, p_order_id, p_note)
--- Doit être créée dans Supabase si ce n'est pas déjà fait.
+-- Tables sans RLS active (à corriger)
+SELECT tablename FROM pg_tables
+WHERE schemaname = 'public' AND rowsecurity = false;
+
+-- Tables avec RLS mais sans policy (bloquées totalement)
+SELECT t.tablename FROM pg_tables t
+LEFT JOIN pg_policies p ON p.schemaname = t.schemaname
+  AND p.tablename = t.tablename
+WHERE t.schemaname = 'public' AND t.rowsecurity = true
+  AND p.policyname IS NULL;
 ```
 
----
+### 4. Régénérer les clés compromises
 
-## Notes importantes
+Les clés suivantes étaient en clair dans Git (historique) ou dans le HTML :
+- **PayTech** : dashboard PayTech → API → Régénérer
+- **imgBB** : imgbb.com → Profile → Generate new API key
 
-### `nodejs_compat`
-Le flag `nodejs_compat` dans `wrangler.toml` est **obligatoire** pour :
-- `@supabase/supabase-js` (utilise `process`, `Buffer`, etc.)
-- `web-push` (utilise le module `crypto` Node.js)
+Pour purger l'historique git :
+```bash
+brew install git-filter-repo  # ou pip install git-filter-repo
+# Sauvegarde d'abord !
+git filter-repo --replace-text <(echo "<ancienne_cle>==>***REVOKED***")
+```
 
-### `context.waitUntil()`
-Cloudflare Workers se terminent dès que la `Response` est retournée.
-Pour les tâches asynchrones post-réponse (ex: créditer les points de fidélité
-après confirmation PayTech), on utilise `context.waitUntil(promise)` qui
-garantit que la tâche se termine même après l'envoi de la réponse.
+## Phase 2 (suivante)
 
-### Limites Cloudflare Pages Functions (plan gratuit)
-- 100 000 requêtes/jour
-- Temps d'exécution max : 30s (plan gratuit) / illimité (Paid)
-- Mémoire : 128 MB
-- Pour des besoins plus importants → Cloudflare Workers (plan Paid)
+Une fois la Phase 1 stable, je proposerai :
+- Refactor `AdminDashboard` (1394 lignes → sous-composants)
+- Migration JWT → cookies HttpOnly
+- Tests Playwright sur le flow checkout
+- Events GA4 e-commerce (`purchase`, `add_to_cart`)
+- i18n (FR / EN / Wolof)
+- Migration vers Vite + code splitting (−60% bytes sur first load)
