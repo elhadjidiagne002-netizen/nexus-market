@@ -17784,7 +17784,7 @@ const RowCard = ({ p, onSelect, onAddToCart }) => React.createElement('div', {
     }, '🛒 Ajouter')
   )
 );
-const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger }) => {
+const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, currentUser: currentUserProp = null, onBackToDashboard = null }) => {
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -17797,7 +17797,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger })
   const [wishlist, setWishlist] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [showReviewModal, setShowReviewModal] = useState(false);
-  const [currentUser2] = useState(null);
+  const currentUser2 = currentUserProp;
   const [currentPage, setCurrentPage] = useState(1);
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [offerProduct, setOfferProduct] = useState(null);
@@ -19864,6 +19864,18 @@ const App = ({ onUserChange }) => {
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [cartBroadcast, setCartBroadcast] = useState(0);
   const [wishlistBroadcast, setWishlistBroadcast] = useState(0);
+  // [PATCH] Permettre à un utilisateur connecté de voir la page d'accueil publique via le logo
+  const [showPublicHome, setShowPublicHome] = useState(false);
+  React.useEffect(() => {
+    const _showHome = () => setShowPublicHome(true);
+    const _hideHome = () => setShowPublicHome(false);
+    window.addEventListener("nexus:show-public-home", _showHome);
+    window.addEventListener("nexus:hide-public-home", _hideHome);
+    return () => {
+      window.removeEventListener("nexus:show-public-home", _showHome);
+      window.removeEventListener("nexus:hide-public-home", _hideHome);
+    };
+  }, []);
   useEffect(() => {
     var _a;
     initializeData();
@@ -20258,7 +20270,7 @@ const App = ({ onUserChange }) => {
       sidebarOpen,
       onToggleSidebar: toggleSidebar
     }
-  ), !currentUser2 ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
@@ -24129,6 +24141,71 @@ window.addEventListener('unhandledrejection', function(event) {
   window.addEventListener('nexus:session-expired', function() { _user = null; });
   window.addEventListener('nexus:logout', function() { _user = null; });
 
+})();
+</script>
+
+<!-- ── [PATCH HOME LOGO] Permettre de voir la page d'accueil publique sans se déconnecter ── -->
+<script>
+(function(){
+  // Au clic sur le logo (capture, donc avant n'importe quel autre handler),
+  // on demande à App d'afficher la page d'accueil publique.
+  // L'event existant `nexus:go-home` continue de fonctionner pour les dashboards.
+  document.addEventListener('click', function(e){
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var logo = t.closest('.logo[aria-label="NEXUS Market - Accueil"]');
+    if (logo) {
+      window.dispatchEvent(new CustomEvent('nexus:show-public-home'));
+    }
+  }, true);
+
+  // ── Bouton flottant "Retour au tableau de bord" pour utilisateurs connectés
+  //    qui se baladent sur la home publique ────────────────────────────────────
+  var _btnInjected = false;
+  function injectBackBtn(){
+    if (_btnInjected || !document.body) return;
+    _btnInjected = true;
+    var style = document.createElement('style');
+    style.textContent = '\
+#nexus-back-to-dash{position:fixed;bottom:20px;left:20px;z-index:9998;\
+  padding:12px 18px;border-radius:30px;background:#00853E;color:#fff;\
+  border:none;cursor:pointer;font-size:14px;font-weight:600;\
+  box-shadow:0 4px 14px rgba(0,133,62,.35);display:none;\
+  align-items:center;gap:8px;font-family:inherit;transition:transform .15s,box-shadow .15s}\
+#nexus-back-to-dash:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,133,62,.45)}\
+#nexus-back-to-dash:active{transform:translateY(0)}';
+    document.head.appendChild(style);
+    var btn = document.createElement('button');
+    btn.id = 'nexus-back-to-dash';
+    btn.innerHTML = '<i class="fas fa-th-large" aria-hidden="true"></i> Mon tableau de bord';
+    btn.setAttribute('aria-label','Retour au tableau de bord');
+    btn.addEventListener('click', function(){
+      window.dispatchEvent(new CustomEvent('nexus:hide-public-home'));
+    });
+    document.body.appendChild(btn);
+  }
+  // Afficher / cacher le bouton selon les events App
+  window.addEventListener('nexus:show-public-home', function(){
+    injectBackBtn();
+    // On ne sait pas si l'utilisateur est connecté depuis ce script ;
+    // l'app cache ce bouton si non-connecté via l'event 'nexus:logout'.
+    // Donc on n'affiche le bouton que s'il y a un JWT en storage.
+    try {
+      var jwt = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+      if (jwt) {
+        var b = document.getElementById('nexus-back-to-dash');
+        if (b) b.style.display = 'inline-flex';
+      }
+    } catch(_) {}
+  });
+  window.addEventListener('nexus:hide-public-home', function(){
+    var b = document.getElementById('nexus-back-to-dash');
+    if (b) b.style.display = 'none';
+  });
+  window.addEventListener('nexus:logout', function(){
+    var b = document.getElementById('nexus-back-to-dash');
+    if (b) b.style.display = 'none';
+  });
 })();
 </script>
 </body>
