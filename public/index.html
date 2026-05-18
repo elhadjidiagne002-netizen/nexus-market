@@ -8951,14 +8951,20 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
               console.warn("[PayTech] Backend absent (NEXUS_CONFIG.apiUrl vide) — mode démo");
               addToast("⚠️ Mode démo : aucun paiement réel n'a été effectué. Configurez NEXUS_CONFIG.apiUrl pour activer PayTech.", "warning", 10000);
             } else {
+              if (!mainOrderId || !amountFcfa) {
+                console.warn("[PayTech] order_id ou amount manquant", { mainOrderId, amountFcfa });
+                addToast("Erreur : commande introuvable. Réessayez.", "error");
+                setLoading(false);
+                return;
+              }
               const initRes = await DataService.apiFetch("/api/payments/paytech/init", {
                 method: "POST",
                 body: JSON.stringify({
-                  orderId:    mainOrderId,
-                  amountFcfa: amountFcfa,
-                  itemName:   `Commande NEXUS #${mainOrderId}`,
-                  successUrl: `${origin}/?payment=return&orderId=${encodeURIComponent(mainOrderId)}`,
-                  cancelUrl:  `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
+                  order_id:    mainOrderId,
+                  amount:      amountFcfa,
+                  item_name:   `Commande NEXUS #${mainOrderId.slice(-8).toUpperCase()}`,
+                  success_url: `${origin}/?payment=return&orderId=${encodeURIComponent(mainOrderId)}`,
+                  cancel_url:  `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
                 }),
               }).catch(e => { console.warn("[PayTech] Init réseau:", e?.message); return null; });
 
