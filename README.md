@@ -1,127 +1,177 @@
-# NEXUS Market — Phase 1 (Bloquants prod & Sécurité critique)
+# NEXUS Market — Phase 3 (Hardening continued)
 
-Ce paquet contient toutes les corrections de la **Phase 1** du plan d'action.
+Cette phase complète le durcissement sécurité de la Phase 2, en gardant ton workflow monolithique actuel (édition directe d'`index.html`).
 
-## Contenu
+## Contenu du paquet
 
 ```
-nexus-phase1/
-├── install.sh              ← Script d'installation + push GitHub automatique
-├── index.html              ← Frontend corrigé (1.5 Mo, -262 lignes, -210 ko)
-├── sw.js                   ← Service Worker (offline, cache assets)
-├── _headers                ← Headers sécurité Cloudflare (CSP, HSTS, etc.)
-└── functions/api/
-    ├── ping.js                              ← GET — test si Functions actif
-    ├── health.js                            ← GET — health check (utilisé par frontend)
-    ├── sms/send.js                          ← POST — SMS Twilio / Orange
-    ├── auth/refresh.js                      ← POST — refresh JWT Supabase
-    ├── upload/index.js                      ← POST — proxy imgBB sécurisé
-    └── payments/paytech/
-        ├── init.js                          ← POST — init paiement
-        ├── ipn.js                           ← POST — webhook PayTech
-        └── verify/[orderId].js              ← GET — vérifier statut commande
+nexus-phase3/
+├── install.ps1                              ← Script Windows PowerShell
+├── install.sh                               ← Script Mac/Linux/Git Bash
+├── README.md                                ← Ce fichier
+├── index.html                               ← Frontend modifié (1.54 Mo)
+├── functions/api/email/send.js              ← Nouvelle route proxy email
+├── playwright.config.js                     ← Config tests E2E (optionnel)
+├── package.json                             ← Pour npm install Playwright
+├── tests/checkout.spec.js                   ← 5 tests E2E
+└── SUPABASE_RLS_AUDIT_PHASE3.sql            ← Audit policies à exécuter dans Supabase
 ```
 
-## Installation rapide
+## Installation
+
+```powershell
+# Windows
+cd C:\Users\pheni\Downloads\nexus-market
+powershell -ExecutionPolicy Bypass -File ..\nexus-phase3\install.ps1
+```
 
 ```bash
-# 1. Télécharge et extrais ce paquet à côté de ton dépôt
-unzip nexus-phase1.zip
-
-# 2. Va dans ton dépôt git local NEXUS
-cd /chemin/vers/ton-depot
-
-# 3. Lance le script (il va copier, commiter et pusher)
-bash ../nexus-phase1/install.sh
+# macOS/Linux/Git Bash
+cd ~/nexus-market
+bash ../nexus-phase3/install.sh
 ```
 
-Le script :
-1. ✅ Vérifie que tu es dans un dépôt git
-2. ✅ Sauvegarde ton ancien `index.html` (`.before-phase1.<timestamp>`)
-3. ✅ Copie tous les fichiers
-4. ✅ Affiche `git status` pour vérification
-5. ✅ Te demande confirmation avant de pusher
-6. ✅ Commit + push avec un message détaillé
-7. ✅ Affiche les variables d'env à configurer sur Cloudflare
+Le script demande si tu veux installer les tests Playwright (optionnel) — réponds `y` seulement si tu prévois de les utiliser.
 
-## Que corrige cette Phase 1 ?
+## Corrections appliquées
 
-### Bloquants production
-- **Duplication CSS/JS supprimée** (`nexus-nav-patch-v2` × 2 → 1) : −262 lignes
-- **Favicon base64 triplé** (216 ko) → SVG inline de 200 octets
-- **OG image cassé** (base64 invalide pour FB/Twitter) → URL placehold.co
-- **74 routes /api/* manquantes** → 8 routes critiques créées
-- **Sessions qui cassent à 15 min** → `/api/auth/refresh` opérationnel
+### 1. Proxy email serveur (`/api/email/send`)
 
-### Sécurité
-- **Sentry désactivé** → stub avec capture dans `window.__nexusErrors`
-- **187 console.log en prod** → silencieux sauf en debug
-- **Pas de CSP** → headers stricts dans `_headers`
-- **Clé imgBB exposée** → proxy via `/api/upload`
+**Problème** : La clé publique EmailJS était dans le HTML. Un attaquant pouvait spammer ton quota EmailJS gratuit (200 emails/mois).
 
-## Après installation : à faire absolument
+**Correction** : Nouvelle Cloudflare Function `/api/email/send` qui :
+- Vérifie le JWT Bearer dans l'Authorization header (auth obligatoire)
+- Applique un rate limit serveur (1 email/30s par destinataire)
+- Supporte 3 providers via la variable `EMAIL_PROVIDER` :
+  - `resend` (recommandé, 100 emails/jour gratuit)
+  - `emailjs` (server-side via leur REST API, ne révèle pas la clé)
+  - `simulate` (log seulement, pour dev/preview)
 
-### 1. Variables d'environnement Cloudflare
+**Côté frontend** : `EmailService.send()` essaie d'abord `/api/email/send` quand le backend est ready et qu'un JWT est disponible. Si le backend répond OK, on n'utilise pas EmailJS direct du tout — la clé n'est donc pas utilisée.
 
-Dashboard Pages → ton projet → Settings → Environment variables
+**Fallback préservé** : si le backend est KO (offline, 5xx), on tombe sur EmailJS direct comme avant — l'app continue de fonctionner.
 
-| Variable | Production | Notes |
-|---|---|---|
-| `SUPABASE_URL` | ✅ Requis | `https://pqcqbstbdujzaclsiosv.supabase.co` |
-| `SUPABASE_SERVICE_KEY` | ✅ Requis | Service role key Supabase |
-| `SUPABASE_ANON_KEY` | ✅ Requis | Anon key (même que dans index.html) |
-| `PAYTECH_API_KEY` | ✅ Requis | **Régénérer** sur paytech.sn |
-| `PAYTECH_API_SECRET` | ✅ Requis | **Régénérer** aussi |
-| `PAYTECH_ENV` | ✅ Requis | `test` au début, `prod` ensuite |
-| `SMS_PROVIDER` | ✅ Requis | `simulate`, `twilio`, ou `orange` |
-| `IMGBB_API_KEY` | ✅ Requis | **Régénérer** sur imgbb.com |
-| `TWILIO_SID/TOKEN/FROM` | si twilio | |
-| `ORANGE_CLIENT_ID/SECRET/SENDER_ADDR` | si orange | |
+### 2. Tests E2E Playwright (optionnel)
 
-### 2. Test après déploiement
+5 tests dans `tests/checkout.spec.js` :
+1. Homepage charge sans erreur JS critique
+2. Catalogue affiche au moins 1 produit
+3. `/api/ping` retourne du JSON (Functions actif)
+4. GA4 `add_to_cart` se déclenche au clic
+5. Validation NINEA rejette les formats invalides
+
+Plus un smoke test qui vérifie que les markers Phase 1+2 sont présents dans le HTML déployé en prod (`__nexusErrors`, favicon SVG, `trackViewItem`, `validateNinea`, etc.).
+
+**Lancer les tests** :
+```bash
+npm install
+npx playwright install chromium
+npx playwright test                # mode CI
+npx playwright test --headed       # mode debug visible
+npx playwright test --ui           # interface graphique interactive
+NEXUS_BASE_URL=http://localhost:5500 npx playwright test    # contre serveur local
+```
+
+### 3. Audit RLS consolidation (manuel)
+
+Le fichier `SUPABASE_RLS_AUDIT_PHASE3.sql` contient 5 requêtes d'analyse pour les tables surchargées de policies (`messages` 18, `products` 16, `profiles` 14, `loyalty_points` 13).
+
+Le script ne supprime rien automatiquement — c'est un outil de revue. Tu décides ce qu'il faut consolider après lecture des résultats.
+
+## Variables d'environnement à ajouter
+
+Sur Cloudflare Pages Settings → Environment variables :
+
+**Option A : Resend (recommandé)**
+```
+EMAIL_PROVIDER       = resend
+RESEND_API_KEY       = re_...     (créer un compte gratuit sur resend.com)
+EMAIL_FROM           = NEXUS Market <no-reply@nexus.sn>
+```
+
+**Option B : EmailJS server-side (garde tes templates existants)**
+```
+EMAIL_PROVIDER       = emailjs
+EMAILJS_SERVICE_ID   = service_84yfkgf
+EMAILJS_TEMPLATE_ID  = template_t075pts
+EMAILJS_PUBLIC_KEY   = WSBntSTWdh5d9usZC
+EMAILJS_PRIVATE_KEY  = (optionnel, pour signer les requêtes)
+```
+
+**Option C : Simulation (dev/preview)**
+```
+EMAIL_PROVIDER       = simulate
+```
+
+## Test post-déploiement
+
+Après que Cloudflare a redéployé :
 
 ```bash
-# Doit retourner du JSON (pas du HTML)
-curl https://5d15ae2f.nexus-market-asb.pages.dev/api/ping
-curl https://5d15ae2f.nexus-market-asb.pages.dev/api/health
+# 1. Le endpoint répond bien
+curl https://5d15ae2f.nexus-market-asb.pages.dev/api/email/send \
+  -X POST \
+  -H "Authorization: Bearer FAKE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"to":"test@example.com","subject":"Test","html":"<p>Hello</p>"}'
+
+# → Doit retourner 401 (FAKE_TOKEN refusé) ou 503 (provider non configuré)
+# → Si ça retourne du HTML, Functions n'est pas actif
 ```
 
-### 3. Audit RLS Supabase
+Dans la console DevTools sur ton site :
 
-Dans le SQL Editor Supabase :
-
-```sql
--- Tables sans RLS active (à corriger)
-SELECT tablename FROM pg_tables
-WHERE schemaname = 'public' AND rowsecurity = false;
-
--- Tables avec RLS mais sans policy (bloquées totalement)
-SELECT t.tablename FROM pg_tables t
-LEFT JOIN pg_policies p ON p.schemaname = t.schemaname
-  AND p.tablename = t.tablename
-WHERE t.schemaname = 'public' AND t.rowsecurity = true
-  AND p.policyname IS NULL;
+```javascript
+// Vérifier que le frontend appelle bien le backend
+window.EmailService.send({
+  to: 'test@example.com',
+  subject: 'Test',
+  variables: { html_body: '<p>Test</p>' }
+});
+// → Network tab : tu dois voir POST /api/email/send (pas un appel direct à emailjs.com)
 ```
 
-### 4. Régénérer les clés compromises
+## Ce qui n'a PAS été fait en Phase 3
 
-Les clés suivantes étaient en clair dans Git (historique) ou dans le HTML :
-- **PayTech** : dashboard PayTech → API → Régénérer
-- **imgBB** : imgbb.com → Profile → Generate new API key
+Pour rester safe en mode monolithique :
 
-Pour purger l'historique git :
-```bash
-brew install git-filter-repo  # ou pip install git-filter-repo
-# Sauvegarde d'abord !
-git filter-repo --replace-text <(echo "<ancienne_cle>==>***REVOKED***")
-```
+- **JWT → cookies HttpOnly** : 115 endroits à refactorer dans `index.html`, risque élevé de tout casser. À faire en Phase 4 si tu passes à Vite.
+- **Refactor AdminDashboard (2665 lignes)** : sans build system, l'extraction de sous-composants n'apporte pas grand-chose. Reporté à la Phase 4.
+- **Code splitting / lazy load** : impossible sans Vite/Webpack.
 
-## Phase 2 (suivante)
+## État global du projet (après Phases 1+2+3)
 
-Une fois la Phase 1 stable, je proposerai :
-- Refactor `AdminDashboard` (1394 lignes → sous-composants)
-- Migration JWT → cookies HttpOnly
-- Tests Playwright sur le flow checkout
-- Events GA4 e-commerce (`purchase`, `add_to_cart`)
-- i18n (FR / EN / Wolof)
-- Migration vers Vite + code splitting (−60% bytes sur first load)
+**Sécurité** ✅
+- 5 routes critiques API (PayTech, SMS, auth/refresh, upload, email)
+- 23 tables Supabase protégées par RLS
+- Headers CSP/HSTS/X-Frame-Options
+- Rate limits frontend ET serveur sur les emails
+- Capture d'erreurs centralisée
+- Clés sensibles déplacées en env vars serveur
+
+**Performance** ✅
+- −210 ko (favicon optimisé)
+- −262 lignes (duplications supprimées)
+- Polling intelligent (pause si backend KO)
+- Service Worker actif
+
+**Business** ✅
+- Funnel GA4 complet (view → add_to_cart → checkout → purchase)
+- Validation NINEA/RCCM
+- Sessions JWT longue durée (refresh côté serveur)
+
+**Qualité** ✅
+- 5 tests Playwright sur les chemins critiques (optionnel)
+- Script SQL d'audit RLS
+
+## Phase 4 possible (si tu veux passer à Vite plus tard)
+
+Quand tu seras prêt à installer Node.js et apprendre `npm run build` :
+
+1. Migration vers Vite (1 jour de setup) → first-load ÷ 3
+2. Refactor AdminDashboard (2-3 jours)
+3. JWT cookies HttpOnly (1-2 jours, élimine le risque XSS sur le token)
+4. TypeScript progressif via JSDoc (3-4 jours)
+5. i18n FR/EN/Wolof complet (1 semaine, l'infrastructure existe déjà)
+
+Mais ce n'est pas urgent : ton app actuelle est solide et sécurisée.

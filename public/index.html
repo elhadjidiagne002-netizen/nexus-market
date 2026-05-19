@@ -5021,6 +5021,33 @@ const EmailService = {
     // [FIX] Les logs emails sont persistés côté serveur dans la table server_logs (Supabase).
     // Plus de stockage localStorage — utiliser GET /api/email/logs pour lire les journaux.
 
+    // [Phase 3] Préférer le proxy serveur /api/email/send (ne révèle pas la clé EmailJS).
+    //           Si le backend répond, on ne tombe pas dans la branche EmailJS-direct.
+    const _phase3Token = (typeof DataService !== "undefined" && DataService._token)
+        || sessionStorage.getItem("nexus_jwt")
+        || localStorage.getItem("nexus_jwt");
+    if (window.__nexusBackendReady && NEXUS_CONFIG.apiUrl && _phase3Token) {
+      try {
+        const _apiBase = NEXUS_CONFIG.apiUrl.endsWith("/") ? NEXUS_CONFIG.apiUrl.slice(0,-1) : NEXUS_CONFIG.apiUrl;
+        const resp = await fetch(_apiBase + "/api/email/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + _phase3Token },
+          body: JSON.stringify({
+            to, subject,
+            html: (variables && variables.html_body) || ("<p>" + subject + "</p>")
+          })
+        });
+        if (resp.ok) {
+          const r = await resp.json();
+          if (r.ok) { console.log("[EmailService] \u2705 via /api/email/send \u2192", to); return true; }
+        } else if (resp.status === 429) {
+          console.warn("[EmailService] Rate limit serveur \u2014 patientez avant de renvoyer");
+          return false;
+        }
+        // Si 4xx/5xx \u2192 on continue avec EmailJS direct en fallback
+      } catch (_) { /* backend KO \u2192 fallback */ }
+    }
+
     // [FIX] Stratégie template universel — 1 seul template EmailJS suffit.
     // ejsTemplateId est ignoré : on utilise toujours universalTemplateId.
     // Le HTML complet est dans html_body (triple accolades dans le template).
