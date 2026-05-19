@@ -3510,6 +3510,8 @@ async signOut() {
         console.warn('[NEXUS] Réseau/CORS:', err.message, '— fallback');
         return null;
       }
+      // [Phase 2] Toute autre erreur est inattendue : on la capture pour le debug
+      try { window.Sentry?.captureException?.(err, { context: { path, method: options.method || 'GET' } }); } catch(_) {}
       throw err;
     }
   },
@@ -4989,6 +4991,32 @@ const EmailService = {
     }
   },
   async send({ to, subject, templateId, variables, ejsTemplateId }) {
+    // [Phase 2] Rate limiting anti-spam : 1 email / 30s par destinataire, 10 emails / heure global
+    //           (la clé publique EmailJS étant nécessairement visible côté client,
+    //            on ne peut empêcher un dev avancé de bypass, mais on protège contre
+    //            les clics répétés et les boucles JS accidentelles).
+    try {
+      if (!this._rl) this._rl = { perTo: new Map(), allHour: [] };
+      const now = Date.now();
+      // Nettoie l'historique de l'heure passée
+      this._rl.allHour = this._rl.allHour.filter(t => now - t < 3600000);
+      if (this._rl.allHour.length >= 10) {
+        console.warn("[EmailService] Rate limit global atteint (10/h) — destinataire:", to);
+        return false;
+      }
+      const lastForTo = this._rl.perTo.get(to) || 0;
+      if (now - lastForTo < 30000) {
+        console.warn("[EmailService] Rate limit destinataire (1/30s) — patientez avant de renvoyer à", to);
+        return false;
+      }
+      this._rl.perTo.set(to, now);
+      this._rl.allHour.push(now);
+      // Cleanup pour ne pas grossir indéfiniment
+      if (this._rl.perTo.size > 100) {
+        for (const [k, v] of this._rl.perTo) if (now - v > 3600000) this._rl.perTo.delete(k);
+      }
+    } catch(_) { /* fail-safe : on n'empêche pas l'envoi si la machinerie rate-limit pète */ }
+
     const entry = { id: "email_" + Date.now(), to, subject, templateId, variables, sentAt: (/* @__PURE__ */ new Date()).toISOString() };
     // [FIX] Les logs emails sont persistés côté serveur dans la table server_logs (Supabase).
     // Plus de stockage localStorage — utiliser GET /api/email/logs pour lire les journaux.
@@ -9581,6 +9609,16 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
   const SHOP_CATS = ["\xc9lectronique","Informatique","Mode","Maison","Sport","Beaut\xe9","Alimentation","Tissus & Wax","Artisanat","Produits locaux","Autre"];
 
   // ─── Validation per step ─────────────────────────────────
+  // [Phase 2] Validation des identifiants légaux sénégalais
+  //   NINEA : 7 chiffres + (espace optionnel) + 1 chiffre + 1 lettre + 3 chiffres
+  //           Ex : "007123456 2T3" ou "0071234562T3"
+  //   RCCM  : SN-{VILLE 2-4 lettres}-{ANNÉE 4 chiffres}-{TYPE 1 lettre}-{NUMÉRO 1-6 chiffres}
+  //           Ex : "SN-DKR-2024-B-12345"
+  const _NINEA_RE = /^\s*\d{7}\s?\d?[A-Za-z]\d{3}\s*$/;
+  const _RCCM_RE  = /^\s*SN-[A-Za-z]{2,4}-\d{4}-[A-Za-z]-\d{1,6}\s*$/;
+  const validateNinea = (v) => _NINEA_RE.test(v || '');
+  const validateRccm  = (v) => _RCCM_RE.test(v || '');
+
   const validate = () => {
     const e = {};
     if (role === "buyer") {
@@ -9598,7 +9636,11 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
       }
       if (step === 2) {
         if (!form.company.trim()) e.company = "Nom de la soci\xe9t\xe9 requis";
-        if (!form.ninea_buyer.trim()) e.ninea_buyer = "NINEA requis";
+        if (!form.ninea_buyer.trim())       e.ninea_buyer = "NINEA requis";
+        else if (!validateNinea(form.ninea_buyer)) e.ninea_buyer = "Format NINEA invalide (ex: 0071234562T3)";
+        if (form.rc_buyer && form.rc_buyer.trim() && !validateRccm(form.rc_buyer)) {
+          e.rc_buyer = "Format RCCM invalide (ex: SN-DKR-2024-B-12345)";
+        }
         if (!form.address_buyer.trim()) e.address_buyer = "Adresse requise";
       }
       if (step === 3) {
@@ -9622,7 +9664,9 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
       }
       if (step === 3) {
         if (!form.ninea.trim()) e.ninea = "NINEA requis";
+        else if (!validateNinea(form.ninea)) e.ninea = "Format NINEA invalide (ex: 0071234562T3)";
         if (!form.rc.trim()) e.rc = "N\xb0 RC requis";
+        else if (!validateRccm(form.rc)) e.rc = "Format RCCM invalide (ex: SN-DKR-2024-B-12345)";
         if (!form.address.trim()) e.address = "Adresse requise";
       }
       if (step === 4) {
@@ -10766,7 +10810,7 @@ const LanguageSwitcher = () => {
 
 const Header = ({ currentUser: currentUser2, onLogout, cartCount, wishlistCount, onLoginClick, onRegisterClick, onCartClick, onWishlistClick, sidebarOpen, onToggleSidebar }) => {
   const { navigate } = useRouter();
-  return /* @__PURE__ */ React.createElement("header", { className: "global-header", role: "banner" }, /* @__PURE__ */ React.createElement("div", { className: "header-content" }, /* @__PURE__ */ React.createElement("button", { className: "hamburger-btn", onClick: onToggleSidebar, "aria-label": sidebarOpen ? "Fermer le menu" : "Ouvrir le menu", "aria-expanded": sidebarOpen, "aria-controls": "sidebar" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${sidebarOpen ? "times" : "bars"}`, "aria-hidden": "true" })), /* @__PURE__ */ React.createElement("div", { className: "logo", onClick: () => { navigate("/"); window.dispatchEvent(new CustomEvent("nexus:go-home")); }, role: "link", tabIndex: 0, onKeyDown: (e) => { if(e.key === "Enter") { navigate("/"); window.dispatchEvent(new CustomEvent("nexus:go-home")); } }, "aria-label": "NEXUS Market - Accueil" }, /* @__PURE__ */ React.createElement("img", { src: "https://placehold.co/1200x630/00853E/FDEF42?text=NEXUS+Market+%F0%9F%87%B8%F0%9F%87%B3", alt: "NEXUS Market", style: { height: "64px", width: "auto", objectFit: "contain", display: "block" }, "aria-hidden": "true" })), /* @__PURE__ */ React.createElement("nav", { className: "header-nav", "aria-label": "Navigation principale" }, currentUser2 ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "user-info" }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", "aria-hidden": "true" }, currentUser2.avatar), /* @__PURE__ */ React.createElement("span", { className: "user-name", style: { fontWeight: 600, fontSize: "0.92rem" } }, currentUser2.name), /* @__PURE__ */ React.createElement("span", { className: "badge badge-primary", style: { fontSize: "0.72rem" } }, currentUser2.role === "admin" ? "Admin" : currentUser2.role === "vendor" ? "Vendeur" : currentUser2.role === "buyer_pro" ? "Pro B2B" : "Client")), /* @__PURE__ */ React.createElement(NotificationBell, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("header", { className: "global-header", role: "banner" }, /* @__PURE__ */ React.createElement("div", { className: "header-content" }, /* @__PURE__ */ React.createElement("button", { className: "hamburger-btn", onClick: onToggleSidebar, "aria-label": sidebarOpen ? "Fermer le menu" : "Ouvrir le menu", "aria-expanded": sidebarOpen, "aria-controls": "sidebar" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${sidebarOpen ? "times" : "bars"}`, "aria-hidden": "true" })), /* @__PURE__ */ React.createElement("div", { className: "logo", onClick: () => { navigate("/"); window.dispatchEvent(new CustomEvent("nexus:go-home")); }, role: "link", tabIndex: 0, onKeyDown: (e) => { if(e.key === "Enter") { navigate("/"); window.dispatchEvent(new CustomEvent("nexus:go-home")); } }, "aria-label": "NEXUS Market - Accueil" }, /* @__PURE__ */ React.createElement("img", { src: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTYwIiBoZWlnaHQ9IjUyIiB2aWV3Qm94PSIwIDAgMTYwIDUyIiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxyZWN0IHdpZHRoPSI1MiIgaGVpZ2h0PSI1MiIgcng9IjEzIiBmaWxsPSIjRkRFRjQyIi8+CiAgPHRleHQgeD0iMjYiIHk9IjM2IiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssc2Fucy1zZXJpZiIgZm9udC1zaXplPSIyNCIgZm9udC13ZWlnaHQ9IjkwMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0iIzAwODUzRSI+Tlg8L3RleHQ+CiAgPHRleHQgeD0iMTEyIiB5PSIyNiIgZm9udC1mYW1pbHk9IkFyaWFsIEJsYWNrLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTciIGZvbnQtd2VpZ2h0PSI5MDAiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiMwMDg1M0UiPk5FWFVTPC90ZXh0PgogIDx0ZXh0IHg9IjExMiIgeT0iNDQiIGZvbnQtZmFtaWx5PSJBcmlhbCxzYW5zLXNlcmlmIiBmb250LXNpemU9IjEzIiBmb250LXdlaWdodD0iNjAwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjNTU1NTU1Ij5NYXJrZXQ8L3RleHQ+Cjwvc3ZnPg==", alt: "NEXUS Market", style: { height: "64px", width: "auto", objectFit: "contain", display: "block" }, "aria-hidden": "true" })), /* @__PURE__ */ React.createElement("nav", { className: "header-nav", "aria-label": "Navigation principale" }, currentUser2 ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "user-info" }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", "aria-hidden": "true" }, currentUser2.avatar), /* @__PURE__ */ React.createElement("span", { className: "user-name", style: { fontWeight: 600, fontSize: "0.92rem" } }, currentUser2.name), /* @__PURE__ */ React.createElement("span", { className: "badge badge-primary", style: { fontSize: "0.72rem" } }, currentUser2.role === "admin" ? "Admin" : currentUser2.role === "vendor" ? "Vendeur" : currentUser2.role === "buyer_pro" ? "Pro B2B" : "Client")), /* @__PURE__ */ React.createElement(NotificationBell, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement(
           // [FIX] MessagingBadge est défini dans script 4 (MessagingCenter).
           // window.MessagingBadge est résolu au moment du render React (pas au parse),
           // ce qui garantit que le composant est disponible. Fallback null-safe.
@@ -17913,6 +17957,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     setCart(newCart);
     storage.set("guest_cart", newCart);
     addToast(`${product.name} ajout\xE9 au panier`, "success");
+    // [Phase 2] GA4 e-commerce tracking
+    try { window.nexusAnalytics?.trackAddToCart(product, quantity); } catch(_) {}
   };
   const updateQty = (id, qty) => {
     if (qty <= 0) {
@@ -18140,7 +18186,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             const disc = [10,15,20,25,30,35,40][i % 7];
             const oldP = Math.round(p.price * (100 / (100 - disc)));
             const sold = Math.floor(40 + Math.random() * 50);
-            return React.createElement('div', { key: p.id, className: 'flash-card', onClick: () => setSelectedProduct(p) },
+            return React.createElement('div', { key: p.id, className: 'flash-card', onClick: () => { try { window.nexusAnalytics&&window.nexusAnalytics.trackViewItem(p); } catch(_){} setSelectedProduct(p); } },
               React.createElement('div', { className: 'flash-card-img' },
                 React.createElement(ProductImg, { product: p, height: 140 })
               ),
@@ -18309,7 +18355,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
               React.createElement('div', { className: 'product-grid', role: 'list' },
                 currentItems.map(product => React.createElement('article', {
                   key: product.id, className: 'product-card', role: 'listitem',
-                  onClick: () => setSelectedProduct(product), tabIndex: 0,
+                  onClick: () => { try { window.nexusAnalytics&&window.nexusAnalytics.trackViewItem(product); } catch(_){} setSelectedProduct(product); }, tabIndex: 0,
                   onKeyDown: e => e.key === 'Enter' && setSelectedProduct(product)
                 },
                   React.createElement('div', { style: { position: 'relative' } },
@@ -18512,7 +18558,13 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                   React.createElement('span', { style: { color: 'var(--primary)' } }, formatPrice(cartTotalEur))
                 )
               ),
-              React.createElement('button', { className: 'btn btn-primary btn-block btn-lg', style: { marginTop: '1rem' }, onClick: () => { setShowCart(false); setShowCheckout(true); } },
+              React.createElement('button', { className: 'btn btn-primary btn-block btn-lg', style: { marginTop: '1rem' }, onClick: () => {
+                setShowCart(false); setShowCheckout(true);
+                try {
+                  const total = cart.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
+                  window.nexusAnalytics?.trackBeginCheckout(cart, total);
+                } catch(_) {}
+              } },
                 React.createElement('i', { className: 'fas fa-lock' }), ' Passer commande'
               )
             )
@@ -19136,6 +19188,8 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setCart(newCart);
     DataService.saveCart(currentUser2.id, newCart);
     addToast(`${product.name} ajout\xE9 !`, "success");
+    // [Phase 2] GA4 e-commerce tracking
+    try { window.nexusAnalytics?.trackAddToCart(product, 1); } catch(_) {}
   };
   const updateQty = (id, qty) => {
     if (qty <= 0) {
@@ -19152,9 +19206,12 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     DataService.saveCart(currentUser2.id, newCart);
   };
   const removeFromCart = (id) => {
+    const removed = cart.find((i) => i.id === id);
     const newCart = cart.filter((i) => i.id !== id);
     setCart(newCart);
     DataService.saveCart(currentUser2.id, newCart);
+    // [Phase 2] GA4 e-commerce tracking
+    if (removed) { try { window.nexusAnalytics?.trackRemoveFromCart(removed, removed.quantity || 1); } catch(_) {} }
   };
   const handleCheckoutSuccess = (orderTotal) => {
     setShowCheckout(false);
@@ -19259,7 +19316,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   ), /* @__PURE__ */ React.createElement("div", { className: "filters", role: "group", "aria-label": "Filtrer par cat\xE9gorie" }, categories.map((cat) => /* @__PURE__ */ React.createElement("button", { key: cat, className: `filter-tag ${filterCategory === cat ? "active" : ""}`, onClick: () => setFilterCategory(cat), "aria-pressed": filterCategory === cat }, cat === "all" ? "Tous" : cat))), currentItems.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-search", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun r\xE9sultat"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => {
     setSearchTerm("");
     setFilterCategory("all");
-  } }, "Voir tout")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "product-grid", role: "list", "aria-label": "Produits disponibles" }, currentItems.map((product) => /* @__PURE__ */ React.createElement("article", { key: product.id, className: "product-card", role: "listitem", onClick: () => setSelectedProduct(product), tabIndex: 0, onKeyDown: (e) => e.key === "Enter" && setSelectedProduct(product), "aria-label": `${product.name}, ${formatPrice(product.price)}` }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
+  } }, "Voir tout")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "product-grid", role: "list", "aria-label": "Produits disponibles" }, currentItems.map((product) => /* @__PURE__ */ React.createElement("article", { key: product.id, className: "product-card", role: "listitem", onClick: () => { try { window.nexusAnalytics&&window.nexusAnalytics.trackViewItem(product); } catch(_){} setSelectedProduct(product); }, tabIndex: 0, onKeyDown: (e) => e.key === "Enter" && setSelectedProduct(product), "aria-label": `${product.name}, ${formatPrice(product.price)}` }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(product);
   }, role: "button", tabIndex: 0, "aria-label": wishlist.includes(product.id) ? "Retirer des favoris" : "Ajouter aux favoris" }, /* @__PURE__ */ React.createElement("i", { className: `fa${wishlist.includes(product.id) ? "s" : "r"} fa-heart`, "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, product.category), /* @__PURE__ */ React.createElement("h3", { className: "product-name" }, product.name), /* @__PURE__ */ React.createElement("div", { className: "product-vendor" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store", "aria-hidden": "true" }), " ", product.vendorName), /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: product.rating }), /* @__PURE__ */ React.createElement("span", { className: "text-muted", style: { fontSize: "0.82rem" } }, "(", product.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("div", { className: "product-footer" }, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement(PriceDisplay, { product, currentUser: currentUser2 }), product.stock <= 5 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, "\u26A0\uFE0F ", product.stock, " restants")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, product.stock === 0
@@ -19274,7 +19331,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setOfferProduct(product);
       setShowOfferModal(true);
     }, "aria-label": "Faire une offre" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd" }))
-  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: setCurrentPage, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager")), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => setSelectedProduct(product) }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
+  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: setCurrentPage, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager")), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => { try { window.nexusAnalytics&&window.nexusAnalytics.trackViewItem(product); } catch(_){} setSelectedProduct(product); } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(product);
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart" }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, product.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, product.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product, currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: (e) => {
@@ -19348,6 +19405,11 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       onCheckout: () => {
         setShowCart(false);
         setShowCheckout(true);
+        // [Phase 2] GA4 e-commerce tracking
+        try {
+          const total = cart.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
+          window.nexusAnalytics?.trackBeginCheckout(cart, total);
+        } catch(_) {}
       },
       onClose: () => setShowCart(false),
       currentUser: currentUser2,
@@ -21488,8 +21550,68 @@ window.nexusAnalytics = {
       });
     }
   },
-  trackAddToCart(product) {
+  trackAddToCart(product, quantity = 1) {
     trackEvent('ecommerce', 'add_to_cart', product.name, product.price);
+    // GA4 e-commerce enrichi (Phase 2)
+    if (typeof window.gtag === 'function') {
+      window.gtag('event', 'add_to_cart', {
+        currency: 'XOF',
+        value: Number(product.price) * Number(quantity || 1),
+        items: [{
+          item_id: String(product.id || ''),
+          item_name: String(product.name || ''),
+          item_category: String(product.category || ''),
+          price: Number(product.price) || 0,
+          quantity: Number(quantity) || 1
+        }]
+      });
+    }
+  },
+  trackRemoveFromCart(product, quantity = 1) {
+    trackEvent('ecommerce', 'remove_from_cart', product.name, product.price);
+    if (typeof window.gtag === 'function') {
+      window.gtag('event', 'remove_from_cart', {
+        currency: 'XOF',
+        value: Number(product.price) * Number(quantity || 1),
+        items: [{
+          item_id: String(product.id || ''),
+          item_name: String(product.name || ''),
+          price: Number(product.price) || 0,
+          quantity: Number(quantity) || 1
+        }]
+      });
+    }
+  },
+  trackViewItem(product) {
+    if (!product) return;
+    trackEvent('ecommerce', 'view_item', product.name, product.price);
+    if (typeof window.gtag === 'function') {
+      window.gtag('event', 'view_item', {
+        currency: 'XOF',
+        value: Number(product.price) || 0,
+        items: [{
+          item_id: String(product.id || ''),
+          item_name: String(product.name || ''),
+          item_category: String(product.category || ''),
+          price: Number(product.price) || 0
+        }]
+      });
+    }
+  },
+  trackBeginCheckout(items, total) {
+    trackEvent('ecommerce', 'begin_checkout', '', total);
+    if (typeof window.gtag === 'function') {
+      window.gtag('event', 'begin_checkout', {
+        currency: 'XOF',
+        value: Number(total) || 0,
+        items: (items || []).map(i => ({
+          item_id: String(i.id || ''),
+          item_name: String(i.name || ''),
+          price: Number(i.price) || 0,
+          quantity: Number(i.quantity) || 1
+        }))
+      });
+    }
   },
   trackSearch(query, resultsCount) {
     trackEvent('engagement', 'search', query, resultsCount);
@@ -22054,6 +22176,12 @@ const NexusPollingService = (() => {
 
   const _doPoll = async () => {
     if (_subs.size === 0) return;
+    // [Phase 2] Skip polling tant que le backend n'est pas prêt — évite 100% des erreurs
+    //          et la charge inutile sur Supabase quand /api/* est indisponible.
+    if (window.__nexusBackendReady === false) {
+      _schedule();
+      return;
+    }
     // Sort by priority (lower = first)
     const sorted = [..._subs.entries()].sort((a, b) => (a[1].priority || 0) - (b[1].priority || 0));
     let hadError = false;
@@ -22078,6 +22206,11 @@ const NexusPollingService = (() => {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) { clearTimeout(_timer); _doPoll(); } // Poll immédiat au retour
     else _schedule();
+  });
+
+  // [Phase 2] Réveil immédiat quand le backend redevient disponible
+  document.addEventListener('nexus:backend-ready', () => {
+    if (_subs.size > 0) { clearTimeout(_timer); _doPoll(); }
   });
 
   return {
