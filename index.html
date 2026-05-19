@@ -4203,25 +4203,16 @@ async signOut() {
 
   // ── LOYALTY POINTS ────────────────────────────────────────────────
   async getLoyaltyPoints(userId) {
-    // [LOYALTY v2] Source de vérité : Netlify Function → Supabase direct → cache
-    try {
-      const session = this._sb ? (await this._sb.auth.getSession()).data?.session : null;
-      if (session?.access_token) {
-        const res = await fetch("/loyalty", {
-          headers: { Authorization: "Bearer " + session.access_token }
-        });
-        if (res.ok) {
-          const json = await res.json();
-          // Mettre à jour le cache local avec les vraies données
-          return json;  // retourne l'objet complet { points, tier, history, ... }
-        }
-      }
-    } catch (_) {}
+    // [LOYALTY v3] La route /loyalty (Netlify legacy) n'existe pas — Supabase direct.
     // Fallback : Supabase direct
     if (this._sb) {
-      const { data } = await this._sb.from("loyalty_points")
-        .select("points, total_earned, total_redeemed")
-        .eq("user_id", userId).maybeSingle().catch(() => ({ data: null }));
+      let data = null;
+      try {
+        const r = await this._sb.from("loyalty_points")
+          .select("points, total_earned, total_redeemed")
+          .eq("user_id", userId).maybeSingle();
+        data = r.data;
+      } catch (_) {}
       if (data) {
         const pts = data.points || 0;
         return { points: pts, totalEarned: data.total_earned || 0, totalRedeemed: data.total_redeemed || 0,
@@ -4234,38 +4225,63 @@ async signOut() {
       tier: { name: "Bronze", icon: "🥉", color: "#CD7F32", progress: 0, nextTier: "1 000 pts pour Argent 🥈", perks: ["1 pt par euro dépensé"] }, history: [] };
   },
   async addLoyaltyPoints(userId, deltaOrAmount, { reason = "order", orderId, note, isEuros = false } = {}) {
-    // [LOYALTY v2] Créditer via Netlify Function (atomique, source de vérité Supabase)
-    try {
-      const session = this._sb ? (await this._sb.auth.getSession()).data?.session : null;
-      if (session?.access_token) {
-        const body = isEuros
-          ? { amountEur: deltaOrAmount, reason, orderId, note }
-          : { delta: deltaOrAmount, reason, orderId, note };
-        const res = await fetch("/loyalty", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
-          body: JSON.stringify(body),
-        });
-        if (res.ok) {
-          const json = await res.json();
-          // Mettre à jour le cache local
-          return json;
-        }
-      }
-    } catch (_) {}
-    // Fallback : Supabase direct (RPC atomique)
+    // [LOYALTY v3] La route /loyalty (Netlify legacy) n'existe pas sur Cloudflare.
+    // On va directement chercher Supabase RPC, puis fallback table directe.
+    const delta = isEuros ? Math.floor(deltaOrAmount * 10) : deltaOrAmount;
+
+    // Tentative 1 : RPC atomique add_loyalty_points (si elle existe en DB)
     if (this._sb) {
-      const { data } = await this._sb.rpc("add_loyalty_points", {
-        p_user_id:  userId,
-        p_delta:    isEuros ? Math.floor(deltaOrAmount * 10) : deltaOrAmount,
-        p_reason:   reason,
-        p_order_id: orderId || null,
-        p_note:     note    || null,
-      }).catch(() => ({ data: null }));
-      if (data) return data;
+      try {
+        const { data } = await this._sb.rpc("add_loyalty_points", {
+          p_user_id:  userId,
+          p_delta:    delta,
+          p_reason:   reason,
+          p_order_id: orderId || null,
+          p_note:     note    || null,
+        });
+        if (data) return data;
+      } catch (_) { /* RPC absente, on continue */ }
+
+      // Tentative 2 : upsert direct dans loyalty_points + insert loyalty_history
+      try {
+        // Lire les points actuels
+        const { data: existing } = await this._sb.from("loyalty_points")
+          .select("points,total_earned")
+          .eq("user_id", userId)
+          .maybeSingle();
+        const prevPoints  = existing?.points || 0;
+        const prevEarned  = existing?.total_earned || 0;
+        const newPoints   = prevPoints + delta;
+        const newEarned   = delta > 0 ? prevEarned + delta : prevEarned;
+
+        // Upsert (insert ou update)
+        await this._sb.from("loyalty_points").upsert({
+          user_id: userId,
+          points: newPoints,
+          total_earned: newEarned,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "user_id" });
+
+        // Historique (best effort)
+        try {
+          await this._sb.from("loyalty_history").insert({
+            user_id: userId,
+            delta,
+            reason,
+            order_id: orderId || null,
+            note: note || null,
+            created_at: new Date().toISOString(),
+          });
+        } catch (_) {}
+
+        return { points: newPoints, pointsAdded: delta, totalEarned: newEarned };
+      } catch (e) {
+        console.warn("[addLoyaltyPoints] Erreur Supabase:", e.message);
+      }
     }
-    // Pas de fallback localStorage — si Netlify Function et Supabase sont indisponibles, retourner null
-    console.error("[addLoyaltyPoints] Toutes les sources indisponibles — points non crédités");
+
+    // Pas de Supabase : aucun stockage possible
+    console.warn("[addLoyaltyPoints] Supabase indisponible — points non crédités");
     return null;
   },
 
@@ -4414,10 +4430,14 @@ async signOut() {
     }
     // Fallback Supabase direct (sans ID local non-UUID)
     if (this._sb) {
-      const { data: sbData } = await this._sb.from("flash_sales").insert({
-        product_id: sale.productId, discount: sale.discount,
-        ends_at: sale.endsAt, active: sale.active !== false
-      }).select("id").single().catch(() => ({ data: null }));
+      let sbData = null;
+      try {
+        const r = await this._sb.from("flash_sales").insert({
+          product_id: sale.productId, discount: sale.discount,
+          ends_at: sale.endsAt, active: sale.active !== false
+        }).select("id").single();
+        sbData = r.data;
+      } catch (_) {}
       if (sbData?.id) sale = { ...sale, id: sbData.id };
     }
     const all = storage.getArray("flash_sales");
@@ -8816,17 +8836,8 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       else storage.set("guest_cart", []);
       // ── [FIX] Déduire les points via backend (vérification solde serveur) ─
       if (currentUser2 && pointsUsed > 0) {
-        // [LOYALTY v2] Déduire les points via Netlify Function (atomique, sans condition apiUrl)
-        const session7 = DataService._sb ? (await DataService._sb.auth.getSession()).data?.session : null;
-        if (session7?.access_token) {
-          await fetch("/loyalty", {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json", Authorization: "Bearer " + session7.access_token },
-            body: JSON.stringify({ points: loyaltyToRedeem || pointsUsed, orderId: createdOrders[0]?.id }),
-          }).catch(() => {});
-        } else {
-          await DataService.addLoyaltyPoints(currentUser2.id, -(loyaltyToRedeem || pointsUsed), { reason: "redeem" }).catch(() => {});
-        }
+        // [LOYALTY v3] Déduire les points via Supabase (route /loyalty Netlify n'existe pas)
+        await DataService.addLoyaltyPoints(currentUser2.id, -(loyaltyToRedeem || pointsUsed), { reason: "redeem", orderId: createdOrders[0]?.id }).catch(() => {});
       } // end if pointsUsed > 0
 
       // ── [AMBASSADOR v2] Commissions + remise filleul — 100% Supabase sans backend ────
@@ -8850,20 +8861,26 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
               const mainOrderId   = createdOrders[0]?.id || null;
 
               // Mettre à jour l'entrée ambassador_referrals
-              await DataService._sb.from("ambassador_referrals")
-                .update({
-                  order_id:     mainOrderId,
-                  order_amount: orderTotalXof,
-                  commission:   commissionXof,
-                  status:       "paid",
-                })
-                .eq("ambassador_id",    ambId)
-                .eq("referred_user_id", currentUser2.id)
-                .eq("status",           "pending").catch(() => {});
+              try {
+                await DataService._sb.from("ambassador_referrals")
+                  .update({
+                    order_id:     mainOrderId,
+                    order_amount: orderTotalXof,
+                    commission:   commissionXof,
+                    status:       "paid",
+                  })
+                  .eq("ambassador_id",    ambId)
+                  .eq("referred_user_id", currentUser2.id)
+                  .eq("status",           "pending");
+              } catch (_) {}
 
               // Mettre à jour les totaux de l'ambassadeur
-              const { data: ambCurrent } = await DataService._sb
-                .from("ambassadors").select("total_sales,total_earned,level").eq("id", ambId).single().catch(() => ({ data: null }));
+              let ambCurrent = null;
+              try {
+                const r = await DataService._sb
+                  .from("ambassadors").select("total_sales,total_earned,level").eq("id", ambId).single();
+                ambCurrent = r.data;
+              } catch (_) {}
               if (ambCurrent) {
                 const newSales  = (ambCurrent.total_sales  || 0) + orderTotalXof;
                 const newEarned = (ambCurrent.total_earned || 0) + commissionXof;
@@ -8872,9 +8889,11 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
                                 : newEarned >= 200000 ? "gold"
                                 : newEarned >= 50000  ? "silver"
                                 : "bronze";
-                await DataService._sb.from("ambassadors")
-                  .update({ total_sales: newSales, total_earned: newEarned, level: newLevel })
-                  .eq("id", ambId).catch(() => {});
+                try {
+                  await DataService._sb.from("ambassadors")
+                    .update({ total_sales: newSales, total_earned: newEarned, level: newLevel })
+                    .eq("id", ambId);
+                } catch (_) {}
                 // Notification de montée de niveau si changement
                 if (newLevel !== ambCurrent.level) {
                   const LEVEL_LABEL = { bronze:"🥉 Bronze", silver:"🥈 Argent", gold:"🥇 Or", platinum:"💎 Platine" };
@@ -21084,7 +21103,10 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast }) => {
                 React.createElement("i",{className:"fas fa-check"})," Accepter"
               ),
               React.createElement("button",{className:"btn btn-secondary btn-sm",onClick:async()=>{
-                const vProfile = offer.vendor_id ? (await DataService._sb?.from("profiles").select("whatsapp_number,whatsapp_prefix,phone").eq("id",offer.vendor_id).single().catch(()=>({data:null})))?.data : null;
+                let vProfile = null;
+                if (offer.vendor_id && DataService._sb) {
+                  try { const r = await DataService._sb.from("profiles").select("whatsapp_number,whatsapp_prefix,phone").eq("id", offer.vendor_id).single(); vProfile = r.data; } catch (_) {}
+                }
                 const wn = vProfile?.whatsapp_number || vProfile?.phone || "";
                 const prefix = vProfile?.whatsapp_prefix || "+221";
                 const fullNum = wn ? (prefix + wn.replace(/\D/g,"")).replace(/^\+221221/,"+221") : "";
