@@ -6407,7 +6407,16 @@ const DisputeModal = ({ order, currentUser: currentUser2, onClose, addToast }) =
       onClose();
     }, 700);
   };
-  const existingDispute = (storage.getArray("disputes")).find((d) => d.orderId === order.id);
+  const [existingDispute, setExistingDispute] = useState((storage.getArray("disputes")).find((d) => d.orderId === order.id) || null);
+  useEffect(() => {
+    DataService.getDisputes({ orderId: order.id }).then(data => {
+      if (Array.isArray(data)) {
+        const found = data.find(d => d.orderId === order.id || d.order_id === order.id);
+        if (found) setExistingDispute(found);
+      }
+    }).catch(() => {});
+  }, [order.id]);
+  const _existingDispute = existingDispute;
   return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel text-danger" }), " Ouvrir un litige"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), existingDispute ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Un litige est d\xE9j\xE0 ouvert pour cette commande (#", existingDispute.id, ").")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "10px", padding: "1rem", marginTop: "1rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 600 } }, "Statut"), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${existingDispute.status === "resolved" ? "success" : existingDispute.status === "closed" ? "info" : "warning"}` }, existingDispute.status === "open" ? "En cours" : existingDispute.status === "resolved" ? "R\xE9solu" : "Ferm\xE9")), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", null, "Motif :"), " ", existingDispute.reasonLabel), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.5rem", color: "var(--text-secondary)" } }, "Pour toute communication : ", /* @__PURE__ */ React.createElement("strong", null, "litiges@nexus.sn"))), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-block mt-2", onClick: onClose }, "Fermer")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.85rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt" }), /* @__PURE__ */ React.createElement("span", null, "Programme de Protection Acheteur NEXUS Market. Un m\xE9diateur examinera votre demande sous ", /* @__PURE__ */ React.createElement("strong", null, "24h ouvr\xE9es"), ". Le montant peut \xEAtre bloqu\xE9 pendant l\\'enqu\xEAte.")), /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: "10px", padding: "0.75rem 1rem", marginBottom: "1.25rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("strong", null, "Commande #", order.id), " \u2014 ", order.vendorName, " \u2014 ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(order.total))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Motif du litige ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.4rem" } }, REASONS.map((r) => /* @__PURE__ */ React.createElement("label", { key: r.v, style: { display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.6rem 0.85rem", borderRadius: "8px", border: `2px solid ${reason === r.v ? "var(--primary)" : "var(--border)"}`, cursor: "pointer", background: reason === r.v ? "rgba(0,133,62,0.05)" : "white", transition: "all 0.15s" } }, /* @__PURE__ */ React.createElement("input", { type: "radio", name: "dispute-reason", value: r.v, checked: reason === r.v, onChange: () => setReason(r.v), style: { accentColor: "var(--primary)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.88rem", fontWeight: reason === r.v ? 600 : 400 } }, r.l))))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Description d\xE9taill\xE9e ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("textarea", { className: "form-textarea", rows: "4", value: description, onChange: (e) => setDescription(e.target.value), placeholder: "D\xE9crivez pr\xE9cis\xE9ment le probl\xE8me (min 20 caract\xE8res). Indiquez les dates, tentatives de contact avec le vendeur, etc.", style: { resize: "vertical" } }), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right", fontSize: "0.75rem", color: description.length < 20 ? "var(--danger)" : "var(--success)" } }, description.length, "/20 min")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: onClose }, "Annuler"), /* @__PURE__ */ React.createElement("button", { className: `btn btn-danger flex-1 ${loading ? "btn-loading" : ""}`, onClick: handleSubmit, disabled: loading || !reason || description.length < 20 }, loading ? "" : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Ouvrir le litige"))))));
 };
 const POINTS_RATE = 10;
@@ -7273,6 +7282,10 @@ const PlatformHealth = () => {
       if (results[2].status === 'fulfilled') { const d = results[2].value; setProducts(Array.isArray(d) ? d : (d.products || [])); }
       if (results[3].status === 'fulfilled') { const d = results[3].value; setReviews(Array.isArray(d) ? d : (d.reviews || [])); }
       if (results[4].status === 'fulfilled') { const d = results[4].value; setDisputes(Array.isArray(d) ? d : (d.disputes || [])); }
+      // Recharger les litiges depuis Supabase (filtré par acheteur)
+      DataService.getDisputes({ buyerId: currentUser2.id }).then(data => {
+        if (Array.isArray(data) && data.length > 0) setDisputes(data);
+      }).catch(() => {});
       if (results[5].status === 'fulfilled') { const d = results[5].value; setReturns(Array.isArray(d) ? d : (d.returns || [])); }
       if (results[6].status === 'fulfilled') { const d = results[6].value; setOffers(Array.isArray(d) ? d : (d.offers || [])); }
       if (results[7].status === 'fulfilled') { const d = results[7].value; setAlerts(Array.isArray(d) ? d : (d.alerts || [])); }
@@ -13395,7 +13408,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const [_adminReturns, _setAdminReturns] = React.useState(storage.getArray("return_requests"));
   React.useEffect(() => {
     DataService.getReturnRequests && DataService.getReturnRequests().then(data => {
-      if (data) _setAdminReturns(data);
+      if (Array.isArray(data) && data.length > 0) { _setAdminReturns(data); storage.set("return_requests", data); }
     }).catch(() => {});
   }, []);
   const [_allUsersArr, _setAllUsersArr] = React.useState([]);
@@ -13403,6 +13416,11 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     DataService.getUsers().then(map => { if (map) _setAllUsersArr(Object.values(map)); }).catch(() => {});
   }, []);
   const [_payoutReqs, _setPayoutReqs] = React.useState(storage.getArray("payout_requests"));
+  React.useEffect(() => {
+    DataService.getPayouts().then(data => {
+      if (Array.isArray(data) && data.length > 0) _setPayoutReqs(data);
+    }).catch(() => {});
+  }, []);
   React.useEffect(() => {
     DataService.apiFetch && DataService.apiFetch("/api/admin/payouts").then(async res => {
       if (res && res.ok) {
@@ -13463,6 +13481,12 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   const [ordersPage, setOrdersPage] = useState(1);
   const ITEMS_PER_PAGE = 8;
   // États des vues admin (hooks hissés pour respecter les règles React)
+  const [_adminCoupons, _setAdminCoupons] = React.useState(storage.get("nexus_coupons") || []);
+  React.useEffect(() => {
+    DataService.apiFetch("/api/coupons").then(r => r && r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d) && d.length > 0) { _setAdminCoupons(d); storage.set("nexus_coupons", d); } })
+      .catch(() => {});
+  }, []);
   const [adminNewCoupon, setAdminNewCoupon] = React.useState({ code: "", discount: 10, discountType: "percent", description: "", maxUses: "", expiresAt: "", minCartFcfa: "", categoryRestriction: "", singleUsePerCustomer: false });
   const [adminFlashForm, setAdminFlashForm] = React.useState({ productId: "", discount: 20, hours: 24 });
   const [adminSelectedTpl, setAdminSelectedTpl] = React.useState(null);
@@ -13555,8 +13579,21 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     _loadDataTimer.current = setTimeout(_loadDataImmediate, 80);
   };
   const _loadDataImmediate = async () => {
+    // Produits depuis Supabase en priorité
     const productsData = storage.getArray("products");
     setProducts(productsData);
+    DataService.getProducts && DataService.getProducts({}).then(data => {
+      const fetched = Array.isArray(data) ? data : (data && data.products ? data.products : null);
+      if (fetched && fetched.length > 0) { setProducts(fetched); storage.set("products", fetched); }
+    }).catch(() => {});
+    // Litiges depuis Supabase
+    DataService.getDisputes({}).then(data => {
+      if (Array.isArray(data) && data.length > 0) storage.set("disputes", data);
+    }).catch(() => {});
+    // Retours depuis Supabase
+    DataService.getReturnRequests && DataService.getReturnRequests().then(data => {
+      if (Array.isArray(data) && data.length > 0) storage.set("return_requests", data);
+    }).catch(() => {});
     // Charger les commandes depuis Supabase/API en priorité (pas uniquement localStorage)
     let ordersData = storage.getArray("orders");
     setOrders(ordersData); // affichage immédiat depuis cache
@@ -13658,7 +13695,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       pendingVendors: pendingData.length,
       openDisputes:   apiStats.openDisputes   ?? (storage.getArray("disputes")).filter(d => d.status === "open").length,
       pendingReturns: apiStats.pendingReturns ?? (storage.getArray("return_requests")).filter(r => r.status === "pending").length,
-      pendingPayouts: apiStats.pendingPayouts ?? storage.getArray("payout_requests").filter(r => r.status === "pending").length,
+      pendingPayouts: apiStats.pendingPayouts ?? _payoutReqs.filter(r => r.status === "pending").length,
       stockAlerts:    apiStats.stockAlerts    ?? storage.getArray("stock_alerts").length,
     });
 
@@ -13950,7 +13987,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "sms",    icon: "sms",      label: "SMS" },
     { id: "emails", icon: "envelope", label: "Emails envoy\xE9s" },
     { id: "payouts", icon: "money-bill-wave", label: "Paiements vendeurs" },
-    { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: stats.pendingPayouts ?? storage.getArray("payout_requests").filter((r) => r.status === "pending").length },
+    { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: stats.pendingPayouts ?? _payoutReqs.filter((r) => r.status === "pending").length },
     { id: "users", icon: "users-cog", label: "Utilisateurs" },
     { id: "b2b", icon: "building", label: "Acheteurs Pro B2B" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
@@ -17234,17 +17271,31 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     loadData();
   }, []);
   const loadData = async () => {
-    const allProducts = storage.getArray("products");
-    const allOrders = storage.getArray("orders");
+    // Affichage immédiat depuis cache localStorage
+    const allProductsCache = storage.getArray("products");
+    const allOrdersCache   = storage.getArray("orders");
+    const allOffersCache   = storage.getArray("offers");
+    setProducts(allProductsCache.filter((p) => p.vendor === currentUser2.id));
+    setOrders(allOrdersCache.filter((o) => o.vendor === currentUser2.id));
+    setOffers(allOffersCache.filter((o) => o.vendorId === currentUser2.id));
+    // Charger depuis Supabase en arrière-plan
+    DataService.getOrders({ vendorId: currentUser2.id, limit: 200 })
+      .then(data => {
+        const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null);
+        if (fetched && fetched.length > 0) { setOrders(fetched); storage.set("orders", fetched); }
+      }).catch(() => {});
+    DataService.getProducts && DataService.getProducts({ vendorId: currentUser2.id })
+      .then(data => {
+        const fetched = Array.isArray(data) ? data : (data && data.products ? data.products : null);
+        if (fetched && fetched.length > 0) { setProducts(fetched); }
+      }).catch(() => {});
+    DataService.getOffers && DataService.getOffers({ vendorId: currentUser2.id })
+      .then(data => {
+        const fetched = Array.isArray(data) ? data : (data && data.offers ? data.offers : null);
+        if (fetched && fetched.length > 0) { setOffers(fetched); storage.set("offers", fetched); }
+      }).catch(() => {});
     const allMessages = await DataService.getMessages(currentUser2.id).catch(() => storage.getArray("messages"));
-    const allOffers = storage.getArray("offers");
-    const myProducts = allProducts.filter((p) => p.vendor === currentUser2.id);
-    const myOrders = allOrders.filter((o) => o.vendor === currentUser2.id);
-    const myOffers = allOffers.filter((o) => o.vendorId === currentUser2.id);
-    setProducts(myProducts);
-    setOrders(myOrders);
     setMessages(allMessages.filter((m) => m.to === currentUser2.id || m.from === currentUser2.id));
-    setOffers(myOffers);
     // [FIX] Récupérer le statut réel du vendeur via apiFetch (gestion token centralisée)
     try {
       const r = await DataService.apiFetch('/api/auth/me').catch(() => null);
@@ -17544,7 +17595,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     })() },
     { id: "invoices", icon: "file-invoice-dollar", label: "Factures & Relevés" },
     { id: "wallet", icon: "wallet", label: "Mes Retraits", badge: (() => {
-      return (storage.getArray("payout_requests")).filter(r => r.vendorId === currentUser2.id && (r.status === "pending" || r.status === "processing")).length;
+      const _pr = storage.getArray("payout_requests");
+    return _pr.filter(r => r.vendorId === currentUser2.id && (r.status === "pending" || r.status === "processing")).length;
     })() },
     { id: "parrainage", icon: "handshake", label: "Parrainage vendeur" },
     { id: "profile", icon: "store", label: "Ma Boutique" }
