@@ -2656,7 +2656,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' }).catch(e => console.warn('[saveCart Supabase]', e.message));
+      Promise.resolve(this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' })).catch(e => console.warn('[saveCart Supabase]', e.message));
     }
   },
   async clearCart(userId) {
@@ -2666,7 +2666,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' }).catch(() => {});
+      Promise.resolve(this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' })).catch(() => {});
     }
   },
   async migrateLocalCart(userId) {
@@ -4339,8 +4339,8 @@ async signOut() {
       return;
     }
     if (this._sb) {
-      await this._sb.from("stock_alerts")
-        .upsert({ user_id: userId, product_id: productId, notified: false }).catch(() => {});
+      await Promise.resolve(this._sb.from("stock_alerts")
+        .upsert({ user_id: userId, product_id: productId, notified: false })).catch(() => {});
     }
   },
   async removeStockAlert(userId, productId) {
@@ -4353,8 +4353,8 @@ async signOut() {
       return;
     }
     if (this._sb) {
-      await this._sb.from("stock_alerts")
-        .delete().eq("user_id", userId).eq("product_id", productId).catch(() => {});
+      await Promise.resolve(this._sb.from("stock_alerts")
+        .delete().eq("user_id", userId).eq("product_id", productId)).catch(() => {});
     }
   },
 
@@ -4418,7 +4418,7 @@ async signOut() {
       return;
     }
     if (this._sb) {
-      await this._sb.from("flash_sales").update({ active: false }).eq("id", id).catch(() => {});
+      await Promise.resolve(this._sb.from("flash_sales").update({ active: false }).eq("id", id)).catch(() => {});
     }
   },
 
@@ -4557,7 +4557,7 @@ async signOut() {
         product_id: qa.productId, user_id: qa.userId, user_name: qa.userName,
         vendor_id: qa.vendorId || null, question: qa.question, answer: qa.answer || null
       };
-      const { data } = await this._sb.from("product_qa").insert(row).select("id").single().catch(() => ({ data: null }));
+      const { data } = await Promise.resolve(this._sb.from("product_qa").insert(row).select("id").single()).catch(() => ({ data: null }));
       if (data?.id) qa = { ...qa, id: data.id };
     } else {
       console.error("[saveQuestion] Ni API ni Supabase disponible — question non sauvegardée");
@@ -4719,7 +4719,7 @@ async signOut() {
   async addCashback(userId, orderId, amountXof, type = "earn", desc = "") {
     const tx = { id: crypto.randomUUID(), user_id: userId, order_id: orderId, amount_xof: amountXof, type, description: desc, created_at: new Date().toISOString() };
     if (this._sb) {
-      await this._sb.from("cashback_transactions").insert(tx).catch(() => {});
+      await Promise.resolve(this._sb.from("cashback_transactions").insert(tx)).catch(() => {});
     }
     const all = storage.getArray("cashback_transactions");
     storage.set("cashback_transactions", [...all, tx]);
@@ -9246,7 +9246,7 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       // Supabase — mettre à jour le rôle dans profiles
       if (DataService._sb) {
         const updatedUser = { ...user, role, status: role === 'vendor' ? 'pending' : 'active' };
-        await DataService._sb.from('profiles').update({ role, status: updatedUser.status }).eq('id', updatedUser.id).catch(() => {});
+        await Promise.resolve(DataService._sb.from('profiles').update({ role, status: updatedUser.status }).eq('id', updatedUser.id)).catch(() => {});
         if (token) DataService.saveSession(token, expiresIn);
         onDone(updatedUser);
         return;
@@ -10534,7 +10534,7 @@ async function _registerVendorReferral(referrerCode, newVendor) {
 
   // Sync Supabase si disponible
   if (DataService._sb) {
-    DataService._sb.from('vendor_referrals').insert(ref).catch(() => {});
+    Promise.resolve(DataService._sb.from('vendor_referrals').insert(ref)).catch(() => {});
   }
   return true;
 }
@@ -10552,7 +10552,7 @@ async function _activateVendorReferralBonus(vendorId) {
 
   // Notifier le parrain
   if (DataService._sb) {
-    DataService._sb.from('vendor_referrals').update({ status: 'paid', bonus_fcfa: 5000, paid_at: ref.paidAt }).eq('id', ref.id).catch(() => {});
+    Promise.resolve(DataService._sb.from('vendor_referrals').update({ status: 'paid', bonus_fcfa: 5000, paid_at: ref.paidAt }).eq('id', ref.id)).catch(() => {});
   }
   DataService.addNotification(ref.referrerId, {
     type:    'system',
@@ -14121,7 +14121,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           if (res && res.ok) { loadData(); addToast(approve ? "Produit approuv\xE9 \u2705" : "Produit refus\xE9 \u274C", approve ? "success" : "info"); return; }
         } catch (e) { console.warn("[moderateProduct]", e); }
       }
-      if (DataService._sb) { await DataService._sb.from("products").update({ moderated: approve, active: approve }).eq("id", pid).catch(() => {}); }
+      if (DataService._sb) { await Promise.resolve(DataService._sb.from("products").update({ moderated: approve, active: approve }).eq("id", pid)).catch(() => {}); }
       const _all = storage.getArray("products"); const _idx = _all.findIndex((p) => p.id === pid);
       if (_idx >= 0) { _all[_idx].moderated = approve; _all[_idx].active = approve; storage.set("products", _all); }
       loadData(); addToast(approve ? "Produit approuv\xE9 \u2705" : "Produit refus\xE9 \u274C", approve ? "success" : "info");
@@ -17445,7 +17445,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     const all = storage.getArray("products");
     all.push(localProduct);
     storage.set("products", all);
-    if (DataService._sb) DataService._sb.from("products").insert(localProduct).catch(() => {});
+    if (DataService._sb) Promise.resolve(DataService._sb.from("products").insert(localProduct)).catch(() => {});
     setShowAddProduct(false);
     setNewProduct({ name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true });
     loadData();
