@@ -13883,40 +13883,49 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     addToast(`Demande de ${vendor?.name || "ce vendeur"} refusée.`, "info");
   };
   const updateOrderStatus = async (orderId, newStatus) => {
-    // [FIX A] PATCH /api/orders/:id/status — localStorage seul ne notifie pas l'acheteur
+    // [FIX] PATCH /api/orders/:id/status avec fallback Supabase direct sur 502/503/504
     let apiOk = false;
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
           method: "PATCH", body: JSON.stringify({ status: newStatus }),
         });
-        // [Phase 3 FIX] Vérifier que la réponse est bien du JSON (pas du HTML SPA)
         const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
         if (res && res.ok && ct.includes("application/json")) {
           apiOk = true;
         } else if (res && !res.ok) {
-          const e = await res.json().catch(() => ({}));
-          addToast(e?.error || "Erreur statut.", "danger");
-          return;
+          // 502/503/504 = backend down → on laisse le fallback Supabase prendre le relais
+          if ([502, 503, 504].includes(res.status)) {
+            console.warn(`[updateOrderStatus] Backend ${res.status} — fallback Supabase`);
+          } else {
+            // 4xx = vraie erreur applicative → afficher l'erreur
+            const e = await res.json().catch(() => ({}));
+            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+            return;
+          }
         }
       } catch (e) { console.warn("[updateOrderStatus admin]", e); }
     }
-    // Fallback Supabase si API indisponible ou renvoie du HTML
+    // Fallback Supabase si API indisponible (502/503/timeout/CORS)
     if (!apiOk) {
       if (DataService._sb) {
-        const upd = { status: newStatus };
+        const upd = { status: newStatus, updated_at: new Date().toISOString() };
         if (newStatus === "delivered") upd.paid_at = new Date().toISOString();
         if (newStatus === "cancelled") upd.canceled_at = new Date().toISOString();
         const { error } = await DataService._sb.from("orders").update(upd).eq("id", orderId);
         if (error) { addToast("Erreur Supabase : " + error.message, "danger"); return; }
+        addToast(`Statut mis à jour → ${newStatus} (via Supabase)`, "success");
       } else {
         const allOrders = storage.getArray("orders");
         const idx = allOrders.findIndex((o) => o.id === orderId);
         if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
+        addToast(`Statut mis à jour localement`, "info");
       }
     }
 
     try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
+    // Mise à jour de l'état React local immédiatement (sans re-fetch)
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus, updated_at: new Date().toISOString() } : o));
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
     // Déclenchement unique sur "delivered". Idempotent : vérifie en DB qu'aucun
     // crédit "earn" n'existe déjà pour cette commande avant de créditer.
@@ -17433,7 +17442,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     addToast("Produit ajout\xE9 (hors-ligne) !", "success");
   };
   const updateOrderStatus = async (orderId, newStatus) => {
-    // [FIX B] PATCH /api/orders/:id/status — localStorage seul ne notifie pas l'acheteur
+    // [FIX] PATCH /api/orders/:id/status avec fallback Supabase direct sur 502/503/504
     let apiOk = false;
     if (NEXUS_CONFIG.apiUrl) {
       try {
@@ -17444,9 +17453,13 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         if (res && res.ok && ct.includes("application/json")) {
           apiOk = true;
         } else if (res && !res.ok) {
-          const e = await res.json().catch(() => ({}));
-          addToast(e?.error || "Erreur statut.", "danger");
-          return;
+          if ([502, 503, 504].includes(res.status)) {
+            console.warn(`[updateOrderStatus vendor] Backend ${res.status} — fallback Supabase`);
+          } else {
+            const e = await res.json().catch(() => ({}));
+            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+            return;
+          }
         }
       } catch (e) { console.warn("[updateOrderStatus vendor]", e); }
     }
@@ -17454,16 +17467,21 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
         if (newStatus === "delivered") upd.paid_at = new Date().toISOString();
+        if (newStatus === "cancelled") upd.canceled_at = new Date().toISOString();
         const { error } = await DataService._sb.from("orders").update(upd).eq("id", orderId);
         if (error) { addToast("Erreur Supabase : " + error.message, "danger"); return; }
+        addToast(`Statut mis à jour → ${newStatus} (via Supabase)`, "success");
       } else {
         const allOrders = storage.getArray("orders");
         const idx = allOrders.findIndex((o) => o.id === orderId);
         if (idx !== -1) { allOrders[idx].status = newStatus; storage.set("orders", allOrders); }
+        addToast(`Statut mis à jour localement`, "info");
       }
     }
 
     try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
+    // Mise à jour de l'état React local immédiatement (sans re-fetch)
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus, updated_at: new Date().toISOString() } : o));
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
     // Identique au flux admin. Idempotent via vérification cashback_transactions.
     if (newStatus === "delivered") {
