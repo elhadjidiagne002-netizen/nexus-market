@@ -3486,11 +3486,10 @@ async signOut() {
       if (res && res.ok) {
         const ct = res.headers.get('content-type') || '';
         if (!ct.includes('application/json') && !ct.includes('text/plain')) {
-          if (!window.__nexusHtmlApiWarned) {
-            console.warn('[NEXUS] /api/* retourne du HTML — backend API absent sur ce domaine. Basculement Supabase.');
-            window.__nexusHtmlApiWarned = true;
-            NEXUS_CONFIG.apiUrl = '';
-          }
+          // [Phase 3 FIX] Route inexistante → Cloudflare sert index.html (200, text/html).
+          // On retourne null pour que le fallback Supabase prenne le relai.
+          // IMPORTANT: on ne vide PAS NEXUS_CONFIG.apiUrl car d'autres routes
+          // (PayTech, payout, orders/status, etc.) FONCTIONNENT bel et bien.
           return null;
         }
       }
@@ -13730,7 +13729,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     });
     setSalesData(last7Days.map((date) => ({
       date:   date.slice(5),
-      ventes: ordersData.filter((o) => o.date.startsWith(date)).reduce((sum, o) => sum + o.total, 0).toFixed(0)
+      ventes: ordersData.filter((o) => (o.date || o.created_at || "").startsWith(date)).reduce((sum, o) => sum + (o.total || 0), 0).toFixed(0)
     })));
   };
   const approveVendor = async (vendorId) => {
@@ -13783,14 +13782,19 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH", body: JSON.stringify({ approved: true }),
         });
-        if (!resp || !resp.ok) {
+        if (resp && resp.ok) {
+          // API a répondu avec succès, on continue
+        } else if (resp && !resp.ok) {
           const err = await resp?.json().catch(() => ({}));
           if (resp?.status === 404) { addToast("Vendeur introuvable. Rafraîchissez.", "warning"); loadData(); return; }
           addToast(err?.error || "Erreur approbation.", "danger"); return;
         }
-      } catch (e) { addToast("Erreur réseau.", "danger"); return; }
+        // resp === null → route inexistante, on tombe dans le fallback Supabase ci-dessous
+      } catch (e) { /* fallback Supabase */ }
+    }
 
-    } else if (DataService._sb) {
+    // ── 2. Supabase RPC SECURITY DEFINER (fallback ou mode direct) ──────
+    if (DataService._sb) {
       // ── 2. Supabase RPC SECURITY DEFINER (contourne le RLS) ──────────────
       // La clé anon ne peut PAS écrire dans profiles directement (RLS).
       // La fonction approve_vendor tourne avec les droits du propriétaire DB
@@ -13842,18 +13846,18 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
           method: "PATCH", body: JSON.stringify({ approved: false }),
         });
-        if (!resp || !resp.ok) {
+        if (resp && resp.ok) {
+          // OK
+        } else if (resp && !resp.ok) {
           if (resp?.status === 404) { setPendingVendors(prev => prev.filter(v => v.id !== vendorId)); loadData(); addToast("Demande déjà traitée.", "info"); return; }
           const err = await resp?.json().catch(() => ({}));
           addToast(err?.error || "Erreur refus.", "danger"); return;
         }
-      } catch (e) {
-        console.warn("[rejectVendor]", e);
-        addToast("Erreur réseau lors du refus.", "danger");
-        return;
-      }
+      } catch (e) { console.warn("[rejectVendor]", e); }
+    }
 
-    } else if (DataService._sb) {
+    // ── 2. Supabase RPC SECURITY DEFINER (fallback ou mode direct) ──────
+    if (DataService._sb) {
       // ── 2. Supabase RPC SECURITY DEFINER (contourne le RLS) ──────────────
       const { error } = await DataService._sb.rpc('approve_vendor', {
         vendor_id: vendorId,
@@ -13880,14 +13884,25 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   };
   const updateOrderStatus = async (orderId, newStatus) => {
     // [FIX A] PATCH /api/orders/:id/status — localStorage seul ne notifie pas l'acheteur
+    let apiOk = false;
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
           method: "PATCH", body: JSON.stringify({ status: newStatus }),
         });
-        if (!res || !res.ok) { const e = await res?.json().catch(() => ({})); addToast(e?.error || "Erreur statut.", "danger"); return; }
-      } catch (e) { console.warn("[updateOrderStatus admin]", e); addToast("Erreur réseau.", "danger"); return; }
-    } else {
+        // [Phase 3 FIX] Vérifier que la réponse est bien du JSON (pas du HTML SPA)
+        const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
+        if (res && res.ok && ct.includes("application/json")) {
+          apiOk = true;
+        } else if (res && !res.ok) {
+          const e = await res.json().catch(() => ({}));
+          addToast(e?.error || "Erreur statut.", "danger");
+          return;
+        }
+      } catch (e) { console.warn("[updateOrderStatus admin]", e); }
+    }
+    // Fallback Supabase si API indisponible ou renvoie du HTML
+    if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus };
         if (newStatus === "delivered") upd.paid_at = new Date().toISOString();
@@ -15008,16 +15023,20 @@ CREATE POLICY "Service role only" ON invoice_sequences
     const allUsersArr = _allUsersArr; const setAllUsersArr = _setAllUsersArr; // [FIX #310]
     const buyers = allUsersArr.filter((u) => u.role === "buyer");
     const handleBan = async (uid, ban) => {
-      // Backend en priorité
+      // Backend en priorité, puis fallback Supabase
+      let apiDone = false;
       if (NEXUS_CONFIG.apiUrl) {
         try {
           const res = await DataService.apiFetch(`/api/admin/users/${uid}/ban`, {
             method: "PATCH",
             body: JSON.stringify({ banned: ban }),
           });
-          if (!res || !res.ok) { addToast("Erreur lors de l'action. Réessayez.", "danger"); return; }
-        } catch (e) { console.warn("[handleBan]", e); addToast("Erreur réseau.", "danger"); return; }
-      } else if (DataService._sb) {
+          if (res && res.ok) { apiDone = true; }
+          else if (res && !res.ok) { addToast("Erreur lors de l'action. Réessayez.", "danger"); return; }
+          // res === null → route inexistante, on tombe dans le fallback ci-dessous
+        } catch (e) { console.warn("[handleBan]", e); }
+      }
+      if (!apiDone && DataService._sb) {
         // Supabase — mettre à jour le profil directement
         const { error } = await DataService._sb.from('profiles').update({ status: ban ? "banned" : "active" }).eq('id', uid);
         if (error) { addToast("Erreur Supabase : " + error.message, "danger"); return; }
@@ -17335,7 +17354,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     });
     setSalesData(last7.map((date) => ({
       date: date.slice(5),
-      ventes: orders.filter((o) => o.date.startsWith(date)).reduce((sum, o) => sum + o.total, 0)
+      ventes: orders.filter((o) => (o.date || o.created_at || "").startsWith(date)).reduce((sum, o) => sum + (o.total || 0), 0)
     })));
   };
   const validateProduct = () => {
@@ -17415,14 +17434,23 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   };
   const updateOrderStatus = async (orderId, newStatus) => {
     // [FIX B] PATCH /api/orders/:id/status — localStorage seul ne notifie pas l'acheteur
+    let apiOk = false;
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
           method: "PATCH", body: JSON.stringify({ status: newStatus }),
         });
-        if (!res || !res.ok) { const e = await res?.json().catch(() => ({})); addToast(e?.error || "Erreur statut.", "danger"); return; }
-      } catch (e) { console.warn("[updateOrderStatus vendor]", e); addToast("Erreur réseau.", "danger"); return; }
-    } else {
+        const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
+        if (res && res.ok && ct.includes("application/json")) {
+          apiOk = true;
+        } else if (res && !res.ok) {
+          const e = await res.json().catch(() => ({}));
+          addToast(e?.error || "Erreur statut.", "danger");
+          return;
+        }
+      } catch (e) { console.warn("[updateOrderStatus vendor]", e); }
+    }
+    if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
         if (newStatus === "delivered") upd.paid_at = new Date().toISOString();
@@ -19831,7 +19859,8 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
         _cancelRes = await DataService.apiFetch(`/api/orders/${order.id}/cancel`, {
           method: "POST", body: JSON.stringify({ reason }),
         });
-      } else if (DataService._sb) {
+      }
+      if (!_cancelRes && DataService._sb) {
         const { data: _eo } = await DataService._sb.from("orders").select("status").eq("id", order.id).single();
         if (_eo && ["delivered","in_transit"].includes(_eo.status)) {
           addToast("Annulation impossible : commande déjà expédiée.", "error"); setLoading(false); return;
