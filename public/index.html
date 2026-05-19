@@ -6750,14 +6750,26 @@ Champs requis : name (string, en français), category (exactement l'une de : Él
     if (!url.trim() || !/^https?:\/\//i.test(url.trim())) { addToast("URL invalide — doit commencer par https://", "error"); return; }
     setPhase("loading"); setData(null);
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: SYS, tools: [{ type: "web_search_20250305", name: "web_search" }], messages: [{ role: "user", content: "Analyse cette page produit et extrait toutes les données :\n" + url.trim() }] }) });
-      if (!res.ok) throw new Error("API " + res.status);
-      const d = await res.json();
-      let txt = (d.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
-      if (txt.startsWith("```")) txt = txt.replace(/^```[a-z]*\n?/, "").replace(/\n?```$/, "");
-      let parsed; try { parsed = JSON.parse(txt); } catch(e) { const m = txt.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); else throw new Error("Réponse non-JSON"); }
+      // [Phase 3] Appel via le proxy serveur /api/ai/extract (Groq)
+      // Plus de CORS, plus de clé API dans le navigateur
+      const _token = (typeof DataService !== "undefined" && DataService._token)
+        || sessionStorage.getItem("nexus_jwt")
+        || localStorage.getItem("nexus_jwt");
+      const _apiBase = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
+      const res = await fetch(_apiBase + "/api/ai/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (_token || "") },
+        body: JSON.stringify({ url: url.trim() })
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || "API " + res.status);
+      }
+      const result = await res.json();
+      if (!result.ok || !result.data) throw new Error("Réponse invalide du serveur");
+      const parsed = result.data;
       setData(parsed);
-      setForm({ name: parsed.name || "", category: parsed.category || "", price: parsed.price_eur ? parsed.price_eur.toFixed(2) : "", originalPrice: parsed.original_price_eur ? parsed.original_price_eur.toFixed(2) : "", stock: parsed.stock != null ? String(parsed.stock) : "0", description: parsed.description || "", imageUrl: parsed.image_url || "", vendorName: parsed.vendor_name || parsed.brand || "" });
+      setForm({ name: parsed.name || "", category: parsed.category || "", price: parsed.price_eur ? parseFloat(parsed.price_eur).toFixed(2) : "", originalPrice: parsed.original_price_eur ? parseFloat(parsed.original_price_eur).toFixed(2) : "", stock: parsed.stock != null ? String(parsed.stock) : "0", description: parsed.description || "", imageUrl: parsed.image_url || "", vendorName: parsed.vendor_name || parsed.brand || "" });
       setPhase("done");
     } catch(err) { setPhase("error"); addToast("Extraction échouée : " + err.message, "error"); }
   };
@@ -6795,7 +6807,7 @@ Champs requis : name (string, en français), category (exactement l'une de : Él
         phase === "loading" && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "2rem" } },
           /* @__PURE__ */ React.createElement("div", { style: { fontSize: "2.5rem", marginBottom: "0.75rem" } }, "\uD83D\uDD0D"),
           /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, marginBottom: "0.25rem" } }, "Analyse de la page en cours\u2026"),
-          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.85rem", color: "var(--text-secondary)" } }, "Claude navigue sur la page et extrait les donn\xE9es produit")
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.85rem", color: "var(--text-secondary)" } }, "L\u2019IA analyse la page et extrait les donn\xE9es produit")
         ),
         phase === "error" && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), " Extraction \xE9chou\xE9e. V\xE9rifiez l\u2019URL ou r\xE9essayez."),
         phase === "done" && data && /* @__PURE__ */ React.createElement(React.Fragment, null,
@@ -11885,7 +11897,19 @@ async function _downloadPdfFromBackend(url, filename) {
     });
     clearTimeout(tid);
     if (!resp.ok) return false;
+    // [Phase 3 FIX] Vérifier que la réponse est bien un PDF et pas le HTML du SPA.
+    // Cloudflare Pages sert index.html (200, text/html) pour toute route /api/* non gérée.
+    // Sans ce check, on téléchargeait le HTML comme fichier .pdf → impossible à ouvrir.
+    const ct = (resp.headers.get('Content-Type') || '').toLowerCase();
+    if (!ct.includes('application/pdf') && !ct.includes('application/octet-stream')) {
+      console.warn('[PDF] Backend n\'a pas renvoyé un PDF (Content-Type:', ct, ') → fallback jsPDF');
+      return false;
+    }
     const blob = await resp.blob();
+    if (blob.size < 500) { // Un vrai PDF fait au minimum ~500 octets
+      console.warn('[PDF] Réponse trop petite pour être un PDF valide (' + blob.size + ' bytes) → fallback jsPDF');
+      return false;
+    }
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
@@ -17311,7 +17335,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     });
     setSalesData(last7.map((date) => ({
       date: date.slice(5),
-      ventes: myOrders.filter((o) => o.date.startsWith(date)).reduce((sum, o) => sum + o.total, 0)
+      ventes: orders.filter((o) => o.date.startsWith(date)).reduce((sum, o) => sum + o.total, 0)
     })));
   };
   const validateProduct = () => {
