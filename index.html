@@ -3510,8 +3510,6 @@ async signOut() {
         console.warn('[NEXUS] Réseau/CORS:', err.message, '— fallback');
         return null;
       }
-      // [Phase 2] Toute autre erreur est inattendue : on la capture pour le debug
-      try { window.Sentry?.captureException?.(err, { context: { path, method: options.method || 'GET' } }); } catch(_) {}
       throw err;
     }
   },
@@ -4991,62 +4989,9 @@ const EmailService = {
     }
   },
   async send({ to, subject, templateId, variables, ejsTemplateId }) {
-    // [Phase 2] Rate limiting anti-spam : 1 email / 30s par destinataire, 10 emails / heure global
-    //           (la clé publique EmailJS étant nécessairement visible côté client,
-    //            on ne peut empêcher un dev avancé de bypass, mais on protège contre
-    //            les clics répétés et les boucles JS accidentelles).
-    try {
-      if (!this._rl) this._rl = { perTo: new Map(), allHour: [] };
-      const now = Date.now();
-      // Nettoie l'historique de l'heure passée
-      this._rl.allHour = this._rl.allHour.filter(t => now - t < 3600000);
-      if (this._rl.allHour.length >= 10) {
-        console.warn("[EmailService] Rate limit global atteint (10/h) — destinataire:", to);
-        return false;
-      }
-      const lastForTo = this._rl.perTo.get(to) || 0;
-      if (now - lastForTo < 30000) {
-        console.warn("[EmailService] Rate limit destinataire (1/30s) — patientez avant de renvoyer à", to);
-        return false;
-      }
-      this._rl.perTo.set(to, now);
-      this._rl.allHour.push(now);
-      // Cleanup pour ne pas grossir indéfiniment
-      if (this._rl.perTo.size > 100) {
-        for (const [k, v] of this._rl.perTo) if (now - v > 3600000) this._rl.perTo.delete(k);
-      }
-    } catch(_) { /* fail-safe : on n'empêche pas l'envoi si la machinerie rate-limit pète */ }
-
     const entry = { id: "email_" + Date.now(), to, subject, templateId, variables, sentAt: (/* @__PURE__ */ new Date()).toISOString() };
     // [FIX] Les logs emails sont persistés côté serveur dans la table server_logs (Supabase).
     // Plus de stockage localStorage — utiliser GET /api/email/logs pour lire les journaux.
-
-    // [Phase 3] Préférer le proxy serveur /api/email/send (ne révèle pas la clé EmailJS).
-    //           Si le backend répond, on ne tombe pas dans la branche EmailJS-direct.
-    const _phase3Token = (typeof DataService !== "undefined" && DataService._token)
-        || sessionStorage.getItem("nexus_jwt")
-        || localStorage.getItem("nexus_jwt");
-    if (window.__nexusBackendReady && NEXUS_CONFIG.apiUrl && _phase3Token) {
-      try {
-        const _apiBase = NEXUS_CONFIG.apiUrl.endsWith("/") ? NEXUS_CONFIG.apiUrl.slice(0,-1) : NEXUS_CONFIG.apiUrl;
-        const resp = await fetch(_apiBase + "/api/email/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + _phase3Token },
-          body: JSON.stringify({
-            to, subject,
-            html: (variables && variables.html_body) || ("<p>" + subject + "</p>")
-          })
-        });
-        if (resp.ok) {
-          const r = await resp.json();
-          if (r.ok) { console.log("[EmailService] \u2705 via /api/email/send \u2192", to); return true; }
-        } else if (resp.status === 429) {
-          console.warn("[EmailService] Rate limit serveur \u2014 patientez avant de renvoyer");
-          return false;
-        }
-        // Si 4xx/5xx \u2192 on continue avec EmailJS direct en fallback
-      } catch (_) { /* backend KO \u2192 fallback */ }
-    }
 
     // [FIX] Stratégie template universel — 1 seul template EmailJS suffit.
     // ejsTemplateId est ignoré : on utilise toujours universalTemplateId.
@@ -9636,16 +9581,6 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
   const SHOP_CATS = ["\xc9lectronique","Informatique","Mode","Maison","Sport","Beaut\xe9","Alimentation","Tissus & Wax","Artisanat","Produits locaux","Autre"];
 
   // ─── Validation per step ─────────────────────────────────
-  // [Phase 2] Validation des identifiants légaux sénégalais
-  //   NINEA : 7 chiffres + (espace optionnel) + 1 chiffre + 1 lettre + 3 chiffres
-  //           Ex : "007123456 2T3" ou "0071234562T3"
-  //   RCCM  : SN-{VILLE 2-4 lettres}-{ANNÉE 4 chiffres}-{TYPE 1 lettre}-{NUMÉRO 1-6 chiffres}
-  //           Ex : "SN-DKR-2024-B-12345"
-  const _NINEA_RE = /^\s*\d{7}\s?\d?[A-Za-z]\d{3}\s*$/;
-  const _RCCM_RE  = /^\s*SN-[A-Za-z]{2,4}-\d{4}-[A-Za-z]-\d{1,6}\s*$/;
-  const validateNinea = (v) => _NINEA_RE.test(v || '');
-  const validateRccm  = (v) => _RCCM_RE.test(v || '');
-
   const validate = () => {
     const e = {};
     if (role === "buyer") {
@@ -9663,11 +9598,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
       }
       if (step === 2) {
         if (!form.company.trim()) e.company = "Nom de la soci\xe9t\xe9 requis";
-        if (!form.ninea_buyer.trim())       e.ninea_buyer = "NINEA requis";
-        else if (!validateNinea(form.ninea_buyer)) e.ninea_buyer = "Format NINEA invalide (ex: 0071234562T3)";
-        if (form.rc_buyer && form.rc_buyer.trim() && !validateRccm(form.rc_buyer)) {
-          e.rc_buyer = "Format RCCM invalide (ex: SN-DKR-2024-B-12345)";
-        }
+        if (!form.ninea_buyer.trim()) e.ninea_buyer = "NINEA requis";
         if (!form.address_buyer.trim()) e.address_buyer = "Adresse requise";
       }
       if (step === 3) {
@@ -9691,9 +9622,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
       }
       if (step === 3) {
         if (!form.ninea.trim()) e.ninea = "NINEA requis";
-        else if (!validateNinea(form.ninea)) e.ninea = "Format NINEA invalide (ex: 0071234562T3)";
         if (!form.rc.trim()) e.rc = "N\xb0 RC requis";
-        else if (!validateRccm(form.rc)) e.rc = "Format RCCM invalide (ex: SN-DKR-2024-B-12345)";
         if (!form.address.trim()) e.address = "Adresse requise";
       }
       if (step === 4) {
@@ -13626,10 +13555,21 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     _loadDataTimer.current = setTimeout(_loadDataImmediate, 80);
   };
   const _loadDataImmediate = async () => {
-    const ordersData   = storage.getArray("orders");
     const productsData = storage.getArray("products");
-    setOrders(ordersData);
     setProducts(productsData);
+    // Charger les commandes depuis Supabase/API en priorité (pas uniquement localStorage)
+    let ordersData = storage.getArray("orders");
+    setOrders(ordersData); // affichage immédiat depuis cache
+    DataService.getOrders({ role: "admin", limit: 500 })
+      .then(data => {
+        const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null);
+        if (fetched && fetched.length > 0) {
+          setOrders(fetched);
+          // Merge dans localStorage pour les prochains chargements
+          storage.set("orders", fetched);
+        }
+      })
+      .catch(() => {});
     // Charger les vendeurs depuis Supabase/backend (pas localStorage)
     DataService.getUsers().then(map => {
       if (map) setVendors(Object.values(map).filter(u => u.role === "vendor"));
@@ -14039,7 +13979,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
             ? /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "monospace", fontSize: "0.78rem", color: "var(--primary)", fontWeight: 600 } }, order.invoiceNumber)
             : /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.72rem", color: "var(--text-secondary)" } }, "—")
         ), /* @__PURE__ */ React.createElement("td", { "data-label": "Commande" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, order.id.slice(0,12))), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, order.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, order.vendorName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(order.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Commission", style: { color: "var(--success)" } }, formatPrice(order.commission || 0)), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${((_a = STATUS_MAP[order.status]) == null ? void 0 : _a.badge) || "warning"}` }, ((_b = STATUS_MAP[order.status]) == null ? void 0 : _b.label) || order.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(order.date).toLocaleDateString("fr-FR")));
-  })))))), view === "vendors" && /* @__PURE__ */ React.createElement(React.Fragment, null,/* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-plug" }),/* @__PURE__ */ React.createElement("span", null,/* @__PURE__ */ React.createElement("strong", null, "Source : "),NEXUS_CONFIG.apiUrl ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--success)" } }, "\u2713 API Render") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--warning)" } }, "\u26A0 Pas d'apiUrl"),DataService._sb ? " + Supabase direct (fallback actif)" : " — Supabase non initialisé"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { marginLeft: "auto" }, onClick: () => { storage.remove("pendingVendors_mem"); loadData(); addToast("Liste rafraîchie", "info"); } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir")),pendingVendors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" },/* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs en Attente"),/* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", "aria-label": `${pendingVendors.length} en attente` }, pendingVendors.length)),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"),/* @__PURE__ */ React.createElement("th", null, "Email"),/* @__PURE__ */ React.createElement("th", null, "Catégorie"),/* @__PURE__ */ React.createElement("th", null, "NINEA / RC"),/* @__PURE__ */ React.createElement("th", null, "Téléphone"),/* @__PURE__ */ React.createElement("th", null, "Date"),/* @__PURE__ */ React.createElement("th", null, "Actions"))),/* @__PURE__ */ React.createElement("tbody", null, pendingVendors.map((vendor) =>/* @__PURE__ */ React.createElement("tr", { key: vendor.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, vendor.name), /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, vendor.ownerName)),/* @__PURE__ */ React.createElement("td", null, vendor.email),/* @__PURE__ */ React.createElement("td", null, vendor.category || "—"),/* @__PURE__ */ React.createElement("td", { style: { fontFamily: "monospace", fontSize: "0.8rem" } }, vendor.ninea ? `${vendor.ninea}${vendor.rc ? " / " + vendor.rc : ""}` : "—"),/* @__PURE__ */ React.createElement("td", null, vendor.phone || "—"),/* @__PURE__ */ React.createElement("td", null, (() => { try { return new Date(vendor.date).toLocaleDateString("fr-FR"); } catch(_) { return vendor.date || "—"; } })()),/* @__PURE__ */ React.createElement("td", null,/* @__PURE__ */ React.createElement("div", { className: "flex gap-1" },/* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => approveVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => rejectVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser"))))))))),pendingVendors.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-success mb-2", style: { fontSize: "0.85rem" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" })," Aucune demande en attente. Si vous attendez une inscription, cliquez Rafraîchir."),/* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs Actifs (", vendors.length, ")"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: async () => { if (NEXUS_CONFIG.apiUrl) { try { const _rv = await DataService.apiFetch("/api/admin/export/vendors"); if (_rv && _rv.ok) { const _tv = await _rv.text(); const _av = document.createElement("a"); _av.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_tv); _av.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _av.click(); return; } } catch(_ev) {} } const _rows = [["ID","Boutique","Email","Note","CA FCFA"].join(",")]; vendors.forEach(v => _rows.push([v.id,`"${v.name||""}"`,v.email||"",v.rating||0,Math.round((v.totalSales||0)*EUR_TO_FCFA)].join(","))); const _aav = document.createElement("a"); _aav.href = "data:text/csv;charset=utf-8,\\uFEFF" + encodeURIComponent(_rows.join("\\n")); _aav.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _aav.click(); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Export CSV")),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"), /* @__PURE__ */ React.createElement("th", null, "Email"), /* @__PURE__ */ React.createElement("th", null, "Ventes"), /* @__PURE__ */ React.createElement("th", null, "Commission"), /* @__PURE__ */ React.createElement("th", null, "Note"), /* @__PURE__ */ React.createElement("th", null, "Statut"))),/* @__PURE__ */ React.createElement("tbody", null, vendors.map((v) =>/* @__PURE__ */ React.createElement("tr", { key: v.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { width: "30px", height: "30px", fontSize: "0.75rem" } }, v.avatar), /* @__PURE__ */ React.createElement("strong", null, v.name))),/* @__PURE__ */ React.createElement("td", null, v.email),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, formatPrice(v.totalSales || 0))),/* @__PURE__ */ React.createElement("td", null, v.commission, "%"),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "stars" }, "★"), " ", v.rating),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, "Actif"))))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Toutes les Commandes (", orders.length, ")"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", title: "Exporter toutes les commandes en CSV", onClick: async () => {
+  })))))), view === "vendors" && /* @__PURE__ */ React.createElement(React.Fragment, null,/* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-plug" }),/* @__PURE__ */ React.createElement("span", null,/* @__PURE__ */ React.createElement("strong", null, "Source : "),NEXUS_CONFIG.apiUrl ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--success)" } }, "\u2713 API Render") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--warning)" } }, "\u26A0 Pas d'apiUrl"),DataService._sb ? " + Supabase direct (fallback actif)" : " — Supabase non initialisé"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { marginLeft: "auto" }, onClick: () => { storage.remove("pendingVendors_mem"); loadData(); addToast("Liste rafraîchie", "info"); } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir")),pendingVendors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" },/* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs en Attente"),/* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", "aria-label": `${pendingVendors.length} en attente` }, pendingVendors.length)),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"),/* @__PURE__ */ React.createElement("th", null, "Email"),/* @__PURE__ */ React.createElement("th", null, "Catégorie"),/* @__PURE__ */ React.createElement("th", null, "NINEA / RC"),/* @__PURE__ */ React.createElement("th", null, "Téléphone"),/* @__PURE__ */ React.createElement("th", null, "Date"),/* @__PURE__ */ React.createElement("th", null, "Actions"))),/* @__PURE__ */ React.createElement("tbody", null, pendingVendors.map((vendor) =>/* @__PURE__ */ React.createElement("tr", { key: vendor.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, vendor.name), /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, vendor.ownerName)),/* @__PURE__ */ React.createElement("td", null, vendor.email),/* @__PURE__ */ React.createElement("td", null, vendor.category || "—"),/* @__PURE__ */ React.createElement("td", { style: { fontFamily: "monospace", fontSize: "0.8rem" } }, vendor.ninea ? `${vendor.ninea}${vendor.rc ? " / " + vendor.rc : ""}` : "—"),/* @__PURE__ */ React.createElement("td", null, vendor.phone || "—"),/* @__PURE__ */ React.createElement("td", null, (() => { try { return new Date(vendor.date).toLocaleDateString("fr-FR"); } catch(_) { return vendor.date || "—"; } })()),/* @__PURE__ */ React.createElement("td", null,/* @__PURE__ */ React.createElement("div", { className: "flex gap-1" },/* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => approveVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => rejectVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser"))))))))),pendingVendors.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-success mb-2", style: { fontSize: "0.85rem" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" })," Aucune demande en attente. Si vous attendez une inscription, cliquez Rafraîchir."),/* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs Actifs (", vendors.length, ")"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: async () => { if (NEXUS_CONFIG.apiUrl) { try { const _rv = await DataService.apiFetch("/api/admin/export/vendors"); if (_rv && _rv.ok) { const _tv = await _rv.text(); const _av = document.createElement("a"); _av.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_tv); _av.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _av.click(); return; } } catch(_ev) {} } const _rows = [["ID","Boutique","Email","Note","CA FCFA"].join(",")]; vendors.forEach(v => _rows.push([v.id,`"${v.name||""}"`,v.email||"",v.rating||0,Math.round((v.totalSales||0)*EUR_TO_FCFA)].join(","))); const _aav = document.createElement("a"); _aav.href = "data:text/csv;charset=utf-8,\\uFEFF" + encodeURIComponent(_rows.join("\\n")); _aav.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _aav.click(); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Export CSV")),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"), /* @__PURE__ */ React.createElement("th", null, "Email"), /* @__PURE__ */ React.createElement("th", null, "Ventes"), /* @__PURE__ */ React.createElement("th", null, "Commission"), /* @__PURE__ */ React.createElement("th", null, "Note"), /* @__PURE__ */ React.createElement("th", null, "Statut"))),/* @__PURE__ */ React.createElement("tbody", null, vendors.map((v) =>/* @__PURE__ */ React.createElement("tr", { key: v.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { width: "30px", height: "30px", fontSize: "0.75rem" } }, v.avatar), /* @__PURE__ */ React.createElement("strong", null, v.name))),/* @__PURE__ */ React.createElement("td", null, v.email),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, formatPrice(v.totalSales || 0))),/* @__PURE__ */ React.createElement("td", null, v.commission, "%"),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "stars" }, "★"), " ", v.rating),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, "Actif"))))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Toutes les Commandes (", orders.length, ")"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => { DataService.getOrders({ role: "admin", limit: 500 }).then(data => { const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null); if (fetched) { setOrders(fetched); addToast(`${fetched.length} commandes chargées`, "success"); } else { addToast("Aucune commande trouvée", "warning"); } }).catch(e => addToast("Erreur chargement : " + e.message, "error")); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", title: "Exporter toutes les commandes en CSV", onClick: async () => {
   if (NEXUS_CONFIG.apiUrl) { try { const _r = await DataService.apiFetch("/api/admin/export/orders"); if (_r && _r.ok) { const _t = await _r.text(); const _a = document.createElement("a"); _a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_t); _a.download = `nexus_commandes_${new Date().toISOString().slice(0,10)}.csv`; _a.click(); return; } } catch(_e) {} }
   const BOM = "\uFEFF";
   const rows = [["ID","Date","Acheteur","Email Acheteur","Vendeur","Produits","Total EUR","Total FCFA","Commission FCFA","Statut","Adresse","Tracking"].join(",")];
@@ -17984,8 +17924,6 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     setCart(newCart);
     storage.set("guest_cart", newCart);
     addToast(`${product.name} ajout\xE9 au panier`, "success");
-    // [Phase 2] GA4 e-commerce tracking
-    try { window.nexusAnalytics?.trackAddToCart(product, quantity); } catch(_) {}
   };
   const updateQty = (id, qty) => {
     if (qty <= 0) {
@@ -18213,7 +18151,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             const disc = [10,15,20,25,30,35,40][i % 7];
             const oldP = Math.round(p.price * (100 / (100 - disc)));
             const sold = Math.floor(40 + Math.random() * 50);
-            return React.createElement('div', { key: p.id, className: 'flash-card', onClick: () => { try { window.nexusAnalytics&&window.nexusAnalytics.trackViewItem(p); } catch(_){} setSelectedProduct(p); } },
+            return React.createElement('div', { key: p.id, className: 'flash-card', onClick: () => setSelectedProduct(p) },
               React.createElement('div', { className: 'flash-card-img' },
                 React.createElement(ProductImg, { product: p, height: 140 })
               ),
@@ -18382,7 +18320,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
               React.createElement('div', { className: 'product-grid', role: 'list' },
                 currentItems.map(product => React.createElement('article', {
                   key: product.id, className: 'product-card', role: 'listitem',
-                  onClick: () => { try { window.nexusAnalytics&&window.nexusAnalytics.trackViewItem(product); } catch(_){} setSelectedProduct(product); }, tabIndex: 0,
+                  onClick: () => setSelectedProduct(product), tabIndex: 0,
                   onKeyDown: e => e.key === 'Enter' && setSelectedProduct(product)
                 },
                   React.createElement('div', { style: { position: 'relative' } },
@@ -18585,13 +18523,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                   React.createElement('span', { style: { color: 'var(--primary)' } }, formatPrice(cartTotalEur))
                 )
               ),
-              React.createElement('button', { className: 'btn btn-primary btn-block btn-lg', style: { marginTop: '1rem' }, onClick: () => {
-                setShowCart(false); setShowCheckout(true);
-                try {
-                  const total = cart.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
-                  window.nexusAnalytics?.trackBeginCheckout(cart, total);
-                } catch(_) {}
-              } },
+              React.createElement('button', { className: 'btn btn-primary btn-block btn-lg', style: { marginTop: '1rem' }, onClick: () => { setShowCart(false); setShowCheckout(true); } },
                 React.createElement('i', { className: 'fas fa-lock' }), ' Passer commande'
               )
             )
@@ -19215,8 +19147,6 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setCart(newCart);
     DataService.saveCart(currentUser2.id, newCart);
     addToast(`${product.name} ajout\xE9 !`, "success");
-    // [Phase 2] GA4 e-commerce tracking
-    try { window.nexusAnalytics?.trackAddToCart(product, 1); } catch(_) {}
   };
   const updateQty = (id, qty) => {
     if (qty <= 0) {
@@ -19233,12 +19163,9 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     DataService.saveCart(currentUser2.id, newCart);
   };
   const removeFromCart = (id) => {
-    const removed = cart.find((i) => i.id === id);
     const newCart = cart.filter((i) => i.id !== id);
     setCart(newCart);
     DataService.saveCart(currentUser2.id, newCart);
-    // [Phase 2] GA4 e-commerce tracking
-    if (removed) { try { window.nexusAnalytics?.trackRemoveFromCart(removed, removed.quantity || 1); } catch(_) {} }
   };
   const handleCheckoutSuccess = (orderTotal) => {
     setShowCheckout(false);
@@ -19343,7 +19270,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   ), /* @__PURE__ */ React.createElement("div", { className: "filters", role: "group", "aria-label": "Filtrer par cat\xE9gorie" }, categories.map((cat) => /* @__PURE__ */ React.createElement("button", { key: cat, className: `filter-tag ${filterCategory === cat ? "active" : ""}`, onClick: () => setFilterCategory(cat), "aria-pressed": filterCategory === cat }, cat === "all" ? "Tous" : cat))), currentItems.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-search", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun r\xE9sultat"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => {
     setSearchTerm("");
     setFilterCategory("all");
-  } }, "Voir tout")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "product-grid", role: "list", "aria-label": "Produits disponibles" }, currentItems.map((product) => /* @__PURE__ */ React.createElement("article", { key: product.id, className: "product-card", role: "listitem", onClick: () => { try { window.nexusAnalytics&&window.nexusAnalytics.trackViewItem(product); } catch(_){} setSelectedProduct(product); }, tabIndex: 0, onKeyDown: (e) => e.key === "Enter" && setSelectedProduct(product), "aria-label": `${product.name}, ${formatPrice(product.price)}` }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
+  } }, "Voir tout")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "product-grid", role: "list", "aria-label": "Produits disponibles" }, currentItems.map((product) => /* @__PURE__ */ React.createElement("article", { key: product.id, className: "product-card", role: "listitem", onClick: () => setSelectedProduct(product), tabIndex: 0, onKeyDown: (e) => e.key === "Enter" && setSelectedProduct(product), "aria-label": `${product.name}, ${formatPrice(product.price)}` }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(product);
   }, role: "button", tabIndex: 0, "aria-label": wishlist.includes(product.id) ? "Retirer des favoris" : "Ajouter aux favoris" }, /* @__PURE__ */ React.createElement("i", { className: `fa${wishlist.includes(product.id) ? "s" : "r"} fa-heart`, "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, product.category), /* @__PURE__ */ React.createElement("h3", { className: "product-name" }, product.name), /* @__PURE__ */ React.createElement("div", { className: "product-vendor" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store", "aria-hidden": "true" }), " ", product.vendorName), /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: product.rating }), /* @__PURE__ */ React.createElement("span", { className: "text-muted", style: { fontSize: "0.82rem" } }, "(", product.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("div", { className: "product-footer" }, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement(PriceDisplay, { product, currentUser: currentUser2 }), product.stock <= 5 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, "\u26A0\uFE0F ", product.stock, " restants")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, product.stock === 0
@@ -19358,7 +19285,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setOfferProduct(product);
       setShowOfferModal(true);
     }, "aria-label": "Faire une offre" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd" }))
-  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: setCurrentPage, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager")), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => { try { window.nexusAnalytics&&window.nexusAnalytics.trackViewItem(product); } catch(_){} setSelectedProduct(product); } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
+  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: setCurrentPage, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager")), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => setSelectedProduct(product) }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(product);
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart" }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, product.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, product.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product, currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: (e) => {
@@ -19432,11 +19359,6 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       onCheckout: () => {
         setShowCart(false);
         setShowCheckout(true);
-        // [Phase 2] GA4 e-commerce tracking
-        try {
-          const total = cart.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
-          window.nexusAnalytics?.trackBeginCheckout(cart, total);
-        } catch(_) {}
       },
       onClose: () => setShowCart(false),
       currentUser: currentUser2,
@@ -21577,68 +21499,8 @@ window.nexusAnalytics = {
       });
     }
   },
-  trackAddToCart(product, quantity = 1) {
+  trackAddToCart(product) {
     trackEvent('ecommerce', 'add_to_cart', product.name, product.price);
-    // GA4 e-commerce enrichi (Phase 2)
-    if (typeof window.gtag === 'function') {
-      window.gtag('event', 'add_to_cart', {
-        currency: 'XOF',
-        value: Number(product.price) * Number(quantity || 1),
-        items: [{
-          item_id: String(product.id || ''),
-          item_name: String(product.name || ''),
-          item_category: String(product.category || ''),
-          price: Number(product.price) || 0,
-          quantity: Number(quantity) || 1
-        }]
-      });
-    }
-  },
-  trackRemoveFromCart(product, quantity = 1) {
-    trackEvent('ecommerce', 'remove_from_cart', product.name, product.price);
-    if (typeof window.gtag === 'function') {
-      window.gtag('event', 'remove_from_cart', {
-        currency: 'XOF',
-        value: Number(product.price) * Number(quantity || 1),
-        items: [{
-          item_id: String(product.id || ''),
-          item_name: String(product.name || ''),
-          price: Number(product.price) || 0,
-          quantity: Number(quantity) || 1
-        }]
-      });
-    }
-  },
-  trackViewItem(product) {
-    if (!product) return;
-    trackEvent('ecommerce', 'view_item', product.name, product.price);
-    if (typeof window.gtag === 'function') {
-      window.gtag('event', 'view_item', {
-        currency: 'XOF',
-        value: Number(product.price) || 0,
-        items: [{
-          item_id: String(product.id || ''),
-          item_name: String(product.name || ''),
-          item_category: String(product.category || ''),
-          price: Number(product.price) || 0
-        }]
-      });
-    }
-  },
-  trackBeginCheckout(items, total) {
-    trackEvent('ecommerce', 'begin_checkout', '', total);
-    if (typeof window.gtag === 'function') {
-      window.gtag('event', 'begin_checkout', {
-        currency: 'XOF',
-        value: Number(total) || 0,
-        items: (items || []).map(i => ({
-          item_id: String(i.id || ''),
-          item_name: String(i.name || ''),
-          price: Number(i.price) || 0,
-          quantity: Number(i.quantity) || 1
-        }))
-      });
-    }
   },
   trackSearch(query, resultsCount) {
     trackEvent('engagement', 'search', query, resultsCount);
@@ -22203,12 +22065,6 @@ const NexusPollingService = (() => {
 
   const _doPoll = async () => {
     if (_subs.size === 0) return;
-    // [Phase 2] Skip polling tant que le backend n'est pas prêt — évite 100% des erreurs
-    //          et la charge inutile sur Supabase quand /api/* est indisponible.
-    if (window.__nexusBackendReady === false) {
-      _schedule();
-      return;
-    }
     // Sort by priority (lower = first)
     const sorted = [..._subs.entries()].sort((a, b) => (a[1].priority || 0) - (b[1].priority || 0));
     let hadError = false;
@@ -22233,11 +22089,6 @@ const NexusPollingService = (() => {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) { clearTimeout(_timer); _doPoll(); } // Poll immédiat au retour
     else _schedule();
-  });
-
-  // [Phase 2] Réveil immédiat quand le backend redevient disponible
-  document.addEventListener('nexus:backend-ready', () => {
-    if (_subs.size > 0) { clearTimeout(_timer); _doPoll(); }
   });
 
   return {
