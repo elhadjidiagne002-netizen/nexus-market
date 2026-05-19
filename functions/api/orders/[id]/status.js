@@ -11,8 +11,10 @@ export async function onRequestPatch(context) {
   const { request, env, params } = context;
   const orderId = params.id;
 
-  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
-    return json({ error: 'Supabase non configuré (SUPABASE_URL + SUPABASE_ANON_KEY requis)' }, 503);
+  // Accepter SUPABASE_ANON_KEY (préféré) ou SUPABASE_SERVICE_KEY (fallback)
+  const apiKey = env.SUPABASE_ANON_KEY || env.SUPABASE_SERVICE_KEY;
+  if (!env.SUPABASE_URL || !apiKey) {
+    return json({ error: 'Supabase non configuré (SUPABASE_URL + SUPABASE_ANON_KEY ou SERVICE_KEY requis)' }, 503);
   }
 
   const auth = request.headers.get('Authorization');
@@ -46,7 +48,7 @@ export async function onRequestPatch(context) {
       {
         method: 'PATCH',
         headers: {
-          'apikey': env.SUPABASE_ANON_KEY,
+          'apikey': apiKey,
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
           'Prefer': 'return=representation'

@@ -3588,13 +3588,23 @@ async signOut() {
             // Utiliser les métadonnées auth pour ne pas bloquer le login.
             prof = this._buildProfileFromAuthUser(session.user);
 
-            // Marquer comme nouveau si GitHub OAuth (pour GitHubRoleModal)
-            if (session.user.app_metadata?.provider === 'github') {
-              prof.isNewGithubUser = true;
-            }
+            // Marquer comme nouveau si OAuth (pour le modal de choix de rôle)
+            const provider = session.user.app_metadata?.provider;
+            if (provider === 'github') prof.isNewGithubUser = true;
+            if (provider === 'google') prof.isNewGoogleUser = true;
           }
 
           callback(event, prof);
+
+          // [Phase 3 FIX] Nettoyer le hash OAuth après SIGNED_IN pour éviter
+          // que Supabase essaie de re-traiter un token expiré au prochain reload.
+          // Le hash contient #access_token=... après le retour de Google/GitHub.
+          try {
+            if (window.location.hash && window.location.hash.includes('access_token')) {
+              const cleanUrl = window.location.pathname + window.location.search;
+              window.history.replaceState({}, document.title, cleanUrl);
+            }
+          } catch (_) {}
         } else if (event === "SIGNED_OUT" || event === "USER_DELETED") {
           callback(event, null);
           if (!this._voluntarySignOut) {
