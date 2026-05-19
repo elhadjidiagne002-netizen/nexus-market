@@ -2656,8 +2656,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' })
-        .catch(e => console.warn('[saveCart Supabase]', e.message));
+      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' }).catch(e => console.warn('[saveCart Supabase]', e.message));
     }
   },
   async clearCart(userId) {
@@ -4633,7 +4632,7 @@ async signOut() {
 
   async getVendorOffers(requestId, vendorId) {
     if (this._sb) {
-      let q = this._sb.from("vendor_offers").select("*, profiles!vendor_id(name,shop_name,logo,rating,whatsapp_number,whatsapp_prefix,phone)").order("created_at", { ascending: false });
+      let q = this._sb.from("vendor_offers").select("*").order("created_at", { ascending: false });
       if (requestId) q = q.eq("original_offer_id", requestId);
       if (vendorId)  q = q.eq("vendor_id", vendorId);
       const { data } = await q;
@@ -8844,8 +8843,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
                 })
                 .eq("ambassador_id",    ambId)
                 .eq("referred_user_id", currentUser2.id)
-                .eq("status",           "pending")
-                .catch(() => {});
+                .eq("status",           "pending").catch(() => {});
 
               // Mettre à jour les totaux de l'ambassadeur
               const { data: ambCurrent } = await DataService._sb
@@ -8860,8 +8858,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
                                 : "bronze";
                 await DataService._sb.from("ambassadors")
                   .update({ total_sales: newSales, total_earned: newEarned, level: newLevel })
-                  .eq("id", ambId)
-                  .catch(() => {});
+                  .eq("id", ambId).catch(() => {});
                 // Notification de montée de niveau si changement
                 if (newLevel !== ambCurrent.level) {
                   const LEVEL_LABEL = { bronze:"🥉 Bronze", silver:"🥈 Argent", gold:"🥇 Or", platinum:"💎 Platine" };
@@ -9848,8 +9845,7 @@ if (json.token || json.accessToken) {
               // Incrémenter total_referrals du parrain
               await DataService._sb.from("ambassadors")
                 .update({ total_referrals: ambRow.total_referrals + 1 })
-                .eq("id", ambRow.id)
-                .catch(() => {});
+                .eq("id", ambRow.id).catch(() => {});
               // Stocker l'ambassador_id dans sessionStorage pour créditer la commission à la 1ère commande
               sessionStorage.setItem("nexus_referred_by_amb", ambRow.id);
               sessionStorage.setItem("nexus_referred_by_uid", ambRow.user_id);
@@ -13954,9 +13950,9 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         // 1. Récupérer la commande (état local d'abord, Supabase en fallback)
         let fullOrder = orders.find(o => o.id === orderId);
         if (!fullOrder && DataService._sb) {
-          const { data: sbOrder } = await DataService._sb
-            .from("orders").select("*").eq("id", orderId).maybeSingle()
-            .catch(() => ({ data: null }));
+          let sbOrder = null;
+          try { const r = await DataService._sb.from("orders").select("*").eq("id", orderId).maybeSingle(); sbOrder = r.data; } catch (_) {}
+          const { data: _sbOrderData } = { data: sbOrder };
           fullOrder = sbOrder;
         }
 
@@ -13968,13 +13964,14 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           // 2. Idempotence : ne créditer qu'une seule fois par commande livrée
           let alreadyCredited = false;
           if (DataService._sb) {
-            const { count } = await DataService._sb
-              .from("cashback_transactions")
-              .select("id", { count: "exact", head: true })
-              .eq("order_id", orderId)
-              .eq("type", "earn")
-              .catch(() => ({ count: null }));
-            alreadyCredited = (count || 0) > 0;
+            try {
+              const { count } = await DataService._sb
+                .from("cashback_transactions")
+                .select("id", { count: "exact", head: true })
+                .eq("order_id", orderId)
+                .eq("type", "earn");
+              alreadyCredited = (count || 0) > 0;
+            } catch (_) { alreadyCredited = false; }
           } else {
             alreadyCredited = storage.getArray("cashback_transactions")
               .some(t => t.order_id === orderId && t.type === "earn");
@@ -13984,10 +13981,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
             // 3. Taux cashback selon palier fidélité (Bronze 1% → Platinum 5%)
             let cashbackRate = 0.01; // Bronze par défaut
             if (DataService._sb) {
-              const { data: lp } = await DataService._sb
-                .from("loyalty_points").select("points").eq("user_id", buyerId).maybeSingle()
-                .catch(() => ({ data: null }));
-              const pts = lp?.points || 0;
+              let lp = null;
+              try { const r = await DataService._sb.from("loyalty_points").select("points").eq("user_id", buyerId).maybeSingle(); lp = r.data; } catch (_) {}
+              {
+              const pts = lp?.points || 0; }
               if      (pts >= 20000) cashbackRate = 0.05; // Platinum
               else if (pts >=  5000) cashbackRate = 0.03; // Gold
               else if (pts >=  1000) cashbackRate = 0.02; // Silver
@@ -17500,9 +17497,9 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         // 1. Récupérer la commande complète (état local, sinon Supabase)
         let fullOrder = orders.find(o => o.id === orderId);
         if (!fullOrder && DataService._sb) {
-          const { data: sbOrder } = await DataService._sb
-            .from("orders").select("*").eq("id", orderId).maybeSingle()
-            .catch(() => ({ data: null }));
+          let sbOrder = null;
+          try { const r = await DataService._sb.from("orders").select("*").eq("id", orderId).maybeSingle(); sbOrder = r.data; } catch (_) {}
+          const { data: _sbOrderData } = { data: sbOrder };
           fullOrder = sbOrder;
         }
 
@@ -17514,13 +17511,14 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
           // 2. Idempotence : ne pas doubler le crédit si "delivered" est rejoué
           let alreadyCredited = false;
           if (DataService._sb) {
-            const { count } = await DataService._sb
-              .from("cashback_transactions")
-              .select("id", { count: "exact", head: true })
-              .eq("order_id", orderId)
-              .eq("type", "earn")
-              .catch(() => ({ count: null }));
-            alreadyCredited = (count || 0) > 0;
+            try {
+              const { count } = await DataService._sb
+                .from("cashback_transactions")
+                .select("id", { count: "exact", head: true })
+                .eq("order_id", orderId)
+                .eq("type", "earn");
+              alreadyCredited = (count || 0) > 0;
+            } catch (_) { alreadyCredited = false; }
           } else {
             alreadyCredited = storage.getArray("cashback_transactions")
               .some(t => t.order_id === orderId && t.type === "earn");
@@ -17530,9 +17528,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
             // 3. Taux selon palier fidélité (Bronze 1% → Platinum 5%)
             let cashbackRate = 0.01;
             if (DataService._sb) {
-              const { data: lp } = await DataService._sb
-                .from("loyalty_points").select("points").eq("user_id", buyerId).maybeSingle()
-                .catch(() => ({ data: null }));
+              let lp = null;
+              try { const r = await DataService._sb.from("loyalty_points").select("points").eq("user_id", buyerId).maybeSingle(); lp = r.data; } catch (_) {}
               const pts = lp?.points || 0;
               if      (pts >= 20000) cashbackRate = 0.05;
               else if (pts >=  5000) cashbackRate = 0.03;
