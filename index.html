@@ -2656,7 +2656,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      Promise.resolve(this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' })).catch(e => console.warn('[saveCart Supabase]', e.message));
+      this._sb.from('carts').upsert({ user_id: userId, items }, { onConflict: 'user_id' }).catch(e => console.warn('[saveCart Supabase]', e.message));
     }
   },
   async clearCart(userId) {
@@ -2666,7 +2666,7 @@ const DataService = {
       return;
     }
     if (this._sb) {
-      Promise.resolve(this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' })).catch(() => {});
+      this._sb.from('carts').upsert({ user_id: userId, items: [] }, { onConflict: 'user_id' }).catch(() => {});
     }
   },
   async migrateLocalCart(userId) {
@@ -3157,6 +3157,20 @@ const DataService = {
     const { data, error } = await this._sb.auth.signInWithOAuth({
       provider: 'github',
       options: { redirectTo: window.location.origin + window.location.pathname },
+    });
+    if (error) throw error;
+    return data;
+  },
+
+  // ── Connexion Google OAuth via Supabase ────────────────────────────────────
+  async signInWithGoogle() {
+    if (!this._sb) throw new Error("Supabase requis pour la connexion Google");
+    const { data, error } = await this._sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin + window.location.pathname,
+        queryParams: { access_type: 'offline', prompt: 'consent' },
+      },
     });
     if (error) throw error;
     return data;
@@ -4339,8 +4353,8 @@ async signOut() {
       return;
     }
     if (this._sb) {
-      await Promise.resolve(this._sb.from("stock_alerts")
-        .upsert({ user_id: userId, product_id: productId, notified: false })).catch(() => {});
+      await this._sb.from("stock_alerts")
+        .upsert({ user_id: userId, product_id: productId, notified: false }).catch(() => {});
     }
   },
   async removeStockAlert(userId, productId) {
@@ -4353,8 +4367,8 @@ async signOut() {
       return;
     }
     if (this._sb) {
-      await Promise.resolve(this._sb.from("stock_alerts")
-        .delete().eq("user_id", userId).eq("product_id", productId)).catch(() => {});
+      await this._sb.from("stock_alerts")
+        .delete().eq("user_id", userId).eq("product_id", productId).catch(() => {});
     }
   },
 
@@ -4418,7 +4432,7 @@ async signOut() {
       return;
     }
     if (this._sb) {
-      await Promise.resolve(this._sb.from("flash_sales").update({ active: false }).eq("id", id)).catch(() => {});
+      await this._sb.from("flash_sales").update({ active: false }).eq("id", id).catch(() => {});
     }
   },
 
@@ -4557,7 +4571,7 @@ async signOut() {
         product_id: qa.productId, user_id: qa.userId, user_name: qa.userName,
         vendor_id: qa.vendorId || null, question: qa.question, answer: qa.answer || null
       };
-      const { data } = await Promise.resolve(this._sb.from("product_qa").insert(row).select("id").single()).catch(() => ({ data: null }));
+      const { data } = await this._sb.from("product_qa").insert(row).select("id").single().catch(() => ({ data: null }));
       if (data?.id) qa = { ...qa, id: data.id };
     } else {
       console.error("[saveQuestion] Ni API ni Supabase disponible — question non sauvegardée");
@@ -4719,7 +4733,7 @@ async signOut() {
   async addCashback(userId, orderId, amountXof, type = "earn", desc = "") {
     const tx = { id: crypto.randomUUID(), user_id: userId, order_id: orderId, amount_xof: amountXof, type, description: desc, created_at: new Date().toISOString() };
     if (this._sb) {
-      await Promise.resolve(this._sb.from("cashback_transactions").insert(tx)).catch(() => {});
+      await this._sb.from("cashback_transactions").insert(tx).catch(() => {});
     }
     const all = storage.getArray("cashback_transactions");
     storage.set("cashback_transactions", [...all, tx]);
@@ -9246,7 +9260,7 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       // Supabase — mettre à jour le rôle dans profiles
       if (DataService._sb) {
         const updatedUser = { ...user, role, status: role === 'vendor' ? 'pending' : 'active' };
-        await Promise.resolve(DataService._sb.from('profiles').update({ role, status: updatedUser.status }).eq('id', updatedUser.id)).catch(() => {});
+        await DataService._sb.from('profiles').update({ role, status: updatedUser.status }).eq('id', updatedUser.id).catch(() => {});
         if (token) DataService.saveSession(token, expiresIn);
         onDone(updatedUser);
         return;
@@ -9418,6 +9432,66 @@ const GitHubSignInButton = ({ label }) => {
   );
 };
 
+// Bouton "Continuer avec Google" (composant partagé)
+const GoogleSignInButton = ({ label }) => {
+  const { addToast } = useToast();
+  const [loading, setLoading] = React.useState(false);
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    if (isSupabaseConfigured() && DataService._sb) {
+      try {
+        const { error } = await DataService._sb.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin + window.location.pathname,
+            queryParams: { access_type: 'offline', prompt: 'consent' },
+          },
+        });
+        if (error) throw error;
+        return;
+      } catch (e) {
+        console.warn('[Google OAuth] Failed:', e.message);
+        addToast('Erreur connexion Google : ' + (e.message || 'Inconnue'), 'error');
+        setLoading(false);
+        return;
+      }
+    }
+    addToast('Connexion Google non configurée. Activez le provider Google dans Supabase Dashboard.', 'error', 7000);
+    setLoading(false);
+  };
+
+  return React.createElement('button', {
+    type: 'button',
+    onClick: handleGoogleLogin,
+    disabled: loading,
+    style: {
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      gap: '0.6rem', width: '100%', padding: '0.7rem 1rem',
+      border: '1.5px solid #d0d7de', borderRadius: '8px',
+      background: loading ? '#f6f8fa' : '#ffffff',
+      cursor: loading ? 'not-allowed' : 'pointer',
+      fontSize: '0.92rem', fontWeight: 600, color: '#3c4043',
+      transition: 'all 0.15s',
+      opacity: loading ? 0.7 : 1,
+      marginTop: '0.5rem',
+    },
+    onMouseEnter: e => { if (!loading) e.currentTarget.style.background = '#f7f8f8'; },
+    onMouseLeave: e => { if (!loading) e.currentTarget.style.background = '#ffffff'; },
+    'aria-busy': loading,
+  },
+    loading
+      ? React.createElement('div', { className: 'spinner', style: { width: '20px', height: '20px', borderWidth: '2px', borderTopColor: '#4285f4' } })
+      : React.createElement('svg', { width: '20', height: '20', viewBox: '0 0 48 48', 'aria-hidden': 'true' },
+          React.createElement('path', { fill: '#EA4335', d: 'M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z' }),
+          React.createElement('path', { fill: '#4285F4', d: 'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z' }),
+          React.createElement('path', { fill: '#FBBC05', d: 'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z' }),
+          React.createElement('path', { fill: '#34A853', d: 'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z' })
+        ),
+    React.createElement('span', null, loading ? 'Redirection vers Google...' : (label || 'Continuer avec Google'))
+  );
+};
+
 const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
   const { addToast } = useToast();
   const [email, setEmail] = useState("");
@@ -9486,7 +9560,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
     !targetRole && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginTop: "1.25rem", fontSize: "0.88rem", color: "var(--text-secondary)" } },
       "Pas encore de compte ? ",
       /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSwitchToRegister, style: { background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontWeight: 700, fontSize: "inherit", padding: 0 } }, "S’inscrire gratuitement →")
-    ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.25rem 0 1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" } }, "ou"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } })), /* @__PURE__ */ React.createElement(GitHubSignInButton, null)
+    ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.25rem 0 1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" } }, "ou"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } })), /* @__PURE__ */ React.createElement(GoogleSignInButton, null), /* @__PURE__ */ React.createElement(GitHubSignInButton, null)
     );
 };
 // [FIX #310] RoleHeader extrait au niveau module — défini dans RegisterForm causait un remontage à chaque render
@@ -9924,6 +9998,7 @@ if (json.token || json.accessToken) {
       ),
       React.createElement(React.Fragment,null,
         React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",margin:"1.25rem 0 1rem"}},React.createElement("div",{style:{flex:1,height:"1px",background:"var(--border)"}}),React.createElement("span",{style:{fontSize:"0.8rem",color:"var(--text-secondary)",whiteSpace:"nowrap"}},"ou"),React.createElement("div",{style:{flex:1,height:"1px",background:"var(--border)"}})),
+        React.createElement(GoogleSignInButton,null),
         React.createElement(GitHubSignInButton,null),
         React.createElement("div",{style:{textAlign:"center",marginTop:"1rem",fontSize:"0.85rem",color:"var(--text-secondary)"}},
           "D\xe9j\xe0 un compte ? ",
@@ -10534,7 +10609,7 @@ async function _registerVendorReferral(referrerCode, newVendor) {
 
   // Sync Supabase si disponible
   if (DataService._sb) {
-    Promise.resolve(DataService._sb.from('vendor_referrals').insert(ref)).catch(() => {});
+    DataService._sb.from('vendor_referrals').insert(ref).catch(() => {});
   }
   return true;
 }
@@ -10552,7 +10627,7 @@ async function _activateVendorReferralBonus(vendorId) {
 
   // Notifier le parrain
   if (DataService._sb) {
-    Promise.resolve(DataService._sb.from('vendor_referrals').update({ status: 'paid', bonus_fcfa: 5000, paid_at: ref.paidAt }).eq('id', ref.id)).catch(() => {});
+    DataService._sb.from('vendor_referrals').update({ status: 'paid', bonus_fcfa: 5000, paid_at: ref.paidAt }).eq('id', ref.id).catch(() => {});
   }
   DataService.addNotification(ref.referrerId, {
     type:    'system',
@@ -14121,7 +14196,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           if (res && res.ok) { loadData(); addToast(approve ? "Produit approuv\xE9 \u2705" : "Produit refus\xE9 \u274C", approve ? "success" : "info"); return; }
         } catch (e) { console.warn("[moderateProduct]", e); }
       }
-      if (DataService._sb) { await Promise.resolve(DataService._sb.from("products").update({ moderated: approve, active: approve }).eq("id", pid)).catch(() => {}); }
+      if (DataService._sb) { await DataService._sb.from("products").update({ moderated: approve, active: approve }).eq("id", pid).catch(() => {}); }
       const _all = storage.getArray("products"); const _idx = _all.findIndex((p) => p.id === pid);
       if (_idx >= 0) { _all[_idx].moderated = approve; _all[_idx].active = approve; storage.set("products", _all); }
       loadData(); addToast(approve ? "Produit approuv\xE9 \u2705" : "Produit refus\xE9 \u274C", approve ? "success" : "info");
@@ -17445,7 +17520,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     const all = storage.getArray("products");
     all.push(localProduct);
     storage.set("products", all);
-    if (DataService._sb) Promise.resolve(DataService._sb.from("products").insert(localProduct)).catch(() => {});
+    if (DataService._sb) DataService._sb.from("products").insert(localProduct).catch(() => {});
     setShowAddProduct(false);
     setNewProduct({ name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true });
     loadData();
