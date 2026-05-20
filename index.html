@@ -2711,7 +2711,27 @@ const DataService = {
       const res = await this.apiFetch('/api/cart/migrate', {
         method: 'POST', body: JSON.stringify({ items: local })
       }).catch(() => null);
-      if (res && res.ok) { storage.set(migKey, true); }
+      if (res && res.ok) { storage.set(migKey, true); return; }
+    }
+    // [MIGRATION SUPABASE] Fusionner le panier invité dans la table carts.
+    // On fusionne avec un panier serveur éventuel (somme des quantités par id).
+    if (this._sb) {
+      try {
+        const { data: existing } = await this._sb.from("carts")
+          .select("items").eq("user_id", userId).maybeSingle();
+        const merged = Array.isArray(existing?.items) ? [...existing.items] : [];
+        for (const it of local) {
+          const found = merged.find(m => m.id === it.id);
+          if (found) found.quantity = (found.quantity || 1) + (it.quantity || 1);
+          else merged.push(it);
+        }
+        const { error } = await this._sb.from("carts")
+          .upsert({ user_id: userId, items: merged }, { onConflict: "user_id" });
+        if (!error) {
+          storage.set(`cart_${userId}`, merged);
+          storage.set(migKey, true);
+        } else { console.warn("[migrateLocalCart]", error.message); }
+      } catch (e) { console.warn("[migrateLocalCart]", e.message); }
     }
   },
   async migrateLocalStockAlerts(userId) {
@@ -2724,7 +2744,21 @@ const DataService = {
         method: 'POST',
         body: JSON.stringify({ productIds: local.map(a => a.productId) })
       }).catch(() => null);
-      if (res && res.ok) { storage.set(migKey, true); }
+      if (res && res.ok) { storage.set(migKey, true); return; }
+    }
+    // [MIGRATION SUPABASE] Upsert des alertes locales (PK composite product_id+user_id).
+    if (this._sb) {
+      try {
+        const rows = local
+          .filter(a => a.productId)
+          .map(a => ({ user_id: userId, product_id: a.productId, notified: false }));
+        if (rows.length) {
+          const { error } = await this._sb.from("stock_alerts")
+            .upsert(rows, { onConflict: "product_id,user_id" });
+          if (!error) { storage.set(migKey, true); }
+          else console.warn("[migrateLocalStockAlerts]", error.message);
+        } else { storage.set(migKey, true); }
+      } catch (e) { console.warn("[migrateLocalStockAlerts]", e.message); }
     }
   },
 
@@ -2974,7 +3008,7 @@ const DataService = {
   async markNotifRead(userId, notifId) {
     // [FIX 4] Passer par le backend si configuré
     if (NEXUS_CONFIG.apiUrl) {
-      await this.apiFetch(`/api/notifications/${notifId}/read`, { method: "POST" }).catch(() => {});
+      await this.apiFetch(`/api/notifications/${notifId}/read`, { method: "PATCH" }).catch(() => {});
       return;
     }
     if (this._sb) {
@@ -2990,7 +3024,7 @@ const DataService = {
   async markAllNotifRead(userId) {
     // [FIX 4] Passer par le backend si configuré
     if (NEXUS_CONFIG.apiUrl) {
-      await this.apiFetch(`/api/notifications/read-all`, { method: "POST" }).catch(() => {});
+      await this.apiFetch(`/api/notifications/read-all`, { method: "PATCH" }).catch(() => {});
       return;
     }
     if (this._sb) {
@@ -5989,34 +6023,13 @@ const PROVIDER_LABELS = { orange: "🟠 Orange Money", wave: "🔵 Wave", free: 
 
 // ── Appel API payout ──────────────────────────────────────────
 async function apiFetchPayout(path, options = {}) {
-  // [FIX session] Attendre que la session Supabase soit pleinement active
-  // avant d'envoyer la requête (évite le 401 au premier appel post-login).
-  const _getToken = async () => {
-    if (!window.__supabaseClient) return "";
-    const { data } = await window.__supabaseClient.auth.getSession();
-    return data?.session?.access_token || "";
-  };
-
-  const _doFetch = async (token) => fetch(path, {
+  const token = (window.__supabaseClient
+    ? (await window.__supabaseClient.auth.getSession()).data?.session?.access_token
+    : null) || "";  // Pas de fallback localStorage pour sb_access_token
+  const res = await fetch(path, {
     ...options,
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, ...(options.headers || {}) },
   });
-
-  let token = await _getToken();
-  let res = await _doFetch(token);
-
-  // [FIX session] Si 401 : le JWT était peut-être périmé (URL token > 120s).
-  // On force un refreshSession() et on réessaie une seule fois.
-  if (res.status === 401 && window.__supabaseClient) {
-    try {
-      const { data: refreshed } = await window.__supabaseClient.auth.refreshSession();
-      const freshToken = refreshed?.session?.access_token || "";
-      if (freshToken) {
-        res = await _doFetch(freshToken);
-      }
-    } catch (_) {}
-  }
-
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
   return json;
@@ -13685,21 +13698,28 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     }).catch(() => {});
   }, []);
   React.useEffect(() => {
-    DataService.apiFetch && DataService.apiFetch("/api/admin/payouts").then(async res => {
-      if (res && res.ok) {
-        const data = await res.json();
-        const list = (data.requests || data || []).map(r => ({
-          id: r.id, vendorId: r.vendor_id, vendorName: r.vendor_name,
-          amount: r.amount, provider: r.provider, destination: r.destination,
-          status: r.status, date: r.created_at || r.date,
-          adminNote: r.admin_note, method: r.method,
-        }));
-        _setPayoutReqs(list);
-      } else if (res && res.status === 403) {
-        // [FIX] 403 = token avec rôle périmé. Silencieux, fallback sur localStorage.
-        console.warn("[admin/payouts] 403 — token rôle périmé. Relancez la session admin.");
-      }
-    }).catch(() => {});
+    const _mapPayout = r => ({
+      id: r.id, vendorId: r.vendor_id, vendorName: r.vendor_name,
+      amount: r.amount, provider: r.provider, destination: r.destination,
+      status: r.status, date: r.created_at || r.date,
+      adminNote: r.admin_note, method: r.method,
+    });
+    const _p = DataService.apiFetch ? DataService.apiFetch("/api/admin/payouts") : null;
+    if (_p && typeof _p.then === "function") {
+      _p.then(async res => {
+        if (res && res.ok) {
+          const data = await res.json();
+          _setPayoutReqs((data.requests || data || []).map(_mapPayout));
+        }
+      }).catch(() => {});
+    } else if (DataService._sb) {
+      // [MIGRATION SUPABASE] Chargement direct des demandes de retrait (admin via RLS).
+      DataService._sb.from("payout_requests").select("*").order("created_at", { ascending: false })
+        .then(({ data, error }) => {
+          if (!error && data) _setPayoutReqs(data.map(_mapPayout));
+          else if (error) console.warn("[admin/payouts] Supabase:", error.message);
+        });
+    }
   }, []);
   const [_flashSales, _setFlashSales] = React.useState(storage.getArray("flash_sales"));
   React.useEffect(() => {
@@ -13746,9 +13766,18 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   // États des vues admin (hooks hissés pour respecter les règles React)
   const [_adminCoupons, _setAdminCoupons] = React.useState(storage.get("nexus_coupons") || []);
   React.useEffect(() => {
-    DataService.apiFetch("/api/coupons").then(r => r && r.ok ? r.json() : null)
-      .then(d => { if (Array.isArray(d) && d.length > 0) { _setAdminCoupons(d); storage.set("nexus_coupons", d); } })
-      .catch(() => {});
+    const _pc = DataService.apiFetch("/api/coupons");
+    if (_pc && typeof _pc.then === "function") {
+      _pc.then(r => r && r.ok ? r.json() : null)
+        .then(d => { if (Array.isArray(d) && d.length > 0) { _setAdminCoupons(d); storage.set("nexus_coupons", d); } })
+        .catch(() => {});
+    } else if (DataService._sb) {
+      // [MIGRATION SUPABASE] Chargement direct des coupons.
+      DataService._sb.from("coupons").select("*").then(({ data, error }) => {
+        if (!error && Array.isArray(data) && data.length) { _setAdminCoupons(data); storage.set("nexus_coupons", data); }
+        else if (error) console.warn("[admin/coupons] Supabase:", error.message);
+      });
+    }
   }, []);
   const [adminNewCoupon, setAdminNewCoupon] = React.useState({ code: "", discount: 10, discountType: "percent", description: "", maxUses: "", expiresAt: "", minCartFcfa: "", categoryRestriction: "", singleUsePerCustomer: false });
   const [adminFlashForm, setAdminFlashForm] = React.useState({ productId: "", discount: 20, hours: 24 });
@@ -13816,9 +13845,20 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX #310] useEffects hissés depuis les IIFEs
   React.useEffect(() => {
     _setLogLoad(true);
-    DataService.apiFetch("/api/admin/logs").then(r => r && r.ok ? r.json() : null)
-      .then(d => { if (d) _setLogs(Array.isArray(d) ? d : (d.logs || [])); _setLogLoad(false); })
-      .catch(() => _setLogLoad(false));
+    const _pl = DataService.apiFetch("/api/admin/logs");
+    if (_pl && typeof _pl.then === "function") {
+      _pl.then(r => r && r.ok ? r.json() : null)
+        .then(d => { if (d) _setLogs(Array.isArray(d) ? d : (d.logs || [])); _setLogLoad(false); })
+        .catch(() => _setLogLoad(false));
+    } else if (DataService._sb) {
+      // [MIGRATION SUPABASE] Chargement direct des logs admin (table audit_logs).
+      DataService._sb.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(200)
+        .then(({ data, error }) => {
+          if (!error && data) _setLogs(data);
+          else if (error) console.warn("[admin/logs] Supabase:", error.message);
+          _setLogLoad(false);
+        });
+    } else { _setLogLoad(false); }
   }, []);
   React.useEffect(() => {
     setEmailLoading(true);
@@ -14149,31 +14189,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         } else if (res && !res.ok) {
           if ([502, 503, 504].includes(res.status)) {
             console.warn(`[updateOrderStatus admin] Backend ${res.status} — fallback Supabase`);
-          } else if (res.status === 401) {
-            const eData = await res.json().catch(() => ({}));
-            _pendingStatusUpdates.current.delete(orderId);
-            setOrders(prev => prev.map(o => o.id === orderId
-              ? { ...o, status: (orders.find(x => x.id === orderId)||{}).status || o.status }
-              : o));
-            if (eData?.code === 'TOKEN_EXPIRED') {
-              window.dispatchEvent(new CustomEvent("nexus:session-expired"));
-              addToast("Session expirée — reconnectez-vous pour mettre à jour le statut.", "warning");
-            } else {
-              addToast(eData?.error || "Non authentifié — statut non mis à jour.", "danger");
-            }
-            return;
-          } else if (res.status === 403) {
-            const eData = await res.json().catch(() => ({}));
-            _pendingStatusUpdates.current.delete(orderId);
-            setOrders(prev => prev.map(o => o.id === orderId
-              ? { ...o, status: (orders.find(x => x.id === orderId)||{}).status || o.status }
-              : o));
-            addToast(eData?.error || "Non autorisé sur cette commande.", "danger");
-            return;
           } else {
-            const eData = await res.json().catch(() => ({}));
+            const e = await res.json().catch(() => ({}));
             _pendingStatusUpdates.current.delete(orderId);
-            addToast(eData?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
             return;
           }
         }
@@ -14182,9 +14201,11 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        // [FIX] Seuls status + updated_at existent dans le schema orders.
-        // Les colonnes *_at (processing_at, in_transit_at, delivered_at, cancelled_at)
-        // n'existent pas -> Supabase rejette avec 400 "column not found in schema cache".
+        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
+        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
+        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
+        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
+        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
         const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
         // [FIX] .select() pour detecter un echec RLS silencieux : un UPDATE qui ne
         // touche aucune ligne ne renvoie PAS d erreur PostgREST mais ne persiste rien
@@ -17741,22 +17762,9 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         } else if (res && !res.ok) {
           if ([502, 503, 504].includes(res.status)) {
             console.warn(`[updateOrderStatus vendor] Backend ${res.status} — fallback Supabase`);
-          } else if (res.status === 401) {
-            const eData = await res.json().catch(() => ({}));
-            if (eData?.code === 'TOKEN_EXPIRED') {
-              window.dispatchEvent(new CustomEvent("nexus:session-expired"));
-              addToast("Session expirée — reconnectez-vous.", "warning");
-            } else {
-              addToast(eData?.error || "Non authentifié.", "danger");
-            }
-            return;
-          } else if (res.status === 403) {
-            const eData = await res.json().catch(() => ({}));
-            addToast(eData?.error || "Non autorisé sur cette commande.", "danger");
-            return;
           } else {
-            const eData = await res.json().catch(() => ({}));
-            addToast(eData?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+            const e = await res.json().catch(() => ({}));
+            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
             return;
           }
         }
@@ -17765,8 +17773,11 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        // [FIX] Seuls status + updated_at existent dans le schema orders.
-        // Les colonnes *_at n'existent pas -> Supabase 400 "column not found".
+        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
+        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
+        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
+        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
+        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
         const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
         // [FIX] .select() detecte un echec RLS silencieux (0 ligne => revert au refresh).
         const { data: _updRows, error } = await DataService._sb.from("orders").update(upd).eq("id", orderId).select("id");
@@ -20188,7 +20199,7 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
         if (_eo && ["delivered","in_transit"].includes(_eo.status)) {
           addToast("Annulation impossible : commande déjà expédiée.", "error"); setLoading(false); return;
         }
-        await DataService._sb.from("orders").update({ status: "cancelled", cancel_reason: reason }).eq("id", order.id).select("id");
+        await DataService._sb.from("orders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: reason }).eq("id", order.id).select("id");
         _cancelRes = { ok: true, json: async () => ({}) };
       }
       const res = _cancelRes;
@@ -23523,7 +23534,11 @@ const ConversationThread = ({
     if (!conv) return;
     const key = `msg-typing-${conv.id}`;
     NexusPollingService.subscribe(key, () => {
-      return DataService.apiFetch(`/api/messages/typing/${conv.id}`).then(r => {
+      // [MIGRATION SUPABASE] apiFetch renvoie null si apiUrl est vide — sans backend,
+      // l’indicateur de frappe est simplement inactif (pas de TypeError dans le poll).
+      const _p = DataService.apiFetch(`/api/messages/typing/${conv.id}`);
+      if (!_p || typeof _p.then !== "function") return;
+      return _p.then(r => {
         if (r && r.userId !== currentUser.id) {
           const isTypingNow = r.isTyping && (Date.now() - r.updatedAt < MSG_TYPING_TTL_MS);
           typingTimerRef.current !== null;
