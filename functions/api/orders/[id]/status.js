@@ -38,11 +38,10 @@ async function handleUpdateStatus(context) {
     return json({ error: `Statut invalide. Valeurs : ${VALID.join(', ')}` }, 400);
   }
 
-  // [FIX] Colonnes timestamp conformes au schéma Supabase :
-  // paid_at et canceled_at n'existent pas → delivered_at et cancelled_at (double L).
+  // [FIX] Seuls status et updated_at existent dans le schéma orders.
+  // Les colonnes delivered_at / cancelled_at / processing_at / in_transit_at
+  // n'existent pas → Supabase rejette avec 400 "column not found in schema cache".
   const updates = { status, updated_at: new Date().toISOString() };
-  if (status === 'delivered') updates.delivered_at = new Date().toISOString();
-  if (status === 'cancelled') updates.cancelled_at = new Date().toISOString();
 
   try {
     const ctrl = new AbortController();

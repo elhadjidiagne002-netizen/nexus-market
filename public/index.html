@@ -14161,11 +14161,9 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
-        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
-        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
-        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
-        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
+        // [FIX] Seuls status + updated_at existent dans le schema orders.
+        // Les colonnes *_at (processing_at, in_transit_at, delivered_at, cancelled_at)
+        // n'existent pas -> Supabase rejette avec 400 "column not found in schema cache".
         const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
         // [FIX] .select() pour detecter un echec RLS silencieux : un UPDATE qui ne
         // touche aucune ligne ne renvoie PAS d erreur PostgREST mais ne persiste rien
@@ -17733,11 +17731,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
-        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
-        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
-        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
-        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
+        // [FIX] Seuls status + updated_at existent dans le schema orders.
+        // Les colonnes *_at n'existent pas -> Supabase 400 "column not found".
         const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
         // [FIX] .select() detecte un echec RLS silencieux (0 ligne => revert au refresh).
         const { data: _updRows, error } = await DataService._sb.from("orders").update(upd).eq("id", orderId).select("id");
@@ -20159,7 +20154,7 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
         if (_eo && ["delivered","in_transit"].includes(_eo.status)) {
           addToast("Annulation impossible : commande déjà expédiée.", "error"); setLoading(false); return;
         }
-        await DataService._sb.from("orders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: reason }).eq("id", order.id).select("id");
+        await DataService._sb.from("orders").update({ status: "cancelled", cancel_reason: reason }).eq("id", order.id).select("id");
         _cancelRes = { ok: true, json: async () => ({}) };
       }
       const res = _cancelRes;
