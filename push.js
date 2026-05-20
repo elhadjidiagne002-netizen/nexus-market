@@ -1,23 +1,36 @@
-// push.js — Script de push GitHub garanti
-// Usage : node push.js
-// Usage : node push.js "mon message de commit"
-const { execSync, spawnSync } = require('child_process');
+#!/usr/bin/env node
 
-const GREEN  = '\x1b[32m';
-const RED    = '\x1b[31m';
-const YELLOW = '\x1b[33m';
-const CYAN   = '\x1b[36m';
-const RESET  = '\x1b[0m';
+/**
+ * git-push-secure.js — Script d'automatisation et de synchronisation Git sécurisé
+ * * Avantages de cette version :
+ * 1. Supporte les flags standards : -m "votre message" ou --message "votre message"
+ * 2. Détection automatique du Remote (origin, upstream, etc.) au lieu d'une valeur codée en dur.
+ * 3. Inclut les nouveaux fichiers (untracked) dans le processus de Stash temporaire.
+ * 4. Totalement impersonnel : utilisable sur n'importe quel projet (Web, Mobile, DevOps, etc.).
+ */
 
-const ok   = m => console.log(GREEN  + '✅ ' + m + RESET);
-const fail = m => console.log(RED    + '❌ ' + m + RESET);
-const warn = m => console.log(YELLOW + '⚠️  ' + m + RESET);
-const info = m => console.log(CYAN   + 'ℹ️  ' + m + RESET);
-const head = m => console.log('\n' + CYAN + '━━━ ' + m + ' ━━━' + RESET);
+const { spawnSync } = require('child_process');
 
-// ── Exécute une commande, retourne { out, err, code } ────────────────────────
-function run(cmd) {
-  const r = spawnSync(cmd, { shell: true, encoding: 'utf8' });
+// ── Configuration des couleurs de sortie ─────────────────────────────────────
+const COLORS = {
+  GREEN:  '\x1b[32m',
+  RED:    '\x1b[31m',
+  YELLOW: '\x1b[33m',
+  CYAN:   '\x1b[36m',
+  RESET:  '\x1b[0m'
+};
+
+const log = {
+  ok:   msg => console.log(`${COLORS.GREEN}✅ ${msg}${COLORS.RESET}`),
+  fail: msg => console.log(`${COLORS.RED}❌ ${msg}${COLORS.RESET}`),
+  warn: msg => console.log(`${COLORS.YELLOW}⚠️  ${msg}${COLORS.RESET}`),
+  info: msg => console.log(`${COLORS.CYAN}ℹ️  ${msg}${COLORS.RESET}`),
+  head: title => console.log(`\n${COLORS.CYAN}━━━ ${title.toUpperCase()} ━━━${COLORS.RESET}`)
+};
+
+// ── Exécuteurs de commandes ──────────────────────────────────────────────────
+function execute(cmd, args = []) {
+  const r = spawnSync(cmd, args, { shell: true, encoding: 'utf8' });
   return {
     out:  (r.stdout || '').trim(),
     err:  (r.stderr || '').trim(),
@@ -25,138 +38,184 @@ function run(cmd) {
   };
 }
 
-// ── Exécute et affiche en temps réel (pour git pull/push) ────────────────────
-function runLive(cmd) {
-  const r = spawnSync(cmd, { shell: true, stdio: 'inherit' });
+function executeLive(cmd, args = []) {
+  const r = spawnSync(cmd, args, { shell: true, stdio: 'inherit' });
   return r.status ?? 1;
 }
 
-// ── Message de commit ─────────────────────────────────────────────────────────
-const args = process.argv.slice(2);
-let commitMsg = args.join(' ').trim();
-if (!commitMsg) {
-  const now = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  commitMsg = `Update ${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+// ── Gestionnaire d'arguments avancé ──────────────────────────────────────────
+function parseArguments() {
+  const args = process.argv.slice(2);
+  let message = '';
+  
+  // Cherche l'argument après -m ou --message
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-m' || args[i] === '--message') {
+      if (args[i + 1]) {
+        message = args[i + 1].trim();
+        break;
+      }
+    }
+  }
+
+  // Si aucun flag trouvé, on prend l'ensemble des arguments bruts (compatibilité)
+  if (!message && args.length > 0 && !args[0].startsWith('-')) {
+    message = args.join(' ').trim();
+  }
+
+  // Message par défaut horodaté si vide
+  if (!message) {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    message = `Auto-commit: ${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  }
+
+  return message;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ── Début du processus
+// ══════════════════════════════════════════════════════════════════════════════
 
-head('Vérification repo git');
+const commitMsg = parseArguments();
 
-if (run('git rev-parse --git-dir').code !== 0) {
-  fail('Pas de repo git ici. Lance le script depuis la racine du projet.');
+log.head('Vérification de l\'environnement Git');
+
+// 1. Vérifier si Git est disponible et s'il s'agit d'un repo
+if (execute('git rev-parse --git-dir').code !== 0) {
+  log.fail('Aucun dépôt Git détecté. Veuillez exécuter ce script à la racine de votre projet.');
   process.exit(1);
 }
 
-const branch = run('git branch --show-current').out || 'main';
-info(`Branche : ${branch}`);
+// 2. Détection automatique de la branche courante
+const branch = execute('git branch --show-current').out || 'main';
 
-// ── Étape 1 : Sauvegarder les changements locaux ──────────────────────────────
-head('Sauvegarde des changements locaux');
+// 3. Détection automatique du Remote lié (fallback sur 'origin' si aucun)
+let remote = execute(`git config --get branch.${branch}.remote`).out;
+if (!remote) {
+  const remotesList = execute('git remote').out.split('\n').filter(Boolean);
+  remote = remotesList.includes('origin') ? 'origin' : (remotesList[0] || 'origin');
+}
 
-const status = run('git status --porcelain').out;
+log.info(`Branche active : ${branch}`);
+log.info(`Dépôt distant  : ${remote}`);
+
+// ── Étape 1 : Sauvegarde sécurisée des modifications locales ─────────────────
+log.head('Analyse des modifications locales');
+
+// --porcelain permet de voir tous les changements y compris les fichiers non-suivis (? ?)
+const status = execute('git status --porcelain').out;
 const hasChanges = status.length > 0;
 
 if (hasChanges) {
   console.log(status);
-  info(`Commit : "${commitMsg}"`);
+  log.info(`Futur commit : "${commitMsg}"`);
 
-  // Stash d'abord pour pouvoir pull proprement
-  run('git add -A');
-  const stashResult = run(`git stash push -m "push-script-temp"`);
+  // Indexation globale indispensable pour le stash
+  execute('git add -A');
+  
+  // Utilisation de --include-untracked pour ne perdre aucun nouveau fichier créé pendant le pull
+  const stashResult = execute('git stash push --include-untracked -m "git-push-secure-temp"');
   if (stashResult.code !== 0) {
-    warn('Stash impossible — tentative de commit direct');
+    log.warn('Mise de côté (stash) impossible — Tentative de commit direct');
   } else {
-    ok('Changements mis de côté (stash)');
+    log.ok('Modifications locales mises en sécurité temporairement (Stash)');
   }
 } else {
-  info('Aucun changement local — vérification des commits en attente');
+  log.info('Aucune modification locale détectée — Vérification des mises à jour distantes');
 }
 
-// ── Étape 2 : Récupérer les commits distants ─────────────────────────────────
-head('Récupération depuis GitHub');
+// ── Étape 2 : Récupération des données distantes ─────────────────────────────
+log.head('Synchronisation avec le serveur distant');
 
-const fetchCode = runLive(`git fetch origin ${branch}`);
+const fetchCode = executeLive(`git fetch ${remote} ${branch}`);
 if (fetchCode !== 0) {
-  warn('Fetch échoué (réseau?) — tentative de push quand même');
+  log.warn('Échec de la récupération (Fetch). Le serveur est peut-être inaccessible ou nécessite une ré-authentification.');
+  log.warn('Tentative de poursuite de la procédure...');
 } else {
-  ok('Fetch réussi');
+  log.ok('Données distantes récupérées avec succès');
 }
 
-// ── Étape 3 : Appliquer les commits distants par rebase ───────────────────────
-head('Intégration des commits distants');
+// ── Étape 3 : Intégration des commits distants ───────────────────────────────
+log.head('Intégration des commits distants');
 
-const behind = run(`git rev-list --count HEAD..origin/${branch}`).out;
-if (behind && parseInt(behind) > 0) {
-  info(`${behind} commit(s) distants à intégrer...`);
-  const rebaseCode = runLive(`git rebase origin/${branch}`);
+const behindCount = execute(`git rev-list --count HEAD..${remote}/${branch}`).out;
+if (behindCount && parseInt(behindCount) > 0) {
+  log.info(`Votre branche a ${behindCount} commit(s) de retard. Application des modifications...`);
+  
+  // Tentative de Rebase pour garder un historique propre et linéaire
+  const rebaseCode = executeLive(`git rebase ${remote}/${branch}`);
   if (rebaseCode !== 0) {
-    warn('Rebase en conflit — abandon du rebase et fusion directe');
-    run('git rebase --abort');
-    const mergeCode = runLive(`git merge origin/${branch} --no-edit`);
+    log.warn('Conflit détecté lors du rebase — Annulation et bascule vers une fusion (Merge) directe');
+    execute('git rebase --abort');
+    
+    const mergeCode = executeLive(`git merge ${remote}/${branch} --no-edit`);
     if (mergeCode !== 0) {
-      fail('Merge échoué. Résolvez les conflits manuellement puis relancez.');
-      // Restaurer le stash avant de quitter
-      if (hasChanges) run('git stash pop');
+      log.fail('Fusion échouée en raison de conflits complexes.');
+      log.info('Résolution : Veuillez résoudre les conflits manuellement, puis relancez le script.');
+      if (hasChanges) execute('git stash pop'); // Restitution du travail en cours
       process.exit(1);
     }
-    ok('Merge réussi');
+    log.ok('Fusion (Merge) effectuée avec succès');
   } else {
-    ok('Rebase réussi');
+    log.ok('Rebase appliqué avec succès');
   }
 } else {
-  ok('Déjà à jour avec le remote');
+  log.ok('Votre branche locale est déjà à jour avec le serveur distant');
 }
 
-// ── Étape 4 : Ré-appliquer les changements locaux ────────────────────────────
+// ── Étape 4 : Restitution et validation du travail local ─────────────────────
 if (hasChanges) {
-  head('Ré-application des changements locaux');
-  const popResult = run('git stash pop');
+  log.head('Restauration de vos modifications');
+  
+  const popResult = execute('git stash pop');
   if (popResult.code !== 0) {
-    warn('Stash pop en conflit — tentative de résolution automatique');
-    run('git checkout --theirs .');
-    run('git add -A');
+    log.warn('Conflit détecté lors de la ré-application de vos modifications.');
+    log.info('Résolution automatique : Priorisation de vos fichiers locaux...');
+    execute('git checkout --theirs .');
+    execute('git add -A');
   } else {
-    ok('Changements restaurés');
+    log.ok('Modifications locales restaurées avec succès');
   }
 
-  // Commit
-  head('Commit');
-  run('git add -A');
-  const commitResult = run(`git commit -m "${commitMsg.replace(/"/g, "'")}"`);
+  log.head('Validation du Commit');
+  execute('git add -A');
+  
+  // Échappement propre des guillemets dans le message de commit
+  const commitResult = execute(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`);
   if (commitResult.code !== 0) {
-    const noChange = commitResult.out.includes('nothing to commit') || commitResult.err.includes('nothing to commit');
-    if (noChange) {
-      info('Rien à committer — déjà propre');
+    const isClean = commitResult.out.includes('nothing to commit') || commitResult.err.includes('nothing to commit');
+    if (isClean) {
+      log.info('Rien à valider (Arbre de travail déjà propre)');
     } else {
-      fail('Commit échoué : ' + (commitResult.err || commitResult.out));
+      log.fail(`Échec du commit : ${commitResult.err || commitResult.out}`);
       process.exit(1);
     }
   } else {
-    ok(`Commit : ${commitResult.out.split('\n')[0]}`);
+    log.ok(`Commit validé : ${commitResult.out.split('\n')[0]}`);
   }
 }
 
-// ── Étape 5 : Push ────────────────────────────────────────────────────────────
-head('Push vers GitHub');
+// ── Étape 5 : Publication (Push) ─────────────────────────────────────────────
+log.head('Publication vers le serveur distant');
 
-let pushCode = runLive(`git push origin ${branch}`);
+let pushCode = executeLive(`git push ${remote} ${branch}`);
 
-// Si rejeté → réessayer avec force-with-lease (sûr)
+// Si le push standard échoue, tentative sécurisée avec --force-with-lease
 if (pushCode !== 0) {
-  warn('Push rejeté — tentative avec --force-with-lease (sécurisé)');
-  pushCode = runLive(`git push origin ${branch} --force-with-lease`);
+  log.warn('Publication standard rejetée. Tentative sécurisée via --force-with-lease...');
+  pushCode = executeLive(`git push ${remote} ${branch} --force-with-lease`);
 }
 
 // ── Résultat final ────────────────────────────────────────────────────────────
 console.log('');
 if (pushCode === 0) {
-  ok('Push réussi ! Cloudflare Pages va redéployer automatiquement 🚀');
+  log.ok('Processus terminé avec succès ! Les modifications sont en ligne. 🚀');
 } else {
-  fail('Push échoué. Causes possibles :');
-  console.log('  • Token GitHub expiré → https://github.com/settings/tokens');
-  console.log('  • Pas de connexion internet');
-  console.log('  • Branche protégée sur GitHub');
+  log.fail('La publication a échoué.');
+  console.log('  Vérifications recommandées :');
+  console.log('  • Vos droits d\'accès (Token d\'accès ou clé SSH expirée/invalide)');
+  console.log('  • Votre connexion au réseau internet');
+  console.log('  • Les règles de protection de branche configurées sur votre serveur distant');
   process.exit(1);
 }
