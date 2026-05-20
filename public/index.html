@@ -2447,8 +2447,30 @@ const DataService = {
           return { ok: outOfStock.length === 0, outOfStock, stocks };
         }
       } catch (e) {
-        console.warn('[checkStock] API indisponible, fallback localStorage:', e.message);
+        console.warn('[checkStock] API indisponible, fallback Supabase:', e.message);
       }
+    }
+
+    // [MIGRATION SUPABASE] RPC check_products_stock : stock réel depuis la table
+    // products (source de vérité), pas le localStorage (faux en multi-utilisateur).
+    if (this._sb) {
+      try {
+        const ids = itemsWithId.map(i => i.id);
+        const { data: stocks, error } = await this._sb.rpc("check_products_stock", { p_ids: ids });
+        if (!error && stocks) {
+          const outOfStock = itemsWithId.filter(item => {
+            const sObj = stocks[item.id];
+            if (!sObj || !sObj.active) return true;
+            return sObj.stock < (item.quantity || 1);
+          }).map(item => ({
+            id: item.id, name: item.name,
+            requested: item.quantity || 1,
+            available: stocks[item.id]?.stock ?? 0,
+          }));
+          return { ok: outOfStock.length === 0, outOfStock, stocks };
+        }
+        if (error) console.warn("[checkStock] RPC:", error.message);
+      } catch (e) { console.warn("[checkStock] Supabase:", e.message); }
     }
 
     // Fallback localStorage (mode hors-ligne)
@@ -2617,7 +2639,18 @@ const DataService = {
         if (res && res.ok) return true;
       } catch (_) {}
     }
-    // Fallback : annuler localement
+    // [MIGRATION SUPABASE] RPC atomique : annule + réincrémente le stock de
+    // chaque produit (idempotent côté serveur). Remplace l’ancien backend qui
+    // était le seul à créditer le stock.
+    if (this._sb) {
+      try {
+        const { data, error } = await this._sb.rpc("cancel_order_release_stock", { p_order_id: orderId });
+        if (!error && data && data.ok) return true;
+        if (error) console.warn("[cancelOrder] RPC:", error.message);
+        else if (data && data.error) console.warn("[cancelOrder] RPC refus:", data.error);
+      } catch (e) { console.warn("[cancelOrder]", e.message); }
+    }
+    // Dernier recours : annuler le statut sans toucher au stock
     await this.updateOrder(orderId, { status: 'cancelled' });
     return true;
   },
@@ -4218,6 +4251,15 @@ async signOut() {
       const res = await this.apiFetch("/api/payouts/balance").catch(() => null);
       if (res && res.ok) return res.json().catch(() => null);
     }
+    // [MIGRATION SUPABASE] RPC serveur vendor_payout_balance() : calcul non
+    // manipulable (revenu net des commandes livrées - retraits payés/en attente).
+    if (this._sb) {
+      try {
+        const { data, error } = await this._sb.rpc("vendor_payout_balance");
+        if (!error && data && !data.error) return data;
+        if (error) console.warn("[getPayoutBalance] RPC:", error.message);
+      } catch (e) { console.warn("[getPayoutBalance]", e.message); }
+    }
     return null;
   },
   async savePayout(payoutReq) {
@@ -4242,10 +4284,28 @@ async signOut() {
     }
     // Fallback Supabase direct
     if (this._sb) {
+      // [MIGRATION SUPABASE] Validation du solde côté serveur AVANT insertion :
+      // empêche un vendeur de demander plus que son solde disponible.
+      try {
+        const bal = await this.getPayoutBalance();
+        if (bal && typeof bal.availableBalance === "number") {
+          if (payoutReq.amount > bal.availableBalance) {
+            throw new Error(`Montant supérieur au solde disponible (${bal.availableBalance.toLocaleString("fr-FR")} FCFA).`);
+          }
+        }
+      } catch (e) {
+        if (e && /solde disponible/.test(e.message || "")) throw e; // erreur métier → remonter
+        // sinon (RPC indispo) : on laisse passer, l’admin validera manuellement
+      }
       const row = { vendor_id: payoutReq.vendorId, vendor_name: payoutReq.vendorName,
         amount: payoutReq.amount, method: payoutReq.method, provider: payoutReq.provider,
         destination: payoutReq.destination, status: "pending" };
-      const { error: ePay } = await this._sb.from("payout_requests").insert(row); if (ePay) console.warn("[savePayout]", ePay.message);
+      const { data: insData, error: ePay } = await this._sb.from("payout_requests").insert(row).select().single();
+      if (ePay) { console.warn("[savePayout]", ePay.message); throw new Error(ePay.message); }
+      if (insData) {
+        const all = storage.getArray("payout_requests"); all.unshift(insData); storage.set("payout_requests", all);
+        return insData;
+      }
     }
     const all = storage.getArray("payout_requests");
     all.push(payoutReq); storage.set("payout_requests", all);
