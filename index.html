@@ -3006,11 +3006,7 @@ const DataService = {
     return n;
   },
   async markNotifRead(userId, notifId) {
-    // [FIX 4] Passer par le backend si configuré
-    if (NEXUS_CONFIG.apiUrl) {
-      await this.apiFetch(`/api/notifications/${notifId}/read`, { method: "PATCH" }).catch(() => {});
-      return;
-    }
+    // [TOUT-SUPABASE] Mise a jour directe Supabase (le backend renvoyait 405).
     if (this._sb) {
       await this._sb.from("notifications").update({ read: true }).eq("id", notifId);
       return;
@@ -3022,11 +3018,7 @@ const DataService = {
     }
   },
   async markAllNotifRead(userId) {
-    // [FIX 4] Passer par le backend si configuré
-    if (NEXUS_CONFIG.apiUrl) {
-      await this.apiFetch(`/api/notifications/read-all`, { method: "PATCH" }).catch(() => {});
-      return;
-    }
+    // [TOUT-SUPABASE] Mise a jour directe Supabase (le backend renvoyait 405).
     if (this._sb) {
       await this._sb.from("notifications").update({ read: true }).eq("user_id", userId).eq("read", false);
       return;
@@ -3292,26 +3284,10 @@ async signOut() {
     // [JWT-FIX] Toujours réinitialiser _voluntarySignOut (Supabase ou non)
     // Sinon le flag reste true indéfiniment et masque tout futur nexus:session-expired
     setTimeout(() => { this._voluntarySignOut = false; }, 500);
-    if (NEXUS_CONFIG.apiUrl) {
-      const token       = this._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
-      const refreshToken = this._refreshToken || localStorage.getItem("nexus_refresh_token");
-      if (token) {
-        const ctrl = new AbortController();
-        const tid  = setTimeout(() => ctrl.abort(), 4000);
-        // [JWT-REFRESH] Envoyer le refresh token dans le body pour révocation serveur
-        await fetch((NEXUS_CONFIG.apiUrl || "") + "/api/auth/logout", {
-          method:  "POST",
-          headers: {
-            Authorization:  `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body:   JSON.stringify({ refreshToken: refreshToken || undefined }),
-          signal: ctrl.signal,
-        }).catch(() => {}).finally(() => clearTimeout(tid));
-      }
-      // [JWT-REFRESH] Nettoyer access token + refresh token
-      this._clearTokens();
-    }
+    // [TOUT-SUPABASE] Deconnexion geree par Supabase (_sb.auth.signOut ci-dessus).
+    // Plus d appel backend /api/auth/logout (qui renvoyait 405). On nettoie les
+    // eventuels tokens residuels par securite.
+    this._clearTokens();
   },
   // ── Session expiry check ─────────────────────────────────────────────────
   isSessionExpired() {
@@ -14244,10 +14220,10 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
             addToast("Erreur annulation : " + _ce.message, "danger"); return;
           }
         }
+        // [FIX SCHEMA REEL] La table orders ne contient que status + updated_at.
+        // Les colonnes *_at (delivered_at, processing_at...) n existent pas =>
+        // les ecrire provoquait un 400 "column not found". On n ecrit que status.
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
-        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
-        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
         // [FIX] .select() pour detecter un echec RLS silencieux : un UPDATE qui ne
         // touche aucune ligne ne renvoie PAS d erreur PostgREST mais ne persiste rien
         // (=> le statut "revient" apres actualisation). On verifie data.length.
@@ -17814,10 +17790,10 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
             addToast("Erreur annulation : " + _ce.message, "danger"); return;
           }
         }
+        // [FIX SCHEMA REEL] La table orders ne contient que status + updated_at.
+        // Les colonnes *_at (delivered_at, processing_at...) n existent pas =>
+        // les ecrire provoquait un 400 "column not found". On n ecrit que status.
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
-        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
-        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
         // [FIX] .select() detecte un echec RLS silencieux (0 ligne => revert au refresh).
         const { data: _updRows, error } = await DataService._sb.from("orders").update(upd).eq("id", orderId).select("id");
         if (error) {
