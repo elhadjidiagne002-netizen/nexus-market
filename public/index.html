@@ -2696,30 +2696,48 @@ const DataService = {
   },
 
   async saveOrder(order) {
-    // Schéma réel de la table orders (vérifié via information_schema) :
-    // id, user_id, amount_eur, amount_fcfa, paid_amount_fcfa, currency,
-    // status, paytech_token, stripe_payment_id, failure_reason, items, buyer_address,
-    // created_at, updated_at, paid_at, canceled_at
+    // Schema canonique reel (cf. database/migrations/all_supabase.txt) :
+    // id, buyer_id, buyer_name, buyer_email, buyer_address, vendor_id, vendor_name,
+    // products(jsonb), subtotal, total, commission, status, payment_method,
+    // payment_status, stripe_payment_id, coupon_code, shipping_city, tracking_number,
+    // return_status, return_id, cancel_reason, cancelled_at, delivered_at, ...
     const { _localId, stripePaymentId, fromOffer, date: _ignoredDate, ...cleanOrder } = order;
     const localId = _localId || ("ORD-" + Date.now());
     if (this._sb) {
       // EUR_TO_FCFA — utilise la constante globale (NEXUS_CONFIG.currency.eurToFcfa)
       // [FIX 23502] La colonne id est TEXT NOT NULL sans default → on la génère ici
       const orderId = cleanOrder.id || localId || ("ORD-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7).toUpperCase());
+      // [FIX] Colonnes conformes au schema canonique de la table orders
+      // (buyer_id, vendor_id, products, subtotal, total, commission...). L ancien
+      // mapping (user_id, amount_eur, items) ne correspondait a AUCUNE colonne reelle
+      // => insert en echec => commande perdue (fallback localStorage uniquement).
+      const _isUuid = (v) => !!(v && v !== "guest" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v));
+      const _pm = (cleanOrder.paymentMethod === "card" || cleanOrder.paymentMethod === "mobile")
+        ? cleanOrder.paymentMethod : null;
+      const _total = cleanOrder.total != null ? cleanOrder.total : 0;
       const row = {
         id: orderId,
-        // [FIX uuid] "guest" ou toute valeur non-UUID doit être null, pas une string
-        user_id: (cleanOrder.buyer && cleanOrder.buyer !== "guest" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanOrder.buyer))
-          ? cleanOrder.buyer : null,
-        amount_eur:         cleanOrder.total || 0,
-        amount_fcfa:        Math.round((cleanOrder.total || 0) * EUR_TO_FCFA),
-        currency:           "XOF",
-        status:             cleanOrder.status || "processing",
-        items:              cleanOrder.products || [],
-        buyer_address:      cleanOrder.buyerAddress || null,
+        buyer_id:        _isUuid(cleanOrder.buyer)  ? cleanOrder.buyer  : null,
+        buyer_name:      cleanOrder.buyerName  || "Client",
+        buyer_email:     cleanOrder.buyerEmail || "inconnu@nexus.sn",
+        buyer_address:   cleanOrder.buyerAddress || null,
+        vendor_id:       _isUuid(cleanOrder.vendor) ? cleanOrder.vendor : null,
+        vendor_name:     cleanOrder.vendorName || "Vendeur",
+        products:        cleanOrder.products  || [],
+        subtotal:        cleanOrder.subtotal != null ? cleanOrder.subtotal : _total,
+        total:           _total,
+        commission:      cleanOrder.commission != null ? cleanOrder.commission : 0,
+        status:          cleanOrder.status || "processing",
+        payment_method:  _pm,
+        coupon_code:     cleanOrder.couponCode   || null,
+        shipping_city:   cleanOrder.shippingCity || null,
+        tracking_number: cleanOrder.trackingNumber || null,
         // Stripe — permet au webhook payment_intent.succeeded de retrouver la commande
         stripe_payment_id:  stripePaymentId || cleanOrder.stripePaymentId || null,
       };
+      // Retirer les cles nulles non indispensables (laisse les NOT NULL deja remplies)
+      ["buyer_id","vendor_id","buyer_address","payment_method","coupon_code","shipping_city","tracking_number","stripe_payment_id"]
+        .forEach(k => { if (row[k] == null) delete row[k]; });
       try {
         // [FIX] Rafraîchir la session Supabase avant l'insert pour éviter le 401
         if (this._sb?.auth) {
@@ -2742,17 +2760,43 @@ const DataService = {
     const all = storage.getArray("orders"); all.push(saved); storage.set("orders", all);
     return saved;
   },
+  // [FIX] Mapping camelCase -> snake_case : sans cela, des cles comme returnStatus
+  // ou returnId sont envoyees telles quelles a PostgREST, qui rejette les colonnes
+  // inconnues -> erreur -> fallback localStorage -> la valeur "revient" au refresh.
+  _ORDER_COL_MAP: {
+    returnStatus: "return_status", returnId: "return_id", trackingNumber: "tracking_number",
+    paymentStatus: "payment_status", paymentMethod: "payment_method", couponCode: "coupon_code",
+    shippingCity: "shipping_city", cancelReason: "cancel_reason", disputeId: "dispute_id",
+    hasDispute: "has_dispute", deliveredAt: "delivered_at", cancelledAt: "cancelled_at",
+    inTransitAt: "in_transit_at", processingAt: "processing_at", updatedAt: "updated_at",
+    buyerId: "buyer_id", vendorId: "vendor_id", stripePaymentId: "stripe_payment_id",
+    mobileMoneyRef: "mobile_money_ref",
+  },
+  _mapOrderCols(updates) {
+    const out = {};
+    for (const k of Object.keys(updates || {})) {
+      out[this._ORDER_COL_MAP[k] || k] = updates[k];
+    }
+    return out;
+  },
   async updateOrder(id, updates) {
+    const row = this._mapOrderCols(updates);
     if (this._sb) {
-      const { error } = await this._sb.from("orders").update(updates).eq("id", id);
-      if (!error) return;
+      const { data, error } = await this._sb.from("orders").update(row).eq("id", id).select("id");
+      // Succes reel uniquement si aucune erreur ET au moins une ligne modifiee
+      // (0 ligne = blocage RLS silencieux -> on retombe sur localStorage).
+      if (!error && data && data.length > 0) return true;
+      if (error) console.warn("[updateOrder] Supabase:", error.message);
+      else console.warn("[updateOrder] 0 ligne modifiee (RLS ou id introuvable):", id);
     }
     const all = storage.getArray("orders");
     const idx = all.findIndex((o) => o.id === id);
     if (idx >= 0) {
       all[idx] = __spreadValues(__spreadValues({}, all[idx]), updates);
       storage.set("orders", all);
+      return true;
     }
+    return false;
   },
   async getUsers() {
     // [FIX] L'endpoint /api/admin/export/users requiert le rôle admin.
@@ -3600,8 +3644,17 @@ async signOut() {
           // que Supabase essaie de re-traiter un token expiré au prochain reload.
           // Le hash contient #access_token=... après le retour de Google/GitHub.
           try {
-            if (window.location.hash && window.location.hash.includes('access_token')) {
-              const cleanUrl = window.location.pathname + window.location.search;
+            // [FIX] Nettoyer a la fois le hash (#access_token, flux implicite) ET les
+            // parametres de requete (?code, ?state, flux PKCE — defaut de supabase-js v2).
+            // Sans cela, ?code=... reste dans l URL : un simple reload tente de re-echanger
+            // un code deja consomme -> erreur "invalid request" / deconnexion intempestive.
+            const _u = new URL(window.location.href);
+            const _hadHashToken = _u.hash && _u.hash.includes("access_token");
+            const _hadCode = _u.searchParams.has("code") || _u.searchParams.has("state");
+            if (_hadHashToken || _hadCode) {
+              ["code", "state", "error", "error_description", "provider_token"].forEach(p => _u.searchParams.delete(p));
+              _u.hash = "";
+              const cleanUrl = _u.pathname + (_u.searchParams.toString() ? "?" + _u.searchParams.toString() : "");
               window.history.replaceState({}, document.title, cleanUrl);
             }
           } catch (_) {}
@@ -4692,9 +4745,12 @@ async signOut() {
   },
 
   async createVendorOffer(payload) {
-    // Normalize field: use original_offer_id as the FK to buyer_requests
+    // [FIX] La table vendor_offers possede DEUX colonnes FK : request_id (NOT NULL,
+    // historique) et original_offer_id (ajoutee ensuite). On renseigne LES DEUX pour
+    // satisfaire la contrainte NOT NULL et rester compatible avec les deux lectures.
     const { request_id, ...rest } = payload;
-    const offer = { id: crypto.randomUUID(), ...rest, original_offer_id: request_id || rest.original_offer_id, status: "pending", created_at: new Date().toISOString() };
+    const _fk = request_id || rest.original_offer_id;
+    const offer = { id: crypto.randomUUID(), ...rest, request_id: _fk, original_offer_id: _fk, status: "pending", created_at: new Date().toISOString() };
     if (this._sb) {
       const { data, error } = await this._sb.from("vendor_offers").insert(offer).select().single();
       if (!error && data) return data;
@@ -4707,7 +4763,8 @@ async signOut() {
   async acceptOffer(offerId, requestId) {
     if (this._sb) {
       await this._sb.from("vendor_offers").update({ status: "accepted", accepted_at: new Date().toISOString() }).eq("id", offerId);
-      await this._sb.from("vendor_offers").update({ status: "rejected" }).eq("request_id", requestId).neq("id", offerId);
+      // [FIX] La FK reelle est original_offer_id (cf. createVendorOffer), pas request_id
+      await this._sb.from("vendor_offers").update({ status: "rejected" }).eq("original_offer_id", requestId).neq("id", offerId);
       await this._sb.from("buyer_requests").update({ status: "accepted" }).eq("id", requestId);
     }
     const offers = storage.getArray("vendor_offers").map(o =>
@@ -14023,12 +14080,25 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        if (newStatus === "delivered") upd.paid_at = new Date().toISOString();
-        if (newStatus === "cancelled") upd.canceled_at = new Date().toISOString();
-        const { error } = await DataService._sb.from("orders").update(upd).eq("id", orderId);
+        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
+        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
+        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
+        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
+        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
+        const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
+        // [FIX] .select() pour detecter un echec RLS silencieux : un UPDATE qui ne
+        // touche aucune ligne ne renvoie PAS d erreur PostgREST mais ne persiste rien
+        // (=> le statut "revient" apres actualisation). On verifie data.length.
+        const { data: _updRows, error } = await DataService._sb.from("orders").update(upd).eq("id", orderId).select("id");
         if (error) {
           _pendingStatusUpdates.current.delete(orderId);
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
           addToast("Erreur Supabase : " + error.message, "danger"); return;
+        }
+        if (!_updRows || _updRows.length === 0) {
+          _pendingStatusUpdates.current.delete(orderId);
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
+          addToast("Mise a jour refusee : droits insuffisants ou commande introuvable.", "danger"); return;
         }
       } else {
         const allOrders = storage.getArray("orders");
@@ -17582,10 +17652,22 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        if (newStatus === "delivered") upd.paid_at = new Date().toISOString();
-        if (newStatus === "cancelled") upd.canceled_at = new Date().toISOString();
-        const { error } = await DataService._sb.from("orders").update(upd).eq("id", orderId);
-        if (error) { addToast("Erreur Supabase : " + error.message, "danger"); return; }
+        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
+        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
+        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
+        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
+        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
+        const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
+        // [FIX] .select() detecte un echec RLS silencieux (0 ligne => revert au refresh).
+        const { data: _updRows, error } = await DataService._sb.from("orders").update(upd).eq("id", orderId).select("id");
+        if (error) {
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
+          addToast("Erreur Supabase : " + error.message, "danger"); return;
+        }
+        if (!_updRows || _updRows.length === 0) {
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
+          addToast("Mise a jour refusee : droits insuffisants ou commande introuvable.", "danger"); return;
+        }
       } else {
         const allOrders = storage.getArray("orders");
         const idx = allOrders.findIndex((o) => o.id === orderId);
@@ -19996,7 +20078,7 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
         if (_eo && ["delivered","in_transit"].includes(_eo.status)) {
           addToast("Annulation impossible : commande déjà expédiée.", "error"); setLoading(false); return;
         }
-        await DataService._sb.from("orders").update({ status: "cancelled", canceled_at: new Date().toISOString(), failure_reason: reason }).eq("id", order.id);
+        await DataService._sb.from("orders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: reason }).eq("id", order.id).select("id");
         _cancelRes = { ok: true, json: async () => ({}) };
       }
       const res = _cancelRes;
