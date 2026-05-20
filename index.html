@@ -14141,18 +14141,39 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
-          method: "POST", body: JSON.stringify({ status: newStatus }),
+          method: "PATCH", body: JSON.stringify({ status: newStatus }),
         });
         const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
         if (res && res.ok && ct.includes("application/json")) {
           apiOk = true;
         } else if (res && !res.ok) {
-          if ([404, 502, 503, 504].includes(res.status)) {
+          if ([502, 503, 504].includes(res.status)) {
             console.warn(`[updateOrderStatus admin] Backend ${res.status} — fallback Supabase`);
-          } else {
-            const e = await res.json().catch(() => ({}));
+          } else if (res.status === 401) {
+            const eData = await res.json().catch(() => ({}));
             _pendingStatusUpdates.current.delete(orderId);
-            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+            setOrders(prev => prev.map(o => o.id === orderId
+              ? { ...o, status: (orders.find(x => x.id === orderId)||{}).status || o.status }
+              : o));
+            if (eData?.code === 'TOKEN_EXPIRED') {
+              window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+              addToast("Session expirée — reconnectez-vous pour mettre à jour le statut.", "warning");
+            } else {
+              addToast(eData?.error || "Non authentifié — statut non mis à jour.", "danger");
+            }
+            return;
+          } else if (res.status === 403) {
+            const eData = await res.json().catch(() => ({}));
+            _pendingStatusUpdates.current.delete(orderId);
+            setOrders(prev => prev.map(o => o.id === orderId
+              ? { ...o, status: (orders.find(x => x.id === orderId)||{}).status || o.status }
+              : o));
+            addToast(eData?.error || "Non autorisé sur cette commande.", "danger");
+            return;
+          } else {
+            const eData = await res.json().catch(() => ({}));
+            _pendingStatusUpdates.current.delete(orderId);
+            addToast(eData?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
             return;
           }
         }
@@ -14161,11 +14182,9 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
-        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
-        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
-        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
-        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
+        // [FIX] Seuls status + updated_at existent dans le schema orders.
+        // Les colonnes *_at (processing_at, in_transit_at, delivered_at, cancelled_at)
+        // n'existent pas -> Supabase rejette avec 400 "column not found in schema cache".
         const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
         // [FIX] .select() pour detecter un echec RLS silencieux : un UPDATE qui ne
         // touche aucune ligne ne renvoie PAS d erreur PostgREST mais ne persiste rien
@@ -17714,17 +17733,30 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
-          method: "POST", body: JSON.stringify({ status: newStatus }),
+          method: "PATCH", body: JSON.stringify({ status: newStatus }),
         });
         const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
         if (res && res.ok && ct.includes("application/json")) {
           apiOk = true;
         } else if (res && !res.ok) {
-          if ([404, 502, 503, 504].includes(res.status)) {
+          if ([502, 503, 504].includes(res.status)) {
             console.warn(`[updateOrderStatus vendor] Backend ${res.status} — fallback Supabase`);
+          } else if (res.status === 401) {
+            const eData = await res.json().catch(() => ({}));
+            if (eData?.code === 'TOKEN_EXPIRED') {
+              window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+              addToast("Session expirée — reconnectez-vous.", "warning");
+            } else {
+              addToast(eData?.error || "Non authentifié.", "danger");
+            }
+            return;
+          } else if (res.status === 403) {
+            const eData = await res.json().catch(() => ({}));
+            addToast(eData?.error || "Non autorisé sur cette commande.", "danger");
+            return;
           } else {
-            const e = await res.json().catch(() => ({}));
-            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+            const eData = await res.json().catch(() => ({}));
+            addToast(eData?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
             return;
           }
         }
@@ -17733,11 +17765,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (!apiOk) {
       if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
-        if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
-        if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
-        if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
-        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
+        // [FIX] Seuls status + updated_at existent dans le schema orders.
+        // Les colonnes *_at n'existent pas -> Supabase 400 "column not found".
         const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
         // [FIX] .select() detecte un echec RLS silencieux (0 ligne => revert au refresh).
         const { data: _updRows, error } = await DataService._sb.from("orders").update(upd).eq("id", orderId).select("id");
@@ -20159,7 +20188,7 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
         if (_eo && ["delivered","in_transit"].includes(_eo.status)) {
           addToast("Annulation impossible : commande déjà expédiée.", "error"); setLoading(false); return;
         }
-        await DataService._sb.from("orders").update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancel_reason: reason }).eq("id", order.id).select("id");
+        await DataService._sb.from("orders").update({ status: "cancelled", cancel_reason: reason }).eq("id", order.id).select("id");
         _cancelRes = { ok: true, json: async () => ({}) };
       }
       const res = _cancelRes;

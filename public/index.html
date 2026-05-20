@@ -14141,18 +14141,39 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
-          method: "POST", body: JSON.stringify({ status: newStatus }),
+          method: "PATCH", body: JSON.stringify({ status: newStatus }),
         });
         const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
         if (res && res.ok && ct.includes("application/json")) {
           apiOk = true;
         } else if (res && !res.ok) {
-          if ([404, 502, 503, 504].includes(res.status)) {
+          if ([502, 503, 504].includes(res.status)) {
             console.warn(`[updateOrderStatus admin] Backend ${res.status} — fallback Supabase`);
-          } else {
-            const e = await res.json().catch(() => ({}));
+          } else if (res.status === 401) {
+            const eData = await res.json().catch(() => ({}));
             _pendingStatusUpdates.current.delete(orderId);
-            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+            setOrders(prev => prev.map(o => o.id === orderId
+              ? { ...o, status: (orders.find(x => x.id === orderId)||{}).status || o.status }
+              : o));
+            if (eData?.code === 'TOKEN_EXPIRED') {
+              window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+              addToast("Session expirée — reconnectez-vous pour mettre à jour le statut.", "warning");
+            } else {
+              addToast(eData?.error || "Non authentifié — statut non mis à jour.", "danger");
+            }
+            return;
+          } else if (res.status === 403) {
+            const eData = await res.json().catch(() => ({}));
+            _pendingStatusUpdates.current.delete(orderId);
+            setOrders(prev => prev.map(o => o.id === orderId
+              ? { ...o, status: (orders.find(x => x.id === orderId)||{}).status || o.status }
+              : o));
+            addToast(eData?.error || "Non autorisé sur cette commande.", "danger");
+            return;
+          } else {
+            const eData = await res.json().catch(() => ({}));
+            _pendingStatusUpdates.current.delete(orderId);
+            addToast(eData?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
             return;
           }
         }
@@ -17712,17 +17733,30 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
-          method: "POST", body: JSON.stringify({ status: newStatus }),
+          method: "PATCH", body: JSON.stringify({ status: newStatus }),
         });
         const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
         if (res && res.ok && ct.includes("application/json")) {
           apiOk = true;
         } else if (res && !res.ok) {
-          if ([404, 502, 503, 504].includes(res.status)) {
+          if ([502, 503, 504].includes(res.status)) {
             console.warn(`[updateOrderStatus vendor] Backend ${res.status} — fallback Supabase`);
+          } else if (res.status === 401) {
+            const eData = await res.json().catch(() => ({}));
+            if (eData?.code === 'TOKEN_EXPIRED') {
+              window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+              addToast("Session expirée — reconnectez-vous.", "warning");
+            } else {
+              addToast(eData?.error || "Non authentifié.", "danger");
+            }
+            return;
+          } else if (res.status === 403) {
+            const eData = await res.json().catch(() => ({}));
+            addToast(eData?.error || "Non autorisé sur cette commande.", "danger");
+            return;
           } else {
-            const e = await res.json().catch(() => ({}));
-            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+            const eData = await res.json().catch(() => ({}));
+            addToast(eData?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
             return;
           }
         }
