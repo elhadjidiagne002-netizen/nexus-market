@@ -2974,7 +2974,7 @@ const DataService = {
   async markNotifRead(userId, notifId) {
     // [FIX 4] Passer par le backend si configuré
     if (NEXUS_CONFIG.apiUrl) {
-      await this.apiFetch(`/api/notifications/${notifId}/read`, { method: "PATCH" }).catch(() => {});
+      await this.apiFetch(`/api/notifications/${notifId}/read`, { method: "POST" }).catch(() => {});
       return;
     }
     if (this._sb) {
@@ -2990,7 +2990,7 @@ const DataService = {
   async markAllNotifRead(userId) {
     // [FIX 4] Passer par le backend si configuré
     if (NEXUS_CONFIG.apiUrl) {
-      await this.apiFetch(`/api/notifications/read-all`, { method: "PATCH" }).catch(() => {});
+      await this.apiFetch(`/api/notifications/read-all`, { method: "POST" }).catch(() => {});
       return;
     }
     if (this._sb) {
@@ -5989,13 +5989,34 @@ const PROVIDER_LABELS = { orange: "🟠 Orange Money", wave: "🔵 Wave", free: 
 
 // ── Appel API payout ──────────────────────────────────────────
 async function apiFetchPayout(path, options = {}) {
-  const token = (window.__supabaseClient
-    ? (await window.__supabaseClient.auth.getSession()).data?.session?.access_token
-    : null) || "";  // Pas de fallback localStorage pour sb_access_token
-  const res = await fetch(path, {
+  // [FIX session] Attendre que la session Supabase soit pleinement active
+  // avant d'envoyer la requête (évite le 401 au premier appel post-login).
+  const _getToken = async () => {
+    if (!window.__supabaseClient) return "";
+    const { data } = await window.__supabaseClient.auth.getSession();
+    return data?.session?.access_token || "";
+  };
+
+  const _doFetch = async (token) => fetch(path, {
     ...options,
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, ...(options.headers || {}) },
   });
+
+  let token = await _getToken();
+  let res = await _doFetch(token);
+
+  // [FIX session] Si 401 : le JWT était peut-être périmé (URL token > 120s).
+  // On force un refreshSession() et on réessaie une seule fois.
+  if (res.status === 401 && window.__supabaseClient) {
+    try {
+      const { data: refreshed } = await window.__supabaseClient.auth.refreshSession();
+      const freshToken = refreshed?.session?.access_token || "";
+      if (freshToken) {
+        res = await _doFetch(freshToken);
+      }
+    } catch (_) {}
+  }
+
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
   return json;
@@ -14120,13 +14141,13 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
-          method: "PATCH", body: JSON.stringify({ status: newStatus }),
+          method: "POST", body: JSON.stringify({ status: newStatus }),
         });
         const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
         if (res && res.ok && ct.includes("application/json")) {
           apiOk = true;
         } else if (res && !res.ok) {
-          if ([502, 503, 504].includes(res.status)) {
+          if ([404, 502, 503, 504].includes(res.status)) {
             console.warn(`[updateOrderStatus admin] Backend ${res.status} — fallback Supabase`);
           } else {
             const e = await res.json().catch(() => ({}));
@@ -17693,13 +17714,13 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (NEXUS_CONFIG.apiUrl) {
       try {
         const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
-          method: "PATCH", body: JSON.stringify({ status: newStatus }),
+          method: "POST", body: JSON.stringify({ status: newStatus }),
         });
         const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
         if (res && res.ok && ct.includes("application/json")) {
           apiOk = true;
         } else if (res && !res.ok) {
-          if ([502, 503, 504].includes(res.status)) {
+          if ([404, 502, 503, 504].includes(res.status)) {
             console.warn(`[updateOrderStatus vendor] Backend ${res.status} — fallback Supabase`);
           } else {
             const e = await res.json().catch(() => ({}));
