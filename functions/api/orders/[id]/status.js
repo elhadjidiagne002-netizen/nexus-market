@@ -7,7 +7,10 @@
  *
  * Body : { status: "in_transit" | "delivered" | "cancelled" | "processing" }
  */
-export async function onRequestPatch(context) {
+// [FIX] Le frontend envoie désormais POST (PATCH rejeté 405 par Cloudflare Pages).
+// onRequestPatch est conservé en alias pour rétro-compatibilité si d'autres
+// clients appellent encore PATCH directement.
+async function handleUpdateStatus(context) {
   const { request, env, params } = context;
   const orderId = params.id;
 
@@ -35,9 +38,11 @@ export async function onRequestPatch(context) {
     return json({ error: `Statut invalide. Valeurs : ${VALID.join(', ')}` }, 400);
   }
 
+  // [FIX] Colonnes timestamp conformes au schéma Supabase :
+  // paid_at et canceled_at n'existent pas → delivered_at et cancelled_at (double L).
   const updates = { status, updated_at: new Date().toISOString() };
-  if (status === 'delivered') updates.paid_at = new Date().toISOString();
-  if (status === 'cancelled') updates.canceled_at = new Date().toISOString();
+  if (status === 'delivered') updates.delivered_at = new Date().toISOString();
+  if (status === 'cancelled') updates.cancelled_at = new Date().toISOString();
 
   try {
     const ctrl = new AbortController();
@@ -79,6 +84,10 @@ export async function onRequestPatch(context) {
     return json({ error: 'Erreur serveur', detail: e.message }, 500);
   }
 }
+
+// Exports Cloudflare Pages Functions
+export const onRequestPost  = handleUpdateStatus; // méthode principale (frontend v2+)
+export const onRequestPatch = handleUpdateStatus; // alias rétro-compatible
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
