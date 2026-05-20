@@ -3468,6 +3468,26 @@ async signOut() {
   },
 
   // Wrapper fetch → auto-logout on 401 + PERF FIX: timeout 4s pour éviter les cold starts Render
+  // [REFONTE TOUT-SUPABASE + PAIEMENTS] paymentFetch appelle TOUJOURS les fonctions
+  // serverless same-origin (/api/payments/*, /api/webhooks/*), independamment de
+  // NEXUS_CONFIG.apiUrl. Raison : l initiation/verification de paiement exige des
+  // cles secretes PayTech/Stripe cote serveur ; elle ne peut PAS passer par Supabase.
+  // Les donnees (commandes, produits...) restent en Supabase direct.
+  async paymentFetch(path, options = {}) {
+    let token = "";
+    try {
+      if (this._sb) token = (await this._sb.auth.getSession()).data?.session?.access_token || "";
+    } catch (_) {}
+    if (!token) { try { token = sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt") || ""; } catch (_) {} }
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    // Timeout court : si la fonction de paiement est injoignable, on echoue vite.
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), 20000);
+    try {
+      return await fetch(path, { ...options, headers, signal: ctrl.signal });
+    } finally { clearTimeout(tid); }
+  },
   async apiFetch(path, options = {}) {
     const _apiBase = (NEXUS_CONFIG.apiUrl || "").endsWith("/") ? NEXUS_CONFIG.apiUrl.slice(0,-1) : (NEXUS_CONFIG.apiUrl || "");
     // [FIX Cloudflare Pages] Sans apiUrl, toutes les routes Railway n'existent pas → null immédiat
@@ -6022,17 +6042,53 @@ const EUR_TO_XOF      = EUR_TO_FCFA;  // taux centralisé — NEXUS_CONFIG.curre
 const PROVIDER_LABELS = { orange: "🟠 Orange Money", wave: "🔵 Wave", free: "🟢 Free Money", bank: "🏦 Virement" };
 
 // ── Appel API payout ──────────────────────────────────────────
+// [TOUT-SUPABASE] apiFetchPayout ne touche plus le backend (éliminait un 401
+// pendant le login car le JWT n’était pas encore prêt). Routeur Supabase :
+//   - /api/payout/history  -> solde (RPC vendor_payout_balance) + historique
+//   - /api/payout/request  -> création via DataService.savePayout (valide le solde)
 async function apiFetchPayout(path, options = {}) {
-  const token = (window.__supabaseClient
-    ? (await window.__supabaseClient.auth.getSession()).data?.session?.access_token
-    : null) || "";  // Pas de fallback localStorage pour sb_access_token
-  const res = await fetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, ...(options.headers || {}) },
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-  return json;
+  const sb = window.__supabaseClient || (typeof DataService !== "undefined" && DataService._sb);
+  // ----- Historique + solde -----
+  if (path.includes("payout/history")) {
+    let bal = null, requests = [];
+    try { bal = await DataService.getPayoutBalance(); } catch (_) {}
+    let vendorId = null;
+    try { vendorId = (await sb.auth.getSession()).data?.session?.user?.id || null; } catch (_) {}
+    try { requests = await DataService.getPayouts(vendorId) || []; } catch (_) {}
+    const avail   = bal ? bal.availableBalance : 0;
+    const revenue = bal ? bal.totalRevenueFcfa : 0;
+    const paid    = bal ? bal.totalPaidOut     : 0;
+    const pending = bal ? bal.pendingPayout    : 0;
+    return {
+      wallet: {
+        available_xof:     avail,
+        total_revenue_xof: revenue,
+        paid_out_xof:      paid,
+        pending_xof:       pending,
+      },
+      balance: bal || {},
+      requests,
+      history: requests,
+    };
+  }
+  // ----- Création d’une demande de retrait -----
+  if (path.includes("payout/request")) {
+    let payload = {};
+    try { payload = options.body ? JSON.parse(options.body) : {}; } catch (_) {}
+    let user = null;
+    try { user = (await sb.auth.getSession()).data?.session?.user || null; } catch (_) {}
+    const vendorName = (user && (user.user_metadata?.name || user.user_metadata?.full_name || user.email)) || "Vendeur";
+    const saved = await DataService.savePayout({
+      vendorId:    user ? user.id : null,
+      vendorName,
+      amount:      payload.amount,
+      method:      payload.method,
+      provider:    payload.provider,
+      destination: payload.destination,
+    });
+    return { ok: true, payout: saved || null, message: "Demande de retrait enregistrée." };
+  }
+  throw new Error("Route payout inconnue : " + path);
 }
 
 // ── Carte portefeuille (overview) ─────────────────────────────
@@ -9161,12 +9217,11 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
             const amountFcfa  = Math.round(grandTotalEur * EUR_TO_FCFA_LOCAL);
             const origin      = window.location.origin;
 
-            if (!NEXUS_CONFIG.apiUrl) {
-              // Mode démo local (jamais en production) — pas de backend disponible.
-              // On NE crée PAS de faux "Paiement confirmé" : on prévient clairement
-              // que le paiement n'a pas eu lieu.
-              console.warn("[PayTech] Backend absent (NEXUS_CONFIG.apiUrl vide) — mode démo");
-              addToast("⚠️ Mode démo : aucun paiement réel n'a été effectué. Configurez NEXUS_CONFIG.apiUrl pour activer PayTech.", "warning", 10000);
+            // [REFONTE] Le paiement passe par paymentFetch (fonctions same-origin),
+            // donc independant de NEXUS_CONFIG.apiUrl. Mode demo uniquement en local file://.
+            if (window.location.protocol === "file:") {
+              console.warn("[PayTech] Contexte local file:// — mode démo");
+              addToast("⚠️ Mode démo local : aucun paiement réel. Déployez le site pour activer PayTech.", "warning", 10000);
             } else {
               if (!mainOrderId || !amountFcfa) {
                 console.warn("[PayTech] order_id ou amount manquant", { mainOrderId, amountFcfa });
@@ -9174,7 +9229,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
                 setLoading(false);
                 return;
               }
-              const initRes = await DataService.apiFetch("/api/payments/paytech/init", {
+              const initRes = await DataService.paymentFetch("/api/payments/paytech/init", {
                 method: "POST",
                 body: JSON.stringify({
                   order_id:    mainOrderId,
@@ -10635,30 +10690,17 @@ const ForgotPasswordModal = ({ onBack, onCancel }) => {
       // [FIX] Appel CF function /api/auth/reset-password → Resend + lien Supabase admin
       // Remplace resetPasswordForEmail() limité à 3 emails/heure sur le plan gratuit Supabase
       try {
-        const res = await fetch("/api/auth/reset-password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "request", email: email.trim().toLowerCase(), name: "" }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok && res.status !== 200) {
-          // Fallback Supabase direct si la CF function n'est pas déployée (404/405)
-          if (res.status === 404 || res.status === 405) {
-            if (DataService._sb) {
-              const { error: sbErr } = await DataService._sb.auth.resetPasswordForEmail(email, {
-                redirectTo: NEXUS_CONFIG.confirmUrl
-              });
-              if (sbErr) {
-                if (sbErr.message.toLowerCase().includes("rate limit") || sbErr.message.toLowerCase().includes("too many")) {
-                  setError("Trop de tentatives. Veuillez patienter quelques minutes.");
-                } else {
-                  setError(sbErr.message || "Erreur lors de l'envoi");
-                }
-                return;
-              }
+        // [TOUT-SUPABASE] Reset via Supabase Auth directement (plus de CF function).
+        if (DataService._sb) {
+          const { error: sbErr } = await DataService._sb.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+            redirectTo: NEXUS_CONFIG.confirmUrl
+          });
+          if (sbErr) {
+            if (sbErr.message.toLowerCase().includes("rate limit") || sbErr.message.toLowerCase().includes("too many")) {
+              setError("Trop de tentatives. Veuillez patienter quelques minutes.");
+            } else {
+              setError(sbErr.message || "Erreur lors de l'envoi");
             }
-          } else {
-            setError(data.error || "Erreur lors de l'envoi. Réessayez.");
             return;
           }
         }
@@ -11152,14 +11194,15 @@ const StripePaymentForm = ({ amount, onSuccess, onError, addToast }) => {
       }
 
       // ── Étape 2 : demander un PaymentIntent au backend ─────────────────
-      if (!NEXUS_CONFIG.apiUrl) {
-        setErrors({ general: "Backend non configuré (NEXUS_CONFIG.apiUrl). Le paiement réel est impossible sans serveur." });
+      // [REFONTE] create-intent via paymentFetch same-origin ; demo seulement en file://.
+      if (window.location.protocol === "file:") {
+        setErrors({ general: "Contexte local file:// — paiement réel impossible. Déployez le site." });
         setLoading(false);
         return;
       }
       let intentData = null;
       try {
-        const intentRes = await DataService.apiFetch("/api/payments/stripe/create-intent", {
+        const intentRes = await DataService.paymentFetch("/api/payments/stripe/create-intent", {
           method: "POST",
           body: JSON.stringify({
             amount:          Math.round(amount * 100), // centimes
@@ -14177,36 +14220,34 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     // Verrou anti-revert + update optimiste immédiat
     _pendingStatusUpdates.current.add(orderId);
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus, updated_at: new Date().toISOString() } : o));
-    let apiOk = false;
-    if (NEXUS_CONFIG.apiUrl) {
-      try {
-        const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
-          method: "PATCH", body: JSON.stringify({ status: newStatus }),
-        });
-        const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
-        if (res && res.ok && ct.includes("application/json")) {
-          apiOk = true;
-        } else if (res && !res.ok) {
-          if ([502, 503, 504].includes(res.status)) {
-            console.warn(`[updateOrderStatus admin] Backend ${res.status} — fallback Supabase`);
-          } else {
-            const e = await res.json().catch(() => ({}));
-            _pendingStatusUpdates.current.delete(orderId);
-            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+    // [TOUT-SUPABASE] Plus d appel backend : ecriture directe Supabase
+    // (elimine le hang 12s + 502 du backend Cloudflare).
+    {
+      if (DataService._sb) {
+        const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
+        // [TOUT-SUPABASE] Annulation = RPC atomique (statut + reincrementation stock).
+        if (newStatus === "cancelled") {
+          try {
+            const { data: _r, error: _e } = await DataService._sb.rpc("cancel_order_release_stock", { p_order_id: orderId });
+            if (_e || !_r || (!_r.ok && !_r.already_cancelled)) {
+              if (typeof _pendingStatusUpdates !== "undefined") _pendingStatusUpdates.current.delete(orderId);
+              setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
+              addToast("Annulation refusee : " + ((_e && _e.message) || (_r && _r.error) || "droits insuffisants"), "danger");
+              return;
+            }
+            addToast("Commande annulee, stock restitue.", "success");
+            if (typeof _pendingStatusUpdates !== "undefined") setTimeout(() => _pendingStatusUpdates.current.delete(orderId), 3000);
             return;
+          } catch (_ce) {
+            if (typeof _pendingStatusUpdates !== "undefined") _pendingStatusUpdates.current.delete(orderId);
+            setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
+            addToast("Erreur annulation : " + _ce.message, "danger"); return;
           }
         }
-      } catch (e) { console.warn("[updateOrderStatus admin]", e); }
-    }
-    if (!apiOk) {
-      if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
         if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
         if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
         if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
-        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
-        const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
         // [FIX] .select() pour detecter un echec RLS silencieux : un UPDATE qui ne
         // touche aucune ligne ne renvoie PAS d erreur PostgREST mais ne persiste rien
         // (=> le statut "revient" apres actualisation). On verifie data.length.
@@ -17750,35 +17791,33 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   const updateOrderStatus = async (orderId, newStatus) => {
     // Update optimiste immédiat
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus, updated_at: new Date().toISOString() } : o));
-    let apiOk = false;
-    if (NEXUS_CONFIG.apiUrl) {
-      try {
-        const res = await DataService.apiFetch(`/api/orders/${orderId}/status`, {
-          method: "PATCH", body: JSON.stringify({ status: newStatus }),
-        });
-        const ct = res && res.headers ? (res.headers.get("Content-Type") || "") : "";
-        if (res && res.ok && ct.includes("application/json")) {
-          apiOk = true;
-        } else if (res && !res.ok) {
-          if ([502, 503, 504].includes(res.status)) {
-            console.warn(`[updateOrderStatus vendor] Backend ${res.status} — fallback Supabase`);
-          } else {
-            const e = await res.json().catch(() => ({}));
-            addToast(e?.error || `Erreur ${res.status} — statut non mis à jour.`, "danger");
+    // [TOUT-SUPABASE] Plus d appel backend : ecriture directe Supabase.
+    {
+      if (DataService._sb) {
+        const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
+        // [TOUT-SUPABASE] Annulation = RPC atomique (statut + reincrementation stock).
+        if (newStatus === "cancelled") {
+          try {
+            const { data: _r, error: _e } = await DataService._sb.rpc("cancel_order_release_stock", { p_order_id: orderId });
+            if (_e || !_r || (!_r.ok && !_r.already_cancelled)) {
+              if (typeof _pendingStatusUpdates !== "undefined") _pendingStatusUpdates.current.delete(orderId);
+              setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
+              addToast("Annulation refusee : " + ((_e && _e.message) || (_r && _r.error) || "droits insuffisants"), "danger");
+              return;
+            }
+            addToast("Commande annulee, stock restitue.", "success");
+            if (typeof _pendingStatusUpdates !== "undefined") setTimeout(() => _pendingStatusUpdates.current.delete(orderId), 3000);
             return;
+          } catch (_ce) {
+            if (typeof _pendingStatusUpdates !== "undefined") _pendingStatusUpdates.current.delete(orderId);
+            setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
+            addToast("Erreur annulation : " + _ce.message, "danger"); return;
           }
         }
-      } catch (e) { console.warn("[updateOrderStatus vendor]", e); }
-    }
-    if (!apiOk) {
-      if (DataService._sb) {
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
-        // [FIX] Colonnes timestamp conformes au schema (ni paid_at ni canceled_at n existent).
         if (newStatus === "processing")  upd.processing_at = new Date().toISOString();
         if (newStatus === "in_transit")  upd.in_transit_at = new Date().toISOString();
         if (newStatus === "delivered")   upd.delivered_at  = new Date().toISOString();
-        if (newStatus === "cancelled")   upd.cancelled_at  = new Date().toISOString();
-        const _prevStatus = (orders.find(o => o.id === orderId) || {}).status;
         // [FIX] .select() detecte un echec RLS silencieux (0 ligne => revert au refresh).
         const { data: _updRows, error } = await DataService._sb.from("orders").update(upd).eq("id", orderId).select("id");
         if (error) {
@@ -20483,8 +20522,9 @@ const App = ({ onUserChange }) => {
       // payment === "return" (ou "success" en rétrocompat)
       setTimeout(() => addToast("\u23F3 Vérification du paiement auprès de PayTech…", "info", 6000), 400);
 
-      if (!NEXUS_CONFIG.apiUrl) {
-        setTimeout(() => addToast("\u26A0\uFE0F Impossible de vérifier le paiement (backend indisponible). Conservez la preuve PayTech et contactez le support.", "warning", 12000), 800);
+      // [REFONTE] Verification via paymentFetch same-origin ; skip seulement en file://.
+      if (window.location.protocol === "file:") {
+        setTimeout(() => addToast("\u26A0\uFE0F Verification indisponible en local. Conservez la preuve PayTech.", "warning", 12000), 800);
         return true;
       }
 
@@ -20497,7 +20537,7 @@ const App = ({ onUserChange }) => {
         if (finished) return;
         attempts++;
         try {
-          const r = await DataService.apiFetch(`/api/payments/paytech/verify/${encodeURIComponent(orderId)}`);
+          const r = await DataService.paymentFetch(`/api/payments/paytech/verify/${encodeURIComponent(orderId)}`);
           if (r && r.ok) {
             const d = await r.json().catch(() => null);
             if (d && d.paid === true) {
