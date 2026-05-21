@@ -2030,16 +2030,22 @@ const normalizeUser = (u) => {
   if (!u) return u;
   return {
     ...u,
-    id:        u.id,
-    email:     u.email,
-    name:      u.name,
-    role:      u.role      || 'buyer',
-    avatar:    u.avatar    || (u.name || u.email || '?').slice(0, 2).toUpperCase(),
-    status:    u.status    || 'active',
-    shopName:  u.shop_name || u.shopName  || null,
-    shopCat:   u.shop_category || u.shopCat || null,
-    phone:     u.phone     || null,
-    createdAt: u.created_at || u.createdAt || null,
+    id:           u.id,
+    email:        u.email,
+    name:         u.name,
+    role:         u.role      || 'buyer',
+    avatar:       u.avatar    || (u.name || u.email || '?').slice(0, 2).toUpperCase(),
+    status:       u.status    || 'active',
+    shopName:     u.shop_name || u.shopName  || null,
+    shopCat:      u.shop_category || u.shopCat || null,
+    shopCategory: u.shop_category || u.shopCategory || null,
+    phone:        u.phone     || null,
+    bio:          u.bio       || null,
+    logo:         u.logo      || u.avatar_url || null,
+    whatsapp_number: u.whatsapp_number || null,
+    openingHours: u.opening_hours || u.openingHours || null,
+    returnPolicy: u.return_policy || u.returnPolicy || null,
+    createdAt:    u.created_at || u.createdAt || null,
   };
 };
 
@@ -5915,9 +5921,34 @@ const VendorProfileEditor = ({ currentUser: currentUser2, addToast }) => {
     email: currentUser2.email || "",
     phone: currentUser2.phone || "",
     bio: currentUser2.bio || "",
-    shopCategory: currentUser2.shopCategory || "",
-    logo: currentUser2.logo || ""
+    shopCategory: currentUser2.shopCategory || currentUser2.shop_category || currentUser2.shopCat || "",
+    logo: currentUser2.logo || currentUser2.avatar_url || ""
   });
+  // ── Rechargement complet du profil depuis Supabase au montage ──────────────
+  React.useEffect(() => {
+    const sb = typeof DataService !== 'undefined' && DataService._sb;
+    if (!sb || !currentUser2.id) return;
+    sb.from('profiles').select('*').eq('id', currentUser2.id).maybeSingle()
+      .then(({ data, error }) => {
+        if (!error && data) {
+          setForm(f => ({
+            ...f,
+            name:           data.name           || f.name,
+            email:          data.email          || f.email,
+            phone:          data.phone          || f.phone,
+            bio:            data.bio            != null ? (data.bio || '') : f.bio,
+            shopCategory:   data.shop_category  || data.shopCategory || f.shopCategory,
+            logo:           data.logo           || data.avatar_url   || f.logo,
+            whatsappNumber: data.whatsapp_number
+                              ? data.whatsapp_number.replace(/^221/, '')
+                              : (f.whatsappNumber || ''),
+            openingHours:   data.opening_hours  || data.openingHours || f.openingHours || '',
+            returnPolicy:   data.return_policy  || data.returnPolicy || f.returnPolicy || '',
+          }));
+        }
+      })
+      .catch(() => {});
+  }, [currentUser2.id]);
   const [pwForm, setPwForm] = useState({ current: "", newPw: "", confirm: "" });
   const [saving, setSaving] = useState(false);
   const [pwSaving, setPwSaving] = useState(false);
@@ -5943,6 +5974,8 @@ const VendorProfileEditor = ({ currentUser: currentUser2, addToast }) => {
             bio:          form.bio,
             avatar_url:   form.logo,       // logo vendeur → avatar_url profil
             shop_category: form.shopCategory,
+            opening_hours: form.openingHours || null,
+            return_policy: form.returnPolicy || null,
           }),
         });
         if (res && res.ok) {
@@ -5961,7 +5994,9 @@ const VendorProfileEditor = ({ currentUser: currentUser2, addToast }) => {
         const uid = currentUser2.id;
         const { error } = await DataService._sb.from('profiles').update({
           name: form.name, email: form.email, phone: form.phone, whatsapp_number: form.whatsappNumber ? (form.whatsappPrefix || "221").replace("+","") + form.whatsappNumber.replace(/\D/g,"") : null,
-          bio: form.bio, shopCategory: form.shopCategory, logo: form.logo,
+          bio: form.bio, shop_category: form.shopCategory, logo: form.logo,
+          opening_hours: form.openingHours || null,
+          return_policy: form.returnPolicy || null,
           avatar: form.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
         }).eq('id', uid);
         if (!error && DataService._currentUser) Object.assign(DataService._currentUser, form);
