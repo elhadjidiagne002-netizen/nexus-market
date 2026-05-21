@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="NEXUS Market Sénégal - Achetez et vendez en toute confiance avec des moyens de paiement locaux">
     <title>NEXUS Market Sénégal</title>
-    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v5">
-    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v5";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
+    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v6">
+    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v6";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
     <!-- [FIX] Favicon inline — évite le 404 /favicon.ico -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%2300853E'/%3E%3Ctext x='32' y='44' font-family='system-ui,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23FDEF42'%3EN%3C/text%3E%3C/svg%3E">
     <!-- PERF FIX: preconnect CDNs & fonts early -->
@@ -2370,7 +2370,13 @@ const DataService = {
     storage.set("products", storage.getArray("products").filter((p) => p.id !== id));
   },
   async getOrders(filters = {}) {
-    const { buyer, vendor, page = 1, limit = 20, status } = filters;
+    // [FIX VISIBILITE] Accepter buyer/buyerId, vendor/vendorId, et role="admin".
+    // Avant : l admin (sans buyer/vendor) et le vendeur (qui envoie vendorId)
+    // tombaient sur le fallback localStorage vide => commandes invisibles.
+    const { page = 1, limit = 20, status, role } = filters;
+    const buyer  = filters.buyer  || filters.buyerId  || null;
+    const vendor = filters.vendor || filters.vendorId || null;
+    const isAdmin = role === "admin";
     if (NEXUS_CONFIG.apiUrl) {
       // [FIX] Inclure buyer et vendor dans les params API — sans eux le backend retourne
       // toutes les commandes (rôle admin) et si ce call échoue, le fallback Supabase
@@ -2389,18 +2395,19 @@ const DataService = {
       }
     }
 
-    // [FIX] Ne tenter le fallback Supabase que si une session active existe (évite le 400)
-    if (this._sb && (buyer || vendor)) {
+    // [FIX] Admin : lecture complete (RLS admin_all_orders). Sinon filtrer par buyer/vendor.
+    if (this._sb && (isAdmin || buyer || vendor)) {
       let sbSession = null;
       try { ({ data: { session: sbSession } } = await this._sb.auth.getSession()); } catch (_) {}
       if (sbSession) {
         let q = this._sb.from("orders").select("*", { count: "exact" });
-        if (buyer)  q = q.eq("buyer_id",  buyer);
-        if (vendor) q = q.eq("vendor_id", vendor);
+        if (!isAdmin && buyer)  q = q.eq("buyer_id",  buyer);
+        if (!isAdmin && vendor) q = q.eq("vendor_id", vendor);
         if (status) q = q.eq("status", status);
         q = q.order("created_at", { ascending: false }).range((page-1)*limit, page*limit-1);
         const { data, error } = await q;
-        if (!error) return data;
+        if (!error) return data || [];
+        console.warn("[getOrders] Supabase:", error.message);
       }
     }
 
@@ -3416,9 +3423,21 @@ async signOut() {
   async paymentFetch(path, options = {}) {
     let token = "";
     try {
-      if (this._sb) token = (await this._sb.auth.getSession()).data?.session?.access_token || "";
+      if (this._sb) {
+        let sess = (await this._sb.auth.getSession()).data?.session;
+        // [FIX 401] Si pas de session ou token sur le point d expirer, forcer un refresh.
+        if (!sess || (sess.expires_at && sess.expires_at * 1000 - Date.now() < 60000)) {
+          try { sess = (await this._sb.auth.refreshSession()).data?.session || sess; } catch (_) {}
+        }
+        token = sess?.access_token || "";
+      }
     } catch (_) {}
     if (!token) { try { token = sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt") || ""; } catch (_) {} }
+    if (!token) {
+      // [FIX 401] Pas de session : le paiement exige une connexion. Erreur explicite
+      // plutot qu un 401 cryptique cote fonction.
+      throw new Error("AUTH_REQUIRED: vous devez etre connecte pour payer.");
+    }
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     if (token) headers["Authorization"] = `Bearer ${token}`;
     // Timeout court : si la fonction de paiement est injoignable, on echoue vite.
@@ -9178,7 +9197,11 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
                   success_url: `${origin}/?payment=return&orderId=${encodeURIComponent(mainOrderId)}`,
                   cancel_url:  `${origin}/?payment=cancel&orderId=${encodeURIComponent(mainOrderId)}`,
                 }),
-              }).catch(e => { console.warn("[PayTech] Init réseau:", e?.message); return null; });
+              }).catch(e => { console.warn("[PayTech] Init réseau:", e?.message); return { __authErr: /AUTH_REQUIRED/.test(e?.message || "") }; });
+              if (initRes && initRes.__authErr) {
+                addToast("Veuillez vous connecter pour finaliser le paiement.", "error");
+                setLoading(false); return;
+              }
 
               let initData = null;
               if (initRes && typeof initRes.json === "function") {
