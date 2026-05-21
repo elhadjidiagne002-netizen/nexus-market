@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="NEXUS Market Sénégal - Achetez et vendez en toute confiance avec des moyens de paiement locaux">
     <title>NEXUS Market Sénégal</title>
-    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v10">
-    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v10";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
+    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v11">
+    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v11";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
     <!-- [FIX] Favicon inline — évite le 404 /favicon.ico -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%2300853E'/%3E%3Ctext x='32' y='44' font-family='system-ui,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23FDEF42'%3EN%3C/text%3E%3C/svg%3E">
     <!-- PERF FIX: preconnect CDNs & fonts early -->
@@ -14253,6 +14253,18 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           addToast("Erreur Supabase : " + error.message, "danger"); return;
         }
         if (!_updRows || _updRows.length === 0) {
+          // [DIAG 403] Logguer l etat reel pour identifier la cause du 0-ligne
+          try {
+            const _s = (await DataService._sb.auth.getSession()).data?.session;
+            const _u = _s?.user?.id || null;
+            const { data: _chk } = await DataService._sb.from("orders").select("id,vendor_id,buyer_id,status").eq("id", orderId).maybeSingle();
+            console.warn("[DIAG updateOrderStatus 0-ligne]", {
+              orderId, newStatus, session_user: _u,
+              commande_vendor_id: _chk?.vendor_id, commande_buyer_id: _chk?.buyer_id,
+              commande_visible: !!_chk,
+              note: _chk ? "commande visible mais UPDATE refuse => RLS write" : "commande INVISIBLE => RLS read / mauvais compte"
+            });
+          } catch (e) { console.warn("[DIAG] echec", e.message); }
           _pendingStatusUpdates.current.delete(orderId);
           setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: _prevStatus } : o));
           addToast("Mise a jour refusee : droits insuffisants ou commande introuvable.", "danger"); return;
