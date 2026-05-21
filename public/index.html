@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="NEXUS Market Sénégal - Achetez et vendez en toute confiance avec des moyens de paiement locaux">
     <title>NEXUS Market Sénégal</title>
-    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v7">
-    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v7";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
+    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v8">
+    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v8";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
     <!-- [FIX] Favicon inline — évite le 404 /favicon.ico -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%2300853E'/%3E%3Ctext x='32' y='44' font-family='system-ui,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23FDEF42'%3EN%3C/text%3E%3C/svg%3E">
     <!-- PERF FIX: preconnect CDNs & fonts early -->
@@ -3950,7 +3950,18 @@ async signOut() {
         console.warn("[markMessageRead] API indisponible, fallback Supabase:", e.message);
       }
     } else if (this._sb) {
-      const { error: e } = await this._sb.from("messages").update({ read: true }).eq("id", msgId);
+      // [FIX null] msgId peut etre null (marquage par expediteur). Sans garde,
+      // .eq("id", null) provoque "invalid input syntax for type uuid: null".
+      let q = this._sb.from("messages").update({ read: true });
+      if (msgId) {
+        q = q.eq("id", msgId);
+      } else if (fromId) {
+        // Marquer tous les messages recus de cet expediteur comme lus
+        q = q.eq("from_id", fromId).eq("read", false);
+      } else {
+        return; // rien a marquer
+      }
+      const { error: e } = await q;
       if (e) console.warn("[markMessageRead]", e.message);
     }
     // Mise à jour du cache localStorage
