@@ -20391,25 +20391,64 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
 };
 const VendorPublicPage = ({ vendorId, vendorName: vendorNameProp="", products, onClose, onAddToCart, onViewProduct, wishlist, onToggleWishlist, addToast, currentUser: currentUser2 }) => {
   const [vendorProfile, setVendorProfile] = React.useState(null);
+  const [profileLoading, setProfileLoading] = React.useState(true);
+  const [profileError,  setProfileError]  = React.useState(null);
+
   React.useEffect(() => {
-    // 1. Cache localStorage immédiat
-    try {
-      const cached = (typeof storage !== "undefined" && storage.getArray ? storage.getArray("users") : []) || [];
-      const found = vendorId
-        ? cached.find(u => u.id === vendorId)
-        : cached.find(u => (u.shopName||u.shop_name||u.name) === vendorNameProp);
-      if (found) setVendorProfile(found);
-    } catch(_) {}
-    // 2. Supabase si ID disponible
-    if (!vendorId) return;
-    const sb = typeof DataService !== "undefined" && DataService._sb;
-    if (!sb) return;
-    sb.from("profiles")
-      .select("id,name,shop_name,bio,phone,whatsapp_number,shopCategory,shop_category,avatar,logo,opening_hours,return_policy")
-      .eq("id", vendorId)
-      .maybeSingle()
-      .then(({ data, error }) => { if (!error && data) setVendorProfile(data); })
-      .catch(() => {});
+    let cancelled = false;
+    setProfileLoading(true);
+    setProfileError(null);
+
+    const sb = typeof DataService !== "undefined" && (DataService._sb || window.__nexusSupabaseClient);
+    if (!sb) { setProfileLoading(false); return; }
+
+    const doFetch = async () => {
+      try {
+        let data = null;
+
+        // ── Cas 1 : on a l'UUID vendeur → RPC get_vendor_profile (SECURITY DEFINER, pas de RLS)
+        if (vendorId) {
+          const { data: rpcData, error: rpcErr } = await sb.rpc("get_vendor_profile", { p_vendor_id: vendorId });
+          if (!rpcErr && rpcData) { data = rpcData; }
+          else {
+            // Fallback : select direct (fonctionne si RLS ouvert via migration SQL)
+            const { data: selData, error: selErr } = await sb
+              .from("profiles")
+              .select("id,name,shop_name,bio,phone,whatsapp_number,whatsapp_prefix,shop_category,avatar,logo,opening_hours,return_policy,status")
+              .eq("id", vendorId)
+              .maybeSingle();
+            if (!selErr && selData) data = selData;
+          }
+        }
+
+        // ── Cas 2 : pas d'UUID, seulement le nom → RPC get_vendor_profile_by_name
+        if (!data && vendorNameProp) {
+          const { data: rpcData2, error: rpcErr2 } = await sb.rpc("get_vendor_profile_by_name", { p_name: vendorNameProp });
+          if (!rpcErr2 && rpcData2) { data = rpcData2; }
+          else {
+            const { data: selData2, error: selErr2 } = await sb
+              .from("profiles")
+              .select("id,name,shop_name,bio,phone,whatsapp_number,whatsapp_prefix,shop_category,avatar,logo,opening_hours,return_policy,status")
+              .ilike("name", vendorNameProp)
+              .eq("role", "vendor")
+              .maybeSingle();
+            if (!selErr2 && selData2) data = selData2;
+          }
+        }
+
+        if (!cancelled) {
+          if (data) setVendorProfile(data);
+          else setProfileError("Profil introuvable");
+        }
+      } catch (e) {
+        if (!cancelled) setProfileError(e.message || "Erreur réseau");
+      } finally {
+        if (!cancelled) setProfileLoading(false);
+      }
+    };
+
+    doFetch();
+    return () => { cancelled = true; };
   }, [vendorId, vendorNameProp]);
   const handleContact = () => {
     if (!currentUser2) { addToast && addToast("Connectez-vous pour contacter ce vendeur", "info"); return; }
@@ -20426,15 +20465,25 @@ const VendorPublicPage = ({ vendorId, vendorName: vendorNameProp="", products, o
     (vendorId && p.vendor === vendorId) ||
     (vendorNameProp && p.vendorName === vendorNameProp)
   );
-  const _fallbackName = vendorNameProp || (allProducts.length > 0 ? allProducts[0].vendorName : 'Boutique');
-  // Résolution du nom : profile Supabase > nom du produit > prop
+  const _fallbackName = vendorNameProp || (allProducts.length > 0 ? allProducts[0].vendorName : "Boutique");
   const _resolvedName = vendorProfile
-    ? (vendorProfile.shopName || vendorProfile.shop_name || vendorProfile.name || _fallbackName)
+    ? (vendorProfile.shop_name || vendorProfile.shopName || vendorProfile.name || _fallbackName)
     : _fallbackName;
-  const vendor = { id: vendorId || (vendorProfile&&vendorProfile.id) || null, name: _resolvedName || 'Boutique' };
-  const avgRating = allProducts.length > 0 ? (allProducts.reduce((s, p) => s + (p.rating || 0), 0) / allProducts.length).toFixed(1) : "\u2014";
+  const _resolvedId = vendorId || (vendorProfile && vendorProfile.id) || null;
+  const vendor = { id: _resolvedId, name: _resolvedName || "Boutique" };
+  const avgRating = allProducts.length > 0
+    ? (vendorProfile && vendorProfile.avg_rating != null
+        ? Number(vendorProfile.avg_rating).toFixed(1)
+        : (allProducts.reduce((s, p) => s + (p.rating || 0), 0) / allProducts.length).toFixed(1))
+    : "\u2014";
+  const productCount = vendorProfile && vendorProfile.product_count != null
+    ? vendorProfile.product_count
+    : allProducts.length;
   const allReviews = (storage.getArray("reviews")).filter((r) => allProducts.some((p) => p.id === r.productId));
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", style: { maxHeight: "90vh", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store text-primary" }), " ", vendor.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("div", { style: { overflowY: "auto", flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "1.25rem", background: "linear-gradient(135deg, rgba(0,133,62,0.06), rgba(253,239,66,0.06))", borderRadius: "14px", marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1.25rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "64px", height: "64px", borderRadius: "50%", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.6rem", fontWeight: 700, flexShrink: 0, overflow: "hidden" } }, vendorProfile && (vendorProfile.logo || vendorProfile.avatar) ? React.createElement("img", { src: vendorProfile.logo||vendorProfile.avatar, alt: vendor.name, style: { width:"100%",height:"100%",objectFit:"cover" } }) : (vendor.name||"B")[0]), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.2rem", marginBottom: "0.2rem" } }, vendor.name), /* @__PURE__ */ React.createElement(VendorBadge, { vendor, products: allProducts }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "1.5rem", flexWrap: "wrap", fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.4rem" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box text-primary" }), " ", allProducts.length, " produit", allProducts.length !== 1 ? "s" : ""), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star text-primary" }), " ", avgRating, "/5 (", allReviews.length, " avis)"), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle text-success" }), " Vendeur v\xE9rifi\xE9")), vendorProfile && vendorProfile.bio && /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.83rem", color: "var(--text-secondary)", marginTop: "0.4rem", fontStyle: "italic" } }, vendorProfile.bio), (vendorProfile && (vendorProfile.shopCategory || vendorProfile.shop_category)) && /* @__PURE__ */ React.createElement("span", { className: "badge badge-primary", style: { marginTop: "0.3rem", display: "inline-block" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-tag" }), " ", vendorProfile.shopCategory || vendorProfile.shop_category), (vendorProfile && (vendorProfile.phone || vendorProfile.whatsapp_number)) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-phone text-primary" }), " ", vendorProfile.phone || vendorProfile.whatsapp_number)), /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: handleContact, title: currentUser2 ? "Envoyer un message \xE0 ce vendeur" : "Connectez-vous pour contacter" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Contacter"))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.25rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", color: "var(--primary)" } }, "Produits (", allProducts.length, ")"), allProducts.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, allProducts.map((p) => /* @__PURE__ */ React.createElement("article", { key: p.id, className: "product-card", style: { cursor: "pointer" }, onClick: () => {
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", style: { maxHeight: "90vh", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store text-primary" }), " ", vendor.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("div", { style: { overflowY: "auto", flex: 1 } },
+    profileLoading && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "2rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin text-primary", style: { fontSize: "1.5rem" } }), /* @__PURE__ */ React.createElement("p", { style: { marginTop: "0.75rem" } }, "Chargement du profil vendeur…")),
+    !profileLoading && /* @__PURE__ */ React.createElement(React.Fragment, null,
+    /* @__PURE__ */ React.createElement("div", { style: { padding: "1.25rem", background: "linear-gradient(135deg, rgba(0,133,62,0.06), rgba(253,239,66,0.06))", borderRadius: "14px", marginBottom: "1.5rem", display: "flex", alignItems: "flex-start", gap: "1.25rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "64px", height: "64px", borderRadius: "50%", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.6rem", fontWeight: 700, flexShrink: 0, overflow: "hidden" } }, vendorProfile && (vendorProfile.logo || vendorProfile.avatar) ? React.createElement("img", { src: vendorProfile.logo||vendorProfile.avatar, alt: vendor.name, style: { width:"100%",height:"100%",objectFit:"cover" } }) : (vendor.name||"B")[0]), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.2rem", marginBottom: "0.2rem" } }, vendor.name), /* @__PURE__ */ React.createElement(VendorBadge, { vendor, products: allProducts }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "1.5rem", flexWrap: "wrap", fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.4rem" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box text-primary" }), " ", productCount, " produit", productCount !== 1 ? "s" : ""), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star text-primary" }), " ", avgRating, "/5 (", allReviews.length, " avis)"), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle text-success" }), " Vendeur v\xE9rifi\xE9")), vendorProfile && vendorProfile.bio && /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.83rem", color: "var(--text-secondary)", marginTop: "0.4rem", fontStyle: "italic" } }, vendorProfile.bio), vendorProfile && vendorProfile.shop_category && /* @__PURE__ */ React.createElement("span", { className: "badge badge-primary", style: { marginTop: "0.3rem", display: "inline-block" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-tag" }), " ", vendorProfile.shop_category), vendorProfile && (vendorProfile.phone || vendorProfile.whatsapp_number) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-phone text-primary" }), " ", vendorProfile.phone || vendorProfile.whatsapp_number), vendorProfile && vendorProfile.opening_hours && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-clock text-primary" }), " ", vendorProfile.opening_hours), vendorProfile && vendorProfile.return_policy && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo text-primary" }), " ", vendorProfile.return_policy)), /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: handleContact, title: currentUser2 ? "Envoyer un message \xE0 ce vendeur" : "Connectez-vous pour contacter" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Contacter"))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.25rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", color: "var(--primary)" } }, "Produits (", allProducts.length, ")"), allProducts.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, allProducts.map((p) => /* @__PURE__ */ React.createElement("article", { key: p.id, className: "product-card", style: { cursor: "pointer" }, onClick: () => {
     onViewProduct(p);
     onClose();
   } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: p }), /* @__PURE__ */ React.createElement("div", { className: `wishlist-heart ${wishlist.includes(p.id) ? "active" : ""}`, onClick: (e) => {
@@ -20443,7 +20492,10 @@ const VendorPublicPage = ({ vendorId, vendorName: vendorNameProp="", products, o
   } }, /* @__PURE__ */ React.createElement("i", { className: `fa${wishlist.includes(p.id) ? "s" : "r"} fa-heart` }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement("div", { className: "product-price" }, formatPrice(p.price)), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? `${p.stock} en stock` : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block btn-sm", style: { marginTop: "0.5rem" }, onClick: (e) => {
     e.stopPropagation();
     onAddToCart(p);
-  }, disabled: p.stock === 0 }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cart-plus" }), " Ajouter au panier")))))), allReviews.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", color: "var(--primary)" } }, "Avis r\xE9cents"), allReviews.slice(0, 5).map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { padding: "0.75rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.88rem" } }, r.userName), " ", /* @__PURE__ */ React.createElement(Stars, { rating: r.rating })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)" } }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-")), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, r.comment))))), /* @__PURE__ */ React.createElement("div", { style: { paddingTop: "1rem", borderTop: "1px solid var(--border)", marginTop: "1rem", display: "flex", gap: "0.75rem" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary flex-1", onClick: handleContact }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Contacter le vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: onClose }, "Fermer la boutique"))));
+  }, disabled: p.stock === 0 }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cart-plus" }), " Ajouter au panier")))))), allReviews.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", color: "var(--primary)" } }, "Avis r\xE9cents"), allReviews.slice(0, 5).map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { padding: "0.75rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.88rem" } }, r.userName), " ", /* @__PURE__ */ React.createElement(Stars, { rating: r.rating })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)" } }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-")), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, r.comment))))),
+    profileError && !vendorProfile && /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning", style: { margin: "0 0 1rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), " Profil vendeur non disponible — ", profileError)
+    ),
+    /* @__PURE__ */ React.createElement("div", { style: { paddingTop: "1rem", borderTop: "1px solid var(--border)", marginTop: "1rem", display: "flex", gap: "0.75rem" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary flex-1", onClick: handleContact }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Contacter le vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: onClose }, "Fermer la boutique"))));
 };
 const SetupWizard = ({ onComplete }) => {
   var _a;
