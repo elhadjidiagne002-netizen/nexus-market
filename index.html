@@ -2924,11 +2924,10 @@ const DataService = {
     // [FIX] id doit être un UUID valide pour Supabase (colonne uuid) — "notif_..." causait un 400
     const safeId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(16) + Math.random().toString(16).slice(2));
     const n = __spreadProps(__spreadValues({ id: safeId, user_id: userId }, notif), { read: false, created_at: (/* @__PURE__ */ new Date()).toISOString() });
-    // FIX 401: passer par le backend (authentifié) plutôt que Supabase direct (RLS bloque sans token)
-    if (NEXUS_CONFIG.apiUrl) {
-      await this.apiFetch("/api/notifications", { method: "POST", body: JSON.stringify({ userId, ...notif }) }).catch(() => {});
-      return n;
-    }
+    // [FIX 403] Toujours passer par la CF Function /api/notifications (service_role contourne le RLS).
+    // L'URL relative fonctionne sur Cloudflare Pages même quand NEXUS_CONFIG.apiUrl est vide.
+    await this.apiFetch("/api/notifications", { method: "POST", body: JSON.stringify({ userId, ...notif }) }).catch(() => {});
+    return n;
     if (this._sb) {
       // [FIX 401] Rafraîchir la session Supabase avant l'insert
       try {
@@ -2949,17 +2948,14 @@ const DataService = {
       const { id: _omit, ...nWithoutId } = n;
       const { data: inserted, error: insErr } = await this._sb.from("notifications").insert(nWithoutId).select().maybeSingle();
       if (insErr) {
-        // RLS bloque l'insert quand le JWT actuel n'est pas celui du destinataire
-        // (ex: le vendeur notifie l'acheteur). On passe par la CF Function /api/notifications
-        // qui utilise la service_role et contourne le RLS.
-        if (NEXUS_CONFIG.apiUrl) {
-          await fetch((NEXUS_CONFIG.apiUrl || "") + "/api/notifications", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId, ...notif }),
-          }).catch(() => {});
-          return n;
-        }
+        // [FIX 403] RLS bloque l'insert cross-user. Toujours utiliser la CF Function
+        // en URL relative — valide sur Cloudflare Pages sans NEXUS_CONFIG.apiUrl.
+        await fetch("/api/notifications", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, ...notif }),
+        }).catch(() => {});
+        return n;
         // Dernier recours : localStorage (session uniquement, perdu au rechargement)
         const all = storage.get("notifications") || {};
         if (!all[userId]) all[userId] = [];
@@ -7528,10 +7524,6 @@ const PlatformHealth = () => {
       if (results[2].status === 'fulfilled') { const d = results[2].value; setProducts(Array.isArray(d) ? d : (d.products || [])); }
       if (results[3].status === 'fulfilled') { const d = results[3].value; setReviews(Array.isArray(d) ? d : (d.reviews || [])); }
       if (results[4].status === 'fulfilled') { const d = results[4].value; setDisputes(Array.isArray(d) ? d : (d.disputes || [])); }
-      // Recharger les litiges depuis Supabase (filtré par acheteur)
-      DataService.getDisputes({ buyerId: currentUser2.id }).then(data => {
-        if (Array.isArray(data) && data.length > 0) setDisputes(data);
-      }).catch(() => {});
       if (results[5].status === 'fulfilled') { const d = results[5].value; setReturns(Array.isArray(d) ? d : (d.returns || [])); }
       if (results[6].status === 'fulfilled') { const d = results[6].value; setOffers(Array.isArray(d) ? d : (d.offers || [])); }
       if (results[7].status === 'fulfilled') { const d = results[7].value; setAlerts(Array.isArray(d) ? d : (d.alerts || [])); }
@@ -19501,6 +19493,45 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
     )
   );
 };
+
+// ── SEO helpers (title + meta dynamiques par fiche produit) ─────────────────
+const _nexusSEODefaults = {
+  title:       document.title,
+  description: document.querySelector('meta[name="description"]')?.content || '',
+  image:       document.querySelector('meta[property="og:image"]')?.content || '',
+};
+function nexusUpdateSEO({ title, description, image, canonicalPath } = {}) {
+  if (title) {
+    document.title = title + ' — NEXUS Market Sénégal';
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) ogTitle.setAttribute('content', document.title);
+  }
+  if (description) {
+    const meta = document.querySelector('meta[name="description"]');
+    if (meta) meta.setAttribute('content', description);
+  }
+  if (image) {
+    const ogImg = document.querySelector('meta[property="og:image"]');
+    if (ogImg) ogImg.setAttribute('content', image);
+  }
+  if (canonicalPath) {
+    let link = document.querySelector('link[rel="canonical"]');
+    if (!link) { link = document.createElement('link'); link.rel = 'canonical'; document.head.appendChild(link); }
+    link.href = window.location.origin + canonicalPath;
+  }
+}
+function nexusResetSEO() {
+  document.title = _nexusSEODefaults.title;
+  const ogTitle = document.querySelector('meta[property="og:title"]');
+  if (ogTitle) ogTitle.setAttribute('content', _nexusSEODefaults.title);
+  const desc = document.querySelector('meta[name="description"]');
+  if (desc) desc.setAttribute('content', _nexusSEODefaults.description);
+  const ogImg = document.querySelector('meta[property="og:image"]');
+  if (ogImg) ogImg.setAttribute('content', _nexusSEODefaults.image);
+  const canon = document.querySelector('link[rel="canonical"]');
+  if (canon) canon.remove();
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, cartTrigger, wishlistTrigger }) => {
   const [view, setView] = useState("catalog");
