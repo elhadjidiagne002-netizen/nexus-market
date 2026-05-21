@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="NEXUS Market Sénégal - Achetez et vendez en toute confiance avec des moyens de paiement locaux">
     <title>NEXUS Market Sénégal</title>
-    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v9">
-    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v9";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
+    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v10">
+    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v10";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
     <!-- [FIX] Favicon inline — évite le 404 /favicon.ico -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%2300853E'/%3E%3Ctext x='32' y='44' font-family='system-ui,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23FDEF42'%3EN%3C/text%3E%3C/svg%3E">
     <!-- PERF FIX: preconnect CDNs & fonts early -->
@@ -3857,8 +3857,15 @@ async signOut() {
       if (updates.approvedAt) row.approved_at  = updates.approvedAt;
       if (updates.rejectedAt) row.rejected_at  = updates.rejectedAt;
       if (updates.refundedAt) row.refunded_at  = updates.refundedAt;
-      await this._sb.from("return_requests").update(row).eq("id", id);
-      return;
+      // [FIX] .select() pour detecter un echec RLS/0-ligne (=> retourne false).
+      const { data, error } = await this._sb.from("return_requests").update(row).eq("id", id).select("id");
+      if (error) { console.warn("[updateReturnRequest]", error.message); }
+      else if (data && data.length > 0) {
+        const all = storage.getArray("return_requests");
+        const idx = all.findIndex(r => r.id === id);
+        if (idx >= 0) { all[idx] = { ...all[idx], ...updates }; storage.set("return_requests", all); }
+        return true;
+      } else { return false; }
     }
     // Fallback localStorage
     const all = storage.getArray("return_requests");
@@ -3866,7 +3873,9 @@ async signOut() {
     if (idx >= 0) {
       all[idx] = { ...all[idx], ...updates };
       storage.set("return_requests", all);
+      return true;
     }
+    return false;
   },
 
   // ── MESSAGES ──────────────────────────────────────────────────────
@@ -14551,40 +14560,22 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     const STATUS_RETURN = { pending: { label: "En attente", badge: "warning" }, approved: { label: "Approuv\xE9", badge: "success" }, rejected: { label: "Refus\xE9", badge: "danger" }, refunded: { label: "Rembours\xE9", badge: "success" } };
     const handleReturnAction = async (retId, newStatus, adminNotes) => {
       try {
-        // Appel API — PATCH /api/returns/:id
-        // Si newStatus === 'refunded', déclenche automatiquement le remboursement Stripe
-        const res = await DataService.apiFetch(`/api/returns/${retId}`, {
-          method: "PATCH",
-          body:   JSON.stringify({ status: newStatus, adminNotes: adminNotes || null }),
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          addToast(err.error || "Erreur lors de la mise à jour du retour", "error");
+        // [TOUT-SUPABASE] Mise a jour directe via updateReturnRequest (Supabase),
+        // plus d appel backend /api/returns (qui renvoyait null/erreur).
+        const _now = new Date().toISOString();
+        const _extra = newStatus === "approved" ? { approvedAt: _now }
+                     : newStatus === "rejected" ? { rejectedAt: _now }
+                     : newStatus === "refunded" ? { refundedAt: _now } : {};
+        const ok = await DataService.updateReturnRequest(retId, { status: newStatus, adminNotes: adminNotes || null, ..._extra });
+        if (ok === false) {
+          addToast("Mise a jour du retour refusee (droits ou retour introuvable).", "danger");
           return;
         }
-
-        const json = await res.json();
-        const stripeRefund = json._refund;
-
-        // Mise à jour locale
-        setReturns(prev => prev.map(r =>
-          r.id === retId
-            ? { ...r, status: newStatus, ...(stripeRefund ? { refundId: stripeRefund.id, refundAmount: stripeRefund.amount } : {}) }
-            : r
-        ));
-
-        if (newStatus === "refunded" && stripeRefund) {
-          addToast(
-            `Remboursement Stripe de ${stripeRefund.amount}€ initié ✓ — Réf : ${stripeRefund.id}`,
-            "success"
-          );
-        } else {
-          const label = STATUS_RETURN?.[newStatus]?.label || newStatus;
-          addToast(`Retour marqué : ${label}`, "success");
-        }
+        setReturns(prev => prev.map(r => r.id === retId ? { ...r, status: newStatus } : r));
+        const label = STATUS_RETURN?.[newStatus]?.label || newStatus;
+        addToast(`Retour marqué : ${label}`, "success");
       } catch (networkErr) {
-        addToast("Erreur réseau — impossible de mettre à jour le retour.", "error");
+        addToast("Erreur — impossible de mettre à jour le retour.", "danger");
       }
     };
     return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Demandes de Retour (", returns.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, returns.filter((r) => r.status === "pending").length, " en attente"))), returns.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune demande de retour")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "ID Retour"), /* @__PURE__ */ React.createElement("th", null, "Client"), /* @__PURE__ */ React.createElement("th", null, "Commande"), /* @__PURE__ */ React.createElement("th", null, "Motif"), /* @__PURE__ */ React.createElement("th", null, "Montant"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, returns.map((r) => {
