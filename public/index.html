@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="NEXUS Market Sénégal - Achetez et vendez en toute confiance avec des moyens de paiement locaux">
     <title>NEXUS Market Sénégal</title>
-    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v8">
-    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v8";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
+    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v9">
+    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v9";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
     <!-- [FIX] Favicon inline — évite le 404 /favicon.ico -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%2300853E'/%3E%3Ctext x='32' y='44' font-family='system-ui,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23FDEF42'%3EN%3C/text%3E%3C/svg%3E">
     <!-- PERF FIX: preconnect CDNs & fonts early -->
@@ -4264,7 +4264,11 @@ async signOut() {
       let q = this._sb.from("payout_requests").select("*");
       if (vendorId) q = q.eq("vendor_id", vendorId);
       const { data, error } = await q.order("created_at", { ascending: false });
-      if (!error && data) { storage.set("payout_requests", data); return data; }
+      if (!error && data) {
+        // [FIX schema] Normaliser amount depuis amount_xof pour tous les affichages
+        const _norm = data.map(r => ({ ...r, amount: r.amount != null ? r.amount : r.amount_xof, vendorId: r.vendor_id, vendorName: r.vendor_name }));
+        storage.set("payout_requests", _norm); return _norm;
+      }
     }
     const all = storage.getArray("payout_requests");
     return vendorId ? all.filter(r => r.vendorId === vendorId) : all;
@@ -4322,7 +4326,7 @@ async signOut() {
         // sinon (RPC indispo) : on laisse passer, l’admin validera manuellement
       }
       const row = { vendor_id: payoutReq.vendorId, vendor_name: payoutReq.vendorName,
-        amount: payoutReq.amount, method: payoutReq.method, provider: payoutReq.provider,
+        amount_xof: payoutReq.amount, method: payoutReq.method, provider: payoutReq.provider,
         destination: payoutReq.destination, status: "pending" };
       const { data: insData, error: ePay } = await this._sb.from("payout_requests").insert(row).select().single();
       if (ePay) { console.warn("[savePayout]", ePay.message); throw new Error(ePay.message); }
@@ -13717,7 +13721,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   React.useEffect(() => {
     const _mapPayout = r => ({
       id: r.id, vendorId: r.vendor_id, vendorName: r.vendor_name,
-      amount: r.amount, provider: r.provider, destination: r.destination,
+      amount: r.amount_xof != null ? r.amount_xof : r.amount, provider: r.provider, destination: r.destination,
       status: r.status, date: r.created_at || r.date,
       adminNote: r.admin_note, method: r.method,
     });
