@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="NEXUS Market Sénégal - Achetez et vendez en toute confiance avec des moyens de paiement locaux">
     <title>NEXUS Market Sénégal</title>
-    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v6">
-    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v6";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
+    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v7">
+    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v7";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
     <!-- [FIX] Favicon inline — évite le 404 /favicon.ico -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%2300853E'/%3E%3Ctext x='32' y='44' font-family='system-ui,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23FDEF42'%3EN%3C/text%3E%3C/svg%3E">
     <!-- PERF FIX: preconnect CDNs & fonts early -->
@@ -14210,6 +14210,14 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         // [FIX SCHEMA REEL] La table orders ne contient que status + updated_at.
         // Les colonnes *_at (delivered_at, processing_at...) n existent pas =>
         // les ecrire provoquait un 400 "column not found". On n ecrit que status.
+        // [FIX 403] S assurer que le client Supabase porte la session avant l UPDATE.
+        // Sans session active, PostgREST traite l appelant comme anon => RLS 0 ligne.
+        // On NE casse PAS le refresh token : on rafraichit proprement si necessaire.
+        try {
+          let _sess = (await DataService._sb.auth.getSession()).data?.session;
+          if (!_sess) { _sess = (await DataService._sb.auth.refreshSession()).data?.session; }
+          if (!_sess) { addToast("Session expiree. Reconnectez-vous pour modifier le statut.", "danger"); return; }
+        } catch (_) {}
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
         // [FIX] .select() pour detecter un echec RLS silencieux : un UPDATE qui ne
         // touche aucune ligne ne renvoie PAS d erreur PostgREST mais ne persiste rien
@@ -17780,6 +17788,14 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         // [FIX SCHEMA REEL] La table orders ne contient que status + updated_at.
         // Les colonnes *_at (delivered_at, processing_at...) n existent pas =>
         // les ecrire provoquait un 400 "column not found". On n ecrit que status.
+        // [FIX 403] S assurer que le client Supabase porte la session avant l UPDATE.
+        // Sans session active, PostgREST traite l appelant comme anon => RLS 0 ligne.
+        // On NE casse PAS le refresh token : on rafraichit proprement si necessaire.
+        try {
+          let _sess = (await DataService._sb.auth.getSession()).data?.session;
+          if (!_sess) { _sess = (await DataService._sb.auth.refreshSession()).data?.session; }
+          if (!_sess) { addToast("Session expiree. Reconnectez-vous pour modifier le statut.", "danger"); return; }
+        } catch (_) {}
         const upd = { status: newStatus, updated_at: new Date().toISOString() };
         // [FIX] .select() detecte un echec RLS silencieux (0 ligne => revert au refresh).
         const { data: _updRows, error } = await DataService._sb.from("orders").update(upd).eq("id", orderId).select("id");
