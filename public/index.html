@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="NEXUS Market Sénégal - Achetez et vendez en toute confiance avec des moyens de paiement locaux">
     <title>NEXUS Market Sénégal</title>
+    <meta name="nexus-build" content="NEXUS-BUILD-2026-05-20-toutSupabase-v5">
+    <script>window.__NEXUS_BUILD="NEXUS-BUILD-2026-05-20-toutSupabase-v5";console.info("[NEXUS] build",window.__NEXUS_BUILD);</script>
     <!-- [FIX] Favicon inline — évite le 404 /favicon.ico -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%2300853E'/%3E%3Ctext x='32' y='44' font-family='system-ui,sans-serif' font-size='38' font-weight='900' text-anchor='middle' fill='%23FDEF42'%3EN%3C/text%3E%3C/svg%3E">
     <!-- PERF FIX: preconnect CDNs & fonts early -->
@@ -1572,7 +1574,7 @@ try {
     if (_sc.emailjsServiceId) NEXUS_CONFIG.emailjs.serviceId         = _sc.emailjsServiceId;
     if (_sc.emailjsOrderTpl)  NEXUS_CONFIG.emailjs.orderTemplateId   = _sc.emailjsOrderTpl;
     if (_sc.emailjsResetTpl)  NEXUS_CONFIG.emailjs.resetTemplateId   = _sc.emailjsResetTpl;
-    if (_sc.apiUrl)           NEXUS_CONFIG.apiUrl                    = _sc.apiUrl;
+    // [TOUT-SUPABASE] apiUrl persiste volontairement ignore (verrou backend).
     if (_sc.githubEnabled !== undefined) NEXUS_CONFIG.github.enabled = _sc.githubEnabled;
     if (_sc.legalNinea)       NEXUS_CONFIG.legal.ninea       = _sc.legalNinea;
     if (_sc.legalRccm)        NEXUS_CONFIG.legal.rccm        = _sc.legalRccm;
@@ -1858,29 +1860,24 @@ const NEXUS_TRANSLATIONS = {
 // retardant l'initialisation. L'URL est désormais fixée statiquement ci-dessus.
 // La config persistée en localStorage (Admin) prévaut sur la valeur hardcodée.
 (function _verifyBackend() {
-  // Priorité : localStorage (config Admin) > valeur hardcodée
+  // [TOUT-SUPABASE — VERROU] On NE force plus apiUrl = origin, et on IGNORE tout
+  // apiUrl persiste en localStorage (un ancien deploiement Railway/CF laissait une
+  // valeur qui reactivait le backend mort => 405/502). Les donnees passent par
+  // Supabase ; les paiements par paymentFetch (same-origin, independant de apiUrl).
   try {
     const _saved = localStorage.getItem('nexus_saved_config');
     if (_saved) {
       const _sc = JSON.parse(_saved);
-      if (_sc.apiUrl) NEXUS_CONFIG.apiUrl = _sc.apiUrl;
-    }
-  } catch(_) {}
-
-  if (!NEXUS_CONFIG.apiUrl) {
-    // [Cloudflare Pages Functions] Les routes /api/* sont co-localisées sur le même domaine.
-    // On auto-détecte l'origine pour activer PayTech sans backend séparé.
-    if (typeof window !== 'undefined') {
-      const _h = window.location.hostname;
-      const _isLocal = _h === 'localhost' || _h === '127.0.0.1' || _h.startsWith('192.168.');
-      if (!_isLocal) {
-        NEXUS_CONFIG.apiUrl = window.location.origin;
-        console.log('[NEXUS] apiUrl auto-détecté (CF Pages) :', NEXUS_CONFIG.apiUrl);
+      if (_sc.apiUrl) {
+        // Purge la valeur obsolete pour qu elle ne revienne pas au prochain chargement.
+        delete _sc.apiUrl;
+        try { localStorage.setItem('nexus_saved_config', JSON.stringify(_sc)); } catch(_) {}
       }
     }
-  }
-  if (!NEXUS_CONFIG.apiUrl) {
-    // Mode Supabase-only (localhost sans backend)
+  } catch(_) {}
+  NEXUS_CONFIG.apiUrl = "";  // verrouille le mode tout-Supabase
+  {
+    // Mode tout-Supabase : aucun backend de donnees a verifier.
     window.__nexusBackendReady = true;
     window.dispatchEvent(new Event('nexus:backend-ready'));
     return;
@@ -2537,42 +2534,9 @@ const DataService = {
   //  Variables d'env : aucune spécifique (utilise la DB existante)
   // ═══════════════════════════════════════════════════════════════════════
   async reserveAndCreateOrder(orderPayload) {
-    // ── 1. Backend API : création atomique (stock + commande en une transaction)
-    if (NEXUS_CONFIG.apiUrl) {
-      const res = await this.apiFetch('/api/orders', {
-        method: 'POST',
-        body: JSON.stringify(orderPayload),
-      }).catch(() => null);
-
-      if (res) {
-        const json = await res.json();
-        if (res.status === 409 && json.code === 'STOCK_INSUFFICIENT') {
-          const err = new Error(json.detail || json.error || 'Stock insuffisant');
-          err.code = 'STOCK_INSUFFICIENT';
-          err.items = json.items || [];
-          throw err;
-        }
-        if (!res.ok) throw new Error(json.error || json.message || 'Erreur commande');
-        return {
-          ...orderPayload,
-          ...json,
-          id:             json.id,
-          buyerName:      json.buyer_name      || orderPayload.buyerName,
-          buyerEmail:     json.buyer_email     || orderPayload.buyerEmail,
-          buyerAddress:   json.buyer_address   || orderPayload.buyerAddress,
-          vendorName:     json.vendor_name     || orderPayload.vendorName,
-          shippingCity:   json.shipping_city   || orderPayload.shippingCity,
-          trackingNumber: json.tracking_number || orderPayload.trackingNumber,
-          date:           json.created_at      || new Date().toISOString(),
-          total:          json.total           != null ? json.total : orderPayload.total,
-          products:       json.products        || orderPayload.products,
-          earnedPoints:   json.earnedPoints    || 0,
-        };
-      }
-      // Backend injoignable → fallback ci-dessous
-    }
-
-    // ── 2. Supabase direct : transaction simulée via RPC
+    // [TOUT-SUPABASE] Plus d appel backend /api/orders (supprime ; renvoyait 405
+    // + corps vide => "Unexpected end of JSON input"). Creation via RPC Supabase.
+    // ── 1. Supabase direct : transaction atomique via RPC create_order_atomic
     if (this._sb) {
       try {
         // Appeler une stored procedure qui fait la transaction atomique
