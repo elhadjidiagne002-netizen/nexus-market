@@ -1427,6 +1427,94 @@
             .category-grid { grid-template-columns: repeat(4, 1fr); }
             .banner-title { font-size: 1.25rem; }
         }
+
+        /* ── Amélioration #9 : Skeleton screens ─────────────────────────── */
+        @keyframes shimmer {
+            0%   { background-position: -700px 0; }
+            100% { background-position:  700px 0; }
+        }
+        .skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%);
+            background-size: 700px 100%;
+            animation: shimmer 1.4s infinite linear;
+            border-radius: 6px;
+        }
+        .skeleton-card {
+            background: white;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+        .skeleton-img  { width: 100%; height: 220px; }
+        .skeleton-body { padding: 1rem; }
+        .skeleton-line { height: 12px; margin-bottom: 8px; border-radius: 4px; }
+        .skeleton-line.w100 { width: 100%; }
+        .skeleton-line.w70  { width: 70%; }
+        .skeleton-line.w50  { width: 50%; }
+        .skeleton-line.h20  { height: 20px; }
+
+        /* ── Amélioration #3 : animation bouton "Ajouté" ────────────────── */
+        @keyframes cartPop {
+            0%   { transform: scale(1); }
+            40%  { transform: scale(1.12); }
+            100% { transform: scale(1); }
+        }
+        .btn-cart-added {
+            background: linear-gradient(135deg, var(--success), #16a34a) !important;
+            animation: cartPop 0.35s ease;
+        }
+
+        /* ── Amélioration #6 : sélecteur quantité modale produit ────────── */
+        .qty-selector {
+            display: inline-flex;
+            align-items: center;
+            gap: 0;
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .qty-selector button {
+            width: 36px; height: 36px;
+            border: none; background: var(--bg-light);
+            cursor: pointer; font-size: 1rem; font-weight: 700;
+            color: var(--primary); transition: background 0.15s;
+        }
+        .qty-selector button:hover:not(:disabled) { background: var(--primary); color: white; }
+        .qty-selector button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .qty-selector span {
+            min-width: 40px; text-align: center;
+            font-weight: 700; font-size: 1rem;
+            border-left: 2px solid var(--border);
+            border-right: 2px solid var(--border);
+            padding: 0 4px; line-height: 36px;
+        }
+
+        /* ── Amélioration #4 : alerte stock dans le panier ──────────────── */
+        .stock-warn-inline {
+            font-size: 0.72rem;
+            color: var(--danger);
+            font-weight: 600;
+            margin-top: 3px;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        /* ── Amélioration #7 : toast avec bouton Annuler ────────────────── */
+        .toast-undo-btn {
+            margin-left: auto;
+            background: none;
+            border: 1px solid currentColor;
+            color: var(--primary);
+            border-radius: 6px;
+            padding: 0.2rem 0.6rem;
+            font-size: 0.78rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s, color 0.15s;
+        }
+        .toast-undo-btn:hover { background: var(--primary); color: white; }
 </style>
 </head>
 <body>
@@ -7912,6 +8000,7 @@ const printOrderSlip = (order) => {
     var overlay = document.getElementById('nexus-shop-overlay');
     if (!overlay) return;
     overlay.classList.remove('hidden');
+    overlay.scrollTop = 0; // [FIX UX #14] reset scroll à chaque ouverture
     _overlayOpen = true;
     document.body.style.overflow = 'hidden';
     if (_allProducts.length === 0) nexusFetchProducts('');
@@ -8037,8 +8126,8 @@ const printOrderSlip = (order) => {
       var price = (p.price || 0).toLocaleString('fr-FR') + ' FCFA';
       var name = (p.name || 'Produit').replace(/"/g, '&quot;');
       var imgEl = img
-        ? '<img class="nexus-prod-img" src="' + img + '" alt="' + name + '" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\'">'
-          + '<div class="nexus-prod-img-ph" style="display:none">🛍️</div>'
+        ? '<div style="width:100%;height:180px;position:relative;overflow:hidden;background:#f0f0ec"><img class="nexus-prod-img" src="' + img + '" alt="' + name + '" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\'" style="position:absolute;inset:0">'
+          + '<div class="nexus-prod-img-ph" style="display:none;position:absolute;inset:0">🛍️</div></div>'
         : '<div class="nexus-prod-img-ph">🛍️</div>';
       return '<div class="nexus-prod-card">'
         + imgEl
@@ -8275,7 +8364,37 @@ const ToastProvider = ({ children }) => {
   const removeToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
-  return /* @__PURE__ */ React.createElement(ToastContext.Provider, { value: { addToast } }, children, /* @__PURE__ */ React.createElement("div", { className: "toast-container", role: "alert", "aria-live": "polite" }, toasts.map((toast) => /* @__PURE__ */ React.createElement("div", { key: toast.id, className: `toast ${toast.type}`, role: "status" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${toast.type === "success" ? "check-circle" : toast.type === "error" ? "exclamation-circle" : "info-circle"}`, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("span", null, toast.message), /* @__PURE__ */ React.createElement("button", { className: "toast-close", onClick: () => removeToast(toast.id), "aria-label": "Fermer la notification" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))))));
+  // [UX #7] Ecoute l'event undo-cart-remove pour afficher un toast avec bouton Annuler
+  useEffect(() => {
+    const handler = (e) => {
+      const { product, restoreCart } = e.detail;
+      const toastId = Date.now();
+      const timer = setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 5000);
+      window[`__undoTimer_${toastId}`] = timer;
+      setToasts(prev => [...prev, { id: toastId, message: `${product.name} retiré du panier`, type: 'info', undoData: { restoreCart } }]);
+    };
+    window.addEventListener('nexus:undo-cart-remove', handler);
+    return () => window.removeEventListener('nexus:undo-cart-remove', handler);
+  }, []);
+  const handleUndo = (toast) => {
+    if (!toast.undoData) return;
+    clearTimeout(window[`__undoTimer_${toast.id}`]);
+    window.dispatchEvent(new CustomEvent('nexus:restore-cart', { detail: { cart: toast.undoData.restoreCart } }));
+    removeToast(toast.id);
+  };
+  return React.createElement(ToastContext.Provider, { value: { addToast } }, children,
+    React.createElement("div", { className: "toast-container", role: "alert", "aria-live": "polite" },
+      toasts.map((toast) => React.createElement("div", { key: toast.id, className: `toast ${toast.type}`, role: "status" },
+        React.createElement("i", { className: `fas fa-${toast.type === "success" ? "check-circle" : toast.type === "error" ? "exclamation-circle" : "info-circle"}`, "aria-hidden": "true" }),
+        React.createElement("span", null, toast.message),
+        toast.undoData
+          ? React.createElement("button", { className: "toast-undo-btn", onClick: () => handleUndo(toast) }, "\u21a9 Annuler")
+          : React.createElement("button", { className: "toast-close", onClick: () => removeToast(toast.id), "aria-label": "Fermer la notification" },
+              React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" })
+            )
+      ))
+    )
+  );
 };
 const useToast = () => useContext(ToastContext);
 const initializeData = () => {
@@ -18360,11 +18479,15 @@ React.createElement("div", { className: "form-group" },
   ), showVendorPage2 && /* @__PURE__ */ React.createElement(VendorPublicPage, { vendorId: showVendorPage2.id||null, vendorName: showVendorPage2.name||"", products: storage.getArray("products"), onClose: () => setShowVendorPage2(null), onAddToCart: () => {}, onViewProduct: () => {}, wishlist: [], onToggleWishlist: () => {}, addToast, currentUser: currentUser2 }));
 };
 // [FIX #310] RowCard extrait au niveau module — onSelect et onAddToCart passés en props
-const RowCard = ({ p, onSelect, onAddToCart }) => React.createElement('div', {
+// [UX #3] WishlistHeart ajouté sur les cartes horizontales
+const RowCard = ({ p, onSelect, onAddToCart, addToast, addedIds }) => React.createElement('div', {
   className: 'product-row-card', onClick: () => onSelect(p)
 },
-  React.createElement('div', { className: 'product-row-img' },
-    React.createElement(ProductImg, { product: p, height: 155 })
+  React.createElement('div', { style: { position: 'relative' } },
+    React.createElement('div', { className: 'product-row-img' },
+      React.createElement(ProductImg, { product: p, height: 155 })
+    ),
+    React.createElement(WishlistHeart, { product: p, currentUser: null, addToast: addToast || (() => {}) })
   ),
   React.createElement('div', { className: 'product-row-body' },
     p.flashDiscount && React.createElement('span', { style: { background:'#e74c3c', color:'white', fontSize:'0.7rem', fontWeight:800, padding:'0.15rem 0.4rem', borderRadius:'4px', marginBottom:'0.3rem', display:'inline-block' } }, `-${p.flashDiscount}%`),
@@ -18376,18 +18499,23 @@ const RowCard = ({ p, onSelect, onAddToCart }) => React.createElement('div', {
     ),
     React.createElement('div', { className: 'product-row-price' }, formatPrice(p.price)),
     React.createElement('button', {
-      className: 'product-row-add',
+      className: `product-row-add${addedIds && addedIds.has(p.id) ? ' btn-cart-added' : ''}`,
       onClick: (e) => { e.stopPropagation(); onAddToCart(p); }
-    }, '🛒 Ajouter')
+    }, addedIds && addedIds.has(p.id) ? '✓ Ajouté' : '🛒 Ajouter')
   )
 );
 const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, currentUser: currentUserProp = null, onBackToDashboard = null }) => {
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
+  // [UX #1] Debounce : displaySearch pilote le champ, searchTerm déclenche le filtre avec délai
+  const [displaySearch, setDisplaySearch] = useState("");
+  const searchDebounceRef = useRef(null);
   const [filterCategory, setFilterCategory] = useState("all");
   const [sortBy, setSortBy] = useState("default");
   const [selectedProduct, setSelectedProduct] = useState(null);
+  // [UX #5] Quantité dans la modale produit
+  const [modalQty, setModalQty] = useState(1);
   const [showCart, setShowCart] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [showWishlist, setShowWishlist] = useState(false);
@@ -18398,6 +18526,12 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   const [currentPage, setCurrentPage] = useState(1);
   const [showOfferModal, setShowOfferModal] = useState(false);
   const [offerProduct, setOfferProduct] = useState(null);
+  // [UX #3] IDs des produits récemment ajoutés au panier (animation bouton)
+  const [addedToCartIds, setAddedToCartIds] = useState(new Set());
+  // [UX #9] Skeleton : état de chargement initial des produits
+  const [productsLoading, setProductsLoading] = useState(true);
+  // [UX #7] Undo suppression panier
+  const undoTimerRef = useRef(null);
   const [bannerIdx, setBannerIdx] = React.useState(0);
   const [flashTime, setFlashTime] = React.useState(3 * 3600 + 42 * 60 + 17);
   const ITEMS_PER_PAGE = 9;
@@ -18412,6 +18546,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       allProducts = storage.getArray("products");
     }
     setProducts(allProducts || []);
+    setProductsLoading(false); // [UX #9] fin du skeleton
     const savedCart = storage.get("guest_cart") || [];
     setCart(savedCart);
     // Charger les avis
@@ -18444,6 +18579,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     setCart(newCart);
     storage.set("guest_cart", newCart);
     addToast(`${product.name} ajout\xE9 au panier`, "success");
+    // [UX #3] Animation bouton "Ajouter au panier"
+    setAddedToCartIds(prev => { const s = new Set(prev); s.add(product.id); return s; });
+    setTimeout(() => setAddedToCartIds(prev => { const s = new Set(prev); s.delete(product.id); return s; }), 1300);
   };
   const updateQty = (id, qty) => {
     if (qty <= 0) {
@@ -18459,10 +18597,20 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     setCart(newCart);
     storage.set("guest_cart", newCart);
   };
+  // [UX #7] removeFromCart avec undo 5s
   const removeFromCart = (id) => {
+    const removed = cart.find(i => i.id === id);
     const newCart = cart.filter((i) => i.id !== id);
     setCart(newCart);
     storage.set("guest_cart", newCart);
+    if (removed) {
+      clearTimeout(undoTimerRef.current);
+      // On injecte un toast custom avec bouton Annuler via un event personnalisé
+      const undoId = `undo-${Date.now()}`;
+      window.dispatchEvent(new CustomEvent('nexus:undo-cart-remove', {
+        detail: { id: undoId, product: removed, restoreCart: [...newCart, removed] }
+      }));
+    }
   };
   const cartTotalEur = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
   useEffect(() => {
@@ -18471,6 +18619,17 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   useEffect(() => {
     if (cartTrigger > 0 && cart.length > 0) setShowCart(true);
   }, [cartTrigger]);
+  // [UX #7] Restaurer le panier si l'utilisateur clique "Annuler" dans le toast
+  useEffect(() => {
+    const handler = (e) => {
+      const { cart: restoredCart } = e.detail;
+      setCart(restoredCart);
+      storage.set("guest_cart", restoredCart);
+      setShowCart(true);
+    };
+    window.addEventListener('nexus:restore-cart', handler);
+    return () => window.removeEventListener('nexus:restore-cart', handler);
+  }, []);
   // Auto-slide banner
   React.useEffect(() => {
     const t = setInterval(() => setBannerIdx(i => (i + 1) % 4), 5000);
@@ -18534,6 +18693,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   };
 
   const [showVendorPagePub, setShowVendorPagePub] = useState(null);
+  // [UX #5] Réinitialiser la quantité modale à chaque nouveau produit sélectionné
+  useEffect(() => { setModalQty(1); }, [selectedProduct?.id]);
   const allCats = ['all', ...new Set(products.map(p => p.category))].filter(Boolean);
 
   const flashProducts = [...products].sort((a, b) => b.rating - a.rating).slice(0, 12);
@@ -18609,8 +18770,19 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           React.createElement('input', {
             type: 'search', className: 'search-input',
             placeholder: 'Rechercher produits, catégories, vendeurs...',
-            value: searchTerm,
-            onChange: e => { setSearchTerm(e.target.value); setCurrentPage(1); if(e.target.value.trim()) { setTimeout(() => { document.getElementById('all-products-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 150); } }
+            value: displaySearch,
+            onChange: e => {
+              const val = e.target.value;
+              setDisplaySearch(val);           // MAJ immédiate du champ (responsive)
+              clearTimeout(searchDebounceRef.current);
+              searchDebounceRef.current = setTimeout(() => {
+                setSearchTerm(val);            // filtre déclenché après 300ms (debounce)
+                setCurrentPage(1);
+                if (val.trim()) {
+                  setTimeout(() => { document.getElementById('all-products-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 150);
+                }
+              }, 300);
+            }
           }),
           React.createElement('i', { className: 'fas fa-search search-icon' })
         ),
@@ -18758,7 +18930,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           React.createElement('button', { className: 'section-see-all', onClick: () => setSortBy('rating') }, 'Voir tout →')
         ),
         React.createElement('div', { className: 'product-row-scroll' },
-          topRated.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart }))
+          topRated.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart, addToast, addedIds: addedToCartIds }))
         )
       )
     ),
@@ -18774,7 +18946,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           React.createElement('button', { className: 'section-see-all', onClick: () => setSortBy('default') }, 'Voir tout →')
         ),
         React.createElement('div', { className: 'product-row-scroll' },
-          newArrivals.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart }))
+          newArrivals.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart, addToast, addedIds: addedToCartIds }))
         )
       )
     ),
@@ -18790,7 +18962,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           React.createElement('button', { className: 'section-see-all', onClick: () => setSortBy('price-asc') }, 'Voir tout →')
         ),
         React.createElement('div', { className: 'product-row-scroll' },
-          cheapest.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart }))
+          cheapest.map(p => React.createElement(RowCard, { key: p.id, p, onSelect: _rowCardOnSelect, onAddToCart: _rowCardAddToCart, addToast, addedIds: addedToCartIds }))
         )
       )
     ),
@@ -18827,6 +18999,19 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             )
           )
         ),
+        // [UX #6] Skeleton pendant le chargement initial des produits
+        productsLoading
+          ? React.createElement('div', { className: 'product-grid', 'aria-label': 'Chargement…' },
+              Array.from({ length: 8 }).map((_, i) => React.createElement('div', { key: i, className: 'skeleton-card' },
+                React.createElement('div', { className: 'skeleton skeleton-img' }),
+                React.createElement('div', { className: 'skeleton-body' },
+                  React.createElement('div', { className: 'skeleton skeleton-line w70', style: { marginBottom: '6px' } }),
+                  React.createElement('div', { className: 'skeleton skeleton-line w100' }),
+                  React.createElement('div', { className: 'skeleton skeleton-line w50 h20', style: { marginTop: '12px' } })
+                )
+              ))
+            )
+          : React.createElement(React.Fragment, null,
         React.createElement('p', { className: 'products-result-count' },
           `${filteredHome.length} produit${filteredHome.length !== 1 ? 's' : ''} trouvé${filteredHome.length !== 1 ? 's' : ''}${filterCategory !== 'all' ? ` dans "${filterCategory}"` : ''}${searchTerm ? ` pour "${searchTerm}"` : ''}`
         ),
@@ -18835,7 +19020,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
               React.createElement('i', { className: 'fas fa-search' }),
               React.createElement('h3', null, 'Aucun produit trouvé'),
               React.createElement('p', null, 'Essayez d\'autres termes ou catégories'),
-              React.createElement('button', { className: 'btn btn-primary', onClick: () => { setSearchTerm(''); setFilterCategory('all'); } }, 'Voir tous les produits')
+              React.createElement('button', { className: 'btn btn-primary', onClick: () => { setSearchTerm(''); setDisplaySearch(''); setFilterCategory('all'); } }, 'Voir tous les produits')
             )
           : React.createElement(React.Fragment, null,
               React.createElement('div', { className: 'product-grid', role: 'list' },
@@ -18866,9 +19051,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                       ),
                       React.createElement('div', { className: 'product-actions' },
                         React.createElement('button', {
-                          className: 'btn btn-primary btn-sm',
+                          className: `btn btn-primary btn-sm${addedToCartIds.has(product.id) ? ' btn-cart-added' : ''}`,
                           onClick: e => { e.stopPropagation(); addToCart(product); }
-                        }, React.createElement('i', { className: 'fas fa-cart-plus' }), ' Panier'),
+                        }, React.createElement('i', { className: `fas ${addedToCartIds.has(product.id) ? 'fa-check' : 'fa-cart-plus'}` }), addedToCartIds.has(product.id) ? ' Ajouté ✓' : ' Panier'),
                         React.createElement('button', {
                           className: 'btn btn-secondary btn-sm',
                           onClick: e => { e.stopPropagation(); handleMakeOffer(product); }
@@ -18897,6 +19082,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                 itemsPerPage: ITEMS_PER_PAGE
               })
             )
+          ) // [UX #6] fermeture React.Fragment du bloc skeleton/produits
       )
     ),
 
@@ -18976,12 +19162,22 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                 selectedProduct.stock > 0 ? `${selectedProduct.stock} en stock` : 'Rupture de stock'
               )
             ),
+            // [UX #5] Sélecteur de quantité
+            selectedProduct.stock > 0 && React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' } },
+              React.createElement('span', { style: { fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-secondary)' } }, 'Quantité :'),
+              React.createElement('div', { className: 'qty-selector' },
+                React.createElement('button', { onClick: () => setModalQty(q => Math.max(1, q - 1)), disabled: modalQty <= 1 }, '−'),
+                React.createElement('span', null, modalQty),
+                React.createElement('button', { onClick: () => setModalQty(q => Math.min(q + 1, selectedProduct.stock)), disabled: modalQty >= selectedProduct.stock }, '+')
+              ),
+              React.createElement('span', { style: { fontSize: '0.82rem', color: 'var(--text-secondary)' } }, `= ${formatPrice(selectedProduct.price * modalQty)}`)
+            ),
             React.createElement('div', { className: 'flex gap-2' },
               React.createElement('button', {
                 className: 'btn btn-primary btn-lg flex-1',
-                onClick: () => { addToCart(selectedProduct); setSelectedProduct(null); },
+                onClick: () => { addToCart(selectedProduct, modalQty); setSelectedProduct(null); },
                 disabled: selectedProduct.stock === 0
-              }, React.createElement('i', { className: 'fas fa-cart-plus' }), ' Ajouter'),
+              }, React.createElement('i', { className: 'fas fa-cart-plus' }), ` Ajouter${modalQty > 1 ? ` (${modalQty})` : ''}`),
               React.createElement('button', {
                 className: 'btn btn-outline btn-lg',
                 onClick: () => handleMakeOffer(selectedProduct),
@@ -19037,7 +19233,12 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                     React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.4rem' } },
                       React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: () => updateQty(item.id, item.quantity - 1) }, React.createElement('i', { className: 'fas fa-minus' })),
                       React.createElement('span', { style: { fontWeight: 700, minWidth: '2rem', textAlign: 'center' } }, item.quantity),
-                      React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: () => updateQty(item.id, item.quantity + 1) }, React.createElement('i', { className: 'fas fa-plus' }))
+                      React.createElement('button', { className: 'btn btn-secondary btn-sm', onClick: () => updateQty(item.id, item.quantity + 1), disabled: item.stock && item.quantity >= item.stock }, React.createElement('i', { className: 'fas fa-plus' }))
+                    ),
+                    // [UX #4] Avertissement stock faible dans le panier
+                    item.stock && item.stock <= 5 && React.createElement('div', { className: 'stock-warn-inline' },
+                      React.createElement('i', { className: 'fas fa-exclamation-triangle' }),
+                      ` Plus que ${item.stock} en stock`
                     )
                   ),
                   React.createElement('div', { style: { textAlign: 'right', flexShrink: 0 } },
