@@ -594,6 +594,12 @@
         .badge-danger { background: rgba(225,27,34,0.12); color: var(--danger); }
         .badge-info { background: rgba(0,133,62,0.12); color: var(--primary); }
         .badge-primary { background: rgba(0,133,62,0.1); color: var(--primary); }
+        /* [UX #11] Pulse sur le badge message non lu dans le sidebar */
+        @keyframes badgePulse {
+            0%, 100% { transform: scale(1); }
+            50%       { transform: scale(1.18); }
+        }
+        .sidebar-item .badge-warning { animation: badgePulse 2s ease-in-out infinite; }
 
         .form-group { margin-bottom: 1.25rem; }
         .form-label { display: block; margin-bottom: 0.4rem; font-weight: 600; color: var(--text-primary); font-size: 0.92rem; }
@@ -17133,6 +17139,39 @@ const VendorAnalyticsDashboard = ({ currentUser: currentUser2, orders, products,
 //      ({from, to, fromName, toName, date}) pour que le code de rendu
 //      existant qui lit `storage.getArray("messages")` voit les nouveautés
 //      sans modification.
+// ── [UX #11] Hook : compteur de messages non lus ─────────────────────────────
+// Se rafraîchit à chaque changement du storage "messages" via NexusPollingService
+// et émet un événement global nexus:unread-count-changed pour les sidebars.
+function useUnreadMessageCount(currentUser) {
+  const uid = currentUser?.id;
+  const [unreadCount, setUnreadCount] = React.useState(() => {
+    if (!uid) return 0;
+    return storage.getArray('messages').filter(m => m.to === uid && !m.read).length;
+  });
+
+  React.useEffect(() => {
+    if (!uid) return;
+    const compute = () => {
+      const count = storage.getArray('messages').filter(m => m.to === uid && !m.read).length;
+      setUnreadCount(prev => {
+        if (prev !== count) window.dispatchEvent(new CustomEvent('nexus:unread-count-changed', { detail: { count } }));
+        return count;
+      });
+    };
+    // Écoute le polling de messages pour se mettre à jour
+    NexusPollingService.subscribe(`unread-badge-${uid}`, async () => compute(), 1);
+    // Écoute aussi les marquages "lu" depuis VendorChatInline
+    window.addEventListener('nexus:messages-read', compute);
+    compute();
+    return () => {
+      NexusPollingService.unsubscribe(`unread-badge-${uid}`);
+      window.removeEventListener('nexus:messages-read', compute);
+    };
+  }, [uid]);
+
+  return unreadCount;
+}
+
 //   4. Bump un `tick` interne qui force le re-render des consommateurs.
 // Channel name unique par montage pour éviter toute collision avec le hook
 // `useMessaging` (MessagingCenter) qui utilise `realtime-messages-${uid}`.
@@ -17294,6 +17333,8 @@ const VendorChatInline = ({ currentUser: currentUser2, addToast }) => {
     all.forEach(m => { if (m.to === currentUser2.id && m.from === activePartnerId && !m.read) { m.read = true; changed = true; } });
     if (changed) {
       storage.set("messages", all);
+      // [UX #11] Notifier le hook useUnreadMessageCount que des messages ont été lus
+      window.dispatchEvent(new CustomEvent('nexus:messages-read'));
       // [REALTIME-CHAT] Synchroniser côté serveur pour que le vendeur/acheteur
       // d'en face reçoive l'UPDATE Realtime et voie le double-check bleu.
       DataService.markMessageRead(null, activePartnerId).catch(() => {});
@@ -17798,6 +17839,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   const [vendorLocalReviews, setVendorLocalReviews] = React.useState([]);
   const [vendorAnswers, setVendorAnswers] = React.useState({});
   const [showReturnOrder, setShowReturnOrder2] = useState(null);
+  // [UX #11] Compteur de messages non lus dans le sidebar
+  const unreadMsgCount = useUnreadMessageCount(currentUser2);
   const [showCancelOrder, setShowCancelOrder2] = useState(null);
   const [priceRange2, setPriceRange] = useState([0, 1e3]);
   // [FIX #310] États hissés depuis le sous-composant LoyaltyHist (IIFE loyalty)
@@ -18171,7 +18214,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         // Le badge est mis à jour au montage via getReturnRequests() dans le panel returns
         return (storage.getArray("return_requests")).filter((r) => r.vendorId === currentUser2.id && r.status === "pending").length;
       })() },
-    { id: "messages", icon: "envelope", label: "Messages" },
+    { id: "messages", icon: "envelope", label: "Messages", badge: unreadMsgCount },
     { id: "flash_sales_vendor", icon: "bolt", label: "Ventes Flash" },
     { id: "ondemand_vendor", icon: "magic", label: "🔥 OnDemand", badge: 0 },
     { id: "analytics", icon: "chart-bar", label: "Statistiques" },
@@ -18191,7 +18234,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (item.id !== 'orders') setOrdersPage(1);
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
-  } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))));
+  } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-label": `${item.badge} message(s) non lu(s)` }, item.badge)))));
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu vendeur" }, renderSidebarContent()), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 },
 
     /* ── Bannière compte en attente d'approbation ── */
@@ -19823,6 +19866,8 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   const [offers, setOffers] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
+  // [UX #11] Compteur de messages non lus dans le sidebar
+  const unreadMsgCount = useUnreadMessageCount(currentUser2);
   // ── SEO dynamique : title + JSON-LD quand un produit est ouvert ──────────────
   React.useEffect(() => {
     if (selectedProduct) {
@@ -20008,11 +20053,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "catalog", icon: "store", label: "Catalogue" },
     { id: "wishlist", icon: "heart", label: "Ma Wishlist", badge: wishlist.length },
     { id: "orders", icon: "box", label: "Mes Commandes" },
-    { id: "messages", icon: "comments", label: "Messages", badge: (() => {
-        // Pas de fallback localStorage — les messages viennent de Supabase
-        const msgs = [];
-        return msgs.filter(m => (m.to === currentUser2.id || m.to_id === currentUser2.id) && !m.read).length;
-      })() },
+    { id: "messages", icon: "comments", label: "Messages", badge: unreadMsgCount },
     { id: "offers", icon: "hand-holding-usd", label: "Mes Offres", badge: offers.filter((o) => o.status === "pending").length },
     ...(currentUser2.role === "buyer_pro"
       ? [
@@ -20037,7 +20078,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
-  }, style: item.b2b ? { borderLeft: "3px solid #0284c7" } : undefined }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true", style: item.b2b ? { color: "#0284c7" } : undefined }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" } }, item.badge)))), cart.length > 0 && /* @__PURE__ */ React.createElement("li", { role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: "sidebar-item", onClick: () => setShowCart(true), "aria-label": `Panier avec ${cart.length} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), "Panier", /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0)))));
+  }, style: item.b2b ? { borderLeft: "3px solid #0284c7" } : undefined }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true", style: item.b2b ? { color: "#0284c7" } : undefined }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-label": `${item.badge} message${item.badge > 1 ? "s" : ""} non lu${item.badge > 1 ? "s" : ""}` }, item.badge)))), cart.length > 0 && /* @__PURE__ */ React.createElement("li", { role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: "sidebar-item", onClick: () => setShowCart(true), "aria-label": `Panier avec ${cart.length} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), "Panier", /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0)))));
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), renderSidebarContent()), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(FlashSaleBanner, { products, onAddToCart: (p) => { addToCart(p); addToast("Ajouté au panier ⚡", "success"); }, onLoginClick: () => {} }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
     SearchWithAutocomplete,
     {
@@ -22675,6 +22716,8 @@ window.openMessagingWith = window.__nexusOpenMessaging;
 .msg-action-item:hover { background: #f5f3ec; }
 .msg-action-item.danger { color: var(--danger); }
 .msg-action-item i { width: 14px; text-align: center; font-size: 0.8rem; }
+/* [UX #12] Feedback "Copié ✓" */
+.msg-action-item.msg-action-copied { color: var(--success); font-weight: 600; background: rgba(0,133,62,0.07); pointer-events: none; }
 
 /* Emoji picker */
 .msg-emoji-picker {
@@ -23629,6 +23672,8 @@ const EmojiPicker = ({ onPick, style }) =>
 const MessageBubble = ({ msg, currentUserId, onReply, onReact, onDelete, onImgClick, searchQuery }) => {
   const [showActions, setShowActions] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  // [UX #12] Feedback visuel après copie dans le presse-papiers
+  const [copied, setCopied] = useState(false);
   const isMine = msg.from_id === currentUserId;
   const isDeleted = (msg.deleted_for || []).includes(currentUserId);
   const actionsRef = useRef(null);
@@ -23712,10 +23757,14 @@ const MessageBubble = ({ msg, currentUserId, onReply, onReact, onDelete, onImgCl
         React.createElement('div', { className: 'msg-action-item', onClick: (e) => { e.stopPropagation(); setShowEmojiPicker(p => !p); setShowActions(false); } },
           React.createElement('i', { className: 'fas fa-smile' }), 'Réagir'
         ),
-        React.createElement('div', { className: 'msg-action-item', onClick: () => {
-          navigator.clipboard?.writeText(msg.text); setShowActions(false);
+        React.createElement('div', { className: `msg-action-item${copied ? ' msg-action-copied' : ''}`, onClick: () => {
+          navigator.clipboard?.writeText(msg.text).then(() => {
+            setCopied(true);
+            setTimeout(() => { setCopied(false); setShowActions(false); }, 1500);
+          }).catch(() => setShowActions(false));
         }},
-          React.createElement('i', { className: 'fas fa-copy' }), 'Copier'
+          React.createElement('i', { className: copied ? 'fas fa-check' : 'fas fa-copy' }),
+          copied ? 'Copié ✓' : 'Copier'
         ),
         React.createElement('div', { className: 'msg-action-item danger', onClick: () => { onDelete(msg.id); setShowActions(false); } },
           React.createElement('i', { className: 'fas fa-trash' }), 'Supprimer pour moi'
