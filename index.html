@@ -8968,6 +8968,8 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   const [errors, setErrors] = useState({});
   const [createdOrders, setCreatedOrders] = useState([]);
   const [showMobileModal, setShowMobileModal] = useState(false);
+  // [UX #15] Ref synchrone pour bloquer les double-soumissions (avant setLoading async)
+  const submittingRef = React.useRef(false);
   // ── Remise B2B ─────────────────────────────────────────────────
   const [b2bDiscount, setB2bDiscount] = React.useState(0); // taux en %
   React.useEffect(() => {
@@ -9050,6 +9052,9 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
     return Object.keys(errs).length === 0;
   };
   const processPayment = (stripeResult = null) => {
+    // [UX #15] Bloque les double-soumissions — la ref est synchrone, contrairement à setLoading
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true);
     (async () => {
       // ── Étape 1 : Pré-vérification stock (UX uniquement) ──────────────
@@ -9058,7 +9063,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       // se fait dans reserveAndCreateOrder() (étape 2).
       const stockCheck = await DataService.checkStockAvailability(cart).catch(() => ({ ok: true, outOfStock: [] }));
       if (!stockCheck.ok) {
-        setLoading(false);
+        submittingRef.current = false; setLoading(false);
         const names = stockCheck.outOfStock.map(i =>
           `${i.name} (${i.available} disponible${i.available > 1 ? 's' : ''})`
         ).join(', ');
@@ -9097,7 +9102,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
               // Succès backend multi-vendeur
               if (currentUser2) storage.set(`cart_${currentUser2.id}`, []);
               else storage.set('guest_cart', []);
-              setLoading(false);
+              submittingRef.current = false; setLoading(false);
               setCreatedOrders(splitData.orders);
               setStep(3);
               return;
@@ -9106,7 +9111,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           if (splitRes) {
             const errData = await splitRes.json().catch(() => ({}));
             if (errData.code === 'STOCK_INSUFFICIENT') {
-              setLoading(false);
+              submittingRef.current = false; setLoading(false);
               addToast(`\u274C Stock insuffisant : ${(errData.items || []).map(i => i.product_name || i.name).join(', ')}`, 'error', 8000);
               return;
             }
@@ -9167,7 +9172,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           // reserveAndCreateOrder fait check+lock+décrémentation+INSERT atomiquement
           savedOrder = await DataService.reserveAndCreateOrder(orderPayload);
         } catch (err) {
-          setLoading(false);
+          submittingRef.current = false; setLoading(false);
           if (err.code === 'STOCK_INSUFFICIENT') {
             const detail = err.items?.map(i => `${i.product_name} (dispo: ${i.available})`).join(', ')
               || err.message;
@@ -9330,7 +9335,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         }
         if (currentUser2) DataService.addNotification(currentUser2.id, { type: "order", title: "Commande confirm\xE9e !", message: `Votre commande ${createdOrders[0].id} a \xE9t\xE9 enregistr\xE9e. Suivi : ${createdOrders[0].trackingNumber}` });
       }
-      setLoading(false);
+      submittingRef.current = false; setLoading(false);
       // ── PayTech Mobile Money — initiation côté serveur ───────────────────
       // Le frontend N'A PLUS accès aux clés PayTech. L'initialisation passe
       // par /api/payments/paytech/init (backend) qui :
@@ -9380,7 +9385,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
               if (!mainOrderId || !amountFcfa) {
                 console.warn("[PayTech] order_id ou amount manquant", { mainOrderId, amountFcfa });
                 addToast("Erreur : commande introuvable. Réessayez.", "error");
-                setLoading(false);
+                submittingRef.current = false; setLoading(false);
                 return;
               }
               const initRes = await DataService.paymentFetch("/api/payments/paytech/init", {
@@ -9412,21 +9417,21 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
                   buyerEmail: customerInfo?.email || "",
                   ts:         Date.now(),
                 }));
-                setLoading(false);
+                submittingRef.current = false; setLoading(false);
                 window.location.href = initData.redirect_url;
                 return;
               } else {
                 const msg = (initData && (initData.error || initData.message)) || "Initialisation PayTech impossible";
                 console.warn("[PayTech] Init échec:", initData);
                 addToast(msg + " — réessayez ou contactez le support.", "error");
-                setLoading(false);
+                submittingRef.current = false; setLoading(false);
                 return;
               }
             }
           } catch (e) {
             console.warn("[PayTech] Erreur initiation paiement:", e.message);
             addToast("Erreur réseau PayTech. Vérifiez votre connexion.", "error");
-            setLoading(false);
+            submittingRef.current = false; setLoading(false);
             return;
           }
         }
@@ -9666,7 +9671,7 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       addToast("Erreur lors du choix du rôle. Vous serez connecté comme acheteur.", "error");
       onDone({ ...user, role: 'buyer' });
     } finally {
-      setLoading(false);
+      submittingRef.current = false; setLoading(false);
     }
   };
 
@@ -9784,7 +9789,7 @@ const GitHubSignInButton = ({ label }) => {
         return;
       } catch(e) {
         addToast('Erreur connexion au serveur. Réessayez.', 'error');
-        setLoading(false);
+        submittingRef.current = false; setLoading(false);
         return;
       }
     }
@@ -9794,7 +9799,7 @@ const GitHubSignInButton = ({ label }) => {
       '⚠️ Connexion GitHub non configurée. Activez Supabase ou renseignez l\'URL de l\'API dans les paramètres.',
       'error', 7000
     );
-    setLoading(false);
+    submittingRef.current = false; setLoading(false);
   };
 
   return React.createElement('button', {
@@ -9848,12 +9853,12 @@ const GoogleSignInButton = ({ label }) => {
       } catch (e) {
         console.warn('[Google OAuth] Failed:', e.message);
         addToast('Erreur connexion Google : ' + (e.message || 'Inconnue'), 'error');
-        setLoading(false);
+        submittingRef.current = false; setLoading(false);
         return;
       }
     }
     addToast('Connexion Google non configurée. Activez le provider Google dans Supabase Dashboard.', 'error', 7000);
-    setLoading(false);
+    submittingRef.current = false; setLoading(false);
   };
 
   return React.createElement('button', {
@@ -9948,7 +9953,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
       }
       setError(msg || "Email ou mot de passe incorrect.");
     } finally {
-      setLoading(false);
+      submittingRef.current = false; setLoading(false);
     }
   };
   return /* @__PURE__ */ React.createElement(React.Fragment, null, error && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger", role: "alert" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle", "aria-hidden": "true" }), error), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "login-email" }, "Email"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-envelope", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { id: "login-email", type: "email", className: "form-input", value: email, onChange: (e) => setEmail(e.target.value), placeholder: "votre@email.sn", onKeyDown: (e) => e.key === "Enter" && handleLogin(), autoComplete: "email", autoFocus: true }))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "login-pw" }, "Mot de passe"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-lock", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { id: "login-pw", type: showPw ? "text" : "password", className: "form-input", value: password, onChange: (e) => setPassword(e.target.value), placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022", onKeyDown: (e) => e.key === "Enter" && handleLogin(), autoComplete: "current-password" }), /* @__PURE__ */ React.createElement("button", { type: "button", className: "input-action", onClick: () => setShowPw(!showPw), "aria-label": showPw ? "Masquer" : "Afficher" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-eye${showPw ? "-slash" : ""}`, "aria-hidden": "true" })))), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right", marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "btn-link", style: { background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontSize: "0.88rem", fontWeight: 600 }, onClick: onForgot }, "Mot de passe oubli\xE9 ?")), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block btn-lg ${loading ? "btn-loading" : ""}`, onClick: handleLogin, disabled: loading, "aria-busy": loading }, loading ? "Connexion..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-sign-in-alt", "aria-hidden": "true" }), " Se connecter")),
@@ -10358,7 +10363,7 @@ if (json.token || json.accessToken) {
         setErrors({ general: msg });
       }
     } finally {
-      setLoading(false);
+      submittingRef.current = false; setLoading(false);
     }
   };
 
@@ -10862,7 +10867,7 @@ const ForgotPasswordModal = ({ onBack, onCancel }) => {
             return;
           }
         }
-        setLoading(false);
+        submittingRef.current = false; setLoading(false);
         setStep(2);
         addToast(`\u{1F4E7} Email de r\xE9initialisation envoy\xE9 \xE0 ${email}. V\xE9rifiez votre bo\xEEte mail.`, "info", 8000);
         try { var _pu=(storage.getArray('users')||[]).find(function(u){return u.email===email.trim().toLowerCase();}); if(_pu&&_pu.phone) NexusSmsService.sendOtp(_pu.phone,String(Math.floor(100000+Math.random()*900000)),10).catch(function(){}); } catch(_){}
@@ -10878,11 +10883,11 @@ const ForgotPasswordModal = ({ onBack, onCancel }) => {
         throw fetchErr;
       }
       // Sans Supabase — afficher le même message neutre (anti-énumération)
-      setLoading(false);
+      submittingRef.current = false; setLoading(false);
       setStep(2);
       addToast(`\u{1F4E7} Si ce compte existe, un lien a \xE9t\xE9 envoy\xE9 \xE0 ${email}.`, "info", 8000);
     } catch(e) {
-      setLoading(false);
+      submittingRef.current = false; setLoading(false);
       setError(e && e.message ? e.message : "Erreur lors de l'envoi");
     }
   };
@@ -10917,7 +10922,7 @@ const ForgotPasswordModal = ({ onBack, onCancel }) => {
       if (DataService._sb) {
         const { error: sbErr } = await DataService._sb.auth.updateUser({ password: newPw });
         if (sbErr) throw new Error(sbErr.message);
-        setLoading(false);
+        submittingRef.current = false; setLoading(false);
         addToast("Mot de passe r\xE9initialis\xE9 avec succ\xE8s !", "success");
         onBack();
         return;
@@ -10925,7 +10930,7 @@ const ForgotPasswordModal = ({ onBack, onCancel }) => {
       // Sans Supabase configuré — impossible de réinitialiser
       throw new Error("Service de réinitialisation indisponible. Configurez Supabase.");
     } catch(e) {
-      setLoading(false);
+      submittingRef.current = false; setLoading(false);
       setError(e && e.message ? e.message : "Erreur lors de la r\xE9initialisation");
     }
   };
@@ -17828,6 +17833,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   const [orders, setOrders] = useState([]);
   const [messages, setMessages] = useState([]);
   const [offers, setOffers] = useState([]);
+  // [UX #13] Indicateur de chargement initial
+  const [isLoading, setIsLoading] = useState(true);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [editProduct, setEditProduct] = useState(null);
   const [showComposeMessage, setShowComposeMessage] = useState(false);
@@ -17866,7 +17873,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   useEffect(() => {
     loadData();
   }, []);
-  const loadData = async () => {
+  const loadData = async (isRetry = false) => {
+    if (!isRetry) setIsLoading(true);
     // Affichage immédiat depuis cache localStorage
     const allProductsCache = storage.getArray("products");
     const allOrdersCache   = storage.getArray("orders");
@@ -17874,22 +17882,37 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     setProducts(allProductsCache.filter((p) => p.vendor === currentUser2.id));
     setOrders(allOrdersCache.filter((o) => o.vendor === currentUser2.id));
     setOffers(allOffersCache.filter((o) => o.vendorId === currentUser2.id));
+    // [UX #14] Retry unique sur erreur réseau
+    const tryFetch = (fn, fallback) => fn().catch(async (err) => {
+      if (!isRetry) {
+        addToast("⚠️ Problème de connexion, nouvelle tentative…", "warning", 4000);
+        await new Promise(r => setTimeout(r, 3000));
+        return fn().catch(() => fallback);
+      }
+      return fallback;
+    });
     // Charger depuis Supabase en arrière-plan
-    DataService.getOrders({ vendorId: currentUser2.id, limit: 200 })
-      .then(data => {
-        const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null);
-        if (fetched && fetched.length > 0) { setOrders(fetched); storage.set("orders", fetched); }
-      }).catch(() => {});
-    DataService.getProducts && DataService.getProducts({ vendorId: currentUser2.id })
-      .then(data => {
-        const fetched = Array.isArray(data) ? data : (data && data.products ? data.products : null);
-        if (fetched && fetched.length > 0) { setProducts(fetched); }
-      }).catch(() => {});
-    DataService.getOffers && DataService.getOffers({ vendorId: currentUser2.id })
-      .then(data => {
-        const fetched = Array.isArray(data) ? data : (data && data.offers ? data.offers : null);
-        if (fetched && fetched.length > 0) { setOffers(fetched); storage.set("offers", fetched); }
-      }).catch(() => {});
+    tryFetch(
+      () => DataService.getOrders({ vendorId: currentUser2.id, limit: 200 }),
+      null
+    ).then(data => {
+      const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null);
+      if (fetched && fetched.length > 0) { setOrders(fetched); storage.set("orders", fetched); }
+    });
+    tryFetch(
+      () => DataService.getProducts && DataService.getProducts({ vendorId: currentUser2.id }),
+      null
+    ).then(data => {
+      const fetched = Array.isArray(data) ? data : (data && data.products ? data.products : null);
+      if (fetched && fetched.length > 0) { setProducts(fetched); }
+    });
+    tryFetch(
+      () => DataService.getOffers && DataService.getOffers({ vendorId: currentUser2.id }),
+      null
+    ).then(data => {
+      const fetched = Array.isArray(data) ? data : (data && data.offers ? data.offers : null);
+      if (fetched && fetched.length > 0) { setOffers(fetched); storage.set("offers", fetched); }
+    });
     const allMessages = await DataService.getMessages(currentUser2.id).catch(() => storage.getArray("messages"));
     setMessages(allMessages.filter((m) => m.to === currentUser2.id || m.from === currentUser2.id));
     // [FIX] Récupérer le statut réel du vendeur via apiFetch (gestion token centralisée)
@@ -17909,6 +17932,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       date: date.slice(5),
       ventes: orders.filter((o) => (o.date || o.created_at || "").startsWith(date)).reduce((sum, o) => sum + (o.total || 0), 0)
     })));
+    setIsLoading(false); // [UX #13] fin du spinner
   };
   const validateProduct = () => {
     const errs = {};
@@ -18237,8 +18261,16 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true" }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-label": `${item.badge} message(s) non lu(s)` }, item.badge)))));
   return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu vendeur" }, renderSidebarContent()), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 },
 
-    /* ── Bannière compte en attente d'approbation ── */
-    vendorStatus !== 'approved' && /* @__PURE__ */ React.createElement("div", {
+    /* [UX #13] Spinner de chargement initial */
+    isLoading && React.createElement('div', {
+      style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: '1rem', color: 'var(--text-secondary)' },
+      role: 'status', 'aria-label': 'Chargement du tableau de bord…'
+    },
+      React.createElement('div', { className: 'spinner', style: { width: '48px', height: '48px', borderWidth: '4px' } }),
+      React.createElement('p', { style: { fontSize: '0.95rem', fontWeight: 500 } }, 'Chargement de vos données…')
+    ),
+
+    !isLoading && /* @__PURE__ */ React.createElement("div", {
       style: {
         background: "linear-gradient(135deg,#fef9c3,#fde68a)",
         border: "2px solid #f59e0b",
@@ -18269,7 +18301,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       )
     ),
 
-    view === "overview" && /* @__PURE__ */ React.createElement(React.Fragment, null,
+    !isLoading && view === "overview" && /* @__PURE__ */ React.createElement(React.Fragment, null,
     /* ── Onboarding checklist (visible si vendeur nouveau ou incomplet) ── */
     /* @__PURE__ */ React.createElement(VendorOnboardingChecklist, {
       currentUser: currentUser2,
@@ -18290,14 +18322,14 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   ].map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, className: "stat-card" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${s.icon} stat-icon`, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "stat-label" }, s.label), /* @__PURE__ */ React.createElement("div", { className: "stat-value" }, s.value), s.trend && /* @__PURE__ */ React.createElement("div", { className: "stat-trend" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-up", "aria-hidden": "true" }), " ", s.trend)))), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Commandes R\xE9centes"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => setView("orders") }, "Voir tout")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box-open", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande"), /* @__PURE__ */ React.createElement("p", null, "Vos commandes appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Commandes r\xE9centes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"))), /* @__PURE__ */ React.createElement("tbody", null, orders.slice(0, 5).map((o) => {
     var _a, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"));
-  })))))), view === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h2", { className: "section-title" }, "Mes Produits (", products.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowBulkImport(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Import CSV"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowScraper(true), title: "Extraire un produit depuis une URL (Amazon, Jumia, AliExpress\u2026)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-magic" }), " Extraire URL"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => {
+  })))))), !isLoading && view === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h2", { className: "section-title" }, "Mes Produits (", products.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowBulkImport(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Import CSV"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowScraper(true), title: "Extraire un produit depuis une URL (Amazon, Jumia, AliExpress\u2026)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-magic" }), " Extraire URL"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => {
   if (vendorStatus !== 'approved') { addToast("Votre boutique est en attente de validation. Vous pourrez ajouter des produits une fois approuvé.", "warning"); return; }
   setShowAddProduct(true);
-}, "aria-expanded": showAddProduct, disabled: vendorStatus !== 'approved', title: vendorStatus !== 'approved' ? "Boutique en attente d'approbation" : "Ajouter un produit", style: vendorStatus !== 'approved' ? {opacity:0.6, cursor:'not-allowed'} : {} }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit"))), products.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit"), /* @__PURE__ */ React.createElement("p", null, vendorStatus !== 'approved' ? "Votre boutique est en attente d'approbation" : "Commencez à vendre en ajoutant votre premier produit"), vendorStatus === 'approved' && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.id, className: "product-card", role: "article", "aria-label": p.name }, /* @__PURE__ */ React.createElement(ProductImg, { product: p, height: 180 }), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product: p }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), " ", /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? p.stock + " stock" : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", onClick: () => setEditProduct(p) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-edit" }), " Modifier / Supprimer")))))), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Offres re\xE7ues (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Les offres de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Acheteur"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Acheteur" }, offer.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, offer.status === "pending" ? /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleOffer(offer.id, true) }, "Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleOffer(offer.id, false) }, "Refuser")) : /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : "danger"}` }, offer.status)))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Toutes mes commandes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Produits"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, orders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE).map((o) => {
+}, "aria-expanded": showAddProduct, disabled: vendorStatus !== 'approved', title: vendorStatus !== 'approved' ? "Boutique en attente d'approbation" : "Ajouter un produit", style: vendorStatus !== 'approved' ? {opacity:0.6, cursor:'not-allowed'} : {} }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit"))), products.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit"), /* @__PURE__ */ React.createElement("p", null, vendorStatus !== 'approved' ? "Votre boutique est en attente d'approbation" : "Commencez à vendre en ajoutant votre premier produit"), vendorStatus === 'approved' && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.id, className: "product-card", role: "article", "aria-label": p.name }, /* @__PURE__ */ React.createElement(ProductImg, { product: p, height: 180 }), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product: p }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), " ", /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? p.stock + " stock" : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", onClick: () => setEditProduct(p) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-edit" }), " Modifier / Supprimer")))))), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Offres re\xE7ues (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Les offres de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Acheteur"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Acheteur" }, offer.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, offer.status === "pending" ? /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleOffer(offer.id, true) }, "Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleOffer(offer.id, false) }, "Refuser")) : /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : "danger"}` }, offer.status)))))))), !isLoading && view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Toutes mes commandes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Produits"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, orders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE).map((o) => {
     var _a, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Produits" }, (o.products || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: "0.82rem" } }, p.name, " \xD7", p.quantity))), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("select", { className: "form-select", style: { padding: "0.3rem", fontSize: "0.8rem", width: "auto" }, value: o.status, onChange: (e) => updateOrderStatus(o.id, e.target.value), "aria-label": `Statut commande ${o.id}` }, /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => downloadBuyerInvoicePDF(o), title: "Facture client PDF (serveur PDFKit)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Client"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-sm", style: { background: "#ea580c", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => downloadVendorInvoicePDF(o), title: "Relevé de vente PDF (serveur PDFKit)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-chart-line" }), " Relevé"),
             /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { background: "#1e40af", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => { const m = new Date(o.date || o.created_at || Date.now()).toISOString().slice(0,7); _downloadStatement(m); }, title: "Relevé mensuel PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-calendar-alt" }), " Mois"))));
-  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "messages" && React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "qa" && (() => {
+  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE }))), !isLoading && view === "messages" && React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), !isLoading && view === "qa" && (() => {
     const allQA = storage.get("product_qa") || {};
     const myProductIds = products.map((p) => p.id);
     const questions = myProductIds.flatMap((pid) => (allQA[pid] || []).map((q) => {
@@ -18325,7 +18357,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       var _a;
       return /* @__PURE__ */ React.createElement("div", { key: q.id, style: { padding: "0.85rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--primary)", fontWeight: 600, marginBottom: "0.25rem" } }, q.productName), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-question text-primary", style: { fontSize: "0.75rem" } }), " ", q.text), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginBottom: "0.5rem" } }, "Pos\xE9 par ", q.userName, " \u2014 ", new Date(q.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: answer[q.id] || "", onChange: (e) => setAnswer((a) => __spreadProps(__spreadValues({}, a), { [q.id]: e.target.value })), placeholder: "Votre r\xE9ponse...", style: { flex: 1, fontSize: "0.85rem" }, onKeyDown: (e) => e.key === "Enter" && saveAnswer(q.id, q.productId) }), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => saveAnswer(q.id, q.productId), disabled: !((_a = answer[q.id]) == null ? void 0 : _a.trim()) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-reply" }), " R\xE9pondre")));
     }));
-  })(), view === "wallet" && React.createElement(PayoutHistoryView, { currentUser: currentUser2, addToast, onRequestPayout: () => setShowPayoutModal(true) }), view === "invoices" && /* @__PURE__ */ React.createElement(VendorInvoicesView, { currentUser: currentUser2, orders, addToast, downloadStatement: _downloadStatement }), view === "parrainage" && React.createElement(VendorReferralWidget, { currentUser: currentUser2 }), view === "profile" && /* @__PURE__ */ React.createElement(VendorProfileEditor, { currentUser: currentUser2, addToast }), view === "ondemand_vendor" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast }), view === "analytics" && /* @__PURE__ */ React.createElement(VendorAnalyticsDashboard, { currentUser: currentUser2, orders, products, salesData, onRequestPayout: () => setShowPayoutModal(true), addToast }), view === "returns" && (() => {
+  })(), !isLoading && view === "wallet" && React.createElement(PayoutHistoryView, { currentUser: currentUser2, addToast, onRequestPayout: () => setShowPayoutModal(true) }), view === "invoices" && /* @__PURE__ */ React.createElement(VendorInvoicesView, { currentUser: currentUser2, orders, addToast, downloadStatement: _downloadStatement }), view === "parrainage" && React.createElement(VendorReferralWidget, { currentUser: currentUser2 }), !isLoading && view === "profile" && /* @__PURE__ */ React.createElement(VendorProfileEditor, { currentUser: currentUser2, addToast }), !isLoading && view === "ondemand_vendor" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast }), !isLoading && view === "analytics" && /* @__PURE__ */ React.createElement(VendorAnalyticsDashboard, { currentUser: currentUser2, orders, products, salesData, onRequestPayout: () => setShowPayoutModal(true), addToast }), !isLoading && view === "returns" && (() => {
     // [FIX] Charger depuis GET /api/returns (filtré par le token côté serveur)
     const myReturns = _myReturns;
     const setMyReturns = _setMyReturns;
@@ -18336,7 +18368,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       r.status === "pending" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { marginTop: "0.5rem" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: async () => { if (NEXUS_CONFIG.apiUrl) { await DataService.apiFetch(`/api/returns/${r.id}`, { method: "PATCH", body: JSON.stringify({ status: "approved" }) }).catch(()=>{}); } setMyReturns(prev => prev.map(x => x.id === r.id ? { ...x, status: "approved" } : x)); addToast("Retour accept\xE9 !", "success"); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: async () => { if (NEXUS_CONFIG.apiUrl) { await DataService.apiFetch(`/api/returns/${r.id}`, { method: "PATCH", body: JSON.stringify({ status: "rejected" }) }).catch(()=>{}); } setMyReturns(prev => prev.map(x => x.id === r.id ? { ...x, status: "rejected" } : x)); addToast("Retour refus\xE9", "info"); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser"))
     );
     })));
-  })()), view === "reviews" && (() => {
+  })()), !isLoading && view === "reviews" && (() => {
     const allReviews = storage.getArray("reviews");
     const myProductIds = products.map((p) => p.id);
     const myReviews = allReviews.filter((r) => myProductIds.includes(r.productId));
@@ -19864,6 +19896,8 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   const [wishlist, setWishlist] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [offers, setOffers] = useState([]);
+  // [UX #13] Indicateur de chargement initial
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
   // [UX #11] Compteur de messages non lus dans le sidebar
@@ -19921,7 +19955,8 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   useEffect(() => {
     if (wishlistTrigger > 0) setView("wishlist");
   }, [wishlistTrigger]);
-  const loadData = async () => {
+  const loadData = async (isRetry = false) => {
+    if (!isRetry) setIsLoading(true);
     try {
       const [allProducts, allOrders] = await Promise.all([
         DataService.getProducts({ limit: 100 }),
@@ -19945,16 +19980,24 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setReviews(allReviews);
       setOffers((allOffers.status === "fulfilled" ? allOffers.value : []).filter((o) => o.buyerId === currentUser2.id));
     } catch(e) {
-      // Pas de fallback localStorage — si l'API échoue, afficher vide
-      const allProducts = [];
-      const allOrders = [];
+      // [UX #14] Retry unique après 3s si première tentative
+      if (!isRetry) {
+        addToast("⚠️ Problème de connexion, nouvelle tentative…", "warning", 4000);
+        setTimeout(() => loadData(true), 3000);
+        return;
+      }
+      // Fallback localStorage si le retry échoue aussi
+      const allProducts = storage.getArray("products");
+      const allOrders = storage.getArray("orders");
       setProducts(allProducts);
       setOrders(allOrders.filter((o) => o.buyer === currentUser2.id));
-      setCart([]);
+      setCart(storage.get(`cart_${currentUser2.id}`) || []);
       const w = storage.get("wishlists") || {};
       setWishlist(w[currentUser2.id] || []);
-      setReviews([]);
-      setOffers([]);
+      setReviews(storage.getArray("reviews"));
+      setOffers(storage.getArray("offers").filter((o) => o.buyerId === currentUser2.id));
+    } finally {
+      setIsLoading(false); // [UX #13] fin du spinner
     }
   };
   const addToCart = (product) => {
@@ -20079,7 +20122,18 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setView(item.id);
     if (window.innerWidth <= 768) onToggleSidebar();
   }, style: item.b2b ? { borderLeft: "3px solid #0284c7" } : undefined }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${item.icon}`, "aria-hidden": "true", style: item.b2b ? { color: "#0284c7" } : undefined }), item.label, item.badge > 0 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-label": `${item.badge} message${item.badge > 1 ? "s" : ""} non lu${item.badge > 1 ? "s" : ""}` }, item.badge)))), cart.length > 0 && /* @__PURE__ */ React.createElement("li", { role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: "sidebar-item", onClick: () => setShowCart(true), "aria-label": `Panier avec ${cart.length} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), "Panier", /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { marginLeft: "auto" }, "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0)))));
-  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), renderSidebarContent()), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 }, view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(FlashSaleBanner, { products, onAddToCart: (p) => { addToCart(p); addToast("Ajouté au panier ⚡", "success"); }, onLoginClick: () => {} }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: `sidebar-overlay ${sidebarOpen ? "open" : ""}`, onClick: onToggleSidebar, "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("nav", { className: `sidebar ${sidebarOpen ? "open" : ""}`, "aria-label": "Menu acheteur" }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem", padding: "1rem", background: "var(--bg-light)", borderRadius: "10px" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.6rem" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { background: currentUser2.role === "buyer_pro" ? "linear-gradient(135deg,#0284c7,#0ea5e9)" : "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", width: "40px", height: "40px", fontSize: "1rem" } }, currentUser2.avatar), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, currentUser2.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, currentUser2.role === "buyer_pro" ? (currentUser2.company || "Acheteur Pro") : currentUser2.email))), currentUser2.role === "buyer_pro" && /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,#0284c7,#0ea5e9)", color: "white", borderRadius: "8px", padding: "0.5rem 0.75rem", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), "Compte Professionnel B2B"), currentUser2.role !== "buyer_pro" && /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2, compact: true })), renderSidebarContent()), /* @__PURE__ */ React.createElement("main", { className: "content-area", id: "main-content", tabIndex: -1 },
+
+    /* [UX #13] Spinner de chargement initial */
+    isLoading && React.createElement('div', {
+      style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: '1rem', color: 'var(--text-secondary)' },
+      role: 'status', 'aria-label': 'Chargement du tableau de bord…'
+    },
+      React.createElement('div', { className: 'spinner', style: { width: '48px', height: '48px', borderWidth: '4px' } }),
+      React.createElement('p', { style: { fontSize: '0.95rem', fontWeight: 500 } }, 'Chargement de vos données…')
+    ),
+
+    !isLoading && view === "catalog" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(FlashSaleBanner, { products, onAddToCart: (p) => { addToCart(p); addToast("Ajouté au panier ⚡", "success"); }, onLoginClick: () => {} }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2 wrap gap-1" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h1", { className: "section-title" }, "Catalogue"), /* @__PURE__ */ React.createElement("p", { className: "section-subtitle" }, filtered.length, " produit", filtered.length !== 1 ? "s" : "", " disponible", filtered.length !== 1 ? "s" : "")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", alignItems: "center" } }, /* @__PURE__ */ React.createElement("label", { htmlFor: "buyer-sort", className: "text-muted", style: { fontSize: "0.85rem" } }, "Trier :"), /* @__PURE__ */ React.createElement("select", { id: "buyer-sort", className: "form-select", style: { width: "auto", padding: "0.5rem", fontSize: "0.88rem" }, value: sortBy, onChange: (e) => setSortBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Pertinence"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix \u2191"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix \u2193"), /* @__PURE__ */ React.createElement("option", { value: "rating" }, "Note")))), /* @__PURE__ */ React.createElement(
     SearchWithAutocomplete,
     {
       products,
@@ -20110,13 +20164,13 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setOfferProduct(product);
       setShowOfferModal(true);
     }, "aria-label": "Faire une offre" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd" }))
-  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: setCurrentPage, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager")), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => setSelectedProduct(product) }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
+  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: setCurrentPage, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), !isLoading && view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), !isLoading && view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), !isLoading && view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager")), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => setSelectedProduct(product) }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(product);
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart" }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, product.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, product.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product, currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: (e) => {
     e.stopPropagation();
     addToCart(product);
-  } }, "Ajouter au panier")))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box-open", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande"), /* @__PURE__ */ React.createElement("p", null, "Vos achats appara\xEEtront ici"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "D\xE9couvrir les produits")) : /* @__PURE__ */ React.createElement("div", { role: "list", "aria-label": "Liste de mes commandes" }, orders.map((order) => {
+  } }, "Ajouter au panier")))))), !isLoading && view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box-open", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande"), /* @__PURE__ */ React.createElement("p", null, "Vos achats appara\xEEtront ici"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "D\xE9couvrir les produits")) : /* @__PURE__ */ React.createElement("div", { role: "list", "aria-label": "Liste de mes commandes" }, orders.map((order) => {
     var _a, _b, _c;
     return /* @__PURE__ */ React.createElement("div", { key: order.id, role: "listitem", style: { border: `2px solid ${(selectedOrder == null ? void 0 : selectedOrder.id) === order.id ? "var(--primary)" : "var(--border)"}`, borderRadius: "14px", padding: "1.25rem", marginBottom: "1rem", cursor: "pointer", background: (selectedOrder == null ? void 0 : selectedOrder.id) === order.id ? "rgba(0,133,62,0.04)" : "white", transition: "all 0.2s" }, onClick: () => setSelectedOrder((selectedOrder == null ? void 0 : selectedOrder.id) === order.id ? null : order), tabIndex: 0, onKeyDown: (e) => e.key === "Enter" && setSelectedOrder((selectedOrder == null ? void 0 : selectedOrder.id) === order.id ? null : order), "aria-expanded": (selectedOrder == null ? void 0 : selectedOrder.id) === order.id }, /* @__PURE__ */ React.createElement("div", { className: "flex-between wrap gap-2" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, marginBottom: "0.3rem" } }, order.id), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.85rem", color: "var(--text-secondary)" } }, order.products.length, " article", order.products.length > 1 ? "s" : "", " \u2022 ", order.vendorName)), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "right" } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.2rem", color: "var(--primary)" } }, formatPrice(order.total)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, new Date(order.date).toLocaleDateString("fr-FR")))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.75rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" } }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[order.status]) == null ? void 0 : _a.badge}` }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${(_b = STATUS_MAP[order.status]) == null ? void 0 : _b.icon}`, "aria-hidden": "true" }), " ", (_c = STATUS_MAP[order.status]) == null ? void 0 : _c.label), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)" } }, (selectedOrder == null ? void 0 : selectedOrder.id) === order.id ? "Masquer" : "D\xE9tails", " ", /* @__PURE__ */ React.createElement("i", { className: `fas fa-chevron-${(selectedOrder == null ? void 0 : selectedOrder.id) === order.id ? "up" : "down"}`, "aria-hidden": "true" }))), (selectedOrder == null ? void 0 : selectedOrder.id) === order.id && /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" }, onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "order-timeline", "aria-label": "Progression de la commande" }, ["processing", "in_transit", "delivered"].map((status, i) => {
       var _a2, _b2, _c2;
@@ -20129,7 +20183,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setComposeRecipient({ id: order.vendor, name: order.vendorName });
       setShowComposeMessage(true);
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => generateInvoicePDF(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Facture PDF"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => printOrderSlip(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-print" }), " Imprimer"), order.status === "delivered" && !order.returnStatus && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowReturnOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour"), !order.disputeId && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "#dc2626", color: "#dc2626" }, onClick: () => setShowDisputeOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige"), order.disputeId && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center", fontSize: "0.72rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige ", order.disputeStatus === "open" ? "en cours" : "r\xE9solu"), order.returnStatus && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour ", order.returnStatus === "requested" ? "en cours" : order.returnStatus), ["pending_payment", "processing"].includes(order.status) && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowCancelOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Annuler"))));
-  }))), view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
+  }))), !isLoading && view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), !isLoading && view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
     // [FIX #310] LoyaltyHist supprimé — états hissés dans BuyerDashboard (_loyaltyData)
     const ld = _loyaltyData;
       const pts2 = ld?.points ?? 0;
@@ -20151,7 +20205,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star" }), /* @__PURE__ */ React.createElement("h3", null, "Pas encore de points"), /* @__PURE__ */ React.createElement("p", null, "Passez votre premi\xE8re commande pour commencer \xE0 gagner des points !"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "D\xE9couvrir le catalogue"))
           : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Type"), /* @__PURE__ */ React.createElement("th", null, "Description"), /* @__PURE__ */ React.createElement("th", null, "Points"), /* @__PURE__ */ React.createElement("th", null, "Date"))), /* @__PURE__ */ React.createElement("tbody", null, hist.slice(0, 20).map((h, i2) => /* @__PURE__ */ React.createElement("tr", { key: i2 }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${h.type==="earn"?"success":h.type==="redeem"?"warning":"danger"}` }, h.type==="earn"?"Gagn\xE9":h.type==="redeem"?"Utilis\xE9":"Expir\xE9")), /* @__PURE__ */ React.createElement("td", null, h.description||h.orderId||"-"), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", { style: { color: h.type==="earn"?"var(--success)":"var(--danger)" } }, h.type==="earn"?"+":"-", Math.abs(h.points||0), " pts")), /* @__PURE__ */ React.createElement("td", null, h.date ? new Date(h.date).toLocaleDateString("fr-FR") : "-"))))))
       );
-  })())), view === "referral" && /* @__PURE__ */ React.createElement(ReferralWidget, { currentUser: currentUser2 }), (view === "b2b_profile" || view === "b2b_orders" || view === "b2b_statement") && /* @__PURE__ */ React.createElement(B2BProDashboard, { currentUser: currentUser2, addToast, view, setParentView: setView }), view === "push_settings" && /* @__PURE__ */ React.createElement(PushNotificationSettings, { currentUser: currentUser2, addToast }), view === "profile" && /* @__PURE__ */ React.createElement(ProfileEditor, { currentUser: currentUser2, addToast })), cart.length > 0 && view !== "orders" && /* @__PURE__ */ React.createElement("button", { className: "floating-cart", onClick: () => setShowCart(true), "aria-label": `Panier: ${cart.reduce((s, i) => s + i.quantity, 0)} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0))), selectedProduct && /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: () => setSelectedProduct(null) }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "prod-detail-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "prod-detail-title" }, selectedProduct.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: () => setSelectedProduct(null), "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-detail-grid" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: selectedProduct, height: 280 }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
+  })())), view === "referral" && /* @__PURE__ */ React.createElement(ReferralWidget, { currentUser: currentUser2 }), (view === "b2b_profile" || view === "b2b_orders" || view === "b2b_statement") && /* @__PURE__ */ React.createElement(B2BProDashboard, { currentUser: currentUser2, addToast, view, setParentView: setView }), view === "push_settings" && /* @__PURE__ */ React.createElement(PushNotificationSettings, { currentUser: currentUser2, addToast }), !isLoading && view === "profile" && /* @__PURE__ */ React.createElement(ProfileEditor, { currentUser: currentUser2, addToast })), cart.length > 0 && view !== "orders" && /* @__PURE__ */ React.createElement("button", { className: "floating-cart", onClick: () => setShowCart(true), "aria-label": `Panier: ${cart.reduce((s, i) => s + i.quantity, 0)} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0))), selectedProduct && /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: () => setSelectedProduct(null) }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "prod-detail-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "prod-detail-title" }, selectedProduct.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: () => setSelectedProduct(null), "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-detail-grid" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: selectedProduct, height: 280 }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(selectedProduct);
   } }, /* @__PURE__ */ React.createElement("i", { className: `fa${wishlist.includes(selectedProduct.id) ? "s" : "r"} fa-heart` }))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "product-category mb-1" }, selectedProduct.category), /* @__PURE__ */ React.createElement("div", { className: "product-vendor vendor-link mb-1", style: { fontSize: "0.95rem" }, title: "Voir la boutique de " + selectedProduct.vendorName, role: "button", tabIndex: 0, onClick: () => { setSelectedProduct(null); setShowVendorPage({ id: selectedProduct.vendor||null, name: selectedProduct.vendorName||"Boutique" }); }, onKeyDown: (e) => { if (e.key==="Enter") { setSelectedProduct(null); setShowVendorPage({ id: selectedProduct.vendor||null, name: selectedProduct.vendorName||"Boutique" }); } } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store", "aria-hidden": "true" }), " Boutique ", /* @__PURE__ */ React.createElement("strong", null, selectedProduct.vendorName)), /* @__PURE__ */ React.createElement(PriceDisplay, { product: selectedProduct, style: { fontSize: "2rem" }, className: "product-price" }), /* @__PURE__ */ React.createElement("div", { className: "product-rating mb-2" }, /* @__PURE__ */ React.createElement(Stars, { rating: selectedProduct.rating }), /* @__PURE__ */ React.createElement("span", null, selectedProduct.rating), /* @__PURE__ */ React.createElement("span", { className: "text-muted" }, "(", selectedProduct.reviewsCount || 0, " avis)")), /* @__PURE__ */ React.createElement("p", { style: { marginBottom: "1.5rem", color: "var(--text-secondary)", lineHeight: "1.8" } }, selectedProduct.description), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement("span", { className: `badge ${selectedProduct.stock > 10 ? "badge-success" : "badge-warning"}` }, selectedProduct.stock, " en stock")), /* @__PURE__ */ React.createElement(VariantSelector, { product: selectedProduct, selectedVariants, onVariantChange: (type, val) => setSelectedVariants((v) => __spreadProps(__spreadValues({}, v), { [type]: val })) }), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2", style: { flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-lg flex-1", onClick: () => {
