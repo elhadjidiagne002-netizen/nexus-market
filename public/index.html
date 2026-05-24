@@ -1672,10 +1672,13 @@ const NEXUS_CONFIG = {
     enabled: true,
   },
   google: {
-    // Google OAuth via Supabase
+    // Google OAuth via Supabase + One Tap
     // Supabase Dashboard → Authentication → Providers → Google
     // Créer des identifiants OAuth 2.0 sur console.cloud.google.com
     // → Authorized redirect URI : https://<project>.supabase.co/auth/v1/callback
+    // → Authorized JavaScript origins : https://nexus-market-asb.pages.dev
+    // Coller ici le Client ID (format : XXXXXX.apps.googleusercontent.com)
+    clientId: "414348896532-sg5avclus8r3qrstijo65lqggabptuc6.apps.googleusercontent.com",
     enabled: true,
   },
   // ═══════════════════════════════════════════════════════════════════════
@@ -9932,6 +9935,12 @@ const GoogleSignInButton = ({ label }) => {
 
   const handleGoogleLogin = async () => {
     setLoading(true);
+    // [ONE TAP] Si le SDK GSI est chargé, déclencher le prompt One Tap
+    if (window.__nexusGoogleOneTapPrompt) {
+      window.__nexusGoogleOneTapPrompt();
+      setLoading(false);
+      return;
+    }
     if (isSupabaseConfigured() && DataService._sb) {
       try {
         const { error } = await DataService._sb.auth.signInWithOAuth({
@@ -10002,6 +10011,128 @@ const GoogleSignInButton = ({ label }) => {
     React.createElement('span', null, loading ? 'Redirection vers Google...' : (label || 'Continuer avec Google'))
   );
 };
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GOOGLE ONE TAP — Connexion 1 clic sans popup ni redirection
+// ──────────────────────────────────────────────────────────────────────────────
+// Charge le SDK Google Identity Services, initialise One Tap et gère le callback
+// Supabase (signInWithIdToken). Affiché automatiquement quand l'utilisateur
+// n'est pas connecté. Compatible avec le bouton "Continuer avec Google" existant.
+// ══════════════════════════════════════════════════════════════════════════════
+const GoogleOneTapProvider = ({ onLogin }) => {
+  const { addToast } = useToast();
+  const initializedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    // Ne pas initialiser si One Tap déjà lancé, ou client ID absent, ou Google désactivé
+    if (initializedRef.current) return;
+    if (NEXUS_CONFIG.google?.enabled === false) return;
+    const clientId = NEXUS_CONFIG.google?.clientId;
+    if (!clientId) return; // clientId non configuré → silencieux
+    if (!isSupabaseConfigured() || !DataService._sb) return;
+
+    // Callback appelé par Google quand l'utilisateur confirme sa sélection
+    const handleCredential = async (response) => {
+      try {
+        const { data, error } = await DataService._sb.auth.signInWithIdToken({
+          provider: 'google',
+          token: response.credential,
+        });
+        if (error) throw error;
+        if (!data?.user) throw new Error('Aucun utilisateur retourné');
+
+        // Construire l'objet user NEXUS depuis la session Supabase
+        const sbUser = data.user;
+        const meta   = sbUser.user_metadata || {};
+        const nexusUser = {
+          id:        sbUser.id,
+          email:     sbUser.email,
+          name:      meta.full_name || meta.name || sbUser.email.split('@')[0],
+          avatar:    (meta.full_name || meta.name || 'U')[0].toUpperCase(),
+          role:      'buyer', // rôle par défaut, sera mis à jour par le profil Supabase
+          provider:  'google',
+          isNewGoogleUser: data.session?._isNew !== false,
+        };
+
+        // Récupérer le profil depuis Supabase pour obtenir le vrai rôle
+        try {
+          const { data: profile } = await DataService._sb
+            .from('profiles')
+            .select('role, name')
+            .eq('id', sbUser.id)
+            .maybeSingle();
+          if (profile?.role)  nexusUser.role   = profile.role;
+          if (profile?.name)  nexusUser.name   = profile.name;
+          if (profile?.name)  nexusUser.avatar = profile.name[0].toUpperCase();
+        } catch (_) {}
+
+        addToast(`Bienvenue ${nexusUser.name} !`, 'success');
+        if (onLogin) onLogin(nexusUser);
+      } catch (e) {
+        console.warn('[Google One Tap] Erreur :', e.message);
+        addToast('Connexion Google échouée : ' + (e.message || 'Erreur inconnue'), 'error');
+      }
+    };
+
+    // Charger le SDK GSI si pas encore présent
+    const initOneTap = () => {
+      if (!window.google?.accounts?.id) return;
+      initializedRef.current = true;
+
+      window.google.accounts.id.initialize({
+        client_id:             clientId,
+        callback:              handleCredential,
+        auto_select:           true,          // connexion silencieuse si session Google active
+        cancel_on_tap_outside: false,
+        context:               'signin',
+        ux_mode:               'popup',
+      });
+
+      // Exposer la fonction pour que le bouton "Continuer avec Google" puisse déclencher le prompt
+      window.__nexusGoogleOneTapPrompt = () => {
+        window.google.accounts.id.prompt((notification) => {
+          if (notification.isNotDisplayed()) {
+            // One Tap supprimé ou bloqué → fallback OAuth classique
+            console.info('[One Tap] Non affiché (' + notification.getNotDisplayedReason() + ') — fallback OAuth');
+            if (DataService._sb) {
+              DataService._sb.auth.signInWithOAuth({
+                provider: 'google',
+                options: { redirectTo: window.location.origin + window.location.pathname,
+                           queryParams: { access_type: 'offline', prompt: 'consent' } },
+              }).catch(err => addToast('Erreur OAuth Google : ' + err.message, 'error'));
+            }
+          }
+        });
+      };
+
+      // Afficher automatiquement le prompt One Tap (coin supérieur droit)
+      window.__nexusGoogleOneTapPrompt();
+    };
+
+    if (window.google?.accounts?.id) {
+      initOneTap();
+    } else {
+      const script = document.createElement('script');
+      script.src   = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = initOneTap;
+      script.onerror = () => console.warn('[Google One Tap] Impossible de charger le SDK GSI');
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      // Annuler le prompt si le composant est démonté (ex. login réussi)
+      try { window.google?.accounts?.id?.cancel(); } catch (_) {}
+      delete window.__nexusGoogleOneTapPrompt;
+    };
+  }, []);
+
+  // Ce composant ne rend rien — il est purement fonctionnel
+  return null;
+};
+// ── Fin GoogleOneTapProvider ───────────────────────────────────────────────────
 
 const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
   const { addToast } = useToast();
@@ -21496,7 +21627,7 @@ const App = ({ onUserChange }) => {
       onShowCGU: () => setShowCGU(true),
       onShowPrivacy: () => setShowPrivacy(true)
     }
-  ), showCGU && /* @__PURE__ */ React.createElement(CGUModal, { onClose: () => setShowCGU(false) }), showPrivacy && /* @__PURE__ */ React.createElement(PrivacyModal, { onClose: () => setShowPrivacy(false) }), showOnboarding && /* @__PURE__ */ React.createElement(
+  ), !currentUser2 && /* @__PURE__ */ React.createElement(GoogleOneTapProvider, { onLogin: handleLogin }), showCGU && /* @__PURE__ */ React.createElement(CGUModal, { onClose: () => setShowCGU(false) }), showPrivacy && /* @__PURE__ */ React.createElement(PrivacyModal, { onClose: () => setShowPrivacy(false) }), showOnboarding && /* @__PURE__ */ React.createElement(
     OnboardingTour,
     {
       role: onboardingRole,
