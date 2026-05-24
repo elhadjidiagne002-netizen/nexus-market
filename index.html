@@ -23795,6 +23795,24 @@ function useMessaging(currentUser) {
         ? { ...m, read: true, read_at: new Date().toISOString() }
         : m
     ));
+    // [FIX] Sync localStorage so useUnreadMessageCount header badge
+    // updates immediately. That hook reads storage.getArray('messages'),
+    // not React state, and listens for the 'nexus:messages-read' event.
+    const _uid = currentUser?.id;
+    if (_uid) {
+      const _all = storage.getArray('messages');
+      let _changed = false;
+      _all.forEach(m => {
+        if (m.from === fromId && m.to === _uid && !m.read) {
+          m.read = true;
+          _changed = true;
+        }
+      });
+      if (_changed) {
+        storage.set('messages', _all);
+        window.dispatchEvent(new CustomEvent('nexus:messages-read'));
+      }
+    }
     await DataService.apiFetch('/api/messages/read', {
       method: 'PATCH', body: JSON.stringify({ fromId })
     }).catch(() => {});
