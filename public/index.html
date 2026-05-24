@@ -18979,441 +18979,573 @@ const RowCard = ({ p, onSelect, onAddToCart, addToast, addedIds }) => React.crea
   )
 );
 
+
 // ══════════════════════════════════════════════════════════════════════════════
-// ANNONCES EXPRESS — Petites annonces sans inscription (email + téléphone seuls)
-// Ultra-simple, conçu pour tous publics, y compris faiblement alphabétisés.
+// ANNONCES EXPRESS v2 — Architecture portail + événements globaux
+// Modal rendu dans document.body via ReactDOM.createPortal → aucun problème
+// de z-index, overflow ou transform parent.
+// Déclenchement via window.__axOpen() → indépendant de toute hiérarchie React.
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── Catégories visuelles ───────────────────────────────────────────────────────
-const AX_CATEGORIES = [
-  { id: 'electromenager', emoji: '📺', label: 'Électro' },
-  { id: 'vetements',      emoji: '👗', label: 'Vêtements' },
-  { id: 'telephone',      emoji: '📱', label: 'Téléphones' },
-  { id: 'alimentaire',    emoji: '🥗', label: 'Alimentaire' },
-  { id: 'moto',           emoji: '🛵', label: 'Motos' },
-  { id: 'maison',         emoji: '🛋️', label: 'Maison' },
-  { id: 'beaute',         emoji: '💄', label: 'Beauté' },
-  { id: 'services',       emoji: '🔧', label: 'Services' },
-  { id: 'agriculture',    emoji: '🌾', label: 'Agri.' },
-  { id: 'informatique',   emoji: '💻', label: 'Informatique' },
-  { id: 'auto',           emoji: '🚗', label: 'Autos' },
-  { id: 'autres',         emoji: '📦', label: 'Autres' },
+const AX_CATS = [
+  { id:'telephone',   e:'📱', l:'Téléphones'  },
+  { id:'electromenager', e:'📺', l:'Électro'  },
+  { id:'vetements',   e:'👗', l:'Vêtements'   },
+  { id:'alimentaire', e:'🥗', l:'Alimentaire' },
+  { id:'moto',        e:'🛵', l:'Motos'       },
+  { id:'maison',      e:'🛋️', l:'Maison'      },
+  { id:'beaute',      e:'💄', l:'Beauté'      },
+  { id:'auto',        e:'🚗', l:'Autos'       },
+  { id:'agriculture', e:'🌾', l:'Agri.'       },
+  { id:'informatique',e:'💻', l:'Informatique'},
+  { id:'services',    e:'🔧', l:'Services'    },
+  { id:'autres',      e:'📦', l:'Autres'      },
 ];
 
-// ── Sauvegarde annonce express (Supabase ou localStorage fallback) ─────────────
-async function saveAnnonceExpress(annonce) {
-  const record = {
-    id:          crypto.randomUUID(),
-    photo_url:   annonce.photoUrl || null,
-    price_fcfa:  annonce.priceFcfa,
-    category:    annonce.category,
-    description: annonce.description || null,
-    phone:       annonce.phone,
-    email:       annonce.email || null,
-    city:        annonce.city || 'Dakar',
+async function axSaveAnnonce(data) {
+  const rec = {
+    id: crypto.randomUUID(),
+    photo_url:   data.photoUrl   || null,
+    price_fcfa:  data.priceFcfa,
+    category:    data.category   || 'autres',
+    description: data.description|| null,
+    phone:       data.phone,
+    email:       data.email      || null,
+    city:        data.city       || 'Dakar',
     status:      'active',
     created_at:  new Date().toISOString(),
-    source:      'express',
   };
-  // Tenter Supabase en premier
   if (isSupabaseConfigured() && DataService._sb) {
     try {
-      const { data, error } = await DataService._sb
-        .from('annonces_express')
-        .insert([record])
-        .select()
-        .single();
-      if (!error) return data || record;
-    } catch (e) {
-      console.warn('[AnnonceExpress] Supabase unavailable, using localStorage:', e.message);
-    }
+      const { error } = await DataService._sb.from('annonces_express').insert([rec]);
+      if (!error) { console.info('[AX] Saved to Supabase'); return rec; }
+    } catch(e) { console.warn('[AX] Supabase error:', e.message); }
   }
-  // Fallback localStorage
-  const existing = JSON.parse(localStorage.getItem('nexus_annonces_express') || '[]');
-  existing.unshift(record);
-  localStorage.setItem('nexus_annonces_express', JSON.stringify(existing.slice(0, 100)));
-  return record;
+  const arr = JSON.parse(localStorage.getItem('nexus_ax') || '[]');
+  arr.unshift(rec);
+  localStorage.setItem('nexus_ax', JSON.stringify(arr.slice(0, 100)));
+  console.info('[AX] Saved to localStorage');
+  return rec;
 }
 
-async function loadAnnoncesExpress() {
+async function axLoadAnnonces() {
   if (isSupabaseConfigured() && DataService._sb) {
     try {
       const { data, error } = await DataService._sb
-        .from('annonces_express')
-        .select('*')
-        .eq('status', 'active')
-        .order('created_at', { ascending: false })
-        .limit(50);
+        .from('annonces_express').select('*')
+        .eq('status','active').order('created_at',{ascending:false}).limit(50);
       if (!error && data && data.length > 0) return data;
-    } catch (e) {}
+    } catch(e) {}
   }
-  return JSON.parse(localStorage.getItem('nexus_annonces_express') || '[]');
+  return JSON.parse(localStorage.getItem('nexus_ax') || '[]');
 }
 
-// ── Modale "Vendre en 3 étapes" ───────────────────────────────────────────────
-const AnnonceExpressModal = ({ onClose, onSuccess, addToast }) => {
+// ── Modal Express (portail) ────────────────────────────────────────────────────
+const AxModal = ({ onClose, onPublished }) => {
   const [step,      setStep]      = React.useState(1);
   const [photoUrl,  setPhotoUrl]  = React.useState('');
-  const [priceFcfa, setPriceFcfa] = React.useState('');
-  const [category,  setCategory]  = React.useState('');
+  const [uploading, setUploading] = React.useState(false);
+  const [price,     setPrice]     = React.useState('');
+  const [cat,       setCat]       = React.useState('');
   const [desc,      setDesc]      = React.useState('');
   const [phone,     setPhone]     = React.useState('');
   const [email,     setEmail]     = React.useState('');
   const [city,      setCity]      = React.useState('Dakar');
-  const [uploading, setUploading] = React.useState(false);
-  const [submitting,setSubmitting]= React.useState(false);
+  const [busy,      setBusy]      = React.useState(false);
   const [done,      setDone]      = React.useState(false);
   const fileRef = React.useRef();
 
-  // Upload photo via Supabase Storage ou base64 fallback
-  const handlePhoto = async (file) => {
+  const compress = (file) => new Promise((res) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 800;
+      const r = Math.min(1, MAX / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = img.width * r; c.height = img.height * r;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => res(b), 'image/jpeg', 0.82);
+    };
+    img.src = url;
+  });
+
+  const handleFile = async (file) => {
     if (!file) return;
     setUploading(true);
     try {
-      // Compresser en canvas (max 800px)
-      const compress = (f) => new Promise((res) => {
-        const img = new Image();
-        const url = URL.createObjectURL(f);
-        img.onload = () => {
-          const MAX = 800;
-          const ratio = Math.min(1, MAX / Math.max(img.width, img.height));
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width * ratio; canvas.height = img.height * ratio;
-          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-          URL.revokeObjectURL(url);
-          canvas.toBlob(b => res(b), 'image/jpeg', 0.82);
-        };
-        img.src = url;
-      });
       const blob = await compress(file);
-
       if (isSupabaseConfigured() && DataService._sb) {
-        try {
-          const fname = `express/${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`;
-          const { data, error } = await DataService._sb.storage
-            .from('nexus-images')
-            .upload(fname, blob, { contentType: 'image/jpeg', upsert: true });
-          if (!error) {
-            const { data: pub } = DataService._sb.storage
-              .from('nexus-images')
-              .getPublicUrl(data.path);
-            setPhotoUrl(pub.publicUrl);
-            setUploading(false);
-            return;
-          }
-        } catch (_) {}
+        const fname = 'express/' + Date.now() + '_' + Math.random().toString(36).slice(2) + '.jpg';
+        const { data: up, error } = await DataService._sb.storage
+          .from('nexus-images').upload(fname, blob, { contentType:'image/jpeg', upsert:true });
+        if (!error) {
+          const { data: pub } = DataService._sb.storage.from('nexus-images').getPublicUrl(up.path);
+          setPhotoUrl(pub.publicUrl); setUploading(false); return;
+        }
       }
-      // Fallback base64
-      const reader = new FileReader();
-      reader.onload = (e) => { setPhotoUrl(e.target.result); setUploading(false); };
-      reader.readAsDataURL(blob);
-    } catch (e) {
-      addToast('Erreur chargement photo', 'error');
-      setUploading(false);
-    }
+      const r = new FileReader();
+      r.onload = e => { setPhotoUrl(e.target.result); setUploading(false); };
+      r.readAsDataURL(blob);
+    } catch(e) { console.error('[AX] upload error', e); setUploading(false); }
   };
 
-  const handleSubmit = async () => {
-    if (!phone || phone.replace(/\D/g,'').length < 8) {
-      addToast('Entrez un numéro valide', 'error'); return;
-    }
-    if (!priceFcfa || parseInt(priceFcfa) < 100) {
-      addToast('Entrez un prix en FCFA', 'error'); return;
-    }
-    setSubmitting(true);
+  const submit = async () => {
+    if (!phone || phone.replace(/\D/g,'').length < 8) { alert('Numéro invalide'); return; }
+    if (!price || parseInt(price) < 100) { alert('Prix manquant'); return; }
+    setBusy(true);
     try {
-      await saveAnnonceExpress({ photoUrl, priceFcfa: parseInt(priceFcfa), category: category || 'autres', description: desc, phone: '+221' + phone.replace(/\D/g,''), email, city });
+      await axSaveAnnonce({
+        photoUrl, priceFcfa: parseInt(price), category: cat || 'autres',
+        description: desc, phone: '+221' + phone.replace(/\D/g,''), email, city
+      });
       setDone(true);
-      if (onSuccess) onSuccess();
-    } catch (e) {
-      addToast('Erreur lors de la publication', 'error');
-    } finally { setSubmitting(false); }
+      if (onPublished) onPublished();
+    } catch(e) { alert('Erreur: ' + e.message); }
+    setBusy(false);
   };
 
-  const canNext1 = !!photoUrl;
-  const canNext2 = !!priceFcfa && parseInt(priceFcfa) >= 100 && !!category;
+  const overlay = {
+    position:'fixed', inset:0, background:'rgba(0,0,0,0.6)',
+    zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center',
+    padding:'1rem', overflowY:'auto',
+  };
+  const box = {
+    background:'#fff', borderRadius:'18px', width:'100%', maxWidth:'440px',
+    maxHeight:'90vh', overflowY:'auto', boxShadow:'0 20px 60px rgba(0,0,0,0.3)',
+    position:'relative',
+  };
+  const hdr = { padding:'1.25rem 1.5rem 0', borderBottom:'1px solid #e5e7eb', paddingBottom:'1rem' };
+  const body = { padding:'1.25rem 1.5rem' };
 
-  if (done) return React.createElement('div', { className: 'modal-overlay', onClick: onClose },
-    React.createElement('div', { className: 'modal', onClick: e => e.stopPropagation(), style: { textAlign: 'center', padding: '2rem 1.5rem' } },
-      React.createElement('div', { className: 'ax-success-check' }, '✅'),
-      React.createElement('h2', { style: { fontWeight: 800, marginBottom: '.5rem' } }, 'Annonce publiée !'),
-      React.createElement('p', { style: { color: 'var(--text-secondary)', marginBottom: '1.5rem' } },
-        'Votre annonce est en ligne. Les acheteurs peuvent vous contacter sur WhatsApp.'),
-      React.createElement('button', { className: 'btn btn-primary btn-block', onClick: onClose },
-        React.createElement('i', { className: 'fab fa-whatsapp' }), ' Retour aux annonces')
-    )
-  );
+  const E = React.createElement;
 
-  return React.createElement('div', { className: 'modal-overlay', onClick: onClose },
-    React.createElement('div', { className: 'modal', onClick: e => e.stopPropagation(), style: { maxWidth: '480px' } },
-      // Header
-      React.createElement('div', { className: 'modal-header' },
-        React.createElement('div', null,
-          React.createElement('div', { className: 'ax-modal-title' },
-            React.createElement('span', { className: 'ax-badge-express' }, '⚡ VENDRE'),
-            step === 1 ? ' Votre photo' : step === 2 ? ' Prix & Catégorie' : ' Vos coordonnées'
-          ),
-          React.createElement('div', { className: 'ax-modal-sub' },
-            step === 1 ? 'Prenez une belle photo de ce que vous vendez' :
-            step === 2 ? 'Combien ça coûte ? Dans quelle catégorie ?' :
-            'Comment vous contacter ?'
-          )
-        ),
-        React.createElement('button', { className: 'close-btn', onClick: onClose }, React.createElement('i', { className: 'fas fa-times' }))
-      ),
-
-      // Step indicator
-      React.createElement('div', { className: 'ax-step-indicator' },
-        [1,2,3].map(s => React.createElement('div', { key: s, className: 'ax-step-dot' + (s === step ? ' active' : s < step ? ' done' : '') }))
-      ),
-
-      // ── Étape 1 : Photo ───────────────────────────────────────────────
-      step === 1 && React.createElement('div', null,
-        React.createElement('div', { className: 'ax-photo-zone', onClick: () => !uploading && fileRef.current?.click() },
-          uploading
-            ? React.createElement('div', { className: 'spinner' })
-            : photoUrl
-              ? React.createElement('img', { src: photoUrl, alt: 'Aperçu' })
-              : React.createElement(React.Fragment, null,
-                  React.createElement('span', { className: 'ax-photo-icon' }, '📷'),
-                  React.createElement('div', { className: 'ax-photo-label' }, 'Appuyez pour prendre une photo'),
-                  React.createElement('div', { className: 'ax-photo-sub' }, 'ou choisissez dans votre galerie')
-                )
-        ),
-        React.createElement('input', { ref: fileRef, type: 'file', accept: 'image/*', capture: 'environment', style: { display: 'none' }, onChange: e => e.target.files[0] && handlePhoto(e.target.files[0]) }),
-
-        React.createElement('div', { style: { marginTop: '1rem', display: 'flex', gap: '.75rem' } },
-          photoUrl && React.createElement('button', { className: 'btn btn-secondary', style: { flex: 1 }, onClick: () => { setPhotoUrl(''); fileRef.current.value=''; } },
-            React.createElement('i', { className: 'fas fa-redo' }), ' Changer'),
-          React.createElement('button', { className: 'btn btn-primary', style: { flex: 2 }, disabled: !canNext1, onClick: () => setStep(2) },
-            'Suivant', React.createElement('i', { className: 'fas fa-arrow-right', style: { marginLeft: '.5rem' } }))
-        ),
-        !photoUrl && React.createElement('p', { style: { textAlign: 'center', marginTop: '.75rem', fontSize: '.78rem', color: 'var(--text-secondary)' } },
-          'Pas de photo ? ',
-          React.createElement('button', { style: { background: 'none', border: 'none', color: 'var(--primary)', fontWeight: 700, cursor: 'pointer', fontSize: '.78rem' }, onClick: () => setStep(2) },
-            'Continuer sans photo →'))
-      ),
-
-      // ── Étape 2 : Prix + Catégorie ────────────────────────────────────
-      step === 2 && React.createElement('div', null,
-        React.createElement('div', { style: { marginBottom: '1.25rem' } },
-          React.createElement('label', { style: { fontWeight: 700, fontSize: '.92rem', display: 'block', marginBottom: '.5rem' } },
-            '💰 Prix de vente'),
-          React.createElement('div', { className: 'ax-price-wrap' },
-            React.createElement('input', {
-              className: 'ax-price-input', type: 'number', inputMode: 'numeric',
-              placeholder: '0', value: priceFcfa,
-              onChange: e => setPriceFcfa(e.target.value.replace(/[^0-9]/g, '')),
-              autoFocus: true,
-            }),
-            React.createElement('span', { className: 'ax-price-suffix' }, 'FCFA')
-          ),
-          priceFcfa && parseInt(priceFcfa) > 0 && React.createElement('div', {
-            style: { textAlign: 'center', fontSize: '.8rem', color: 'var(--text-secondary)', marginTop: '.3rem' }
-          }, `≈ ${(parseInt(priceFcfa) / EUR_TO_FCFA).toFixed(0)} EUR`)
-        ),
-
-        React.createElement('div', { style: { marginBottom: '1.25rem' } },
-          React.createElement('label', { style: { fontWeight: 700, fontSize: '.92rem', display: 'block', marginBottom: '.5rem' } },
-            '📂 Catégorie'),
-          React.createElement('div', { className: 'ax-cat-grid' },
-            AX_CATEGORIES.map(c => React.createElement('button', {
-              key: c.id, type: 'button',
-              className: 'ax-cat-btn' + (category === c.id ? ' active' : ''),
-              onClick: () => setCategory(c.id),
-            },
-              React.createElement('span', { className: 'ax-cat-emoji' }, c.emoji),
-              c.label
-            ))
-          )
-        ),
-
-        React.createElement('div', { style: { marginBottom: '1rem' } },
-          React.createElement('label', { style: { fontWeight: 700, fontSize: '.92rem', display: 'block', marginBottom: '.5rem' } },
-            '✏️ Description (optionnel)'),
-          React.createElement('textarea', {
-            className: 'form-textarea', rows: 2, maxLength: 120,
-            placeholder: 'Ex : Bon état, peu utilisé, livraison possible à Dakar...',
-            value: desc, onChange: e => setDesc(e.target.value),
-            style: { resize: 'none', fontSize: '.9rem' }
-          }),
-          React.createElement('div', { style: { textAlign: 'right', fontSize: '.72rem', color: 'var(--text-secondary)' } }, `${desc.length}/120`)
-        ),
-
-        React.createElement('div', { style: { display: 'flex', gap: '.75rem' } },
-          React.createElement('button', { className: 'btn btn-secondary', onClick: () => setStep(1) },
-            React.createElement('i', { className: 'fas fa-arrow-left' })),
-          React.createElement('button', { className: 'btn btn-primary', style: { flex: 1 }, disabled: !canNext2, onClick: () => setStep(3) },
-            'Suivant', React.createElement('i', { className: 'fas fa-arrow-right', style: { marginLeft: '.5rem' } }))
-        )
-      ),
-
-      // ── Étape 3 : Contact ─────────────────────────────────────────────
-      step === 3 && React.createElement('div', null,
-        React.createElement('div', { style: { background: 'rgba(37,211,102,.08)', border: '2px solid rgba(37,211,102,.3)', borderRadius: '12px', padding: '.75rem 1rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '.75rem', fontSize: '.82rem' } },
-          React.createElement('i', { className: 'fab fa-whatsapp', style: { fontSize: '1.5rem', color: '#25D366' } }),
-          React.createElement('span', null, 'Les acheteurs vous contacteront directement sur ', React.createElement('strong', null, 'WhatsApp'))
-        ),
-
-        React.createElement('div', { style: { marginBottom: '1rem' } },
-          React.createElement('label', { style: { fontWeight: 700, fontSize: '1rem', display: 'block', marginBottom: '.5rem' } },
-            '📱 Votre numéro WhatsApp *'),
-          React.createElement('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'stretch' } },
-            React.createElement('div', { style: { background: 'var(--bg-light)', border: '3px solid var(--border)', borderRadius: '14px', padding: '.85rem', display: 'flex', alignItems: 'center', fontWeight: 800, fontSize: '1rem', whiteSpace: 'nowrap' } },
-              '🇸🇳 +221'),
-            React.createElement('input', {
-              type: 'tel', inputMode: 'numeric', className: 'ax-phone-input',
-              placeholder: '77 123 45 67', value: phone, autoFocus: true,
-              onChange: e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 9))
-            })
-          )
-        ),
-
-        React.createElement('div', { style: { marginBottom: '1rem' } },
-          React.createElement('label', { style: { fontWeight: 700, fontSize: '.92rem', display: 'block', marginBottom: '.5rem' } },
-            '📧 Email (optionnel — pour recevoir vos ventes)'),
-          React.createElement('input', {
-            type: 'email', inputMode: 'email', className: 'form-input',
-            placeholder: 'votremail@gmail.com', value: email,
-            onChange: e => setEmail(e.target.value)
-          })
-        ),
-
-        React.createElement('div', { style: { marginBottom: '1.5rem' } },
-          React.createElement('label', { style: { fontWeight: 700, fontSize: '.92rem', display: 'block', marginBottom: '.5rem' } },
-            '📍 Ville'),
-          React.createElement('select', { className: 'form-select', value: city, onChange: e => setCity(e.target.value) },
-            ['Dakar', 'Thiès', 'Saint-Louis', 'Ziguinchor', 'Kaolack', 'Mbour', 'Touba', 'Diourbel', 'Tambacounda', 'Autre'].map(v => React.createElement('option', { key: v, value: v }, v))
-          )
-        ),
-
-        // Récapitulatif
-        React.createElement('div', { style: { background: 'var(--bg-light)', borderRadius: '12px', padding: '.75rem 1rem', marginBottom: '1.25rem', fontSize: '.82rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' } },
-          photoUrl && React.createElement('img', { src: photoUrl, style: { width: 52, height: 52, borderRadius: 8, objectFit: 'cover', flexShrink: 0 } }),
-          React.createElement('div', null,
-            React.createElement('div', { style: { fontWeight: 800, fontSize: '1rem', color: 'var(--primary)' } },
-              parseInt(priceFcfa).toLocaleString('fr-FR'), ' FCFA'),
-            React.createElement('div', { style: { color: 'var(--text-secondary)' } },
-              (AX_CATEGORIES.find(c => c.id === category)?.emoji || '📦'), ' ',
-              AX_CATEGORIES.find(c => c.id === category)?.label || 'Autres'),
-            desc && React.createElement('div', { style: { marginTop: '.15rem', color: '#374151' } }, desc.slice(0, 60) + (desc.length > 60 ? '…' : ''))
-          )
-        ),
-
-        React.createElement('div', { style: { display: 'flex', gap: '.75rem' } },
-          React.createElement('button', { className: 'btn btn-secondary', onClick: () => setStep(2) },
-            React.createElement('i', { className: 'fas fa-arrow-left' })),
-          React.createElement('button', {
-            className: `btn btn-primary${submitting ? ' btn-loading' : ''}`,
-            style: { flex: 1, fontSize: '1rem', fontWeight: 800, padding: '.9rem' },
-            disabled: submitting || !phone || phone.replace(/\D/g,'').length < 8,
-            onClick: handleSubmit,
-          },
-            submitting ? 'Publication...' : React.createElement(React.Fragment, null,
-              React.createElement('i', { className: 'fas fa-bolt' }), ' PUBLIER MON ANNONCE'))
-        ),
-        React.createElement('p', { style: { textAlign: 'center', fontSize: '.72rem', color: 'var(--text-secondary)', marginTop: '.75rem' } },
-          '🔒 Vos coordonnées ne sont partagées qu\'avec les acheteurs intéressés')
+  if (done) return ReactDOM.createPortal(
+    E('div', { style: overlay, onClick: onClose },
+      E('div', { style: { ...box, textAlign:'center', padding:'2.5rem 1.5rem' }, onClick: e => e.stopPropagation() },
+        E('div', { style:{ fontSize:'3.5rem', marginBottom:'.75rem' } }, '✅'),
+        E('h2', { style:{ fontWeight:800, marginBottom:'.5rem' } }, 'Annonce publiée !'),
+        E('p',  { style:{ color:'#6b7280', marginBottom:'1.5rem' } },
+          'Les acheteurs peuvent vous contacter sur WhatsApp.'),
+        E('button', { onClick: onClose,
+          style:{ background:'#00853E', color:'#fff', border:'none', borderRadius:'12px',
+                  padding:'.85rem 2rem', fontWeight:800, fontSize:'1rem', cursor:'pointer', width:'100%' } },
+          '✓ Voir mes annonces')
       )
-    )
+    ), document.body
+  );
+
+  // Steps indicator
+  const Dots = () => E('div', { style:{ display:'flex', gap:'.4rem', justifyContent:'center', margin:'1rem 0 1.5rem' } },
+    [1,2,3].map(s => E('div', { key:s, style:{
+      height:8, borderRadius:4, transition:'all .25s',
+      width: s===step ? 60 : 36,
+      background: s===step ? '#00853E' : s<step ? '#86efac' : '#e5e7eb'
+    }}))
+  );
+
+  return ReactDOM.createPortal(
+    E('div', { style: overlay, onClick: onClose },
+      E('div', { style: box, onClick: e => e.stopPropagation() },
+
+        // Header
+        E('div', { style: hdr },
+          E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' } },
+            E('div', null,
+              E('div', { style:{ background:'#FDEE42', display:'inline-flex', alignItems:'center',
+                gap:'.3rem', padding:'.2rem .6rem', borderRadius:'20px',
+                fontSize:'.65rem', fontWeight:800, marginBottom:'.4rem' } }, '⚡ VENDRE MAINTENANT'),
+              E('h2', { style:{ fontWeight:800, fontSize:'1.1rem', margin:0 } },
+                step===1 ? '📷 Photo de votre article' :
+                step===2 ? '💰 Prix et catégorie' : '📱 Comment vous contacter ?')
+            ),
+            E('button', { onClick: onClose,
+              style:{ background:'none', border:'none', fontSize:'1.4rem',
+                      cursor:'pointer', color:'#9ca3af', lineHeight:1, padding:'.2rem' } }, '×')
+          ),
+          Dots()
+        ),
+
+        // ── Étape 1: Photo ────────────────────────────────────────────────
+        step===1 && E('div', { style: body },
+          E('div', {
+            onClick: () => !uploading && fileRef.current && fileRef.current.click(),
+            style:{ border:'3px dashed #00853E', borderRadius:'18px', minHeight:200,
+                    display:'flex', flexDirection:'column', alignItems:'center',
+                    justifyContent:'center', gap:'.75rem', cursor:'pointer',
+                    background:'rgba(0,133,62,.04)', overflow:'hidden', position:'relative' }
+          },
+            uploading ? E('div', { className:'spinner' }) :
+            photoUrl  ? E('img', { src:photoUrl, style:{ width:'100%', maxHeight:220, objectFit:'cover', borderRadius:14 } }) :
+            E(React.Fragment, null,
+              E('div', { style:{ fontSize:'4rem', lineHeight:1 } }, '📷'),
+              E('div', { style:{ fontWeight:800, color:'#00853E', fontSize:'1.05rem' } }, 'Appuyez pour ajouter une photo'),
+              E('div', { style:{ fontSize:'.8rem', color:'#6b7280' } }, 'Galerie ou appareil photo')
+            )
+          ),
+          E('input', { ref:fileRef, type:'file', accept:'image/*', capture:'environment',
+            style:{ display:'none' }, onChange: e => e.target.files[0] && handleFile(e.target.files[0]) }),
+
+          E('div', { style:{ display:'flex', gap:'.75rem', marginTop:'1rem' } },
+            photoUrl && E('button', { onClick:()=>{ setPhotoUrl(''); if(fileRef.current) fileRef.current.value=''; },
+              style:{ flex:1, padding:'.75rem', borderRadius:'12px', border:'2px solid #e5e7eb',
+                      background:'#fff', cursor:'pointer', fontWeight:700, fontSize:'.9rem' } }, '🔄 Changer'),
+            E('button', { onClick:()=>setStep(2),
+              style:{ flex:2, padding:'.85rem', borderRadius:'12px', border:'none',
+                      background:'#00853E', color:'#fff', cursor:'pointer', fontWeight:800, fontSize:'1rem' } },
+              photoUrl ? 'Suivant →' : 'Continuer sans photo →')
+          )
+        ),
+
+        // ── Étape 2: Prix + Catégorie ─────────────────────────────────────
+        step===2 && E('div', { style: body },
+          E('div', { style:{ marginBottom:'1.25rem' } },
+            E('label', { style:{ fontWeight:800, fontSize:'1rem', display:'block', marginBottom:'.5rem' } }, '💰 Prix de vente'),
+            E('div', { style:{ position:'relative' } },
+              E('input', {
+                type:'number', inputMode:'numeric', autoFocus:true,
+                value:price, onChange:e=>setPrice(e.target.value.replace(/[^0-9]/g,'')),
+                placeholder:'Ex: 5000',
+                style:{ width:'100%', fontSize:'2rem', fontWeight:800, textAlign:'center',
+                        border:'3px solid ' + (price && parseInt(price)>=100 ? '#00853E' : '#e5e7eb'),
+                        borderRadius:'14px', padding:'1rem 4rem 1rem 1rem',
+                        outline:'none', boxSizing:'border-box', color:'#00853E' }
+              }),
+              E('span', { style:{ position:'absolute', right:'1rem', top:'50%',
+                transform:'translateY(-50%)', fontWeight:700, color:'#6b7280', fontSize:'.85rem' } }, 'FCFA')
+            )
+          ),
+
+          E('div', { style:{ marginBottom:'1.25rem' } },
+            E('label', { style:{ fontWeight:800, fontSize:'1rem', display:'block', marginBottom:'.5rem' } }, '📂 Catégorie'),
+            E('div', { style:{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'.5rem' } },
+              AX_CATS.map(c => E('button', {
+                key:c.id, type:'button', onClick:()=>setCat(c.id),
+                style:{ display:'flex', flexDirection:'column', alignItems:'center', gap:'.25rem',
+                        padding:'.6rem .3rem', borderRadius:'10px', cursor:'pointer',
+                        border:'2.5px solid ' + (cat===c.id ? '#00853E' : '#e5e7eb'),
+                        background: cat===c.id ? 'rgba(0,133,62,.08)' : '#fff',
+                        fontSize:'.65rem', fontWeight:700,
+                        color: cat===c.id ? '#00853E' : '#6b7280', transition:'all .15s' }
+              },
+                E('span', { style:{ fontSize:'1.8rem', lineHeight:1 } }, c.e),
+                c.l
+              ))
+            )
+          ),
+
+          E('div', { style:{ marginBottom:'1rem' } },
+            E('label', { style:{ fontWeight:700, fontSize:'.9rem', display:'block', marginBottom:'.4rem' } }, '✏️ Description (optionnel)'),
+            E('textarea', { rows:2, maxLength:120, value:desc, onChange:e=>setDesc(e.target.value),
+              placeholder:'Ex: Bon état, peu utilisé...',
+              style:{ width:'100%', border:'2px solid #e5e7eb', borderRadius:'12px',
+                      padding:'.75rem', fontSize:'.9rem', resize:'none', boxSizing:'border-box',
+                      outline:'none', fontFamily:'inherit' }
+            })
+          ),
+
+          E('div', { style:{ display:'flex', gap:'.75rem' } },
+            E('button', { onClick:()=>setStep(1),
+              style:{ padding:'.85rem 1.25rem', borderRadius:'12px', border:'2px solid #e5e7eb',
+                      background:'#fff', cursor:'pointer', fontWeight:700, fontSize:'1rem' } }, '←'),
+            E('button', { onClick:()=>setStep(3),
+              disabled: !price || parseInt(price)<100 || !cat,
+              style:{ flex:1, padding:'.85rem', borderRadius:'12px', border:'none',
+                      background: (!price || parseInt(price)<100 || !cat) ? '#d1d5db' : '#00853E',
+                      color:'#fff', cursor: (!price || parseInt(price)<100 || !cat) ? 'not-allowed' : 'pointer',
+                      fontWeight:800, fontSize:'1rem' } }, 'Suivant →')
+          )
+        ),
+
+        // ── Étape 3: Contact ─────────────────────────────────────────────
+        step===3 && E('div', { style: body },
+          E('div', { style:{ background:'rgba(37,211,102,.08)', border:'2px solid rgba(37,211,102,.3)',
+                borderRadius:'12px', padding:'.75rem 1rem', marginBottom:'1.25rem',
+                display:'flex', alignItems:'center', gap:'.75rem', fontSize:'.85rem' } },
+            E('i', { className:'fab fa-whatsapp', style:{ fontSize:'1.6rem', color:'#25D366' } }),
+            E('span', null, 'Les acheteurs vous contacteront sur ', E('strong', null, 'WhatsApp'))
+          ),
+
+          E('div', { style:{ marginBottom:'1rem' } },
+            E('label', { style:{ fontWeight:800, fontSize:'1rem', display:'block', marginBottom:'.5rem' } }, '📱 Votre numéro *'),
+            E('div', { style:{ display:'flex', gap:'.5rem' } },
+              E('div', { style:{ background:'#f3f4f6', border:'2px solid #e5e7eb', borderRadius:'12px',
+                    padding:'.85rem .75rem', fontWeight:800, fontSize:'1rem', whiteSpace:'nowrap',
+                    display:'flex', alignItems:'center' } }, '🇸🇳 +221'),
+              E('input', { type:'tel', inputMode:'numeric', autoFocus:true,
+                value:phone, onChange:e=>setPhone(e.target.value.replace(/\D/g,'').slice(0,9)),
+                placeholder:'77 123 45 67',
+                style:{ flex:1, fontSize:'1.3rem', fontWeight:700, textAlign:'center',
+                        border:'2px solid ' + (phone && phone.replace(/\D/g,'').length>=8 ? '#25D366' : '#e5e7eb'),
+                        borderRadius:'12px', padding:'.8rem', outline:'none',
+                        letterSpacing:'.05em', boxSizing:'border-box' }
+              })
+            )
+          ),
+
+          E('div', { style:{ marginBottom:'1rem' } },
+            E('label', { style:{ fontWeight:700, fontSize:'.9rem', display:'block', marginBottom:'.4rem' } }, '📧 Email (optionnel)'),
+            E('input', { type:'email', inputMode:'email', value:email, onChange:e=>setEmail(e.target.value),
+              placeholder:'votremail@gmail.com',
+              style:{ width:'100%', border:'2px solid #e5e7eb', borderRadius:'12px',
+                      padding:'.75rem', fontSize:'1rem', outline:'none', boxSizing:'border-box' }
+            })
+          ),
+
+          E('div', { style:{ marginBottom:'1.5rem' } },
+            E('label', { style:{ fontWeight:700, fontSize:'.9rem', display:'block', marginBottom:'.4rem' } }, '📍 Ville'),
+            E('select', { value:city, onChange:e=>setCity(e.target.value),
+              style:{ width:'100%', border:'2px solid #e5e7eb', borderRadius:'12px',
+                      padding:'.75rem', fontSize:'1rem', outline:'none' }
+            },
+              ['Dakar','Thiès','Saint-Louis','Ziguinchor','Kaolack','Mbour','Touba','Diourbel','Tambacounda','Autre']
+              .map(v => E('option', { key:v, value:v }, v))
+            )
+          ),
+
+          // Récap
+          E('div', { style:{ background:'#f9fafb', borderRadius:'12px', padding:'.75rem 1rem',
+              marginBottom:'1.25rem', display:'flex', gap:'.75rem', alignItems:'center' } },
+            photoUrl && E('img', { src:photoUrl, style:{ width:48, height:48, borderRadius:8, objectFit:'cover', flexShrink:0 } }),
+            E('div', null,
+              E('div', { style:{ fontWeight:800, fontSize:'1.1rem', color:'#00853E' } },
+                parseInt(price).toLocaleString('fr-FR') + ' FCFA'),
+              E('div', { style:{ fontSize:'.8rem', color:'#6b7280' } },
+                (AX_CATS.find(c=>c.id===cat)||AX_CATS[11]).e, ' ',
+                (AX_CATS.find(c=>c.id===cat)||AX_CATS[11]).l, ' · ', city),
+              desc && E('div', { style:{ fontSize:'.78rem', color:'#374151', marginTop:'.15rem' } },
+                desc.slice(0,60) + (desc.length>60?'…':''))
+            )
+          ),
+
+          E('div', { style:{ display:'flex', gap:'.75rem' } },
+            E('button', { onClick:()=>setStep(2),
+              style:{ padding:'.85rem 1.25rem', borderRadius:'12px', border:'2px solid #e5e7eb',
+                      background:'#fff', cursor:'pointer', fontWeight:700, fontSize:'1rem' } }, '←'),
+            E('button', { onClick:submit,
+              disabled: busy || !phone || phone.replace(/\D/g,'').length<8,
+              style:{ flex:1, padding:'.9rem', borderRadius:'12px', border:'none',
+                      background: (busy || !phone || phone.replace(/\D/g,'').length<8) ? '#d1d5db' : '#00853E',
+                      color:'#fff', cursor:'pointer', fontWeight:800, fontSize:'1rem' } },
+              busy ? '⏳ Publication...' : '⚡ PUBLIER MON ANNONCE')
+          ),
+
+          E('p', { style:{ textAlign:'center', fontSize:'.72rem', color:'#9ca3af', marginTop:'.75rem' } },
+            '🔒 Vos coordonnées sont partagées uniquement avec les acheteurs intéressés')
+        )
+      )
+    ), document.body
   );
 };
 
-// ── Carte d'annonce express ────────────────────────────────────────────────────
-const AnnonceExpressCard = ({ annonce, addToast }) => {
-  const cat = AX_CATEGORIES.find(c => c.id === annonce.category);
-  const price = typeof annonce.price_fcfa === 'number' ? annonce.price_fcfa : 0;
-  const phone = annonce.phone || '';
-  const waUrl = phone
-    ? `https://wa.me/${phone.replace(/\D/g,'').replace(/^0/, '221')}?text=${encodeURIComponent(`Bonjour, je suis intéressé(e) par votre annonce sur NEXUS Market : ${annonce.description || (cat?.label || 'produit')} à ${price.toLocaleString('fr-FR')} FCFA`)}`
-    : 'https://wa.me/';
-  const timeAgo = (() => {
-    const d = new Date(annonce.created_at);
-    const diff = (Date.now() - d.getTime()) / 1000;
-    if (diff < 3600)  return `Il y a ${Math.floor(diff/60)} min`;
-    if (diff < 86400) return `Il y a ${Math.floor(diff/3600)}h`;
-    return `Il y a ${Math.floor(diff/86400)}j`;
+// ── Carte annonce ─────────────────────────────────────────────────────────────
+const AxCard = ({ a }) => {
+  const cat = AX_CATS.find(c => c.id === a.category) || AX_CATS[11];
+  const price = a.price_fcfa || 0;
+  const ph = (a.phone || '').replace(/\D/g,'').replace(/^0/,'221');
+  const msg = encodeURIComponent('Bonjour, je suis intéressé(e) par votre annonce : ' + (a.description || cat.l) + ' — ' + price.toLocaleString('fr-FR') + ' FCFA (NEXUS Market)');
+  const waUrl = ph ? 'https://wa.me/' + ph + '?text=' + msg : 'https://wa.me/';
+  const ago = (() => {
+    const s = (Date.now() - new Date(a.created_at).getTime()) / 1000;
+    if (s < 3600)  return Math.floor(s/60) + ' min';
+    if (s < 86400) return Math.floor(s/3600) + 'h';
+    return Math.floor(s/86400) + 'j';
   })();
-  return React.createElement('div', { className: 'ax-card' },
-    React.createElement('div', { className: 'ax-card-img' },
-      annonce.photo_url
-        ? React.createElement('img', { src: annonce.photo_url, alt: cat?.label || 'Annonce', loading: 'lazy' })
-        : React.createElement('span', null, cat?.emoji || '📦')
+  return React.createElement('div', { style:{
+    background:'#fff', borderRadius:14, overflow:'hidden',
+    boxShadow:'0 2px 10px rgba(0,0,0,.08)', border:'1px solid #e5e7eb',
+    transition:'transform .18s', cursor:'default'
+  }},
+    React.createElement('div', { style:{ width:'100%', height:130, background:'#f0fdf4',
+        display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }},
+      a.photo_url
+        ? React.createElement('img', { src:a.photo_url, alt:cat.l, loading:'lazy',
+            style:{ width:'100%', height:130, objectFit:'cover' } })
+        : React.createElement('span', { style:{ fontSize:'3rem' } }, cat.e)
     ),
-    React.createElement('div', { className: 'ax-card-body' },
-      React.createElement('div', { className: 'ax-card-cat' },
-        cat?.emoji, ' ', cat?.label || 'Autres', ' · ', annonce.city || 'Dakar', ' · ', timeAgo),
-      React.createElement('div', { className: 'ax-card-price' },
+    React.createElement('div', { style:{ padding:'.65rem .75rem' } },
+      React.createElement('div', { style:{ fontSize:'.7rem', color:'#9ca3af', marginBottom:'.2rem' } },
+        cat.e, ' ', cat.l, ' · ', a.city||'Dakar', ' · ', ago),
+      React.createElement('div', { style:{ fontWeight:800, fontSize:'1.1rem', color:'#00853E', marginBottom:'.25rem' } },
         price.toLocaleString('fr-FR'), ' FCFA'),
-      annonce.description && React.createElement('div', { className: 'ax-card-desc' }, annonce.description),
-      React.createElement('button', { className: 'ax-card-wa', onClick: e => { e.stopPropagation(); window.open(waUrl, '_blank'); } },
-        React.createElement('i', { className: 'fab fa-whatsapp' }), ' Contacter')
+      a.description && React.createElement('div', { style:{ fontSize:'.75rem', color:'#374151',
+          overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2,
+          WebkitBoxOrient:'vertical', marginBottom:'.5rem' } }, a.description),
+      React.createElement('button', { onClick:()=>window.open(waUrl,'_blank'),
+        style:{ width:'100%', padding:'.45rem', borderRadius:8, border:'none',
+                background:'#25D366', color:'#fff', fontWeight:700, fontSize:'.78rem',
+                cursor:'pointer', display:'flex', alignItems:'center',
+                justifyContent:'center', gap:'.35rem' } },
+        React.createElement('i', { className:'fab fa-whatsapp' }), ' Contacter')
     )
   );
 };
 
-// ── Section annonces express dans le catalogue ────────────────────────────────
-const AnnonceExpressSection = ({ addToast, onOpenModal }) => {
+// ── Section dans le catalogue ─────────────────────────────────────────────────
+const AxSection = ({ onOpen }) => {
   const [annonces, setAnnonces] = React.useState([]);
   const [loading,  setLoading]  = React.useState(true);
+  const [refreshKey, setRefreshKey] = React.useState(0);
 
+  // Écouter les nouvelles publications
   React.useEffect(() => {
-    loadAnnoncesExpress().then(data => {
-      setAnnonces(data || []);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    const handler = () => setRefreshKey(k => k+1);
+    window.addEventListener('ax:published', handler);
+    return () => window.removeEventListener('ax:published', handler);
   }, []);
 
-  return React.createElement('div', { className: 'home-section' },
-    React.createElement('div', { style: { background: 'white', borderRadius: '16px', padding: '1.25rem 1.5rem' } },
+  React.useEffect(() => {
+    setLoading(true);
+    axLoadAnnonces().then(d => { setAnnonces(d||[]); setLoading(false); });
+  }, [refreshKey]);
 
-      // Banner CTA
-      React.createElement('div', { className: 'ax-banner' },
-        React.createElement('div', { className: 'ax-banner-text' },
-          React.createElement('h3', null, '⚡ Vendez en 2 minutes !'),
-          React.createElement('p', null, 'Pas de compte requis · Juste une photo + votre numéro WhatsApp')
-        ),
-        React.createElement('button', { className: 'ax-banner-btn', onClick: onOpenModal },
-          React.createElement('i', { className: 'fas fa-plus-circle' }), ' Déposer une annonce')
+  const E = React.createElement;
+  return E('div', { style:{ background:'white', borderRadius:16, padding:'1.25rem 1.5rem', marginBottom:'1rem' }},
+
+    // Bannière CTA
+    E('div', { style:{ background:'linear-gradient(135deg,#00853E,#006b31)', borderRadius:14,
+        padding:'1.1rem 1.4rem', display:'flex', alignItems:'center',
+        justifyContent:'space-between', gap:'.75rem', flexWrap:'wrap', marginBottom:'1.25rem',
+        boxShadow:'0 4px 18px rgba(0,133,62,.25)' }},
+      E('div', null,
+        E('div', { style:{ color:'#fff', fontWeight:800, fontSize:'1rem', marginBottom:'.2rem' } },
+          '⚡ Vendez en 2 minutes !'),
+        E('div', { style:{ color:'rgba(255,255,255,.82)', fontSize:'.8rem' } },
+          'Pas de compte requis · Photo + numéro WhatsApp')
       ),
+      E('button', { onClick: onOpen,
+        style:{ background:'#FDEE42', color:'#1a1a1a', border:'none', borderRadius:10,
+                padding:'.7rem 1.25rem', fontWeight:800, cursor:'pointer', fontSize:'.9rem',
+                display:'flex', alignItems:'center', gap:'.4rem',
+                boxShadow:'0 2px 8px rgba(0,0,0,.15)', whiteSpace:'nowrap' }},
+        E('i', { className:'fas fa-plus-circle' }), ' Déposer une annonce')
+    ),
 
-      // Liste des annonces
-      React.createElement('div', { className: 'ax-section-header' },
-        React.createElement('div', { className: 'ax-section-title' },
-          React.createElement('span', null, '📢'),
-          'Annonces Express',
-          React.createElement('span', { className: 'ax-badge-express', style: { marginLeft: '.5rem' } }, '⚡ SANS INSCRIPTION')
-        )
-      ),
+    // Titre section
+    E('div', { style:{ display:'flex', alignItems:'center', gap:'.5rem', marginBottom:'1rem' }},
+      E('span', { style:{ fontSize:'1.05rem', fontWeight:800 } }, '📢 Annonces Express'),
+      E('span', { style:{ background:'#FDEE42', color:'#1a1a1a', fontSize:'.62rem',
+          fontWeight:800, padding:'.18rem .5rem', borderRadius:20 } }, '⚡ SANS INSCRIPTION')
+    ),
 
-      loading
-        ? React.createElement('div', { style: { textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' } },
-            React.createElement('div', { className: 'spinner' }))
-        : annonces.length === 0
-          ? React.createElement('div', { style: { textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-secondary)' } },
-              React.createElement('div', { style: { fontSize: '2.5rem', marginBottom: '.5rem' } }, '📢'),
-              React.createElement('div', { style: { fontWeight: 700, marginBottom: '.25rem' } }, 'Aucune annonce pour l\'instant'),
-              React.createElement('div', { style: { fontSize: '.82rem' } }, 'Soyez le premier à vendre !'),
-              React.createElement('button', { className: 'btn btn-primary', style: { marginTop: '1rem' }, onClick: onOpenModal },
-                React.createElement('i', { className: 'fas fa-bolt' }), ' Déposer la première annonce')
-            )
-          : React.createElement('div', { className: 'ax-grid' },
-              annonces.slice(0, 8).map(a => React.createElement(AnnonceExpressCard, { key: a.id, annonce: a, addToast })))
-    )
+    loading
+      ? E('div', { style:{ textAlign:'center', padding:'2rem', color:'#9ca3af' } },
+          E('div', { className:'spinner' }))
+      : annonces.length === 0
+        ? E('div', { style:{ textAlign:'center', padding:'1.5rem', color:'#9ca3af' } },
+            E('div', { style:{ fontSize:'2.5rem', marginBottom:'.5rem' } }, '📢'),
+            E('div', { style:{ fontWeight:700, marginBottom:'.25rem' } }, 'Aucune annonce pour l\'instant'),
+            E('button', { onClick:onOpen,
+              style:{ marginTop:'.75rem', background:'#00853E', color:'#fff', border:'none',
+                      borderRadius:10, padding:'.65rem 1.25rem', fontWeight:800,
+                      cursor:'pointer', fontSize:'.9rem' } },
+              '⚡ Déposer la première annonce')
+          )
+        : E('div', { style:{ display:'grid',
+              gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))', gap:'.65rem' }},
+            annonces.slice(0,8).map(a => E(AxCard, { key:a.id, a })))
   );
 };
 
-// ── Bouton flottant FAB ────────────────────────────────────────────────────────
-const AnnonceExpressFAB = ({ onClick }) =>
-  React.createElement('button', {
-    className: 'ax-fab', onClick, title: 'Déposer une annonce express',
-    'aria-label': 'Déposer une annonce',
-  },
-    React.createElement('i', { className: 'fas fa-bolt' }),
-    'VENDRE'
-  );
+// ── App globale (portail + FAB) ────────────────────────────────────────────────
+// Rendu dans un root séparé attaché à document.body — totalement indépendant
+// de l'arbre React principal. Zéro risque d'overflow/z-index.
+const AxApp = () => {
+  const [open, setOpen] = React.useState(false);
+  const [pub,  setPub]  = React.useState(0);
 
-// ══ Fin Annonces Express ═══════════════════════════════════════════════════════
+  React.useEffect(() => {
+    window.__axOpen  = () => setOpen(true);
+    window.__axClose = () => setOpen(false);
+    return () => { delete window.__axOpen; delete window.__axClose; };
+  }, []);
+
+  const onPublished = () => {
+    setOpen(false);
+    setPub(p => p+1);
+    window.dispatchEvent(new CustomEvent('ax:published'));
+    // Toast via le système global si disponible
+    setTimeout(() => {
+      const toastFn = window.__nexusToast || window.__nexusAddToast;
+      if (toastFn) toastFn('🎉 Annonce publiée ! Les acheteurs peuvent vous contacter.', 'success');
+    }, 100);
+  };
+
+  return React.createElement(React.Fragment, null,
+    // Bouton flottant
+    React.createElement('button', {
+      onClick: () => setOpen(true),
+      title: 'Déposer une annonce',
+      style:{
+        position:'fixed', bottom:24, right:24, zIndex:9000,
+        width:68, height:68, borderRadius:'50%',
+        background:'linear-gradient(135deg,#FDEE42,#f5c800)',
+        color:'#1a1a1a', border:'none', cursor:'pointer',
+        boxShadow:'0 6px 20px rgba(253,238,66,.55)',
+        display:'flex', flexDirection:'column', alignItems:'center',
+        justifyContent:'center', gap:2,
+        fontSize:'.55rem', fontWeight:800, letterSpacing:'.03em',
+        transition:'transform .18s, box-shadow .18s',
+      },
+      onMouseEnter: e => e.currentTarget.style.transform='scale(1.1)',
+      onMouseLeave: e => e.currentTarget.style.transform='scale(1)',
+    },
+      React.createElement('i', { className:'fas fa-bolt', style:{ fontSize:'1.5rem', lineHeight:1 } }),
+      'VENDRE'
+    ),
+    // Modal
+    open && React.createElement(AxModal, {
+      onClose: () => setOpen(false),
+      onPublished,
+    })
+  );
+};
+
+// Monter AxApp dans un root indépendant
+(function mountAxApp() {
+  const el = document.getElementById('ax-root');
+  if (!el) {
+    const div = document.createElement('div');
+    div.id = 'ax-root';
+    document.body.appendChild(div);
+    if (window.ReactDOM && ReactDOM.createRoot) {
+      ReactDOM.createRoot(div).render(React.createElement(AxApp));
+    }
+  }
+})();
+
+// ── AxSection se monte elle-même dans un root dédié ─────────────────────────
+window.__axOpenModal = () => window.__axOpen && window.__axOpen();
+
+// Section s'insère dans la page automatiquement après le hero banner
+(function mountAxSection() {
+  // On attend que PublicCatalog ait rendu le .home-page
+  let tries = 0;
+  const interval = setInterval(() => {
+    tries++;
+    const homePage = document.querySelector('.home-page');
+    if (homePage && !document.getElementById('ax-section-root')) {
+      const div = document.createElement('div');
+      div.id = 'ax-section-root';
+      // Insérer après le premier enfant (hero banner) si possible
+      const firstChild = homePage.children[1] || homePage.firstChild;
+      if (firstChild) {
+        homePage.insertBefore(div, firstChild.nextSibling || firstChild);
+      } else {
+        homePage.appendChild(div);
+      }
+      if (window.ReactDOM && ReactDOM.createRoot) {
+        ReactDOM.createRoot(div).render(
+          React.createElement(AxSection, { onOpen: () => window.__axOpenModal() })
+        );
+      }
+      clearInterval(interval);
+    }
+    if (tries > 40) clearInterval(interval);
+  }, 250);
+})();
+
+// ══ Fin Annonces Express v2 ════════════════════════════════════════════════════
 
 const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, currentUser: currentUserProp = null, onBackToDashboard = null }) => {
   const [products, setProducts] = useState([]);
@@ -19447,8 +19579,6 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   const undoTimerRef = useRef(null);
   const [bannerIdx, setBannerIdx] = React.useState(0);
   const [flashTime, setFlashTime] = React.useState(3 * 3600 + 42 * 60 + 17);
-  const [showAnnonceModal, setShowAnnonceModal] = React.useState(false);
-  const [annonceKey, setAnnonceKey] = React.useState(0);
   const ITEMS_PER_PAGE = 9;
   useEffect(() => { try { sessionStorage.setItem('nexus_pub_cat', filterCategory); } catch(_){} }, [filterCategory]);
   useEffect(() => { try { sessionStorage.setItem('nexus_pub_sort', sortBy); } catch(_){} }, [sortBy]);
@@ -19886,11 +20016,6 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       )
     ),
 
-    React.createElement(AnnonceExpressSection, {
-      key: 'ax-section-' + annonceKey,
-      addToast,
-      onOpenModal: () => setShowAnnonceModal(true),
-    }),
 
     (() => {
       const viewed = getViewedPub().slice(0, 4);
@@ -21218,17 +21343,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       },
       addToast
     }
-  ),
-    showAnnonceModal && React.createElement(AnnonceExpressModal, {
-      onClose: () => setShowAnnonceModal(false),
-      addToast,
-      onSuccess: () => {
-        setAnnonceKey(k => k + 1);
-        addToast('🎉 Annonce publiée ! Les acheteurs peuvent vous contacter.', 'success', 6000);
-      },
-    }),
-    React.createElement(AnnonceExpressFAB, { onClick: () => setShowAnnonceModal(true) })
-  );
+  ));
 };
 const ProfileEditor = ({ currentUser: currentUser2, addToast }) => {
   var _a, _b;
