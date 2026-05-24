@@ -1669,6 +1669,20 @@ const NEXUS_CONFIG = {
     // → Callback URL: https://<project>.supabase.co/auth/v1/callback
     enabled: true,
   },
+  google: {
+    // Google OAuth via Supabase
+    // Supabase Dashboard → Authentication → Providers → Google
+    // Créer des identifiants OAuth 2.0 sur console.cloud.google.com
+    // → Authorized redirect URI : https://<project>.supabase.co/auth/v1/callback
+    enabled: true,
+  },
+  google: {
+    // Google OAuth via Supabase
+    // Supabase Dashboard → Authentication → Providers → Google
+    // Créer des identifiants OAuth 2.0 sur console.cloud.google.com
+    // → Authorized redirect URI : https://<project>.supabase.co/auth/v1/callback
+    enabled: true,
+  },
   // ═══════════════════════════════════════════════════════════════════════
   //  MENTIONS LÉGALES — OBLIGATOIRES POUR LA PRODUCTION
   // ───────────────────────────────────────────────────────────────────────
@@ -9804,6 +9818,16 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
 const GitHubSignInButton = ({ label }) => {
   const { addToast } = useToast();
   const [loading, setLoading] = React.useState(false);
+  // [FIX] Ne pas afficher le bouton si GitHub OAuth est désactivé dans NEXUS_CONFIG
+  if (NEXUS_CONFIG.github?.enabled === false) return null;
+
+  // [FIX] Détecter les erreurs Supabase indiquant un provider non configuré
+  const _isProviderErrorGH = (msg) => {
+    const m = (msg || '').toLowerCase();
+    return m.includes('provider') || m.includes('unexpected_failure') ||
+           m.includes('unsupported') || m.includes('not enabled') ||
+           m.includes('not configured') || m.includes('unauthorized_client');
+  };
 
   const handleGitHubLogin = async () => {
     setLoading(true);
@@ -9822,6 +9846,16 @@ const GitHubSignInButton = ({ label }) => {
         // La page va se recharger vers GitHub → onAuthStateChange prend le relais au retour
         return;
       } catch (e) {
+        // [FIX] Erreur 'provider non configuré' → toast info + désactiver pour la session
+        if (_isProviderErrorGH(e.message)) {
+          NEXUS_CONFIG.github.enabled = false;
+          addToast(
+            'GitHub OAuth non activé. '
+            + 'Configurez-le dans Supabase Dashboard \u2192 Authentication \u2192 Providers \u2192 GitHub.',
+            'info', 9000
+          );
+          setLoading(false); return;
+        }
         console.warn('[GitHub OAuth] Supabase failed, trying backend:', e.message);
         // Ne pas setLoading(false) — tenter le track B
       }
@@ -9847,9 +9881,11 @@ const GitHubSignInButton = ({ label }) => {
     }
 
     // ── Aucune option disponible ──────────────────────────────────────────
+    NEXUS_CONFIG.github.enabled = false;
     addToast(
-      '⚠️ Connexion GitHub non configurée. Activez Supabase ou renseignez l\'URL de l\'API dans les paramètres.',
-      'error', 7000
+      'GitHub OAuth non configuré. '
+      + 'Activez le provider dans Supabase Dashboard \u2192 Authentication \u2192 Providers \u2192 GitHub.',
+      'info', 9000
     );
     submittingRef.current = false; setLoading(false);
   };
@@ -9888,6 +9924,16 @@ const GitHubSignInButton = ({ label }) => {
 const GoogleSignInButton = ({ label }) => {
   const { addToast } = useToast();
   const [loading, setLoading] = React.useState(false);
+  // [FIX] Ne pas afficher le bouton si Google OAuth est désactivé dans NEXUS_CONFIG
+  if (NEXUS_CONFIG.google?.enabled === false) return null;
+
+  // [FIX] Détecter les erreurs Supabase indiquant un provider non configuré
+  const _isProviderError = (msg) => {
+    const m = (msg || '').toLowerCase();
+    return m.includes('provider') || m.includes('unexpected_failure') ||
+           m.includes('unsupported') || m.includes('not enabled') ||
+           m.includes('not configured') || m.includes('unauthorized_client');
+  };
 
   const handleGoogleLogin = async () => {
     setLoading(true);
@@ -9903,13 +9949,31 @@ const GoogleSignInButton = ({ label }) => {
         if (error) throw error;
         return;
       } catch (e) {
+        // [FIX] Si Supabase dit que le provider n'est pas activé, on le désactive
+        // pour cette session et on affiche un message d'aide (et non une erreur rouge).
+        if (_isProviderError(e.message)) {
+          if (NEXUS_CONFIG.google) NEXUS_CONFIG.google.enabled = false;
+          addToast(
+            'Google OAuth non activé. '
+            + 'Configurez-le dans Supabase Dashboard → Authentication → Providers → Google.',
+            'info', 9000
+          );
+          setLoading(false);
+          return;
+        }
         console.warn('[Google OAuth] Failed:', e.message);
-        addToast('Erreur connexion Google : ' + (e.message || 'Inconnue'), 'error');
+        addToast('Erreur connexion Google : ' + (e.message || 'Inconnue'), 'error');
         submittingRef.current = false; setLoading(false);
         return;
       }
     }
-    addToast('Connexion Google non configurée. Activez le provider Google dans Supabase Dashboard.', 'error', 7000);
+    // [FIX] Ni Supabase ni backend configuré
+    if (NEXUS_CONFIG.google) NEXUS_CONFIG.google.enabled = false;
+    addToast(
+      'Google OAuth non configuré. '
+      + 'Activez le provider dans Supabase Dashboard → Authentication → Providers → Google.',
+      'info', 9000
+    );
     submittingRef.current = false; setLoading(false);
   };
 
@@ -10012,7 +10076,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
     !targetRole && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginTop: "1.25rem", fontSize: "0.88rem", color: "var(--text-secondary)" } },
       "Pas encore de compte ? ",
       /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSwitchToRegister, style: { background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontWeight: 700, fontSize: "inherit", padding: 0 } }, "S’inscrire gratuitement →")
-    ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.25rem 0 1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" } }, "ou"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } })), /* @__PURE__ */ React.createElement(GoogleSignInButton, null), /* @__PURE__ */ React.createElement(GitHubSignInButton, null)
+    ), (NEXUS_CONFIG.github?.enabled !== false || NEXUS_CONFIG.google?.enabled !== false) && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.25rem 0 1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" } }, "ou"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } })), /* @__PURE__ */ React.createElement(GoogleSignInButton, null), /* @__PURE__ */ React.createElement(GitHubSignInButton, null))
     );
 };
 // [FIX #310] RoleHeader extrait au niveau module — défini dans RegisterForm causait un remontage à chaque render
@@ -10448,7 +10512,7 @@ if (json.token || json.accessToken) {
           React.createElement("i",{className:"fas fa-chevron-right",style:{color:"var(--text-secondary)",fontSize:"0.85rem"}})
         ))
       ),
-      React.createElement(React.Fragment,null,
+      (NEXUS_CONFIG.github?.enabled !== false || NEXUS_CONFIG.google?.enabled !== false) && React.createElement(React.Fragment,null,
         React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",margin:"1.25rem 0 1rem"}},React.createElement("div",{style:{flex:1,height:"1px",background:"var(--border)"}}),React.createElement("span",{style:{fontSize:"0.8rem",color:"var(--text-secondary)",whiteSpace:"nowrap"}},"ou"),React.createElement("div",{style:{flex:1,height:"1px",background:"var(--border)"}})),
         React.createElement(GoogleSignInButton,null),
         React.createElement(GitHubSignInButton,null),
@@ -23795,24 +23859,6 @@ function useMessaging(currentUser) {
         ? { ...m, read: true, read_at: new Date().toISOString() }
         : m
     ));
-    // [FIX] Sync localStorage so useUnreadMessageCount header badge
-    // updates immediately. That hook reads storage.getArray('messages'),
-    // not React state, and listens for the 'nexus:messages-read' event.
-    const _uid = currentUser?.id;
-    if (_uid) {
-      const _all = storage.getArray('messages');
-      let _changed = false;
-      _all.forEach(m => {
-        if (m.from === fromId && m.to === _uid && !m.read) {
-          m.read = true;
-          _changed = true;
-        }
-      });
-      if (_changed) {
-        storage.set('messages', _all);
-        window.dispatchEvent(new CustomEvent('nexus:messages-read'));
-      }
-    }
     await DataService.apiFetch('/api/messages/read', {
       method: 'PATCH', body: JSON.stringify({ fromId })
     }).catch(() => {});
