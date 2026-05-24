@@ -1812,6 +1812,14 @@ const NEXUS_CONFIG = {
     // → Callback URL: https://<project>.supabase.co/auth/v1/callback
     enabled: true,
   },
+
+  vapid: {
+    // Clé publique VAPID pour les notifications push (Web Push)
+    // Générer sur https://web-push-codelab.glitch.me/ ou via:
+    //   const vapidKeys = require('web-push').generateVAPIDKeys();
+    // Coller ici la clé PUBLIQUE (publicKey)
+    publicKey: "BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U",
+  },
   google: {
     // Google OAuth via Supabase + One Tap
     // Supabase Dashboard → Authentication → Providers → Google
@@ -13964,6 +13972,130 @@ const TrackingModal = ({ order, onClose }) => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AdminAmbassadorsPanel — Validation des candidatures ambassadeurs
+// ══════════════════════════════════════════════════════════════════════════════
+const AdminAmbassadorsPanel = ({ addToast }) => {
+  const [list, setList]       = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [tab, setTab]         = React.useState('pending'); // pending | active | all
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      if (!DataService._sb) throw new Error('Supabase non configuré');
+      let q = DataService._sb.from('ambassadors')
+        .select('*, profiles!user_id(name,email,phone,avatar,created_at)')
+        .order('created_at', { ascending: false });
+      if (tab !== 'all') q = q.eq('status', tab);
+      const { data, error } = await q;
+      if (error) throw error;
+      setList(data || []);
+    } catch(e) { addToast('Erreur chargement : ' + e.message, 'error'); }
+    finally { setLoading(false); }
+  };
+
+  React.useEffect(() => { load(); }, [tab]);
+
+  const approve = async (amb) => {
+    try {
+      const { error } = await DataService._sb.from('ambassadors')
+        .update({ status: 'active', approved_at: new Date().toISOString() })
+        .eq('id', amb.id);
+      if (error) throw error;
+      addToast('✅ Ambassadeur approuvé : ' + (amb.profiles?.name || amb.id), 'success');
+      load();
+    } catch(e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  const reject = async (amb) => {
+    if (!confirm('Refuser la candidature de ' + (amb.profiles?.name || 'cet utilisateur') + ' ?')) return;
+    try {
+      const { error } = await DataService._sb.from('ambassadors')
+        .update({ status: 'rejected' })
+        .eq('id', amb.id);
+      if (error) throw error;
+      addToast('Candidature refusée', 'warning');
+      load();
+    } catch(e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  const revoke = async (amb) => {
+    if (!confirm('Révoquer l\'ambassadeur ' + (amb.profiles?.name || '') + ' ?')) return;
+    try {
+      await DataService._sb.from('ambassadors').update({ status: 'rejected' }).eq('id', amb.id);
+      addToast('Ambassadeur révoqué', 'warning');
+      load();
+    } catch(e) { addToast(e.message, 'error'); }
+  };
+
+  const E = React.createElement;
+  const TABS = [
+    { id:'pending', label:'⏳ En attente', badge: list.filter(a=>a.status==='pending').length },
+    { id:'active',  label:'✅ Actifs' },
+    { id:'all',     label:'📋 Tous' },
+  ];
+
+  const pending = list.filter(a => a.status === 'pending').length;
+
+  return E('div', { className:'card' },
+    E('div', { className:'card-header' },
+      E('h2', { className:'card-title' }, '🏆 Ambassadeurs'),
+      pending > 0 && E('span', { className:'badge badge-warning', style:{ marginLeft:'.5rem' } }, pending, ' en attente')
+    ),
+
+    // Tabs
+    E('div', { style:{ display:'flex', gap:'.5rem', marginBottom:'1.25rem', borderBottom:'2px solid var(--border)', paddingBottom:'.75rem' } },
+      TABS.map(t => E('button', { key:t.id,
+        onClick: () => setTab(t.id),
+        style:{ padding:'.4rem .85rem', borderRadius:8, border:'none', cursor:'pointer', fontWeight:600, fontSize:'.82rem',
+                background: tab===t.id ? 'var(--primary)' : 'var(--bg-light)', color: tab===t.id ? '#fff' : 'var(--text-secondary)' }
+      }, t.label, t.badge > 0 && E('span', { style:{ marginLeft:'.35rem', background:'rgba(255,255,255,.3)', borderRadius:99, padding:'0 5px', fontSize:'.7rem' } }, t.badge))
+    )),
+
+    loading ? E('div', { className:'empty-state' }, E('i', { className:'fas fa-spinner fa-spin' })) :
+    list.length === 0 ? E('div', { className:'empty-state' },
+      E('i', { className:'fas fa-award' }), E('p', null, tab === 'pending' ? 'Aucune candidature en attente' : 'Aucun ambassadeur')
+    ) :
+    E('div', { style:{ display:'flex', flexDirection:'column', gap:'.75rem' } },
+      list.map(amb => {
+        const p = amb.profiles || {};
+        const statusColor = { pending:'#d97706', active:'#059669', rejected:'#dc2626' }[amb.status] || '#64748b';
+        const total_fcfa = Math.round((amb.total_earned || 0) * EUR_TO_FCFA);
+        return E('div', { key:amb.id, style:{ border:'1px solid var(--border)', borderRadius:12, padding:'1rem', display:'flex', alignItems:'center', gap:'1rem', flexWrap:'wrap' } },
+          // Avatar
+          E('div', { style:{ width:44, height:44, borderRadius:'50%', background:'linear-gradient(135deg,var(--primary),var(--primary-light))', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:'1.1rem', flexShrink:0 } },
+            (p.name||'?')[0].toUpperCase()
+          ),
+          // Info
+          E('div', { style:{ flex:1, minWidth:0 } },
+            E('div', { style:{ fontWeight:700, fontSize:'.95rem' } }, p.name || '—'),
+            E('div', { style:{ fontSize:'.78rem', color:'var(--text-secondary)' } }, p.email || '—', ' · ', p.phone || '—'),
+            E('div', { style:{ display:'flex', gap:'.75rem', marginTop:'.3rem', flexWrap:'wrap', fontSize:'.78rem' } },
+              E('span', null, '🏷️ Code : ', E('code', { style:{ fontWeight:700, color:'var(--primary)' } }, amb.code || amb.referral_code || '—')),
+              E('span', null, '👥 ', amb.total_referrals || 0, ' filleul(s)'),
+              E('span', null, '💰 ', total_fcfa.toLocaleString('fr-FR'), ' FCFA'),
+              E('span', { style:{ color:statusColor, fontWeight:600 } },
+                { pending:'⏳ En attente', active:'✅ Actif', rejected:'❌ Refusé' }[amb.status] || amb.status
+              )
+            )
+          ),
+          // Actions
+          E('div', { style:{ display:'flex', gap:'.5rem', flexShrink:0, flexWrap:'wrap' } },
+            amb.status === 'pending' && E(React.Fragment, null,
+              E('button', { onClick:()=>approve(amb), style:{ padding:'.4rem .9rem', borderRadius:8, border:'none', background:'#059669', color:'#fff', cursor:'pointer', fontWeight:700, fontSize:'.82rem' } }, '✅ Approuver'),
+              E('button', { onClick:()=>reject(amb),  style:{ padding:'.4rem .9rem', borderRadius:8, border:'none', background:'#dc2626', color:'#fff', cursor:'pointer', fontWeight:700, fontSize:'.82rem' } }, '❌ Refuser')
+            ),
+            amb.status === 'active' && E('button', { onClick:()=>revoke(amb), style:{ padding:'.4rem .9rem', borderRadius:8, border:'1.5px solid #dc2626', background:'transparent', color:'#dc2626', cursor:'pointer', fontWeight:600, fontSize:'.82rem' } }, 'Révoquer')
+          )
+        );
+      })
+    )
+  );
+};
+// ── Fin AdminAmbassadorsPanel ─────────────────────────────────────────────────
+
 // AdminB2BPanel — Tableau admin des acheteurs professionnels B2B
 // Rendu dans AdminDashboard quand view === "b2b"
 // ══════════════════════════════════════════════════════════════════════════
@@ -13989,59 +14121,75 @@ const AdminB2BPanel = ({ addToast }) => {
   useEffect(() => { loadBuyers(); }, [search, filterVerified, page]);
 
   const loadStats = async () => {
+    if (!DataService._sb) return;
     try {
-      const r = await fetch((apiBase||"") + "/api/admin/b2b/stats", { headers });
-      if (r.ok) setStats(await r.json());
-    } catch (_) {}
+      const [all, verified, newMonth] = await Promise.all([
+        DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}),
+        DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}).eq('ninea_verified', true),
+        DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}).gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
+      ]);
+      setStats({
+        total: all.count || 0,
+        verified: verified.count || 0,
+        pending: (all.count || 0) - (verified.count || 0),
+        newThisMonth: newMonth.count || 0,
+      });
+    } catch(_) {}
   };
 
   const loadBuyers = async () => {
     setLoading(true);
+    if (!DataService._sb) { setLoading(false); return; }
     try {
-      const params = new URLSearchParams({ page, limit: LIMIT });
-      if (search)         params.set('search', search);
-      if (filterVerified) params.set('verified', filterVerified);
-      const r = await fetch((apiBase||"") + "/api/admin/b2b?${params}", { headers });
-      if (r.ok) { const d = await r.json(); setBuyers(d.buyers || []); setTotal(d.total || 0); }
+      let q = DataService._sb
+        .from('b2b_buyers')
+        .select('*, profiles!user_id(name,email,phone,avatar)', { count:'exact' })
+        .order('created_at', { ascending: false })
+        .range((page-1)*LIMIT, page*LIMIT-1);
+      if (search)         q = q.or('company.ilike.%' + search + '%,ninea.ilike.%' + search + '%');
+      if (filterVerified) q = q.eq('ninea_verified', filterVerified === 'true');
+      const { data, count, error } = await q;
+      if (!error) { setBuyers(data || []); setTotal(count || 0); }
     } catch (_) {}
     setLoading(false);
   };
 
   const verifyNinea = async (userId, verified, note) => {
+    if (!DataService._sb) { addToast('Supabase non configuré', 'error'); return; }
     try {
-      const r = await fetch((apiBase||"") + "/api/b2b/verify-ninea/${userId}", {
-        method: 'PATCH', headers, body: JSON.stringify({ verified, note: note || null })
-      });
-      if (r.ok) {
-        addToast(verified ? '✅ NINEA vérifié' : '❌ NINEA refusé', verified ? 'success' : 'warning');
-        setNoteModal(null); setNoteText('');
-        loadBuyers(); loadStats();
-      } else { const e = await r.json(); addToast(e.error || 'Erreur', 'error'); }
-    } catch (_) { addToast('Erreur réseau', 'error'); }
+      const { error } = await DataService._sb.from('b2b_buyers')
+        .update({ ninea_verified: verified, admin_note: note || null, verified_at: verified ? new Date().toISOString() : null })
+        .eq('user_id', userId);
+      if (error) throw error;
+      addToast(verified ? '✅ NINEA vérifié' : '❌ NINEA refusé', verified ? 'success' : 'warning');
+      setNoteModal(null); setNoteText('');
+      loadBuyers(); loadStats();
+    } catch(e) { addToast(e.message || 'Erreur', 'error'); }
   };
 
   const suspendBuyer = async (userId, company) => {
     setSuspendModal({ userId, company });
   };
   const _confirmSuspend = async () => {
-    if (!suspendModal) return;
+    if (!suspendModal || !DataService._sb) return;
     const { userId, company } = suspendModal;
     setSuspendModal(null);
     try {
-      const r = await fetch((apiBase||"") + "/api/admin/b2b/${userId}", { method: 'DELETE', headers });
-      if (r.ok) { addToast(`${company} suspendu`, 'warning'); loadBuyers(); loadStats(); }
-    } catch (_) { addToast('Erreur réseau', 'error'); }
+      // Désactiver le compte (changer le rôle en buyer)
+      const { error } = await DataService._sb.from('profiles').update({ role: 'buyer' }).eq('id', userId);
+      if (error) throw error;
+      addToast(company + ' suspendu', 'warning'); loadBuyers(); loadStats();
+    } catch(e) { addToast(e.message, 'error'); }
   };
 
   const exportCSV = async () => {
     setExporting(true);
+    if (!DataService._sb) { setExporting(false); addToast('Supabase non configuré', 'error'); return; }
     try {
-      const params = new URLSearchParams({ page: 1, limit: 1000 });
-      if (search)         params.set('search', search);
-      if (filterVerified) params.set('verified', filterVerified);
-      const r = await fetch((apiBase||"") + "/api/admin/b2b?${params}", { headers });
-      if (!r.ok) throw new Error();
-      const { buyers: all } = await r.json();
+      let q = DataService._sb.from('b2b_buyers').select('*, profiles!user_id(name,email,phone)').order('created_at',{ascending:false}).limit(1000);
+      if (search)         q = q.or('company.ilike.%' + search + '%');
+      if (filterVerified) q = q.eq('ninea_verified', filterVerified === 'true');
+      const { data: all } = await q;
       const rows = [
         'Entreprise,NINEA,RC,Responsable,Email,Téléphone,Adresse,NINEA vérifié,Date inscription'
       ];
@@ -15109,6 +15257,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: stats.pendingPayouts ?? _payoutReqs.filter((r) => r.status === "pending").length },
     { id: "users", icon: "users-cog", label: "Utilisateurs" },
     { id: "b2b", icon: "building", label: "Acheteurs Pro B2B" },
+    { id: "ambassadors", icon: "award", label: "Ambassadeurs" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
     { id: "logs", icon: "history", label: "Journal activité" },
@@ -15336,7 +15485,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
               )
             )
     );
-  })(), view === "b2b" && /* @__PURE__ */ React.createElement(AdminB2BPanel, { addToast }), view === "coupons" && (() => {
+  })(), view === "b2b" && /* @__PURE__ */ React.createElement(AdminB2BPanel, { addToast }), view === "ambassadors" && React.createElement(AdminAmbassadorsPanel, { addToast }), view === "coupons" && (() => {
     const newCoupon = adminNewCoupon;
     const setNewCoupon = setAdminNewCoupon;
     const COUPON_CATS = ["", "Électronique","Informatique","Mode","Beauté","Maison","Sport","Alimentation","Tissus & Wax","Artisanat","Produits locaux","Autre"];
@@ -20947,8 +21096,8 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
   };
 
   // [FIX] Endpoint Netlify Function (fonctionne sans apiUrl backend)
-  const PUSH_SUBSCRIBE_URL  = "/push-subscribe";
-  const PUSH_VAPID_KEY_URL  = "/push-vapid-key";
+  const PUSH_SUBSCRIBE_URL  = ""; // Supabase direct — pas de serveur
+  const PUSH_VAPID_KEY_URL  = ""; // Clé dans NEXUS_CONFIG.vapid.publicKey
 
   const requestPush = async () => {
     setSubLoading(true);
@@ -20959,12 +21108,11 @@ const PushNotificationSettings = ({ currentUser: currentUser2, addToast }) => {
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
         addToast("Notifications push non supportées sur ce navigateur", "error"); setSubLoading(false); return;
       }
-      // [FIX] Récupérer la vraie clé VAPID publique depuis la Netlify Function
-      const vapidRes = await fetch(PUSH_VAPID_KEY_URL).catch(() => null);
-      if (!vapidRes || !vapidRes.ok) {
-        addToast("Clé VAPID non disponible — vérifiez la config Netlify", "error"); setSubLoading(false); return;
+      // Utiliser la clé VAPID depuis NEXUS_CONFIG (pas de serveur requis)
+      const publicKey = NEXUS_CONFIG?.vapid?.publicKey;
+      if (!publicKey) {
+        addToast("Clé VAPID non configurée dans NEXUS_CONFIG.vapid.publicKey", "error"); setSubLoading(false); return;
       }
-      const { publicKey } = await vapidRes.json();
       const reg = await navigator.serviceWorker.ready;
       // [FIX] applicationServerKey ne peut pas être null — doit être Uint8Array
       const sub = await reg.pushManager.subscribe({
@@ -21979,10 +22127,33 @@ const VendorPublicPage = ({ vendorId, vendorName: vendorNameProp="", products, o
     run();
     return () => { cancelled = true; };
   }, [vendorId, vendorNameProp]);
+  // Construire le lien WhatsApp contextuel du vendeur
+  const buildVendorWaLink = (productName) => {
+    const raw = vendorProfile && (vendorProfile.whatsapp_number || vendorProfile.phone);
+    if (!raw) return null;
+    // Normaliser : +221XXXXXXXXX ou 221XXXXXXXXX → 221XXXXXXXXX
+    const digits = raw.replace(/\D/g, '').replace(/^0+/, '');
+    const intl = digits.startsWith('221') ? digits : '221' + digits;
+    const buyerName = currentUser2 ? currentUser2.name : 'un visiteur';
+    let text = 'Bonjour ' + (vendorProfile.name || 'vendeur') + ' !';
+    if (productName) text += ' Je suis intéressé(e) par votre produit "' + productName + '" sur NEXUS Market.';
+    else text += ' J\u2019ai vu votre boutique sur NEXUS Market et j\u2019aimerais en savoir plus.';
+    text += ' — ' + buyerName;
+    return 'https://wa.me/' + intl + '?text=' + encodeURIComponent(text);
+  };
+
   const handleContact = () => {
     if (!currentUser2) { addToast && addToast("Connectez-vous pour contacter ce vendeur", "info"); return; }
     const vid = vendorId || (vendorProfile && vendorProfile.id);
     if (vid && currentUser2.id === vid) { addToast && addToast("Vous ne pouvez pas vous contacter vous-même", "info"); return; }
+
+    // Priorité 1 : WhatsApp du vendeur (direct, sans serveur)
+    const waLink = buildVendorWaLink(null);
+    if (waLink) {
+      window.open(waLink, '_blank');
+      return;
+    }
+    // Priorité 2 : messagerie interne NEXUS
     if (typeof window.__nexusOpenMessaging === "function") window.__nexusOpenMessaging(vid, vendor.name);
     else document.dispatchEvent(new CustomEvent("nexus:open-messaging", { detail: { userId: vid, userName: vendor.name } }));
     onClose();
@@ -22009,7 +22180,10 @@ const VendorPublicPage = ({ vendorId, vendorName: vendorNameProp="", products, o
   } }, /* @__PURE__ */ React.createElement("i", { className: `fa${wishlist.includes(p.id) ? "s" : "r"} fa-heart` }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement("div", { className: "product-price" }, formatPrice(p.price)), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? `${p.stock} en stock` : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block btn-sm", style: { marginTop: "0.5rem" }, onClick: (e) => {
     e.stopPropagation();
     onAddToCart(p);
-  }, disabled: p.stock === 0 }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cart-plus" }), " Ajouter au panier")))))), allReviews.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", color: "var(--primary)" } }, "Avis r\xE9cents"), allReviews.slice(0, 5).map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { padding: "0.75rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.88rem" } }, r.userName), " ", /* @__PURE__ */ React.createElement(Stars, { rating: r.rating })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)" } }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-")), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, r.comment))))), /* @__PURE__ */ React.createElement("div", { style: { paddingTop: "1rem", borderTop: "1px solid var(--border)", marginTop: "1rem", display: "flex", gap: "0.75rem" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary flex-1", onClick: handleContact }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Contacter le vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: onClose }, "Fermer la boutique"))));
+  }, disabled: p.stock === 0 }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cart-plus" }), " Ajouter au panier")))))), allReviews.length > 0 && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", color: "var(--primary)" } }, "Avis r\xE9cents"), allReviews.slice(0, 5).map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { padding: "0.75rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.88rem" } }, r.userName), " ", /* @__PURE__ */ React.createElement(Stars, { rating: r.rating })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)" } }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-")), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, r.comment))))), /* @__PURE__ */ React.createElement("div", { style: { paddingTop: "1rem", borderTop: "1px solid var(--border)", marginTop: "1rem", display: "flex", gap: "0.75rem" } }, React.createElement("button", { className: "btn btn-primary flex-1", onClick: handleContact },
+    React.createElement("i", { className: buildVendorWaLink() ? "fab fa-whatsapp" : "fas fa-envelope" }),
+    " ", buildVendorWaLink() ? "WhatsApp" : "Contacter le vendeur"
+  ), React.createElement("button", { className: "btn btn-secondary flex-1", onClick: onClose }, "Fermer la boutique"))));
 };
 const SetupWizard = ({ onComplete }) => {
   var _a;
@@ -22858,6 +23032,35 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast }) => {
   );
 
   if (loading) return React.createElement("div",{className:"empty-state"},React.createElement("i",{className:"fas fa-spinner fa-spin"}),React.createElement("p",null,"Chargement..."));
+
+  // Afficher un message si l'ambassadeur est en attente de validation
+  if (amb && amb.status === 'pending') return React.createElement("div", {style:{maxWidth:600,margin:"0 auto"}},
+    React.createElement("div", {style:{background:"linear-gradient(135deg,rgba(234,179,8,.08),rgba(234,179,8,.02))",border:"2px solid rgba(234,179,8,.3)",borderRadius:16,padding:"2rem",textAlign:"center"}},
+      React.createElement("div",{style:{fontSize:"3rem",marginBottom:"1rem"}},"⏳"),
+      React.createElement("h2",{style:{fontWeight:800,marginBottom:".5rem"}},"Candidature en cours d'examen"),
+      React.createElement("p",{style:{color:"var(--text-secondary)",marginBottom:"1.5rem",fontSize:".9rem"}},
+        "Votre demande d'ambassadeur est en cours de validation par l'équipe NEXUS. Vous recevrez une notification sous 24-48h."
+      ),
+      React.createElement("div",{style:{background:"white",borderRadius:12,padding:"1rem",marginBottom:"1rem",textAlign:"left"}},
+        React.createElement("div",{style:{fontSize:".8rem",fontWeight:700,color:"var(--text-secondary)",marginBottom:".5rem",textTransform:"uppercase"}},"Votre code (activé après validation)"),
+        React.createElement("div",{style:{fontFamily:"monospace",fontSize:"1.4rem",fontWeight:800,color:"var(--primary)",letterSpacing:".15rem"}},(amb.code||amb.referral_code||"—"))
+      ),
+      React.createElement("p",{style:{fontSize:".78rem",color:"var(--text-secondary)"}},
+        "Contact : ", React.createElement("a",{href:"mailto:contact@nexus.sn",style:{color:"var(--primary)"}},"contact@nexus.sn")
+      )
+    )
+  );
+
+  // Statut refusé
+  if (amb && amb.status === 'rejected') return React.createElement("div", {style:{maxWidth:600,margin:"0 auto"}},
+    React.createElement("div", {style:{background:"rgba(220,38,38,.05)",border:"2px solid rgba(220,38,38,.2)",borderRadius:16,padding:"2rem",textAlign:"center"}},
+      React.createElement("div",{style:{fontSize:"3rem",marginBottom:"1rem"}},"❌"),
+      React.createElement("h2",{style:{fontWeight:800,marginBottom:".5rem"}},"Candidature refusée"),
+      React.createElement("p",{style:{color:"var(--text-secondary)",fontSize:".9rem"}},
+        "Votre candidature n'a pas été retenue. Pour plus d'informations, contactez ", React.createElement("a",{href:"mailto:contact@nexus.sn",style:{color:"var(--primary)"}},"contact@nexus.sn")
+      )
+    )
+  );
 
   return React.createElement("div",{style:{maxWidth:820,margin:"0 auto"}},
     // Header
