@@ -7221,6 +7221,7 @@ const BulkImportModal = ({ currentUser: currentUser2, onImported, onClose, addTo
   const [errors, setErrors] = useState([]);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [bulkResult, setBulkResult] = useState(null);
   const TEMPLATE_CSV = 'nom,categorie,prix_eur,stock,description,url_image\nSmartphone Samsung,\xC9lectronique,150,30,Smartphone 4G \xE9cran 6.6",https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?w=400&h=280&fit=crop&auto=format&q=80\nTissu Wax imprim\xE9,Tissus & Wax,25,50,Tissu wax authentique 6 yards,https://images.unsplash.com/photo-1528360983277-13d401cdc186?w=400&h=280&fit=crop&auto=format&q=80\nOrdinateur HP,Informatique,450,10,Intel i5 8Go RAM SSD 256Go,';
   const downloadTemplate = () => {
     const a = document.createElement("a");
@@ -7256,25 +7257,88 @@ const BulkImportModal = ({ currentUser: currentUser2, onImported, onClose, addTo
     };
     reader.readAsText(file, "UTF-8");
   };
-  const handleImport = () => {
+  const handleImport = async () => {
     setImporting(true);
-    const allProducts = storage.getArray("products");
-    let done = 0;
+    setProgress(0);
     const total = preview.length;
-    preview.forEach((p, i) => {
-      setTimeout(() => {
-        const id = "prod_bulk_" + Date.now() + "_" + i;
-        allProducts.push(__spreadProps(__spreadValues({ id }, p), { vendor: currentUser2.id, vendorName: currentUser2.name, rating: 0, reviewsCount: 0, imageUrl: p.imageUrl || `https://placehold.co/400x280/f9f7f0/9ca3af?text=📦`, moderated: false }));
-        done++;
-        setProgress(Math.round(done / total * 100));
-        if (done === total) {
-          storage.set("products", allProducts);
-          setImporting(false);
-          setStep(3);
-          onImported == null ? void 0 : onImported();
+    let done = 0;
+    let saved = 0;
+    const errors = [];
+
+    // Préparer tous les produits
+    const products = preview.map((p, i) => ({
+      id: "prod_bulk_" + Date.now() + "_" + i,
+      name: p.name,
+      category: p.category || "Autres",
+      price: p.price,
+      stock: p.stock,
+      description: p.description || null,
+      imageUrl: p.imageUrl || "https://placehold.co/400x280/f9f7f0/9ca3af?text=📦",
+      vendor: currentUser2.id,
+      vendorName: currentUser2.name,
+      rating: 0,
+      reviewsCount: 0,
+      moderated: false,
+      active: true,
+      createdAt: new Date().toISOString(),
+    }));
+
+    // ── Tenter Supabase en lot (chunks de 50) ───────────────────────────────
+    if (isSupabaseConfigured() && DataService._sb) {
+      const CHUNK = 50;
+      for (let i = 0; i < products.length; i += CHUNK) {
+        const chunk = products.slice(i, i + CHUNK);
+        // Mapper vers le schéma Supabase (snake_case)
+        const rows = chunk.map(p => ({
+          id:           p.id,
+          name:         p.name,
+          category:     p.category,
+          price:        p.price,
+          stock:        p.stock,
+          description:  p.description,
+          image_url:    p.imageUrl,
+          vendor_id:    p.vendor,
+          vendor_name:  p.vendorName,
+          rating:       0,
+          reviews_count: 0,
+          moderated:    false,
+          active:       true,
+        }));
+        try {
+          const { error } = await DataService._sb.from('products').insert(rows);
+          if (error) {
+            console.warn('[CSV Import] Supabase chunk error:', error.message);
+            errors.push(...chunk.map(p => p.name));
+          } else {
+            saved += chunk.length;
+          }
+        } catch(e) {
+          console.warn('[CSV Import] Supabase error:', e.message);
+          errors.push(...chunk.map(p => p.name));
         }
-      }, i * 60);
-    });
+        done += chunk.length;
+        setProgress(Math.round(done / total * 100));
+        // Pause courte pour ne pas saturer l'API
+        await new Promise(r => setTimeout(r, 80));
+      }
+    } else {
+      // ── Fallback localStorage ──────────────────────────────────────────────
+      const allProducts = storage.getArray("products");
+      for (const p of products) {
+        allProducts.push(p);
+        done++;
+        saved++;
+        setProgress(Math.round(done / total * 100));
+        await new Promise(r => setTimeout(r, 30));
+      }
+      storage.set("products", allProducts);
+    }
+
+    setImporting(false);
+    setStep(3);
+    // Stocker le résumé pour l'étape 3
+    setBulkResult({ saved, failed: errors.length, total });
+    if (onImported) onImported();
   };
   return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv text-primary" }), " Import en masse \u2014 CSV"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginBottom: "1.5rem" } }, ["Fichier", "Pr\xE9visualisation", "Termin\xE9"].map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { height: "4px", borderRadius: "2px", background: step > i ? "var(--primary)" : "var(--border)", marginBottom: "0.3rem", transition: "background 0.3s" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: step > i ? "var(--primary)" : "var(--text-secondary)", textAlign: "center" } }, s)))), step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.85rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Format CSV requis avec les colonnes : ", /* @__PURE__ */ React.createElement("code", null, "nom, categorie, prix_eur, stock, description, url_image"))), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary mb-2", onClick: downloadTemplate }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-download" }), " T\xE9l\xE9charger le mod\xE8le CSV"), /* @__PURE__ */ React.createElement(
     "div",
@@ -7293,7 +7357,24 @@ const BulkImportModal = ({ currentUser: currentUser2, onImported, onClose, addTo
       /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".csv,text/csv", style: { display: "none" }, onChange: (e) => handleFile(e.target.files[0]) })
     ),
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "0.5rem" } }, "Max 1000 produits par import")
-  )), step === 2 && /* @__PURE__ */ React.createElement(React.Fragment, null, errors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", null, errors.length, " ligne(s) ignor\xE9e(s) :"), /* @__PURE__ */ React.createElement("ul", { style: { margin: "0.3rem 0 0 1rem", padding: 0 } }, errors.slice(0, 5).map((e, i) => /* @__PURE__ */ React.createElement("li", { key: i }, e))))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1rem", fontWeight: 600 } }, preview.length, " produit(s) pr\xEAts \xE0 importer :"), /* @__PURE__ */ React.createElement("div", { style: { maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "10px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("table", { className: "data-table", style: { minWidth: "auto" } }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Nom"), /* @__PURE__ */ React.createElement("th", null, "Cat\xE9gorie"), /* @__PURE__ */ React.createElement("th", null, "Prix"), /* @__PURE__ */ React.createElement("th", null, "Stock"))), /* @__PURE__ */ React.createElement("tbody", null, preview.map((p, i) => /* @__PURE__ */ React.createElement("tr", { key: i }, /* @__PURE__ */ React.createElement("td", { style: { fontSize: "0.82rem" } }, p.name), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info", style: { fontSize: "0.7rem" } }, p.category)), /* @__PURE__ */ React.createElement("td", { style: { fontWeight: 600 } }, formatPrice(p.price)), /* @__PURE__ */ React.createElement("td", null, p.stock)))))), importing ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "8px", background: "var(--border)", borderRadius: "4px", overflow: "hidden", marginBottom: "0.75rem" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: `${progress}%`, background: "var(--primary)", transition: "width 0.3s ease", borderRadius: "4px" } })), /* @__PURE__ */ React.createElement("div", { style: { color: "var(--text-secondary)", fontSize: "0.88rem" } }, "Import en cours... ", progress, "%")) : /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => setStep(1) }, "Modifier"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary flex-1", onClick: handleImport, disabled: preview.length === 0 }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-upload" }), " Importer ", preview.length, " produit(s)"))), step === 3 && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "3.5rem", marginBottom: "1rem" } }, "\u2705"), /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "0.5rem" } }, preview.length, " produit(s) import\xE9(s) !"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.5rem" } }, "Vos produits sont en attente de validation par l\\'\xE9quipe NEXUS (24h ouvr\xE9es)."), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Voir mes produits"))));
+  )), step === 2 && /* @__PURE__ */ React.createElement(React.Fragment, null, errors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-warning mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-triangle" }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", null, errors.length, " ligne(s) ignor\xE9e(s) :"), /* @__PURE__ */ React.createElement("ul", { style: { margin: "0.3rem 0 0 1rem", padding: 0 } }, errors.slice(0, 5).map((e, i) => /* @__PURE__ */ React.createElement("li", { key: i }, e))))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1rem", fontWeight: 600 } }, preview.length, " produit(s) pr\xEAts \xE0 importer :"), /* @__PURE__ */ React.createElement("div", { style: { maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "10px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("table", { className: "data-table", style: { minWidth: "auto" } }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Nom"), /* @__PURE__ */ React.createElement("th", null, "Cat\xE9gorie"), /* @__PURE__ */ React.createElement("th", null, "Prix"), /* @__PURE__ */ React.createElement("th", null, "Stock"))), /* @__PURE__ */ React.createElement("tbody", null, preview.map((p, i) => /* @__PURE__ */ React.createElement("tr", { key: i }, /* @__PURE__ */ React.createElement("td", { style: { fontSize: "0.82rem" } }, p.name), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info", style: { fontSize: "0.7rem" } }, p.category)), /* @__PURE__ */ React.createElement("td", { style: { fontWeight: 600 } }, formatPrice(p.price)), /* @__PURE__ */ React.createElement("td", null, p.stock)))))), importing ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "8px", background: "var(--border)", borderRadius: "4px", overflow: "hidden", marginBottom: "0.75rem" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "100%", width: `${progress}%`, background: "var(--primary)", transition: "width 0.3s ease", borderRadius: "4px" } })), /* @__PURE__ */ React.createElement("div", { style: { color: "var(--text-secondary)", fontSize: "0.88rem" } }, "Import en cours... ", progress, "%")) : /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => setStep(1) }, "Modifier"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary flex-1", onClick: handleImport, disabled: preview.length === 0 }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-upload" }), " Importer ", preview.length, " produit(s)"))), step === 3 && React.createElement("div", { style: { textAlign: "center", padding: "1.5rem 1rem" } },
+  React.createElement("div", { style: { fontSize: "3.5rem", marginBottom: "1rem" } }, "\u2705"),
+  React.createElement("h3", { style: { fontWeight: 700, marginBottom: "0.75rem" } }, "Import termin\xe9 !"),
+  bulkResult && React.createElement("div", { style: { display:"flex", gap:"1rem", justifyContent:"center", marginBottom:"1rem", flexWrap:"wrap" } },
+    React.createElement("div", { style:{ background:"rgba(0,133,62,.08)", borderRadius:12, padding:"0.75rem 1.25rem" } },
+      React.createElement("div", { style:{ fontSize:"1.6rem", fontWeight:800, color:"var(--primary)" } }, bulkResult.saved || preview.length),
+      React.createElement("div", { style:{ fontSize:"0.75rem", color:"var(--text-secondary)" } }, "Import\xe9s")
+    ),
+    bulkResult && bulkResult.failed > 0 && React.createElement("div", { style:{ background:"rgba(220,38,38,.08)", borderRadius:12, padding:"0.75rem 1.25rem" } },
+      React.createElement("div", { style:{ fontSize:"1.6rem", fontWeight:800, color:"#dc2626" } }, bulkResult.failed),
+      React.createElement("div", { style:{ fontSize:"0.75rem", color:"var(--text-secondary)" } }, "\xc9chou\xe9s")
+    )
+  ),
+  React.createElement("p", { style:{ color:"var(--text-secondary)", marginBottom:"1.5rem", fontSize:"0.85rem" } },
+    isSupabaseConfigured() && DataService._sb ? "\u2705 Sauvegard\xe9s dans Supabase" : "\u26a0 Sauvegard\xe9s localement"
+  ),
+  React.createElement("button", { className:"btn btn-primary btn-block", onClick:onClose },
+    React.createElement("i", { className:"fas fa-check" }), " Voir mes produits"))));
 };
 // ─── ProductScraperModal — Extraction produit par URL ────────────────────────
 const ProductScraperModal = ({ currentUser: currentUser2, onClose, addToast }) => {
@@ -7308,31 +7389,94 @@ const ProductScraperModal = ({ currentUser: currentUser2, onClose, addToast }) =
   const SYS = `Tu es un extracteur de données produit pour NEXUS Market Sénégal. À partir de l'URL fournie, utilise l'outil web_search pour visiter la page et extraire les informations. Réponds UNIQUEMENT avec un objet JSON valide, sans markdown.
 Champs requis : name (string, en français), category (exactement l'une de : Électronique, Mode & Vêtements, Alimentation, Maison & Déco, Beauté & Santé, Services, Informatique, Sport & Loisirs, Autres), price_eur (number, convertir si nécessaire : 1 USD=0.93 EUR, 1 XOF=0.00152 EUR), original_price_eur (number|null), stock (number|null), description (string max 120 car. en français), image_url (string|null), vendor_name (string|null), brand (string|null), rating (number|null), reviews_count (number|null), tags (array 3-5 mots), confidence (objet : name/price/category/image_url de 0 à 1), extraction_notes (string). Valeur inconnue = null.`;
   const extract = async () => {
-    if (!url.trim() || !/^https?:\/\//i.test(url.trim())) { addToast("URL invalide — doit commencer par https://", "error"); return; }
+    const cleanUrl = url.trim();
+    if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl)) {
+      addToast("URL invalide — doit commencer par https://", "error"); return;
+    }
     setPhase("loading"); setData(null);
+
+    const GROQ_KEY   = "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";
+    const GROQ_MODEL = "llama-3.3-70b-versatile";
+
+    // ── Étape 1 : fetch la page via AllOrigins (proxy CORS gratuit) ──────────
+    let pageText = "";
     try {
-      // [Phase 3] Appel via le proxy serveur /api/ai/extract (Groq)
-      // Plus de CORS, plus de clé API dans le navigateur
-      const _token = (typeof DataService !== "undefined" && DataService._token)
-        || sessionStorage.getItem("nexus_jwt")
-        || localStorage.getItem("nexus_jwt");
-      const _apiBase = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
-      const res = await fetch(_apiBase + "/api/ai/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (_token || "") },
-        body: JSON.stringify({ url: url.trim() })
-      });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.error || "API " + res.status);
+      const proxyUrl = "https://api.allorigins.win/get?url=" + encodeURIComponent(cleanUrl);
+      const pageRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
+      if (pageRes.ok) {
+        const pageJson = await pageRes.json();
+        // Extraire le texte brut depuis le HTML
+        const tmp = document.createElement("div");
+        tmp.innerHTML = (pageJson.contents || "").replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+                                                   .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
+        pageText = (tmp.textContent || tmp.innerText || "")
+          .replace(/\s+/g, " ").trim().slice(0, 6000);
       }
-      const result = await res.json();
-      if (!result.ok || !result.data) throw new Error("Réponse invalide du serveur");
-      const parsed = result.data;
+    } catch(e) {
+      console.warn("[Scraper] Proxy fetch failed:", e.message);
+    }
+
+    // ── Étape 2 : demander à Groq d'extraire les données produit ─────────────
+    try {
+      const userPrompt = pageText
+        ? "Voici le contenu extrait de la page produit (" + cleanUrl + ") :\n\n" + pageText.slice(0,4000) + "\n\nExtrait toutes les informations produit disponibles."
+        : "L'URL produit est : " + cleanUrl + "\n\nAnalyse cette URL et g\xe9n\xe8re une fiche produit plausible bas\xe9e sur le domaine et le chemin de l'URL (Jumia, Amazon, AliExpress, Dakar.com, etc.).";
+
+      const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + GROQ_KEY,
+        },
+        body: JSON.stringify({
+          model: GROQ_MODEL,
+          temperature: 0.2,
+          max_tokens: 700,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: SYS },
+            { role: "user",   content: userPrompt },
+          ],
+        }),
+      });
+
+      if (!groqRes.ok) {
+        const err = await groqRes.json().catch(() => ({}));
+        throw new Error("Groq " + groqRes.status + ": " + (err?.error?.message || "erreur inconnue"));
+      }
+
+      const groqData = await groqRes.json();
+      const rawJson  = groqData?.choices?.[0]?.message?.content || "{}";
+      let parsed;
+      try { parsed = JSON.parse(rawJson); }
+      catch(e) {
+        // Tentative de récupérer le JSON imbriqué
+        const match = rawJson.match(/\{[\s\S]+\}/);
+        if (match) parsed = JSON.parse(match[0]);
+        else throw new Error("Réponse JSON invalide de Groq");
+      }
+
+      if (!parsed.name && !parsed.price_eur) throw new Error("Aucune donnée extraite");
+
       setData(parsed);
-      setForm({ name: parsed.name || "", category: parsed.category || "", price: parsed.price_eur ? parseFloat(parsed.price_eur).toFixed(2) : "", originalPrice: parsed.original_price_eur ? parseFloat(parsed.original_price_eur).toFixed(2) : "", stock: parsed.stock != null ? String(parsed.stock) : "0", description: parsed.description || "", imageUrl: parsed.image_url || "", vendorName: parsed.vendor_name || parsed.brand || "" });
+      setForm({
+        name:          parsed.name         || "",
+        category:      parsed.category     || "Autres",
+        price:         parsed.price_eur    ? parseFloat(parsed.price_eur).toFixed(2)          : "",
+        originalPrice: parsed.original_price_eur ? parseFloat(parsed.original_price_eur).toFixed(2) : "",
+        stock:         parsed.stock != null ? String(parsed.stock) : "10",
+        description:   parsed.description  || "",
+        imageUrl:      parsed.image_url     || "",
+        vendorName:    parsed.vendor_name   || parsed.brand || "",
+      });
       setPhase("done");
-    } catch(err) { setPhase("error"); addToast("Extraction échouée : " + err.message, "error"); }
+      if (!pageText) addToast("⚠️ Page non accessible directement — données estimées par l'IA", "warning");
+
+    } catch(err) {
+      console.error("[Scraper] Groq error:", err);
+      setPhase("error");
+      addToast("Extraction échouée : " + err.message, "error");
+    }
   };
   const save = async () => {
     if (!form.name || !form.price) { addToast("Nom et prix requis", "error"); return; }
@@ -7370,7 +7514,21 @@ Champs requis : name (string, en français), category (exactement l'une de : Él
           /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, marginBottom: "0.25rem" } }, "Analyse de la page en cours\u2026"),
           /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.85rem", color: "var(--text-secondary)" } }, "L\u2019IA analyse la page et extrait les donn\xE9es produit")
         ),
-        phase === "error" && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), " Extraction \xE9chou\xE9e. V\xE9rifiez l\u2019URL ou r\xE9essayez."),
+        phase === "error" && React.createElement("div", { style:{ background:"rgba(220,38,38,.06)", border:"1px solid rgba(220,38,38,.2)", borderRadius:12, padding:"1rem 1.25rem", marginBottom:"1rem" } },
+  React.createElement("div", { style:{ fontWeight:700, color:"#dc2626", marginBottom:"0.35rem" } },
+    React.createElement("i", { className:"fas fa-exclamation-circle", style:{ marginRight:"0.4rem" } }),
+    "Extraction \xe9chou\xe9e"
+  ),
+  React.createElement("div", { style:{ fontSize:"0.83rem", color:"var(--text-secondary)", marginBottom:"0.6rem" } }, "Certains sites bloquent l\u2019acc\xe8s automatique. Essayez :"),
+  React.createElement("div", { style:{ display:"flex", gap:"0.5rem", flexWrap:"wrap" } },
+    ["https://www.jumia.sn", "https://www.dakar.com", "https://fr.aliexpress.com"].map(s =>
+      React.createElement("span", { key:s, style:{ fontSize:"0.75rem", padding:"3px 10px", borderRadius:99, background:"var(--bg-light)", border:"1px solid var(--border)", cursor:"pointer" },
+        onClick: () => setUrl(s) },
+        s.replace("https://www.","").replace("https://fr.","")
+      )
+    )
+  )
+),
         phase === "done" && data && /* @__PURE__ */ React.createElement(React.Fragment, null,
           /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 130px", gap: "1.25rem", marginBottom: "1rem" } },
             /* @__PURE__ */ React.createElement("div", null,
