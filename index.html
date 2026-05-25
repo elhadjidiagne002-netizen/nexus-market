@@ -21993,6 +21993,498 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
 
 // ══════════════════════════════════════════════════════════════════════════
 // B2BProDashboard — tableau de bord dédié aux acheteurs professionnels
+
+// ════════════════════════════════════════════════════════════════════════════
+// B2BQuotesPanel — Devis B2B automatisés (buyer_pro → Groq → vendeur → facture)
+// ════════════════════════════════════════════════════════════════════════════
+const B2BQuotesPanel = ({ currentUser: cu, addToast }) => {
+  const GROQ_KEY   = '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';
+  const GROQ_MODEL = 'llama-3.3-70b-versatile';
+  const FCFA = NEXUS_CONFIG.currency.eurToFcfa;
+
+  // ── États ──────────────────────────────────────────────────────────────
+  const [tab,       setTab]       = React.useState('list');   // 'list' | 'new'
+  const [quotes,    setQuotes]    = React.useState([]);
+  const [loading,   setLoading]   = React.useState(true);
+  const [step,      setStep]      = React.useState(1);        // 1=form 2=generating 3=review 4=sent
+  const [busy,      setBusy]      = React.useState(false);
+  const [selected,  setSelected]  = React.useState(null);
+
+  // Formulaire devis
+  const [form, setForm] = React.useState({
+    requestText:  '',
+    category:     'informatique',
+    quantityHint: '',
+    budgetFcfa:   '',
+    vendorId:     '',
+  });
+  const [vendors,   setVendors]   = React.useState([]);
+  const [generated, setGenerated] = React.useState(null);     // quote_data JSON
+
+  const E = React.createElement;
+  const sb = DataService._sb;
+
+  const CATEGORIES = [
+    'informatique','electromenager','telephone','maison','vetements',
+    'alimentaire','auto','moto','services','autres'
+  ];
+
+  // ── Chargement des devis ───────────────────────────────────────────────
+  const loadQuotes = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      if (sb) {
+        const { data, error } = await sb
+          .from('b2b_quotes').select('*')
+          .eq('buyer_id', cu.id)
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (!error && data) { setQuotes(data); setLoading(false); return; }
+      }
+    } catch(_) {}
+    // Fallback localStorage
+    const all = JSON.parse(localStorage.getItem('nexus_b2b_quotes') || '[]');
+    setQuotes(all.filter(q => q.buyer_id === cu.id));
+    setLoading(false);
+  }, [cu.id]);
+
+  // Chargement des vendeurs pour le sélecteur
+  const loadVendors = React.useCallback(async () => {
+    try {
+      if (sb) {
+        const { data } = await sb.from('profiles')
+          .select('id, name, shop_category')
+          .eq('role', 'vendor').eq('status', 'approved').limit(100);
+        if (data) { setVendors(data); return; }
+      }
+    } catch(_) {}
+    setVendors(JSON.parse(localStorage.getItem('nexus_vendors') || '[]')
+      .map(v => ({ id: v.id, name: v.name, shop_category: v.category })));
+  }, []);
+
+  React.useEffect(() => { loadQuotes(); loadVendors(); }, []);
+
+  // ── Génération Groq ────────────────────────────────────────────────────
+  const generateQuote = async () => {
+    if (!form.requestText.trim()) { addToast('Décrivez votre besoin', 'warning'); return; }
+    setBusy(true); setStep(2);
+
+    const SYS = `Tu es un assistant commercial expert en B2B au Sénégal pour NEXUS Market.
+Tu génères des devis professionnels structurés en JSON selon le schéma suivant (réponds UNIQUEMENT en JSON, sans texte autour) :
+{
+  "title": "Devis NEXUS #[REF]",
+  "lines": [{ "description": "...", "qty": 1, "unit": "unité|kg|lot|heure", "unit_price_fcfa": 0, "total_fcfa": 0 }],
+  "subtotal_fcfa": 0,
+  "tva_percent": 18,
+  "tva_fcfa": 0,
+  "total_fcfa": 0,
+  "validity_days": 30,
+  "delivery_days": 7,
+  "conditions": "Paiement à 30 jours. Livraison à Dakar incluse. Facture NINEA fournie.",
+  "notes": ""
+}
+Adapte les prix au marché sénégalais en FCFA. TVA à 18% si total > 10M FCFA/an (sinon 0). Sois précis et professionnel.`;
+
+    const userPrompt = `Besoin : ${form.requestText}
+Catégorie : ${form.category}
+Quantité estimée : ${form.quantityHint || 'non précisée'}
+Budget max : ${form.budgetFcfa ? form.budgetFcfa + ' FCFA' : 'non précisé'}
+Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérification'})`;
+
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + GROQ_KEY },
+        body: JSON.stringify({
+          model: GROQ_MODEL, temperature: 0.1, max_tokens: 1200,
+          response_format: { type: 'json_object' },
+          messages: [{ role: 'system', content: SYS }, { role: 'user', content: userPrompt }]
+        })
+      });
+      if (!res.ok) throw new Error('Groq ' + res.status);
+      const data = await res.json();
+      const raw  = data.choices?.[0]?.message?.content || '{}';
+      const q    = JSON.parse(raw);
+      // Enrichir avec une référence
+      q.ref = 'NEXUS-B2B-' + Date.now().toString(36).toUpperCase().slice(-6);
+      q.title = q.title.replace('#[REF]', '#' + q.ref);
+      // Recalcul sécurisé
+      q.subtotal_fcfa = (q.lines || []).reduce((s, l) => s + (l.total_fcfa || 0), 0);
+      q.tva_fcfa = Math.round(q.subtotal_fcfa * (q.tva_percent || 0) / 100);
+      q.total_fcfa = q.subtotal_fcfa + q.tva_fcfa;
+      setGenerated(q);
+      setStep(3);
+    } catch (err) {
+      addToast('Erreur Groq : ' + err.message, 'error');
+      setStep(1);
+    }
+    setBusy(false);
+  };
+
+  // ── Envoi du devis ─────────────────────────────────────────────────────
+  const sendQuote = async () => {
+    setBusy(true);
+    const rec = {
+      id:            crypto.randomUUID(),
+      buyer_id:      cu.id,
+      buyer_name:    cu.name,
+      buyer_company: cu.company || '',
+      buyer_ninea:   cu.ninea   || '',
+      buyer_phone:   cu.phone   || '',
+      buyer_email:   cu.email   || '',
+      vendor_id:     form.vendorId || null,
+      vendor_name:   vendors.find(v => v.id === form.vendorId)?.name || null,
+      request_text:  form.requestText,
+      category:      form.category,
+      quantity_hint: parseInt(form.quantityHint) || null,
+      budget_fcfa:   parseInt(form.budgetFcfa)   || null,
+      quote_data:    generated,
+      status:        'sent',
+      created_at:    new Date().toISOString(),
+      sent_at:       new Date().toISOString(),
+      expires_at:    new Date(Date.now() + 30*86400e3).toISOString(),
+    };
+    try {
+      if (sb) {
+        const { error } = await sb.from('b2b_quotes').insert([rec]);
+        if (error) throw new Error(error.message);
+      } else {
+        const all = JSON.parse(localStorage.getItem('nexus_b2b_quotes') || '[]');
+        all.unshift(rec);
+        localStorage.setItem('nexus_b2b_quotes', JSON.stringify(all));
+      }
+      // Notifier via WhatsApp admin si pas de vendeur ciblé
+      if (!form.vendorId && NEXUS_CONFIG.admin.whatsapp && NEXUS_CONFIG.admin.whatsapp !== '77XXXXXXX') {
+        const msg = encodeURIComponent(
+          `🏢 *Nouvelle demande devis B2B NEXUS*\n` +
+          `Société : ${cu.company || cu.name}\n` +
+          `Catégorie : ${form.category}\n` +
+          `Budget : ${form.budgetFcfa ? parseInt(form.budgetFcfa).toLocaleString('fr-FR') + ' FCFA' : 'N/P'}\n` +
+          `Besoin : ${form.requestText.slice(0, 200)}...\n` +
+          `Ref : ${generated.ref}`
+        );
+        window.open('https://wa.me/221' + NEXUS_CONFIG.admin.whatsapp + '?text=' + msg, '_blank');
+      }
+      addToast('✅ Devis envoyé ! Le vendeur vous répondra sous 24h.', 'success', 6000);
+      setQuotes(prev => [rec, ...prev]);
+      setTab('list');
+      resetForm();
+    } catch (err) {
+      addToast('Erreur envoi : ' + err.message, 'error');
+    }
+    setBusy(false);
+  };
+
+  const resetForm = () => {
+    setForm({ requestText: '', category: 'informatique', quantityHint: '', budgetFcfa: '', vendorId: '' });
+    setGenerated(null); setStep(1);
+  };
+
+  // ── Helpers UI ─────────────────────────────────────────────────────────
+  const fmtFcfa = n => n ? Math.round(n).toLocaleString('fr-FR') + ' FCFA' : '—';
+  const STATUS_CFG = {
+    draft:           { label: 'Brouillon',     badge: 'secondary', icon: 'edit' },
+    sent:            { label: 'Envoyé',         badge: 'info',      icon: 'paper-plane' },
+    vendor_viewed:   { label: 'Lu',             badge: 'info',      icon: 'eye' },
+    vendor_modified: { label: 'Modifié',        badge: 'warning',   icon: 'pen' },
+    confirmed:       { label: 'Confirmé ✅',    badge: 'success',   icon: 'check-circle' },
+    rejected:        { label: 'Refusé',         badge: 'danger',    icon: 'times-circle' },
+    invoiced:        { label: 'Facturé 🧾',     badge: 'success',   icon: 'file-invoice' },
+    cancelled:       { label: 'Annulé',         badge: 'secondary', icon: 'ban' },
+  };
+
+  // ── Rendu formulaire (Step 1) ──────────────────────────────────────────
+  const renderForm = () => E('div', null,
+    E('div', { className: 'alert alert-info', style: { fontSize: '.82rem', marginBottom: '1.25rem' } },
+      E('i', { className: 'fas fa-robot' }), ' Décrivez votre besoin en français ou wolof — l\'IA Groq génère un devis structuré en secondes.'
+    ),
+    E('div', { className: 'form-group' },
+      E('label', { className: 'form-label' }, '✍️ Décrivez votre besoin *'),
+      E('textarea', {
+        className: 'form-textarea', rows: 5,
+        placeholder: 'Ex: J\'ai besoin de 50 ordinateurs portables pour mon école, budget ~200 000 FCFA l\'unité, livraison à Thiès dans 2 semaines. Processeur i5 minimum, SSD 256 Go...',
+        value: form.requestText,
+        onChange: ev => setForm(f => ({ ...f, requestText: ev.target.value })),
+        style: { resize: 'vertical' }
+      }),
+      E('div', { style: { textAlign: 'right', fontSize: '.72rem', color: 'var(--text-secondary)', marginTop: '.25rem' } },
+        form.requestText.length, ' / 2000 caractères'
+      )
+    ),
+    E('div', { className: 'form-row' },
+      E('div', { className: 'form-group' },
+        E('label', { className: 'form-label' }, 'Catégorie'),
+        E('select', { className: 'form-select', value: form.category, onChange: ev => setForm(f => ({ ...f, category: ev.target.value })) },
+          CATEGORIES.map(c => E('option', { key: c, value: c }, c.charAt(0).toUpperCase() + c.slice(1)))
+        )
+      ),
+      E('div', { className: 'form-group' },
+        E('label', { className: 'form-label' }, 'Quantité estimée'),
+        E('input', { type: 'number', className: 'form-input', placeholder: 'Ex: 50', min: 1,
+          value: form.quantityHint, onChange: ev => setForm(f => ({ ...f, quantityHint: ev.target.value })) })
+      )
+    ),
+    E('div', { className: 'form-row' },
+      E('div', { className: 'form-group' },
+        E('label', { className: 'form-label' }, 'Budget maximum (FCFA)'),
+        E('input', { type: 'number', className: 'form-input', placeholder: 'Ex: 5000000',
+          value: form.budgetFcfa, onChange: ev => setForm(f => ({ ...f, budgetFcfa: ev.target.value })) })
+      ),
+      E('div', { className: 'form-group' },
+        E('label', { className: 'form-label' }, 'Vendeur cible (optionnel)'),
+        E('select', { className: 'form-select', value: form.vendorId, onChange: ev => setForm(f => ({ ...f, vendorId: ev.target.value })) },
+          E('option', { value: '' }, '— Diffuser à tous —'),
+          vendors.filter(v => !form.category || v.shop_category === form.category || !v.shop_category)
+            .map(v => E('option', { key: v.id, value: v.id }, v.name))
+        )
+      )
+    ),
+    E('button', {
+      className: 'btn btn-primary btn-block' + (busy ? ' btn-loading' : ''),
+      onClick: generateQuote,
+      disabled: busy || !form.requestText.trim()
+    }, busy ? 'Génération...' : E(React.Fragment, null, E('i', { className: 'fas fa-robot' }), ' Générer le devis avec Groq IA'))
+  );
+
+  // ── Rendu génération (Step 2) ──────────────────────────────────────────
+  const renderGenerating = () => E('div', { style: { textAlign: 'center', padding: '3rem 1rem' } },
+    E('div', { className: 'spinner', style: { width: 56, height: 56, margin: '0 auto 1.5rem' } }),
+    E('h3', { style: { fontWeight: 700, marginBottom: '.5rem' } }, '🤖 Groq LLaMA génère votre devis...'),
+    E('p', { style: { color: 'var(--text-secondary)', fontSize: '.88rem' } },
+      'Analyse du besoin · Estimation des prix FCFA · Structuration des lignes · Conditions de paiement'
+    )
+  );
+
+  // ── Rendu review (Step 3) ──────────────────────────────────────────────
+  const renderReview = () => {
+    if (!generated) return null;
+    const q = generated;
+    return E('div', null,
+      E('div', { style: { background: 'linear-gradient(135deg,#1a1a2e,#16213e)', color: 'white', borderRadius: 14, padding: '1.1rem 1.4rem', marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem' } },
+        E('div', null,
+          E('div', { style: { fontWeight: 900, fontSize: '1.05rem' } }, q.title),
+          E('div', { style: { fontSize: '.78rem', opacity: .7, marginTop: '.2rem' } },
+            'Valide ', q.validity_days, ' jours · Livraison estimée : ', q.delivery_days, ' j ouvrés'
+          )
+        ),
+        E('div', { style: { textAlign: 'right' } },
+          E('div', { style: { fontSize: '1.5rem', fontWeight: 900, color: '#FDEE42' } }, fmtFcfa(q.total_fcfa)),
+          E('div', { style: { fontSize: '.72rem', opacity: .7 } }, 'TVA ', q.tva_percent || 0, '% incluse')
+        )
+      ),
+      // Lignes
+      E('div', { className: 'table-wrapper', style: { marginBottom: '1.25rem' } },
+        E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null,
+            E('th', null, 'Description'), E('th', null, 'Qté'), E('th', null, 'Unité'),
+            E('th', null, 'Prix unitaire'), E('th', null, 'Total')
+          )),
+          E('tbody', null, (q.lines || []).map((l, i) =>
+            E('tr', { key: i },
+              E('td', null, l.description),
+              E('td', null, l.qty),
+              E('td', null, l.unit || 'unité'),
+              E('td', null, fmtFcfa(l.unit_price_fcfa)),
+              E('td', { style: { fontWeight: 700 } }, fmtFcfa(l.total_fcfa))
+            )
+          )),
+          E('tfoot', null,
+            E('tr', { style: { background: 'var(--bg-light)' } },
+              E('td', { colSpan: 4, style: { fontWeight: 700, textAlign: 'right' } }, 'Sous-total'),
+              E('td', { style: { fontWeight: 700 } }, fmtFcfa(q.subtotal_fcfa))
+            ),
+            q.tva_fcfa > 0 && E('tr', null,
+              E('td', { colSpan: 4, style: { textAlign: 'right', color: 'var(--text-secondary)' } }, 'TVA ' + (q.tva_percent || 18) + '%'),
+              E('td', { style: { color: 'var(--text-secondary)' } }, fmtFcfa(q.tva_fcfa))
+            ),
+            E('tr', { style: { background: '#f0fdf4' } },
+              E('td', { colSpan: 4, style: { fontWeight: 900, textAlign: 'right', fontSize: '1.05rem' } }, 'TOTAL TTC'),
+              E('td', { style: { fontWeight: 900, fontSize: '1.05rem', color: 'var(--success)' } }, fmtFcfa(q.total_fcfa))
+            )
+          )
+        )
+      ),
+      // Conditions
+      q.conditions && E('div', { style: { background: 'var(--bg-light)', borderRadius: 10, padding: '.85rem 1rem', fontSize: '.82rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' } },
+        E('strong', null, '📋 Conditions : '), q.conditions
+      ),
+      E('div', { className: 'alert alert-warning', style: { fontSize: '.82rem', marginBottom: '1.25rem' } },
+        E('i', { className: 'fas fa-edit' }),
+        ' Ce devis est généré par IA. Vous pouvez le modifier avant l\'envoi. Le vendeur peut aussi l\'ajuster.'
+      ),
+      E('div', { className: 'flex gap-2' },
+        E('button', { className: 'btn btn-secondary', onClick: () => setStep(1) },
+          E('i', { className: 'fas fa-arrow-left' }), ' Modifier le besoin'
+        ),
+        E('button', {
+          className: 'btn btn-primary flex-1' + (busy ? ' btn-loading' : ''),
+          onClick: sendQuote, disabled: busy
+        }, busy ? 'Envoi...' : E(React.Fragment, null, E('i', { className: 'fas fa-paper-plane' }), ' Envoyer au vendeur'))
+      )
+    );
+  };
+
+  // ── Rendu liste des devis ──────────────────────────────────────────────
+  const renderList = () => E('div', null,
+    loading
+      ? E('div', { style: { textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' } },
+          E('i', { className: 'fas fa-spinner fa-spin fa-2x' })
+        )
+      : quotes.length === 0
+        ? E('div', { className: 'empty-state' },
+            E('i', { className: 'fas fa-file-invoice' }),
+            E('h3', null, 'Aucun devis pour l\'instant'),
+            E('p', null, 'Créez votre première demande de devis B2B'),
+            E('button', { className: 'btn btn-primary', onClick: () => setTab('new') },
+              E('i', { className: 'fas fa-plus' }), ' Nouveau devis'
+            )
+          )
+        : E('div', { className: 'table-wrapper' },
+            E('table', { className: 'data-table' },
+              E('thead', null, E('tr', null,
+                E('th', null, 'Réf'), E('th', null, 'Catégorie'), E('th', null, 'Total'),
+                E('th', null, 'Vendeur'), E('th', null, 'Statut'), E('th', null, 'Date'), E('th', null, '')
+              )),
+              E('tbody', null, quotes.map(q =>
+                E('tr', { key: q.id },
+                  E('td', { style: { fontFamily: 'monospace', fontSize: '.78rem' } },
+                    q.quote_data?.ref || q.id.slice(0, 8).toUpperCase()
+                  ),
+                  E('td', null, q.category),
+                  E('td', { style: { fontWeight: 700 } }, fmtFcfa(q.quote_data?.total_fcfa)),
+                  E('td', null, q.vendor_name || E('span', { style: { color: 'var(--text-secondary)', fontStyle: 'italic' } }, 'Tous vendeurs')),
+                  E('td', null,
+                    E('span', { className: 'badge badge-' + (STATUS_CFG[q.status]?.badge || 'secondary') },
+                      E('i', { className: 'fas fa-' + (STATUS_CFG[q.status]?.icon || 'circle'), style: { marginRight: '.3rem' } }),
+                      STATUS_CFG[q.status]?.label || q.status
+                    )
+                  ),
+                  E('td', null, new Date(q.created_at).toLocaleDateString('fr-FR')),
+                  E('td', null,
+                    E('button', { className: 'btn btn-secondary btn-sm', onClick: () => setSelected(q) },
+                      E('i', { className: 'fas fa-eye' })
+                    )
+                  )
+                )
+              ))
+            )
+          )
+  );
+
+  // ── Modale détail devis ────────────────────────────────────────────────
+  const renderModal = () => !selected ? null : E('div', { className: 'modal-overlay', onClick: () => setSelected(null) },
+    E('div', { className: 'modal modal-wide', onClick: e => e.stopPropagation(), style: { maxWidth: 680 } },
+      E('div', { className: 'modal-header' },
+        E('h2', { className: 'modal-title' },
+          E('i', { className: 'fas fa-file-invoice text-primary', style: { marginRight: '.5rem' } }),
+          selected.quote_data?.title || 'Devis B2B'
+        ),
+        E('button', { className: 'close-btn', onClick: () => setSelected(null) }, E('i', { className: 'fas fa-times' }))
+      ),
+      E('div', { className: 'modal-body' },
+        selected.vendor_note && E('div', { className: 'alert alert-warning', style: { fontSize: '.82rem' } },
+          E('i', { className: 'fas fa-pen' }), ' Note du vendeur : ', E('strong', null, selected.vendor_note)
+        ),
+        selected.quote_data && renderReviewStatic(selected.quote_data),
+        selected.status === 'confirmed' && !selected.invoice_number && E('button', {
+          className: 'btn btn-success btn-block', style: { marginTop: '1rem' },
+          onClick: async () => {
+            // Générer la facture PDF via la fonction existante
+            try {
+              await generateBuyerInvoicePDF({
+                id: selected.id,
+                buyerName: selected.buyer_name,
+                buyerAddress: selected.buyer_company,
+                products: (selected.quote_data?.lines || []).map(l => ({ name: l.description, quantity: l.qty, price: l.unit_price_fcfa / FCFA })),
+                total: (selected.quote_data?.total_fcfa || 0) / FCFA,
+                date: selected.confirmed_at || new Date().toISOString(),
+                status: 'confirmed'
+              });
+              addToast('Facture générée !', 'success');
+            } catch(e) { addToast('Erreur PDF : ' + e.message, 'error'); }
+          }
+        }, E(React.Fragment, null, E('i', { className: 'fas fa-file-invoice' }), ' Télécharger la facture NINEA'))
+      )
+    )
+  );
+
+  const renderReviewStatic = q => {
+    if (!q) return null;
+    return E('div', null,
+      E('div', { className: 'table-wrapper', style: { marginBottom: '.75rem' } },
+        E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null,
+            E('th', null, 'Description'), E('th', null, 'Qté'), E('th', null, 'P.U.'), E('th', null, 'Total')
+          )),
+          E('tbody', null, (q.lines || []).map((l, i) =>
+            E('tr', { key: i },
+              E('td', null, l.description), E('td', null, l.qty),
+              E('td', null, fmtFcfa(l.unit_price_fcfa)),
+              E('td', { style: { fontWeight: 700 } }, fmtFcfa(l.total_fcfa))
+            )
+          ))
+        )
+      ),
+      E('div', { style: { textAlign: 'right', fontWeight: 900, fontSize: '1.1rem', color: 'var(--success)' } },
+        'TOTAL : ', fmtFcfa(q.total_fcfa)
+      )
+    );
+  };
+
+  // ── Rendu principal ────────────────────────────────────────────────────
+  return E('div', null,
+    // En-tête
+    E('div', { className: 'card', style: { marginBottom: '1.5rem' } },
+      E('div', { className: 'card-header' },
+        E('h2', { className: 'card-title' },
+          E('i', { className: 'fas fa-file-invoice-dollar text-primary' }), ' Devis B2B automatisés'
+        ),
+        E('div', { style: { display: 'flex', gap: '.5rem' } },
+          ['list', 'new'].map(t => E('button', {
+            key: t,
+            className: 'btn btn-sm ' + (tab === t ? 'btn-primary' : 'btn-secondary'),
+            onClick: () => { setTab(t); if (t === 'new') { resetForm(); } else { loadQuotes(); } }
+          }, t === 'list'
+            ? E(React.Fragment, null, E('i', { className: 'fas fa-list' }), ' Mes devis')
+            : E(React.Fragment, null, E('i', { className: 'fas fa-plus' }), ' Nouveau devis')
+          ))
+        )
+      ),
+      // Indicateur de valeur
+      tab === 'new' && E('div', { style: { background: 'linear-gradient(135deg,#0284c7,#0ea5e9)', padding: '1rem 1.4rem', display: 'flex', gap: '2rem', flexWrap: 'wrap' } },
+        [
+          { i: 'robot',        t: 'IA Groq génère en 5s' },
+          { i: 'file-invoice', t: 'Facture NINEA auto' },
+          { i: 'clock',        t: 'Vendeur répond sous 24h' },
+          { i: 'percent',      t: 'Remise volume B2B' },
+        ].map((f, i) => E('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: '.4rem', color: 'white', fontSize: '.78rem' } },
+          E('i', { className: 'fas fa-' + f.i, style: { color: '#FDEE42' } }), f.t
+        ))
+      )
+    ),
+
+    // Stepper (new quote)
+    tab === 'new' && step <= 3 && E('div', { style: { display: 'flex', gap: '.5rem', marginBottom: '1.5rem' } },
+      [['1', 'Décrire le besoin'], ['2', 'Génération IA'], ['3', 'Réviser & Envoyer']].map(([n, lbl], i) =>
+        E('div', { key: n, style: { flex: 1 } },
+          E('div', { style: { height: 4, borderRadius: 2, background: step > i ? 'var(--primary)' : 'var(--border)', marginBottom: '.3rem', transition: 'background .3s' } }),
+          E('div', { style: { fontSize: '.72rem', color: step > i ? 'var(--primary)' : 'var(--text-secondary)', fontWeight: step === i + 1 ? 700 : 400 } }, lbl)
+        )
+      )
+    ),
+
+    E('div', { className: 'card' },
+      E('div', { style: { padding: '1.4rem' } },
+        tab === 'list' ? renderList()
+          : step === 1 ? renderForm()
+          : step === 2 ? renderGenerating()
+          : renderReview()
+      )
+    ),
+    renderModal()
+  );
+};
+
 // Rendu à l'intérieur de BuyerDashboard quand view === "b2b_profile" | "b2b_orders" | "b2b_statement"
 // ══════════════════════════════════════════════════════════════════════════
 // [FIX #310] NavTabs extrait au niveau module — activeTab et onTabChange passés en props
@@ -22805,7 +23297,8 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "offers", icon: "hand-holding-usd", label: "Mes Offres", badge: offers.filter((o) => o.status === "pending").length },
     ...(currentUser2.role === "buyer_pro"
       ? [
-          { id: "b2b_profile",   icon: "building",     label: "Profil Entreprise",  b2b: true },
+          { id: "b2b_profile",   icon: "building",      label: "Profil Entreprise",  b2b: true },
+          { id: "b2b_quotes",    icon: "file-invoice-dollar", label: "Devis IA 🤖",     b2b: true },
           { id: "b2b_orders",    icon: "file-invoice",  label: "Commandes B2B",      b2b: true },
           { id: "b2b_statement", icon: "file-pdf",      label: "Relevé mensuel",     b2b: true },
         ]
@@ -22924,7 +23417,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star" }), /* @__PURE__ */ React.createElement("h3", null, "Pas encore de points"), /* @__PURE__ */ React.createElement("p", null, "Passez votre premi\xE8re commande pour commencer \xE0 gagner des points !"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "D\xE9couvrir le catalogue"))
           : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Type"), /* @__PURE__ */ React.createElement("th", null, "Description"), /* @__PURE__ */ React.createElement("th", null, "Points"), /* @__PURE__ */ React.createElement("th", null, "Date"))), /* @__PURE__ */ React.createElement("tbody", null, hist.slice(0, 20).map((h, i2) => /* @__PURE__ */ React.createElement("tr", { key: i2 }, /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${h.type==="earn"?"success":h.type==="redeem"?"warning":"danger"}` }, h.type==="earn"?"Gagn\xE9":h.type==="redeem"?"Utilis\xE9":"Expir\xE9")), /* @__PURE__ */ React.createElement("td", null, h.description||h.orderId||"-"), /* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", { style: { color: h.type==="earn"?"var(--success)":"var(--danger)" } }, h.type==="earn"?"+":"-", Math.abs(h.points||0), " pts")), /* @__PURE__ */ React.createElement("td", null, h.date ? new Date(h.date).toLocaleDateString("fr-FR") : "-"))))))
       );
-  })())), view === "referral" && /* @__PURE__ */ React.createElement(ReferralWidget, { currentUser: currentUser2 }), (view === "b2b_profile" || view === "b2b_orders" || view === "b2b_statement") && /* @__PURE__ */ React.createElement(B2BProDashboard, { currentUser: currentUser2, addToast, view, setParentView: setView }), view === "push_settings" && /* @__PURE__ */ React.createElement(PushNotificationSettings, { currentUser: currentUser2, addToast }), !isLoading && view === "profile" && /* @__PURE__ */ React.createElement(ProfileEditor, { currentUser: currentUser2, addToast })), cart.length > 0 && view !== "orders" && /* @__PURE__ */ React.createElement("button", { className: "floating-cart", onClick: () => setShowCart(true), "aria-label": `Panier: ${cart.reduce((s, i) => s + i.quantity, 0)} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0))), selectedProduct && /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: () => setSelectedProduct(null) }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "prod-detail-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "prod-detail-title" }, selectedProduct.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: () => setSelectedProduct(null), "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-detail-grid" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: selectedProduct, height: 280 }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
+  })())), view === "referral" && /* @__PURE__ */ React.createElement(ReferralWidget, { currentUser: currentUser2 }), (view === "b2b_profile" || view === "b2b_orders" || view === "b2b_statement") && /* @__PURE__ */ React.createElement(B2BProDashboard, { currentUser: currentUser2, addToast, view, setParentView: setView }), view === "b2b_quotes" && /* @__PURE__ */ React.createElement(B2BQuotesPanel, { currentUser: currentUser2, addToast }), view === "push_settings" && /* @__PURE__ */ React.createElement(PushNotificationSettings, { currentUser: currentUser2, addToast }), !isLoading && view === "profile" && /* @__PURE__ */ React.createElement(ProfileEditor, { currentUser: currentUser2, addToast })), cart.length > 0 && view !== "orders" && /* @__PURE__ */ React.createElement("button", { className: "floating-cart", onClick: () => setShowCart(true), "aria-label": `Panier: ${cart.reduce((s, i) => s + i.quantity, 0)} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0))), selectedProduct && /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: () => setSelectedProduct(null) }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "prod-detail-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "prod-detail-title" }, selectedProduct.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: () => setSelectedProduct(null), "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-detail-grid" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: selectedProduct, height: 280 }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(selectedProduct);
   } }, /* @__PURE__ */ React.createElement("i", { className: `fa${wishlist.includes(selectedProduct.id) ? "s" : "r"} fa-heart` }))), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { className: "product-category mb-1" }, selectedProduct.category), /* @__PURE__ */ React.createElement("div", { className: "product-vendor vendor-link mb-1", style: { fontSize: "0.95rem" }, title: "Voir la boutique de " + selectedProduct.vendorName, role: "button", tabIndex: 0, onClick: () => { setSelectedProduct(null); setShowVendorPage({ id: selectedProduct.vendor||null, name: selectedProduct.vendorName||"Boutique" }); }, onKeyDown: (e) => { if (e.key==="Enter") { setSelectedProduct(null); setShowVendorPage({ id: selectedProduct.vendor||null, name: selectedProduct.vendorName||"Boutique" }); } } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store", "aria-hidden": "true" }), " Boutique ", /* @__PURE__ */ React.createElement("strong", null, selectedProduct.vendorName)), /* @__PURE__ */ React.createElement(PriceDisplay, { product: selectedProduct, style: { fontSize: "2rem" }, className: "product-price" }), /* @__PURE__ */ React.createElement("div", { className: "product-rating mb-2" }, /* @__PURE__ */ React.createElement(Stars, { rating: selectedProduct.rating }), /* @__PURE__ */ React.createElement("span", null, selectedProduct.rating), /* @__PURE__ */ React.createElement("span", { className: "text-muted" }, "(", selectedProduct.reviewsCount || 0, " avis)")), /* @__PURE__ */ React.createElement("p", { style: { marginBottom: "1.5rem", color: "var(--text-secondary)", lineHeight: "1.8" } }, selectedProduct.description), /* @__PURE__ */ React.createElement("div", { className: "mb-2" }, /* @__PURE__ */ React.createElement("span", { className: `badge ${selectedProduct.stock > 10 ? "badge-success" : "badge-warning"}` }, selectedProduct.stock, " en stock")), /* @__PURE__ */ React.createElement(VariantSelector, { product: selectedProduct, selectedVariants, onVariantChange: (type, val) => setSelectedVariants((v) => __spreadProps(__spreadValues({}, v), { [type]: val })) }), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2", style: { flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-lg flex-1", onClick: () => {
