@@ -14387,6 +14387,224 @@ const AdminAmbassadorsPanel = ({ addToast }) => {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════════════
+// AdminInsuranceLeads — Dashboard admin des leads assurance auto
+// ════════════════════════════════════════════════════════════════════════════
+const AdminInsuranceLeads = ({ addToast }) => {
+  const [leads,   setLeads]   = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [filter,  setFilter]  = React.useState('all');
+  const [kpi,     setKpi]     = React.useState({ total:0, new:0, converted:0, commission:0 });
+  const E = React.createElement;
+
+  const STATUS_CFG = {
+    new:       { label:'Nouveau',    badge:'danger',    icon:'bell' },
+    contacted: { label:'Contacté',   badge:'warning',   icon:'phone' },
+    quoted:    { label:'Devis envoyé',badge:'info',     icon:'file-alt' },
+    converted: { label:'Converti ✅', badge:'success',  icon:'check-circle' },
+    lost:      { label:'Perdu',       badge:'secondary',icon:'times-circle' },
+  };
+  const INSURER_LABEL = {
+    nexus_choice:'⭐ Choix NEXUS', nsia:'🔵 NSIA', allianz:'🔷 Allianz',
+    laarcSN:'🟢 LARC SN', amsa:'🟡 AMSA'
+  };
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      if (DataService._sb) {
+        const { data } = await DataService._sb
+          .from('insurance_leads').select('*')
+          .order('created_at', { ascending: false }).limit(200);
+        if (data) {
+          setLeads(data);
+          setKpi({
+            total:      data.length,
+            new:        data.filter(l=>l.status==='new').length,
+            converted:  data.filter(l=>l.status==='converted').length,
+            commission: data.reduce((s,l)=>s+(l.commission_fcfa||0),0),
+          });
+        }
+      } else {
+        const ls = JSON.parse(localStorage.getItem('nexus_ins_leads')||'[]');
+        setLeads(ls);
+        setKpi({ total:ls.length, new:ls.filter(l=>l.status==='new').length, converted:0, commission:0 });
+      }
+    } catch(e) { addToast('Erreur chargement : '+e.message,'error'); }
+    setLoading(false);
+  }, []);
+
+  React.useEffect(()=>{ load(); }, []);
+
+  const setStatus = async (id, status) => {
+    if (DataService._sb) {
+      await DataService._sb.from('insurance_leads').update({ status, updated_at:new Date().toISOString() }).eq('id',id);
+    }
+    setLeads(prev=>prev.map(l=>l.id===id?{...l,status}:l));
+    const upd = leads.find(l=>l.id===id);
+    if (status==='converted' && upd) addToast('Lead converti ! Commission estimée : 5 000 FCFA','success');
+  };
+
+  const filtered = filter==='all' ? leads : leads.filter(l=>l.status===filter);
+
+  const exportCSV = () => {
+    const rows = [['Date','Nom','Téléphone','Email','Ville','Véhicule','Couverture','Assureur','Statut','Prix FCFA'].join(',')];
+    filtered.forEach(l => rows.push([
+      new Date(l.created_at).toLocaleDateString('fr-FR'),
+      '"'+(l.full_name||'')+'"', l.phone||'', l.email||'', l.city||'',
+      '"'+(l.product_name||'')+'"', l.coverage_type||'', l.insurer||'', l.status||'', l.product_price||0
+    ].join(',')));
+    const a = document.createElement('a');
+    a.href = 'data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(rows.join('\n'));
+    a.download = 'nexus_leads_assurance_'+new Date().toISOString().slice(0,10)+'.csv';
+    a.click();
+  };
+
+  const notifyInsurer = (lead) => {
+    const insurer = lead.insurer==='nsia' ? 'partenaires@nsia.sn'
+                  : lead.insurer==='allianz' ? 'courtage@allianz.sn' : 'partenaires@nexus.sn';
+    const subject = encodeURIComponent('Lead assurance véhicule — NEXUS Market');
+    const body = encodeURIComponent(
+      'Bonjour,\n\nNous vous transmettons un lead qualifié depuis NEXUS Market.\n\n' +
+      'Prospect : '+lead.full_name+'\nTél : +221'+lead.phone+'\nEmail : '+(lead.email||'N/A')+'\n' +
+      'Ville : '+lead.city+'\nVéhicule : '+(lead.product_name||'N/A')+
+      ' ('+(lead.product_price||0).toLocaleString('fr-FR')+' FCFA)\n' +
+      'Couverture souhaitée : '+lead.coverage_type+'\nUsage : '+(lead.vehicle_usage||'personnel')+'\n\n' +
+      'Cordialement,\nNEXUS Market — nexus.sn'
+    );
+    window.open('mailto:'+insurer+'?subject='+subject+'&body='+body, '_blank');
+    setStatus(lead.id, 'contacted');
+  };
+
+  return E('div', null,
+    // KPIs
+    E('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))', gap:'0.75rem', marginBottom:'1.5rem' } },
+      [
+        { label:'Total leads',     val:kpi.total,     icon:'car',         color:'#0284c7' },
+        { label:'Nouveaux',        val:kpi.new,        icon:'bell',        color:'#dc2626' },
+        { label:'Convertis',       val:kpi.converted,  icon:'check-circle',color:'#16a34a' },
+        { label:'Commissions (F)', val:(kpi.commission||0).toLocaleString('fr-FR')+' FCFA', icon:'coins', color:'#00853E' },
+      ].map((k,i) => E('div', { key:i, className:'stat-card' },
+        E('i', { className:'fas fa-'+k.icon+' stat-icon', style:{ color:k.color } }),
+        E('div', { className:'stat-label' }, k.label),
+        E('div', { className:'stat-value', style:{ fontSize:'1.4rem' } }, k.val)
+      ))
+    ),
+    // Filtres + Export
+    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-car text-primary'}), ' Leads Assurance Auto (', leads.length, ')'),
+        E('div', { style:{ display:'flex', gap:'0.5rem', flexWrap:'wrap' } },
+          E('button', { className:'btn btn-secondary btn-sm', onClick:load }, E('i',{className:'fas fa-sync-alt'}),' Actualiser'),
+          E('button', { className:'btn btn-secondary btn-sm', onClick:exportCSV }, E('i',{className:'fas fa-file-csv'}),' Export CSV'),
+          E('a', { href:'https://nsia.sn', target:'_blank', className:'btn btn-sm', style:{ background:'#003478',color:'white' } },
+            E('i',{className:'fas fa-external-link-alt'}),' NSIA')
+        )
+      ),
+      E('div', { style:{ padding:'0.75rem 1rem', display:'flex', gap:'0.5rem', flexWrap:'wrap', borderBottom:'1px solid var(--border)' } },
+        ['all','new','contacted','quoted','converted','lost'].map(s =>
+          E('button', { key:s, className:'btn btn-sm '+(filter===s?'btn-primary':'btn-secondary'),
+            onClick:()=>setFilter(s) },
+            s==='all'?'Tous ('+leads.length+')':(STATUS_CFG[s]?.label||s)+' ('+leads.filter(l=>l.status===s).length+')'
+          )
+        )
+      ),
+      loading
+        ? E('div', { style:{ padding:'2rem', textAlign:'center', color:'var(--text-secondary)' } },
+            E('i', { className:'fas fa-spinner fa-spin fa-2x' })
+          )
+        : filtered.length === 0
+          ? E('div', { className:'empty-state' },
+              E('i', { className:'fas fa-car-crash' }),
+              E('h3', null, filter==='all'?'Aucun lead pour l\'instant':'Aucun lead dans cette catégorie'),
+              E('p', null, 'Les leads générés depuis les fiches véhicule apparaîtront ici.')
+            )
+          : E('div', { className:'table-wrapper' },
+              E('table', { className:'data-table' },
+                E('thead', null, E('tr', null,
+                  E('th', null,'Date'), E('th',null,'Prospect'), E('th',null,'Véhicule'),
+                  E('th',null,'Couverture'), E('th',null,'Assureur'), E('th',null,'Statut'),
+                  E('th',null,'Actions')
+                )),
+                E('tbody', null, filtered.map(l =>
+                  E('tr', { key:l.id },
+                    E('td', null, new Date(l.created_at).toLocaleDateString('fr-FR')),
+                    E('td', null,
+                      E('div', { style:{ fontWeight:700 } }, l.full_name),
+                      E('div', { style:{ fontSize:'0.76rem', color:'var(--text-secondary)' } }, '+221', l.phone),
+                      l.city && E('div', { style:{ fontSize:'0.72rem', color:'var(--text-secondary)' } }, l.city)
+                    ),
+                    E('td', null,
+                      E('div', { style:{ fontSize:'0.82rem', fontWeight:600 } }, l.product_name||'—'),
+                      l.product_price && E('div', { style:{ fontSize:'0.72rem', color:'var(--text-secondary)' } },
+                        (l.product_price).toLocaleString('fr-FR'),' FCFA'
+                      )
+                    ),
+                    E('td', null, E('span', { className:'badge badge-info', style:{ fontSize:'0.72rem' } },
+                      l.coverage_type?.replace('_',' ')||'—'
+                    )),
+                    E('td', null, E('span', { style:{ fontSize:'0.8rem', fontWeight:600 } },
+                      INSURER_LABEL[l.insurer]||l.insurer
+                    )),
+                    E('td', null, E('span', { className:'badge badge-'+(STATUS_CFG[l.status]?.badge||'secondary') },
+                      STATUS_CFG[l.status]?.label||l.status
+                    )),
+                    E('td', null,
+                      E('div', { className:'flex gap-1', style:{ flexWrap:'wrap' } },
+                        E('button', {
+                          className:'btn btn-sm',
+                          style:{ background:'#003478', color:'white', border:'none', padding:'0.3rem 0.6rem', borderRadius:6, cursor:'pointer', fontSize:'0.78rem' },
+                          onClick:()=>notifyInsurer(l),
+                          title:'Transmettre par email à l\'assureur'
+                        }, E('i',{className:'fas fa-paper-plane'}), ' Transmettre'),
+                        l.status !== 'converted' && E('button', {
+                          className:'btn btn-success btn-sm',
+                          onClick:()=>setStatus(l.id,'converted'),
+                          title:'Marquer comme converti'
+                        }, E('i',{className:'fas fa-check'})),
+                        l.status === 'new' && E('button', {
+                          className:'btn btn-secondary btn-sm',
+                          onClick:()=>setStatus(l.id,'lost'),
+                          title:'Marquer comme perdu'
+                        }, E('i',{className:'fas fa-times'}))
+                      )
+                    )
+                  )
+                ))
+              )
+            )
+    ),
+    // Aide partenariats
+    E('div', { className:'card' },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-handshake text-primary'}), ' Partenariats assureurs')
+      ),
+      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'0.75rem' } },
+        E('div', { className:'alert alert-info', style:{ fontSize:'0.82rem' } },
+          E('i',{className:'fas fa-info-circle'}),
+          ' Chaque lead qualifié transmis vaut entre 3 000 et 10 000 FCFA selon l\'assureur et le véhicule. Avec 20 leads/mois : 60k-200k FCFA de commissions.'
+        ),
+        E('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.75rem' } },
+          [
+            { label:'NSIA Sénégal', url:'https://nsia.sn/partenaires', color:'#003478', desc:'Leader assurance SN' },
+            { label:'Allianz SN',   url:'https://allianz.sn/b2b',      color:'#0050b3', desc:'Réseau 47 agences' },
+            { label:'LARC SN',      url:'mailto:commercial@larc.sn',   color:'#16a34a', desc:'Assureur local' },
+            { label:'AMSA',         url:'mailto:b2b@amsa-assurances.com',color:'#ca8a04',desc:'Spécialiste véhicules' },
+          ].map((p,i) => E('a', { key:i, href:p.url, target:'_blank', style:{
+            padding:'0.75rem', borderRadius:10, border:'1px solid var(--border)',
+            textDecoration:'none', display:'block', background:'white',
+          }},
+            E('div', { style:{ fontWeight:700, color:p.color, fontSize:'0.88rem' } }, p.label),
+            E('div', { style:{ fontSize:'0.75rem', color:'var(--text-secondary)', marginTop:'0.15rem' } }, p.desc),
+            E('div', { style:{ fontSize:'0.7rem', color:'var(--primary)', fontWeight:600, marginTop:'0.25rem' } }, 'Contacter le service partenariats →')
+          ))
+        )
+      )
+    )
+  );
+};
+
 // AdminOnDemandPanel — Gestion des commandes sur demande (côté admin)
 // ══════════════════════════════════════════════════════════════════════════════
 const AdminOnDemandPanel = ({ addToast }) => {
@@ -16145,7 +16363,8 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "users", icon: "users-cog", label: "Utilisateurs" },
     { id: "b2b", icon: "building", label: "Acheteurs Pro B2B" },
     { id: "ambassadors", icon: "award", label: "Ambassadeurs" },
-    { id: "ondemand_admin", icon: "concierge-bell", label: "Commandes OnDemand" },
+    { id: "ondemand_admin",   icon: "concierge-bell", label: "Commandes OnDemand" },
+    { id: "insurance_leads",  icon: "car",            label: "🚗 Leads Assurance" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
     { id: "logs", icon: "history", label: "Journal activité" },
@@ -16431,7 +16650,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
               )
             )
     );
-  })(), view === "b2b" && /* @__PURE__ */ React.createElement(AdminB2BPanel, { addToast }), view === "ambassadors" && React.createElement(AdminAmbassadorsPanel, { addToast }), view === "ondemand_admin" && React.createElement(AdminOnDemandPanel, { addToast }), view === "coupons" && (() => {
+  })(), view === "b2b" && /* @__PURE__ */ React.createElement(AdminB2BPanel, { addToast }), view === "ambassadors" && React.createElement(AdminAmbassadorsPanel, { addToast }), view === "ondemand_admin" && React.createElement(AdminOnDemandPanel, { addToast }), view === "insurance_leads" && React.createElement(AdminInsuranceLeads, { addToast }), view === "coupons" && (() => {
     const newCoupon = adminNewCoupon;
     const setNewCoupon = setAdminNewCoupon;
     const COUPON_CATS = ["", "Électronique","Informatique","Mode","Beauté","Maison","Sport","Alimentation","Tissus & Wax","Artisanat","Produits locaux","Autre"];
@@ -19763,6 +19982,366 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
     )
   );
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// InsuranceWidget — Widget devis assurance auto sur fiches véhicules
+// S'affiche uniquement si product.category correspond à un véhicule.
+// Flux : formulaire → Supabase insurance_leads → notification admin →
+//        transmission à NSIA/Allianz → commission 3k-10k FCFA/lead
+// ════════════════════════════════════════════════════════════════════════════
+
+const VEHICLE_CATEGORIES = ['auto','automobile','voiture','moto','véhicule','vehicule',
+  'transport','camion','bus','taxi','4x4','tricycle','vélo électrique'];
+
+const isVehicleProduct = (product) => {
+  if (!product) return false;
+  const cat = (product.category || '').toLowerCase();
+  const name = (product.name || '').toLowerCase();
+  return VEHICLE_CATEGORIES.some(v => cat.includes(v) || name.includes(v))
+    || cat === 'auto' || cat === 'moto' || cat === 'transport'
+    || name.includes('voiture') || name.includes('moto') || name.includes('véhicule')
+    || name.includes('Toyota') || name.includes('Peugeot') || name.includes('Renault')
+    || name.includes('Mercedes') || name.includes('BMW') || name.includes('Nissan')
+    || /\b(4x4|SUV|berline|pick.?up|camion|bus|taxi)\b/i.test(name);
+};
+
+const InsuranceWidget = ({ product, currentUser, addToast }) => {
+  const [open,      setOpen]      = React.useState(false);
+  const [step,      setStep]      = React.useState(1); // 1=intro, 2=form, 3=confirmed
+  const [submitting,setSubmitting]= React.useState(false);
+  const [form, setForm] = React.useState({
+    fullName:     currentUser?.name  || '',
+    phone:        currentUser?.phone || '',
+    email:        currentUser?.email || '',
+    city:         'Dakar',
+    vehicleType:  'voiture',
+    vehicleBrand: '',
+    vehicleYear:  new Date().getFullYear(),
+    vehicleUsage: 'personnel',
+    coverageType: 'tiers',
+    insurer:      'nexus_choice',
+  });
+
+  const E = React.createElement;
+
+  const COVERAGE = [
+    { id:'tiers',           label:'Responsabilité Civile (tiers)',    price:'~25k-80k FCFA/an', desc:'Obligatoire — couvre les dommages aux tiers' },
+    { id:'tiers_incendie',  label:'Tiers + Incendie/Vol',             price:'~50k-150k FCFA/an',desc:'RC + protection contre l\'incendie et le vol' },
+    { id:'tous_risques',    label:'Tous Risques (complète)',           price:'~120k-400k FCFA/an',desc:'Couverture maximale · recommandé pour véhicules neufs' },
+  ];
+
+  const INSURERS = [
+    { id:'nexus_choice', label:'Meilleure offre NEXUS',  emoji:'⭐', desc:'On compare NSIA, Allianz et LARC pour vous' },
+    { id:'nsia',         label:'NSIA Sénégal',           emoji:'🔵', desc:'Leader assurance Sénégal · filiale NSIA Groupe' },
+    { id:'allianz',      label:'Allianz Sénégal',        emoji:'🔷', desc:'Groupe mondial · réseau 47 agences Sénégal' },
+    { id:'laarcSN',      label:'LARC Sénégal',           emoji:'🟢', desc:'Assureur local sénégalais · tarifs compétitifs' },
+    { id:'amsa',         label:'AMSA Assurances',        emoji:'🟡', desc:'Spécialiste véhicules & mobilité Afrique' },
+  ];
+
+  const USAGE = [
+    { id:'personnel', label:'Usage personnel' },
+    { id:'taxi',      label:'Taxi / VTC' },
+    { id:'transport', label:'Transport marchandises' },
+    { id:'autre',     label:'Autre usage' },
+  ];
+
+  const submit = async () => {
+    if (!form.fullName.trim() || !form.phone.replace(/\D/g,'')) {
+      addToast('Nom et téléphone requis', 'warning'); return;
+    }
+    setSubmitting(true);
+    const lead = {
+      product_id:    product.id,
+      product_name:  product.name,
+      product_price: Math.round((product.price || 0) * 655.957),
+      buyer_id:      currentUser?.id || null,
+      full_name:     form.fullName.trim(),
+      phone:         form.phone.replace(/\D/g,''),
+      email:         form.email.trim() || null,
+      city:          form.city,
+      vehicle_type:  form.vehicleType,
+      vehicle_brand: form.vehicleBrand.trim() || null,
+      vehicle_year:  parseInt(form.vehicleYear) || null,
+      vehicle_usage: form.vehicleUsage,
+      coverage_type: form.coverageType,
+      insurer:       form.insurer,
+      status:        'new',
+    };
+    try {
+      // Supabase
+      if (DataService._sb) {
+        const { error } = await DataService._sb.from('insurance_leads').insert(lead);
+        if (error) throw new Error(error.message);
+      } else {
+        // Fallback localStorage
+        const all = JSON.parse(localStorage.getItem('nexus_ins_leads')||'[]');
+        all.unshift({ ...lead, id: crypto.randomUUID(), created_at: new Date().toISOString() });
+        localStorage.setItem('nexus_ins_leads', JSON.stringify(all));
+      }
+      // WhatsApp admin si disponible
+      const adminWa = NEXUS_CONFIG?.admin?.whatsapp;
+      if (adminWa && adminWa !== '77XXXXXXX') {
+        const waMsg = encodeURIComponent(
+          '\uD83D\uDE97 *Nouveau lead assurance NEXUS*\n' +
+          'Prospect : ' + form.fullName + '\n' +
+          'Tél : +221' + form.phone.replace(/\D/g,'') + '\n' +
+          'Ville : ' + form.city + '\n' +
+          'Véhicule : ' + product.name + '\n' +
+          'Couverture : ' + form.coverageType + '\n' +
+          'Assureur préféré : ' + form.insurer
+        );
+        // Envoi silencieux via NexusWA si disponible
+        if (typeof NexusWA !== 'undefined') {
+          NexusWA.send(adminWa,
+            '\uD83D\uDE97 *Nouveau lead assurance NEXUS*\n' +
+            'Prospect : ' + form.fullName + ' · +221' + form.phone.replace(/\D/g,'') + '\n' +
+            'Véhicule : ' + product.name + ' · Prix : ' + Math.round((product.price||0)*655.957).toLocaleString('fr-FR') + ' FCFA\n' +
+            'Couverture : ' + form.coverageType + ' · Assureur : ' + form.insurer + '\n' +
+            'Ville : ' + form.city,
+            'insurance_lead'
+          ).catch(() => {});
+        }
+      }
+      setStep(3);
+    } catch(err) {
+      addToast('Erreur envoi : ' + err.message, 'error');
+    } finally { setSubmitting(false); }
+  };
+
+  const inp = (label, val, setter, type = 'text', placeholder = '') =>
+    E('div', { className:'form-group' },
+      E('label', { className:'form-label' }, label),
+      E('input', { type, className:'form-input', value: val, placeholder,
+        onChange: ev => setter(ev.target.value) })
+    );
+
+  const priceFcfa = Math.round((product.price || 0) * 655.957);
+
+  // ── Widget fermé : bouton d'accroche ──────────────────────────────────
+  if (!open) return E('div', {
+    onClick: () => setOpen(true),
+    style: {
+      background: 'linear-gradient(135deg,#003478,#0050b3)',
+      borderRadius: 14, padding: '0.9rem 1.1rem',
+      cursor: 'pointer', marginTop: '0.75rem',
+      display: 'flex', alignItems: 'center', gap: '0.85rem',
+      border: '1.5px solid rgba(255,255,255,0.15)',
+      transition: 'transform 0.15s',
+    },
+    onMouseEnter: e => e.currentTarget.style.transform = 'scale(1.01)',
+    onMouseLeave: e => e.currentTarget.style.transform = 'scale(1)',
+  },
+    E('div', { style:{ fontSize:'1.8rem', lineHeight:1 } }, '\uD83D\uDE97'),
+    E('div', { style:{ flex:1 } },
+      E('div', { style:{ fontWeight:800, color:'white', fontSize:'0.95rem' } }, 'Obtenez un devis assurance auto'),
+      E('div', { style:{ fontSize:'0.76rem', color:'rgba(255,255,255,0.75)', marginTop:'0.15rem' } },
+        'NSIA · Allianz · LARC · Gratuit · R\u00e9ponse sous 2h'
+      )
+    ),
+    E('div', { style:{ background:'#FDEE42', color:'#1a1a1a', borderRadius:99, padding:'0.35rem 0.85rem', fontSize:'0.78rem', fontWeight:800, whiteSpace:'nowrap' } },
+      'D\u00e9vis gratuit \u2192'
+    )
+  );
+
+  // ── Modal ────────────────────────────────────────────────────────────
+  return E('div', { className:'modal-overlay', onClick: e => e.target===e.currentTarget && setOpen(false) },
+    E('div', { className:'modal', onClick: e => e.stopPropagation(),
+      style:{ maxWidth:580, width:'95vw', maxHeight:'90vh', overflowY:'auto' } },
+
+      // Header
+      E('div', { className:'modal-header', style:{ background:'linear-gradient(135deg,#003478,#0050b3)', color:'white' } },
+        E('div', null,
+          E('h2', { className:'modal-title', style:{ color:'white' } },
+            E('i', { className:'fas fa-car', style:{ color:'#FDEE42', marginRight:'0.5rem' } }),
+            'Devis assurance auto — NEXUS'
+          ),
+          E('div', { style:{ fontSize:'0.76rem', opacity:0.75, marginTop:'0.2rem' } },
+            product.name, ' · ', priceFcfa.toLocaleString('fr-FR'), ' FCFA'
+          )
+        ),
+        E('button', { className:'close-btn', onClick:()=>setOpen(false), style:{ color:'white' } },
+          E('i', { className:'fas fa-times' })
+        )
+      ),
+
+      E('div', { className:'modal-body' },
+
+        // ── STEP 1 : Intro ──────────────────────────────────────────────
+        step === 1 && E(React.Fragment, null,
+          E('div', { style:{ background:'#f0f9ff', borderRadius:12, padding:'1rem 1.25rem', marginBottom:'1.25rem', border:'1px solid #bae6fd' } },
+            E('div', { style:{ fontWeight:700, marginBottom:'0.5rem', fontSize:'0.9rem' } },
+              '\uD83D\uDEC1 Pourquoi assurer votre v\u00e9hicule ?'
+            ),
+            E('ul', { style:{ margin:0, paddingLeft:'1.25rem', fontSize:'0.82rem', color:'var(--text-secondary)', display:'flex', flexDirection:'column', gap:'0.25rem' } },
+              E('li', null, 'Obligatoire au S\u00e9n\u00e9gal (Code des Assurances CIMA art.\u00a012)'),
+              E('li', null, 'Protection contre accidents, vol, incendie'),
+              E('li', null, 'Assistance routière 24h/24 incluse'),
+              E('li', null, 'Indemnisation rapide en cas de sinistre')
+            )
+          ),
+          // Partenaires
+          E('div', { style:{ marginBottom:'1.5rem' } },
+            E('div', { style:{ fontWeight:600, fontSize:'0.88rem', marginBottom:'0.75rem' } }, 'Nos partenaires assureurs :'),
+            E('div', { style:{ display:'flex', gap:'0.6rem', flexWrap:'wrap' } },
+              INSURERS.slice(1).map(ins => E('div', { key:ins.id, style:{
+                padding:'0.5rem 0.85rem', borderRadius:10,
+                background:'white', border:'1px solid var(--border)',
+                fontSize:'0.78rem', fontWeight:600,
+              }}, ins.emoji, ' ', ins.label))
+            )
+          ),
+          E('div', { style:{ background:'var(--green-light)', borderRadius:10, padding:'0.75rem 1rem', marginBottom:'1.25rem', fontSize:'0.82rem' } },
+            E('i', { className:'fas fa-check-circle', style:{ color:'var(--primary)', marginRight:'0.4rem' } }),
+            'Service gratuit \u2014 NEXUS ne facture rien. Nous transmettons votre demande aux assureurs. Vous choisissez librement.'
+          ),
+          E('button', { className:'btn btn-primary btn-block btn-lg', onClick:()=>setStep(2) },
+            E('i', { className:'fas fa-arrow-right' }), ' Demander mon devis gratuit'
+          )
+        ),
+
+        // ── STEP 2 : Formulaire ─────────────────────────────────────────
+        step === 2 && E(React.Fragment, null,
+
+          // Couverture
+          E('div', { style:{ marginBottom:'1.25rem' } },
+            E('div', { style:{ fontWeight:700, fontSize:'0.9rem', marginBottom:'0.75rem' } }, '1. Type de couverture souhaitée'),
+            E('div', { style:{ display:'flex', flexDirection:'column', gap:'0.5rem' } },
+              COVERAGE.map(c => E('div', {
+                key:c.id,
+                onClick:()=>setForm(f=>({...f, coverageType:c.id})),
+                style:{
+                  padding:'0.75rem 1rem', borderRadius:10, cursor:'pointer',
+                  border:'2px solid '+(form.coverageType===c.id?'var(--primary)':'var(--border)'),
+                  background: form.coverageType===c.id?'rgba(0,133,62,0.05)':'white',
+                }
+              },
+                E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'0.25rem' } },
+                  E('div', null,
+                    E('div', { style:{ fontWeight:700, fontSize:'0.88rem' } }, c.label),
+                    E('div', { style:{ fontSize:'0.74rem', color:'var(--text-secondary)', marginTop:'0.1rem' } }, c.desc)
+                  ),
+                  E('span', { style:{ fontSize:'0.75rem', fontWeight:700, color:'var(--primary)', whiteSpace:'nowrap' } }, c.price)
+                )
+              ))
+            )
+          ),
+
+          // Assureur préféré
+          E('div', { style:{ marginBottom:'1.25rem' } },
+            E('div', { style:{ fontWeight:700, fontSize:'0.9rem', marginBottom:'0.75rem' } }, '2. Assureur préféré (optionnel)'),
+            E('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.5rem' } },
+              INSURERS.map(ins => E('div', {
+                key:ins.id,
+                onClick:()=>setForm(f=>({...f, insurer:ins.id})),
+                style:{
+                  padding:'0.6rem 0.85rem', borderRadius:10, cursor:'pointer', textAlign:'center',
+                  border:'2px solid '+(form.insurer===ins.id?'var(--primary)':'var(--border)'),
+                  background: form.insurer===ins.id?'rgba(0,133,62,0.05)':'white',
+                }
+              },
+                E('div', { style:{ fontSize:'1.1rem' } }, ins.emoji),
+                E('div', { style:{ fontSize:'0.75rem', fontWeight:700, marginTop:'0.2rem' } }, ins.label),
+                ins.id==='nexus_choice' && E('div', { style:{ fontSize:'0.65rem', color:'var(--primary)', fontWeight:600 } }, '⭐ RECOMMANDÉ')
+              ))
+            )
+          ),
+
+          // Détails véhicule
+          E('div', { style:{ marginBottom:'1.25rem' } },
+            E('div', { style:{ fontWeight:700, fontSize:'0.9rem', marginBottom:'0.75rem' } }, '3. Détails du véhicule'),
+            E('div', { className:'form-row' },
+              E('div', { className:'form-group' },
+                E('label', { className:'form-label' }, 'Type de véhicule'),
+                E('select', { className:'form-select', value:form.vehicleType, onChange:e=>setForm(f=>({...f,vehicleType:e.target.value})) },
+                  E('option', { value:'voiture' }, 'Voiture'),
+                  E('option', { value:'moto' }, 'Moto'),
+                  E('option', { value:'camion' }, 'Camion / Camionnette'),
+                  E('option', { value:'autre' }, 'Autre')
+                )
+              ),
+              E('div', { className:'form-group' },
+                E('label', { className:'form-label' }, 'Usage'),
+                E('select', { className:'form-select', value:form.vehicleUsage, onChange:e=>setForm(f=>({...f,vehicleUsage:e.target.value})) },
+                  USAGE.map(u => E('option', { key:u.id, value:u.id }, u.label))
+                )
+              )
+            ),
+            E('div', { className:'form-row' },
+              E('div', { className:'form-group' },
+                E('label', { className:'form-label' }, 'Marque (optionnel)'),
+                E('input', { type:'text', className:'form-input', placeholder:'Toyota, Peugeot…', value:form.vehicleBrand,
+                  onChange:e=>setForm(f=>({...f,vehicleBrand:e.target.value})) })
+              ),
+              E('div', { className:'form-group' },
+                E('label', { className:'form-label' }, 'Année'),
+                E('input', { type:'number', className:'form-input', min:1990, max:new Date().getFullYear()+1,
+                  value:form.vehicleYear, onChange:e=>setForm(f=>({...f,vehicleYear:e.target.value})) })
+              )
+            )
+          ),
+
+          // Contact
+          E('div', { style:{ marginBottom:'1.25rem' } },
+            E('div', { style:{ fontWeight:700, fontSize:'0.9rem', marginBottom:'0.75rem' } }, '4. Vos coordonnées'),
+            E('div', { className:'form-row' },
+              inp('Nom complet *', form.fullName, v=>setForm(f=>({...f,fullName:v})), 'text', 'Prénom Nom'),
+              inp('Téléphone *', form.phone, v=>setForm(f=>({...f,phone:v})), 'tel', '77 123 45 67')
+            ),
+            E('div', { className:'form-row' },
+              inp('Email (optionnel)', form.email, v=>setForm(f=>({...f,email:v})), 'email', 'vous@email.com'),
+              E('div', { className:'form-group' },
+                E('label', { className:'form-label' }, 'Ville'),
+                E('select', { className:'form-select', value:form.city, onChange:e=>setForm(f=>({...f,city:e.target.value})) },
+                  ['Dakar','Thiès','Saint-Louis','Ziguinchor','Kaolack','Mbour','Diourbel','Touba','Louga','Autre']
+                    .map(c => E('option', { key:c, value:c }, c))
+                )
+              )
+            )
+          ),
+
+          E('div', { className:'alert alert-info', style:{ fontSize:'0.78rem', marginBottom:'1rem' } },
+            E('i', { className:'fas fa-shield-alt' }),
+            ' Vos données sont protégées (Loi 2008-12 DDP Sénégal). Un courtier vous contactera sous 2h ouvrées.'
+          ),
+
+          E('div', { style:{ display:'flex', gap:'0.75rem' } },
+            E('button', { className:'btn btn-secondary', onClick:()=>setStep(1) },
+              E('i', { className:'fas fa-arrow-left' }), ' Retour'
+            ),
+            E('button', {
+              className:'btn btn-primary flex-1'+(submitting?' btn-loading':''),
+              onClick:submit, disabled:submitting
+            }, submitting ? 'Envoi...' : E(React.Fragment, null,
+              E('i', { className:'fas fa-paper-plane' }), ' Envoyer ma demande'
+            ))
+          )
+        ),
+
+        // ── STEP 3 : Confirmé ───────────────────────────────────────────
+        step === 3 && E('div', { style:{ textAlign:'center', padding:'1.5rem 0.5rem' } },
+          E('div', { style:{ fontSize:'3.5rem', marginBottom:'1rem' } }, '\uD83C\uDF89'),
+          E('h3', { style:{ fontWeight:800, color:'var(--primary)', marginBottom:'0.5rem' } }, 'Demande envoyée avec succès !'),
+          E('p', { style:{ color:'var(--text-secondary)', marginBottom:'1.25rem', fontSize:'0.9rem' } },
+            'Un courtier NEXUS vous contactera au ', E('strong', null, '+221', form.phone.replace(/\D/g,'')), ' sous 2h ouvrées avec ',
+            E('strong', null, 'plusieurs devis comparatifs.')
+          ),
+          E('div', { style:{ background:'#f0fdf4', border:'1px solid #86efac', borderRadius:12, padding:'1rem', marginBottom:'1.5rem', textAlign:'left' } },
+            [
+              '\uD83D\uDCCB Comparaison de 2 à 4 assureurs',
+              '\uD83D\uDCB0 Tarifs négociés NEXUS (remise partenaire)',
+              '\uD83D\uDE97 Prise en charge dossier CNA incluse',
+              '\uD83D\uDCDE Support WhatsApp pendant toute la souscription',
+            ].map((t,i) => E('div', { key:i, style:{ fontSize:'0.82rem', padding:'0.25rem 0', color:'#166534' } }, t))
+          ),
+          E('button', { className:'btn btn-primary', onClick:()=>setOpen(false) },
+            E('i', { className:'fas fa-check' }), ' Fermer'
+          )
+        )
+      )
+    )
+  );
+};
+
 // ── Fin BoostModal ────────────────────────────────────────────────────────────
 
 const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, onDownloadStatement }) => {
@@ -22180,6 +22759,11 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           )
         ),
         React.createElement('div', { style: { marginTop: '2rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' } },
+          isVehicleProduct(selectedProduct) && React.createElement(InsuranceWidget, {
+            product: selectedProduct,
+            currentUser: null,
+            addToast
+          }),
           React.createElement('h3', { style: { fontWeight: 700, marginBottom: '1rem' } }, 'Avis clients'),
           reviews.filter(r => r.productId === selectedProduct.id).length === 0
             ? React.createElement('p', { className: 'text-muted' }, 'Aucun avis pour ce produit.')
@@ -23693,7 +24277,14 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setShowOfferModal(true);
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd" }), " Offre"), /* @__PURE__ */ React.createElement("button", { className: `btn btn-sm ${compareList.includes(selectedProduct.id) ? "btn-success" : "btn-secondary"}`, onClick: () => {
     setCompareList((l) => l.includes(selectedProduct.id) ? l.filter((x) => x !== selectedProduct.id) : l.length < 3 ? [...l, selectedProduct.id] : l);
-  }, title: "Comparer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-columns" }))))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "2rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem" } }, "Avis clients"), reviews.filter((r) => r.productId === selectedProduct.id).length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-muted" }, "Aucun avis pour ce produit. ", selectedProduct.stock === 0 && /* @__PURE__ */ React.createElement(StockAlertButton, { product: selectedProduct, currentUser: currentUser2, addToast })) : reviews.filter((r) => r.productId === selectedProduct.id).map((rev) => /* @__PURE__ */ React.createElement("div", { key: rev.id, style: { padding: "0.75rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", null, rev.userName), " ", /* @__PURE__ */ React.createElement(Stars, { rating: rev.rating })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, new Date(rev.date).toLocaleDateString("fr-FR"))), /* @__PURE__ */ React.createElement("p", { style: { marginTop: "0.3rem", fontSize: "0.9rem" } }, rev.comment))), selectedProduct.stock === 0 && reviews.filter((r) => r.productId === selectedProduct.id).length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.75rem" } }, /* @__PURE__ */ React.createElement(StockAlertButton, { product: selectedProduct, currentUser: currentUser2, addToast }))), /* @__PURE__ */ React.createElement(ProductQA, { product: selectedProduct, currentUser: currentUser2, addToast }), /* @__PURE__ */ React.createElement(
+  }, title: "Comparer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-columns" }))))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "2rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" } },
+    /* Insurance widget — véhicules uniquement */
+    isVehicleProduct(selectedProduct) && /* @__PURE__ */ React.createElement(InsuranceWidget, {
+      product: selectedProduct,
+      currentUser: currentUser2,
+      addToast
+    }),
+    /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem" } }, "Avis clients"), reviews.filter((r) => r.productId === selectedProduct.id).length === 0 ? /* @__PURE__ */ React.createElement("p", { className: "text-muted" }, "Aucun avis pour ce produit. ", selectedProduct.stock === 0 && /* @__PURE__ */ React.createElement(StockAlertButton, { product: selectedProduct, currentUser: currentUser2, addToast })) : reviews.filter((r) => r.productId === selectedProduct.id).map((rev) => /* @__PURE__ */ React.createElement("div", { key: rev.id, style: { padding: "0.75rem 0", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("div", { className: "flex-between" }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("strong", null, rev.userName), " ", /* @__PURE__ */ React.createElement(Stars, { rating: rev.rating })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, new Date(rev.date).toLocaleDateString("fr-FR"))), /* @__PURE__ */ React.createElement("p", { style: { marginTop: "0.3rem", fontSize: "0.9rem" } }, rev.comment))), selectedProduct.stock === 0 && reviews.filter((r) => r.productId === selectedProduct.id).length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.75rem" } }, /* @__PURE__ */ React.createElement(StockAlertButton, { product: selectedProduct, currentUser: currentUser2, addToast }))), /* @__PURE__ */ React.createElement(ProductQA, { product: selectedProduct, currentUser: currentUser2, addToast }), /* @__PURE__ */ React.createElement(
     RelatedProducts,
     {
       product: selectedProduct,
