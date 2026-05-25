@@ -18720,76 +18720,89 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
   const [selectedPlan, setSelectedPlan] = React.useState(null);
   const [step,         setStep]         = React.useState(1); // 1=choix, 2=paiement, 3=confirmé
   const [paying,       setPaying]       = React.useState(false);
-  const [payMethod,    setPayMethod]    = React.useState('wave');
+  const [payMethod,    setPayMethod]    = React.useState('paytech');
 
   const existingBoost = activBoosts.find(b => b.product_id === product.id && b.active);
 
   const handleActivate = async () => {
     if (!selectedPlan) return;
     setPaying(true);
-
     try {
-      const now      = new Date();
-      const endsAt   = new Date(now.getTime() + selectedPlan.days * 86400000);
+      const now     = new Date();
+      const endsAt  = new Date(now.getTime() + selectedPlan.days * 86400000);
+      const boostId = crypto.randomUUID();
       const boostRow = {
-        id:          crypto.randomUUID(),
-        product_id:  product.id,
-        vendor_id:   currentUser2.id,
-        boost_type:  selectedPlan.type,
-        price_fcfa:  selectedPlan.price,
-        started_at:  now.toISOString(),
-        ends_at:     endsAt.toISOString(),
-        active:      true,
-        payment_method: payMethod,
-        payment_status: 'pending', // sera mis à 'paid' par webhook Wave/PayTech
+        id: boostId, product_id: product.id, vendor_id: currentUser2.id,
+        boost_type: selectedPlan.type, price_fcfa: selectedPlan.price,
+        started_at: now.toISOString(), ends_at: endsAt.toISOString(),
+        active: payMethod !== 'paytech', payment_method: payMethod, payment_status: 'pending',
       };
 
-      // ── Étape 1 : Sauvegarder le boost en base ──────────────────────────
+      // 1. Sauvegarder en base (pending)
       if (isSupabaseConfigured() && DataService._sb) {
         const { error } = await DataService._sb.from('product_boosts').insert(boostRow);
-        if (error) console.warn('[Boost] Supabase insert error:', error.message);
-
-        // Marquer le produit comme boosté
-        await DataService._sb.from('products')
-          .update({ is_boosted: true, boost_ends_at: endsAt.toISOString() })
-          .eq('id', product.id);
-      }
-
-      // ── Étape 2 : Initier le paiement ───────────────────────────────────
-      if (payMethod === 'wave') {
-        // Lien de paiement Wave Business (ouvre l'app Wave ou le site web)
-        const waveRef = 'BOOST-' + boostRow.id.slice(0,8).toUpperCase();
-        const waveMsg = encodeURIComponent(
-          'Boost annonce "' + product.name + '" (' + selectedPlan.label + ') — Réf: ' + waveRef
-        );
-        // Numéro Wave NEXUS Market (à configurer dans NEXUS_CONFIG)
-        const waveNumber = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.waveNumber) || '771234567';
-        // Vérifier que le numéro a bien été configuré
-        if (waveNumber === '77XXXXXXX') {
-          addToast('⚠️ Numéro Wave non configuré — contactez le vendeur directement', 'warning');
+        if (error) console.warn('[Boost] insert:', error.message);
+        if (payMethod !== 'paytech') {
+          await DataService._sb.from('products')
+            .update({ is_boosted: true, boost_ends_at: endsAt.toISOString() })
+            .eq('id', product.id);
         }
-        window.open('https://pay.wave.com/m/' + waveNumber + '?amount=' + selectedPlan.price + '&note=' + waveMsg, '_blank');
-        addToast(
-          '📱 Wave ouvert — Effectuez le paiement de ' + selectedPlan.price.toLocaleString('fr-FR') + ' FCFA puis revenez ici.',
-          'info', 8000
-        );
-      } else if (payMethod === 'orange_money') {
-        const omRef = 'BOOST-' + boostRow.id.slice(0,8).toUpperCase();
-        addToast(
-          '📱 Envoyez ' + selectedPlan.price.toLocaleString('fr-FR') + ' FCFA au +221 77 XXX XX XX (Orange Money NEXUS) avec la référence : ' + omRef,
-          'info', 10000
-        );
       }
 
-      // ── Étape 3 : Passer en confirmation ────────────────────────────────
-      setStep(3);
-      onBoostSuccess(boostRow);
+      const origin = window.location.origin;
 
+      // 2a. PayTech
+      if (payMethod === 'paytech') {
+        const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
+          method: 'POST',
+          body: JSON.stringify({
+            order_id:     'BOOST-' + boostId.slice(0,12).toUpperCase(),
+            amount:       selectedPlan.price,
+            item_name:    'Boost "' + product.name + '" \u2014 ' + selectedPlan.label + ' (' + selectedPlan.days + 'j)',
+            success_url:  origin + '/?boost_return=success&boostId=' + boostId,
+            cancel_url:   origin + '/?boost_return=cancel&boostId='  + boostId,
+            custom_field: JSON.stringify({ boostId, vendorId: currentUser2.id, productId: product.id }),
+          }),
+        }).catch(e => ({ __err: e.message }));
+
+        if (initRes && initRes.__err) {
+          if (DataService._sb) await DataService._sb.from('product_boosts').delete().eq('id', boostId);
+          addToast('\u26a0\ufe0f Backend PayTech non disponible \u2014 utilisez Wave ou Orange Money. R\xe9f : BOOST-' + boostId.slice(0,8).toUpperCase(), 'warning', 9000);
+          setPaying(false); return;
+        }
+        if (initRes && initRes.redirect_url) {
+          addToast('Redirection vers PayTech...', 'info', 3000);
+          setTimeout(() => { window.location.href = initRes.redirect_url; }, 700);
+          return;
+        }
+        if (DataService._sb) await DataService._sb.from('product_boosts').delete().eq('id', boostId);
+        addToast('Erreur PayTech : ' + ((initRes && initRes.error) || 'R\xe9ponse invalide'), 'error');
+        setPaying(false); return;
+      }
+
+      // 2b. Wave
+      if (payMethod === 'wave') {
+        const wNum = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.waveNumber) || '';
+        if (!wNum || wNum === '77XXXXXXX') { addToast('\u26a0\ufe0f Num\xe9ro Wave non configur\xe9.', 'warning', 8000); setPaying(false); return; }
+        const ref  = 'BOOST-' + boostId.slice(0,8).toUpperCase();
+        const note = encodeURIComponent('Boost "' + product.name + '" (' + selectedPlan.label + ') \u2014 ' + ref);
+        window.open('https://pay.wave.com/m/' + wNum + '?amount=' + selectedPlan.price + '&note=' + note, '_blank');
+        addToast('\ud83d\udcf1 Wave ouvert \u2014 ' + selectedPlan.price.toLocaleString('fr-FR') + ' FCFA \u00b7 R\xe9f\xa0: ' + ref, 'info', 10000);
+      }
+
+      // 2c. Orange Money
+      if (payMethod === 'orange_money') {
+        const omNum = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.orangeMoneyNumber) || '';
+        if (!omNum || omNum === '77XXXXXXX') { addToast('\u26a0\ufe0f Num\xe9ro Orange Money non configur\xe9.', 'warning', 8000); setPaying(false); return; }
+        const ref = 'BOOST-' + boostId.slice(0,8).toUpperCase();
+        addToast('\ud83d\udfe0 Envoyez ' + selectedPlan.price.toLocaleString('fr-FR') + ' FCFA au +221' + omNum + ' (OM NEXUS) \u2014 R\xe9f\xa0: ' + ref, 'info', 14000);
+      }
+
+      // 3. Confirmation
+      setStep(3); onBoostSuccess(boostRow);
     } catch(err) {
-      addToast('Erreur activation boost : ' + err.message, 'error');
-    } finally {
-      setPaying(false);
-    }
+      addToast('Erreur boost : ' + err.message, 'error');
+    } finally { setPaying(false); }
   };
 
   const E = React.createElement;
@@ -18904,7 +18917,8 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
                 }
               },
                 E('div', { style: { fontSize: '1.5rem', marginBottom: '0.25rem' } }, m.icon),
-                E('div', { style: { color: m.color, fontSize: '0.9rem' } }, m.label)
+                E('div', { style: { color: m.color, fontSize: '0.9rem', fontWeight: 700 } }, m.label),
+                m.sub && E('div', { style: { fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.1rem' } }, m.sub)
               ))
             )
           ),
@@ -23529,6 +23543,42 @@ const Root = () => {
         detail: { message: "Lien de confirmation invalide ou expiré.", type: "error", duration: 5000 }
       }));
       window.history?.replaceState(null, "", window.location.pathname);
+    }
+
+    // Retour PayTech Boost — ?boost_return=success|cancel&boostId=xxx
+    const _bRet = _sp.get('boost_return');
+    const _bId  = _sp.get('boostId');
+    if (_bRet && _bId) {
+      window.history?.replaceState(null, "", window.location.pathname);
+      if (_bRet === 'success') {
+        if (typeof isSupabaseConfigured === 'function' && isSupabaseConfigured() && DataService._sb) {
+          DataService._sb.from('product_boosts')
+            .update({ payment_status: 'paid', active: true }).eq('id', _bId)
+            .then(({ error: _be }) => {
+              if (!_be) {
+                window.dispatchEvent(new CustomEvent('nexus:toast', {
+                  detail: { message: '⚡ Boost PayTech activé ! Votre annonce est maintenant en vedette.', type: 'success', duration: 8000 }
+                }));
+              }
+            });
+          // Mettre aussi is_boosted sur le produit
+          DataService._sb.from('product_boosts').select('product_id,ends_at').eq('id', _bId).single()
+            .then(({ data: _bd }) => {
+              if (_bd) DataService._sb.from('products')
+                .update({ is_boosted: true, boost_ends_at: _bd.ends_at }).eq('id', _bd.product_id);
+            });
+        } else {
+          window.dispatchEvent(new CustomEvent('nexus:toast', {
+            detail: { message: '⚡ Boost activé avec succès !', type: 'success', duration: 6000 }
+          }));
+        }
+      } else {
+        // Annulation — supprimer le boost pending
+        if (DataService._sb) DataService._sb.from('product_boosts').delete().eq('id', _bId);
+        window.dispatchEvent(new CustomEvent('nexus:toast', {
+          detail: { message: 'Paiement annulé — boost non activé.', type: 'warning', duration: 5000 }
+        }));
+      }
     }
   }, []);
 
