@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
@@ -1925,7 +1925,22 @@ const NEXUS_CONFIG = {
     get rccmDisplay()   { return this.rccm  || "⚠️ NON CONFIGURÉ"; },
     get footerLine()    { return `${this.companyName}  ·  NINEA : ${this.nineaDisplay}  ·  RCCM : ${this.rccmDisplay}`; },
     get headerLine()    { return `${this.address} · NINEA : ${this.nineaDisplay}`; },
-  }
+  },
+
+  // ── Paiements mobiles ──────────────────────────────────────────────────────
+  // Configurer ici vos numéros marchands Wave et Orange Money
+  // Ces numéros reçoivent les paiements Boost directement
+  payments: {
+    // Numéro Wave Business NEXUS Market (sans l'indicatif +221)
+    // Remplacer par votre vrai numéro marchand Wave
+    waveNumber:        "77XXXXXXX",   // ex: "771234567" — À configurer
+
+    // Numéro Orange Money Business NEXUS Market
+    orangeMoneyNumber: "77XXXXXXX",   // ex: "776543210" — À configurer
+
+    // Référence à afficher dans les virements (préfixe)
+    boostRefPrefix:    "NEXUS-BOOST",
+  },
 };
 // ── Restaurer la config persistée (survit aux rechargements de page) ──────────
 try {
@@ -12102,6 +12117,23 @@ const StripePaymentForm = ({ amount, onSuccess, onError, addToast }) => {
 // ── CONSTANTES PDF ───────────────────────────────────────────────────────────
 const FCFA_RATE        = NEXUS_CONFIG.currency.eurToFcfa;  // taux centralisé
 // [LEGAL] NEXUS_TVA = taux frais de service (18%) — TVA officielle quand CA > 10M FCFA/an
+    // ══ TABLE SUPABASE REQUISE : product_boosts ════════════════════════
+    // CREATE TABLE product_boosts (
+    //   id             uuid primary key default gen_random_uuid(),
+    //   product_id     text not null,
+    //   vendor_id      uuid references auth.users(id),
+    //   boost_type     text check (boost_type in ('top_3j','boost_semaine','pro_mensuel')),
+    //   price_fcfa     integer not null,
+    //   started_at     timestamptz default now(),
+    //   ends_at        timestamptz not null,
+    //   active         boolean default true,
+    //   payment_method text,
+    //   payment_status text default 'pending'
+    // );
+    // RLS: vendor reads/inserts own boosts + public reads active boosts
+    // ALTER TABLE products ADD COLUMN IF NOT EXISTS is_boosted boolean default false;
+    // ALTER TABLE products ADD COLUMN IF NOT EXISTS boost_ends_at timestamptz;
+    // ═══════════════════════════════════════════════════════════════════════
     const NEXUS_TVA        = 0.18;
 const NEXUS_COMMISSION = 0.10;
 const _C = {
@@ -18646,6 +18678,279 @@ const VendorInvoicesView = ({ currentUser: currentUser2, orders, addToast, downl
   );
 };
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BoostModal — Sélection du forfait + paiement Wave/PayTech + activation Supabase
+// ══════════════════════════════════════════════════════════════════════════════
+const BOOST_PLANS = [
+  {
+    type:     'top_3j',
+    label:    'TOP Express',
+    emoji:    '🥉',
+    price:    500,
+    days:     3,
+    desc:     'Votre annonce en tête de liste pendant 3 jours',
+    features: ['Position TOP garantie 3 jours', '2× plus de vues en moyenne', 'Badge "Annonce en vedette"'],
+    color:    '#CD7F32',
+  },
+  {
+    type:     'boost_semaine',
+    label:    'Boost Semaine',
+    emoji:    '🥈',
+    price:    1200,
+    days:     7,
+    desc:     'Remontée automatique 2× par jour pendant 7 jours',
+    features: ['Remonte 2×/jour dans les résultats', '4× plus de vues en moyenne', 'Badge "Annonce vedette"', 'Apparaît dans "Similaires"'],
+    color:    '#C0C0C0',
+    best:     true,
+  },
+  {
+    type:     'pro_mensuel',
+    label:    'Pro Mensuel',
+    emoji:    '🥇',
+    price:    8000,
+    days:     30,
+    desc:     'Visibilité maximale pendant 30 jours',
+    features: ['Remonte 4×/jour', '8× plus de vues', 'Badge "Pro NEXUS"', 'Support prioritaire', 'Statistiques avancées'],
+    color:    '#FFD700',
+  },
+];
+
+const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast, onBoostSuccess, onClose }) => {
+  const [selectedPlan, setSelectedPlan] = React.useState(null);
+  const [step,         setStep]         = React.useState(1); // 1=choix, 2=paiement, 3=confirmé
+  const [paying,       setPaying]       = React.useState(false);
+  const [payMethod,    setPayMethod]    = React.useState('wave');
+
+  const existingBoost = activBoosts.find(b => b.product_id === product.id && b.active);
+
+  const handleActivate = async () => {
+    if (!selectedPlan) return;
+    setPaying(true);
+
+    try {
+      const now      = new Date();
+      const endsAt   = new Date(now.getTime() + selectedPlan.days * 86400000);
+      const boostRow = {
+        id:          crypto.randomUUID(),
+        product_id:  product.id,
+        vendor_id:   currentUser2.id,
+        boost_type:  selectedPlan.type,
+        price_fcfa:  selectedPlan.price,
+        started_at:  now.toISOString(),
+        ends_at:     endsAt.toISOString(),
+        active:      true,
+        payment_method: payMethod,
+        payment_status: 'pending', // sera mis à 'paid' par webhook Wave/PayTech
+      };
+
+      // ── Étape 1 : Sauvegarder le boost en base ──────────────────────────
+      if (isSupabaseConfigured() && DataService._sb) {
+        const { error } = await DataService._sb.from('product_boosts').insert(boostRow);
+        if (error) console.warn('[Boost] Supabase insert error:', error.message);
+
+        // Marquer le produit comme boosté
+        await DataService._sb.from('products')
+          .update({ is_boosted: true, boost_ends_at: endsAt.toISOString() })
+          .eq('id', product.id);
+      }
+
+      // ── Étape 2 : Initier le paiement ───────────────────────────────────
+      if (payMethod === 'wave') {
+        // Lien de paiement Wave Business (ouvre l'app Wave ou le site web)
+        const waveRef = 'BOOST-' + boostRow.id.slice(0,8).toUpperCase();
+        const waveMsg = encodeURIComponent(
+          'Boost annonce "' + product.name + '" (' + selectedPlan.label + ') — Réf: ' + waveRef
+        );
+        // Numéro Wave NEXUS Market (à configurer dans NEXUS_CONFIG)
+        const waveNumber = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.waveNumber) || '771234567';
+        // Vérifier que le numéro a bien été configuré
+        if (waveNumber === '77XXXXXXX') {
+          addToast('⚠️ Numéro Wave non configuré — contactez le vendeur directement', 'warning');
+        }
+        window.open('https://pay.wave.com/m/' + waveNumber + '?amount=' + selectedPlan.price + '&note=' + waveMsg, '_blank');
+        addToast(
+          '📱 Wave ouvert — Effectuez le paiement de ' + selectedPlan.price.toLocaleString('fr-FR') + ' FCFA puis revenez ici.',
+          'info', 8000
+        );
+      } else if (payMethod === 'orange_money') {
+        const omRef = 'BOOST-' + boostRow.id.slice(0,8).toUpperCase();
+        addToast(
+          '📱 Envoyez ' + selectedPlan.price.toLocaleString('fr-FR') + ' FCFA au +221 77 XXX XX XX (Orange Money NEXUS) avec la référence : ' + omRef,
+          'info', 10000
+        );
+      }
+
+      // ── Étape 3 : Passer en confirmation ────────────────────────────────
+      setStep(3);
+      onBoostSuccess(boostRow);
+
+    } catch(err) {
+      addToast('Erreur activation boost : ' + err.message, 'error');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const E = React.createElement;
+  const plan = selectedPlan ? BOOST_PLANS.find(p => p.type === selectedPlan) : null;
+
+  return E('div', { className: 'modal-overlay', onClick: e => e.target === e.currentTarget && onClose() },
+    E('div', { className: 'modal', style: { maxWidth: 620, width: '95vw', maxHeight: '90vh', overflowY: 'auto' } },
+
+      /* Header */
+      E('div', { className: 'modal-header', style: { background: 'linear-gradient(135deg,#1a1a2e,#16213e)', color: 'white' } },
+        E('div', null,
+          E('h2', { className: 'modal-title', style: { color: 'white' } },
+            E('i', { className: 'fas fa-rocket', style: { color: '#FDEE42', marginRight: '0.5rem' } }),
+            'Booster : ', product.name
+          ),
+          existingBoost && E('div', { style: { fontSize: '0.78rem', color: '#FDEE42', marginTop: '0.25rem' } },
+            '\u26a1 Boost actif jusqu\u2019au ', new Date(existingBoost.ends_at).toLocaleDateString('fr-FR')
+          )
+        ),
+        E('button', { className: 'close-btn', onClick: onClose, style: { color: 'white' } },
+          E('i', { className: 'fas fa-times' })
+        )
+      ),
+
+      E('div', { className: 'modal-body' },
+
+        /* ── STEP 1 : Choisir le forfait ── */
+        step === 1 && E(React.Fragment, null,
+          E('p', { style: { color: 'var(--text-secondary)', marginBottom: '1.25rem', fontSize: '0.88rem' } },
+            'Choisissez un forfait de visibilité. Votre annonce remontera automatiquement en haut du catalogue NEXUS.'
+          ),
+
+          E('div', { style: { display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' } },
+            BOOST_PLANS.map(p => E('div', {
+              key: p.type,
+              onClick: () => setSelectedPlan(p.type),
+              style: {
+                border: '2.5px solid ' + (selectedPlan === p.type ? p.color : 'var(--border)'),
+                borderRadius: 14, padding: '1rem 1.25rem', cursor: 'pointer',
+                background: selectedPlan === p.type ? 'rgba(253,238,66,0.05)' : 'white',
+                position: 'relative', transition: 'all 0.2s',
+              }
+            },
+              p.best && E('div', { style: {
+                position: 'absolute', top: -10, right: 12,
+                background: '#00853E', color: 'white',
+                borderRadius: 99, padding: '2px 10px', fontSize: '0.7rem', fontWeight: 800,
+              }}, '⭐ RECOMMANDÉ'),
+              E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' } },
+                E('div', { style: { display: 'flex', alignItems: 'center', gap: '0.75rem' } },
+                  E('div', { style: { fontSize: '1.6rem', lineHeight: 1 } }, p.emoji),
+                  E('div', null,
+                    E('div', { style: { fontWeight: 800, fontSize: '1rem', color: p.color } }, p.label),
+                    E('div', { style: { fontSize: '0.78rem', color: 'var(--text-secondary)' } }, p.desc)
+                  )
+                ),
+                E('div', { style: { textAlign: 'right' } },
+                  E('div', { style: { fontWeight: 800, fontSize: '1.2rem', color: 'var(--primary)' } },
+                    p.price.toLocaleString('fr-FR') + ' FCFA'
+                  ),
+                  E('div', { style: { fontSize: '0.72rem', color: 'var(--text-secondary)' } }, p.days + ' jours')
+                )
+              ),
+              E('div', { style: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.65rem' } },
+                p.features.map((f, i) => E('span', {
+                  key: i,
+                  style: { fontSize: '0.72rem', padding: '2px 8px', borderRadius: 99, background: 'var(--bg-light)', border: '1px solid var(--border)' }
+                }, '✓ ', f))
+              )
+            ))
+          ),
+
+          E('button', {
+            className: 'btn btn-primary btn-block',
+            disabled: !selectedPlan,
+            onClick: () => setStep(2),
+            style: { background: selectedPlan ? 'linear-gradient(135deg,#FDEE42,#f5c800)' : undefined, color: selectedPlan ? '#1a1a1a' : undefined }
+          },
+            E('i', { className: 'fas fa-arrow-right' }), ' Continuer vers le paiement'
+          )
+        ),
+
+        /* ── STEP 2 : Paiement ── */
+        step === 2 && plan && E(React.Fragment, null,
+          E('div', { style: {
+            background: 'linear-gradient(135deg,#1a1a2e,#16213e)',
+            borderRadius: 14, padding: '1rem 1.25rem', marginBottom: '1.25rem', color: 'white'
+          }},
+            E('div', { style: { fontWeight: 700, marginBottom: '0.25rem' } }, '📦 Forfait sélectionné : ', plan.emoji, ' ', plan.label),
+            E('div', { style: { fontSize: '1.5rem', fontWeight: 800, color: '#FDEE42' } },
+              plan.price.toLocaleString('fr-FR') + ' FCFA'
+            ),
+            E('div', { style: { fontSize: '0.8rem', color: 'rgba(255,255,255,0.6)', marginTop: '0.25rem' } },
+              plan.days + ' jours · Actif immédiatement après paiement confirmé'
+            )
+          ),
+
+          E('div', { style: { marginBottom: '1.25rem' } },
+            E('div', { style: { fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.9rem' } }, 'Mode de paiement :'),
+            E('div', { style: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' } },
+              [
+                { id: 'wave',         label: 'Wave',         icon: '📱', color: '#00A3E0' },
+                { id: 'orange_money', label: 'Orange Money', icon: '🟠', color: '#FF6600' },
+              ].map(m => E('div', {
+                key: m.id,
+                onClick: () => setPayMethod(m.id),
+                style: {
+                  flex: '1 1 140px', padding: '0.85rem 1rem', borderRadius: 12, cursor: 'pointer',
+                  border: '2px solid ' + (payMethod === m.id ? m.color : 'var(--border)'),
+                  background: payMethod === m.id ? 'rgba(0,163,224,0.05)' : 'white',
+                  textAlign: 'center', fontWeight: 700, transition: 'all 0.18s',
+                }
+              },
+                E('div', { style: { fontSize: '1.5rem', marginBottom: '0.25rem' } }, m.icon),
+                E('div', { style: { color: m.color, fontSize: '0.9rem' } }, m.label)
+              ))
+            )
+          ),
+
+          E('div', { className: 'alert alert-info', style: { fontSize: '0.82rem', marginBottom: '1.25rem' } },
+            E('i', { className: 'fas fa-info-circle' }),
+            payMethod === 'wave'
+              ? E('span', null, ' Wave Business s\u2019ouvrira avec le montant pr\xe9-rempli. Effectuez le paiement et revenez confirmer.')
+              : E('span', null, ' Envoyez ', plan.price.toLocaleString('fr-FR'), ' FCFA au numéro Orange Money NEXUS indiqué. Votre boost sera activé après vérification (< 1h).')
+          ),
+
+          E('div', { style: { display: 'flex', gap: '0.75rem' } },
+            E('button', { className: 'btn btn-secondary', onClick: () => setStep(1) },
+              E('i', { className: 'fas fa-arrow-left' }), ' Retour'
+            ),
+            E('button', {
+              className: paying ? 'btn btn-primary btn-block btn-loading' : 'btn btn-primary btn-block',
+              onClick: handleActivate, disabled: paying,
+              style: { background: 'linear-gradient(135deg,#FDEE42,#f5c800)', color: '#1a1a1a', border: 'none' }
+            },
+              !paying && E(React.Fragment, null, E('i', { className: 'fas fa-bolt' }), ' Payer et activer le boost')
+            )
+          )
+        ),
+
+        /* ── STEP 3 : Confirmé ── */
+        step === 3 && E('div', { style: { textAlign: 'center', padding: '1.5rem 0' } },
+          E('div', { style: { fontSize: '3.5rem', marginBottom: '1rem' } }, '⚡'),
+          E('h3', { style: { fontWeight: 800, marginBottom: '0.5rem', color: 'var(--primary)' } }, 'Boost activé !'),
+          E('p', { style: { color: 'var(--text-secondary)', marginBottom: '0.5rem', fontSize: '0.9rem' } },
+            'Votre annonce "', product.name, '" est maintenant mise en avant.'
+          ),
+          plan && E('p', { style: { fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' } },
+            'Actif pendant ', plan.days, ' jours — jusqu\u2019au ',
+            new Date(Date.now() + (plan.days * 86400000)).toLocaleDateString('fr-FR')
+          ),
+          E('button', { className: 'btn btn-primary', onClick: onClose },
+            E('i', { className: 'fas fa-check' }), ' Fermer'
+          )
+        )
+      )
+    )
+  );
+};
+// ── Fin BoostModal ────────────────────────────────────────────────────────────
+
 const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, onDownloadStatement }) => {
   // [FIX #310] Hooks remontés au niveau du composant — interdit dans les IIFEs conditionnelles
   const [_myReturns, _setMyReturns] = React.useState(
@@ -18699,6 +19004,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   const [showPayoutModal, setShowPayoutModal] = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [showScraper, setShowScraper] = useState(false);
+  const [boostProduct, setBoostProduct] = useState(null);   // produit à booster
+  const [activBoosts, setActivBoosts] = useState([]);       // boosts actifs du vendeur
   // États hissés pour respecter les règles React Hooks
   const [vendorLocalReviews, setVendorLocalReviews] = React.useState([]);
   const [vendorAnswers, setVendorAnswers] = React.useState({});
@@ -18742,6 +19049,24 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   useEffect(() => {
     loadData();
   }, []);
+
+  // Charger les boosts actifs du vendeur au montage
+  useEffect(() => {
+    const loadBoosts = async () => {
+      if (!isSupabaseConfigured() || !DataService._sb) return;
+      try {
+        const { data } = await DataService._sb
+          .from('product_boosts')
+          .select('*')
+          .eq('vendor_id', currentUser2.id)
+          .eq('active', true)
+          .gte('ends_at', new Date().toISOString());
+        if (data) setActivBoosts(data);
+      } catch(e) { console.warn('[Boost] load error:', e.message); }
+    };
+    loadBoosts();
+  }, [currentUser2.id]);
+
   const loadData = async (isRetry = false) => {
     if (!isRetry) setIsLoading(true);
     // Affichage immédiat depuis cache localStorage
@@ -19123,6 +19448,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       const _pr = storage.getArray("payout_requests");
     return _pr.filter(r => r.vendorId === currentUser2.id && (r.status === "pending" || r.status === "processing")).length;
     })() },
+    { id: "boost", icon: "rocket", label: "⚡ Booster mes annonces" },
     { id: "parrainage", icon: "handshake", label: "Parrainage vendeur" },
     { id: "profile", icon: "store", label: "Ma Boutique" }
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
@@ -19196,7 +19522,145 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   })))))), !isLoading && view === "products" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h2", { className: "section-title" }, "Mes Produits (", products.length, ")"), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowBulkImport(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Import CSV"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary", onClick: () => setShowScraper(true), title: "Extraire un produit depuis une URL (Amazon, Jumia, AliExpress\u2026)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-magic" }), " Extraire URL"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => {
   if (vendorStatus !== 'approved') { addToast("Votre boutique est en attente de validation. Vous pourrez ajouter des produits une fois approuvé.", "warning"); return; }
   setShowAddProduct(true);
-}, "aria-expanded": showAddProduct, disabled: vendorStatus !== 'approved', title: vendorStatus !== 'approved' ? "Boutique en attente d'approbation" : "Ajouter un produit", style: vendorStatus !== 'approved' ? {opacity:0.6, cursor:'not-allowed'} : {} }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("input", { type: "search", className: "form-input", placeholder: "Rechercher un produit…", value: productSearch, onChange: e => setProductSearch(e.target.value), style: { flex: "1 1 180px", padding: "0.45rem 0.75rem", fontSize: "0.88rem" } }), /* @__PURE__ */ React.createElement("select", { className: "form-select", value: productSortVendor, onChange: e => setProductSortVendor(e.target.value), style: { flex: "0 0 auto", padding: "0.45rem 0.65rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Tri : Défaut"), /* @__PURE__ */ React.createElement("option", { value: "name" }, "Nom A→Z"), /* @__PURE__ */ React.createElement("option", { value: "stock-asc" }, "Stock ↑"), /* @__PURE__ */ React.createElement("option", { value: "stock-desc" }, "Stock ↓"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix ↑"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix ↓"))), (() => { let displayProducts = products.filter(p => !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || (p.category||'').toLowerCase().includes(productSearch.toLowerCase())); if (productSortVendor === 'name') displayProducts = [...displayProducts].sort((a,b) => a.name.localeCompare(b.name)); else if (productSortVendor === 'stock-asc') displayProducts = [...displayProducts].sort((a,b) => a.stock - b.stock); else if (productSortVendor === 'stock-desc') displayProducts = [...displayProducts].sort((a,b) => b.stock - a.stock); else if (productSortVendor === 'price-asc') displayProducts = [...displayProducts].sort((a,b) => a.price - b.price); else if (productSortVendor === 'price-desc') displayProducts = [...displayProducts].sort((a,b) => b.price - a.price); return displayProducts.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit"), /* @__PURE__ */ React.createElement("p", null, vendorStatus !== 'approved' ? "Votre boutique est en attente d'approbation" : productSearch ? `Aucun résultat pour "${productSearch}"` : "Commencez à vendre en ajoutant votre premier produit"), vendorStatus === 'approved' && !productSearch && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, displayProducts.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.id, className: "product-card", role: "article", "aria-label": p.name }, /* @__PURE__ */ React.createElement(ProductImg, { product: p, height: 180 }), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product: p }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), " ", /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? p.stock + " stock" : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", style: { marginBottom: "0.35rem" }, onClick: (e) => { e.stopPropagation(); const url = `${location.origin}${location.pathname}?product=${p.id}`; navigator.clipboard ? navigator.clipboard.writeText(url).then(() => addToast("🔗 URL copiée !", "success")).catch(() => addToast("Copie impossible", "error")) : addToast("Copie impossible", "error"); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-link" }), " Copier URL"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", onClick: () => setEditProduct(p) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-edit" }), " Modifier / Supprimer"))))); })()), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Offres re\xE7ues (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Les offres de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Acheteur"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Acheteur" }, offer.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, offer.status === "pending" ? /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleOffer(offer.id, true) }, "Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleOffer(offer.id, false) }, "Refuser")) : /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : "danger"}` }, offer.status)))))))), !isLoading && view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.6rem", flexWrap: "wrap", padding: "0.75rem 1rem", background: "var(--bg-light)", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("input", { type: "search", className: "form-input", placeholder: "Rechercher ID ou client…", value: orderSearch, onChange: e => { setOrderSearch(e.target.value); setOrdersPage(1); }, style: { flex: "1 1 160px", padding: "0.45rem 0.75rem", fontSize: "0.88rem" } }), /* @__PURE__ */ React.createElement("select", { className: "form-select", value: orderStatusFilter, onChange: e => { setOrderStatusFilter(e.target.value); setOrdersPage(1); }, style: { flex: "0 0 auto", padding: "0.45rem 0.65rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("option", { value: "all" }, "Tous les statuts"), /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livré"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annulé"))), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande")) : (() => { const filteredOrders = orders.filter(o => { const ms = !orderSearch || o.id.toLowerCase().includes(orderSearch.toLowerCase()) || (o.buyerName||'').toLowerCase().includes(orderSearch.toLowerCase()); const mst = orderStatusFilter === 'all' || o.status === orderStatusFilter; return ms && mst; }); return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Toutes mes commandes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Produits"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, filteredOrders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE).map((o) => {
+}, "aria-expanded": showAddProduct, disabled: vendorStatus !== 'approved', title: vendorStatus !== 'approved' ? "Boutique en attente d'approbation" : "Ajouter un produit", style: vendorStatus !== 'approved' ? {opacity:0.6, cursor:'not-allowed'} : {} }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit"))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.6rem", flexWrap: "wrap", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("input", { type: "search", className: "form-input", placeholder: "Rechercher un produit…", value: productSearch, onChange: e => setProductSearch(e.target.value), style: { flex: "1 1 180px", padding: "0.45rem 0.75rem", fontSize: "0.88rem" } }), /* @__PURE__ */ React.createElement("select", { className: "form-select", value: productSortVendor, onChange: e => setProductSortVendor(e.target.value), style: { flex: "0 0 auto", padding: "0.45rem 0.65rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("option", { value: "default" }, "Tri : Défaut"), /* @__PURE__ */ React.createElement("option", { value: "name" }, "Nom A→Z"), /* @__PURE__ */ React.createElement("option", { value: "stock-asc" }, "Stock ↑"), /* @__PURE__ */ React.createElement("option", { value: "stock-desc" }, "Stock ↓"), /* @__PURE__ */ React.createElement("option", { value: "price-asc" }, "Prix ↑"), /* @__PURE__ */ React.createElement("option", { value: "price-desc" }, "Prix ↓"))), (() => { let displayProducts = products.filter(p => !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || (p.category||'').toLowerCase().includes(productSearch.toLowerCase())); if (productSortVendor === 'name') displayProducts = [...displayProducts].sort((a,b) => a.name.localeCompare(b.name)); else if (productSortVendor === 'stock-asc') displayProducts = [...displayProducts].sort((a,b) => a.stock - b.stock); else if (productSortVendor === 'stock-desc') displayProducts = [...displayProducts].sort((a,b) => b.stock - a.stock); else if (productSortVendor === 'price-asc') displayProducts = [...displayProducts].sort((a,b) => a.price - b.price); else if (productSortVendor === 'price-desc') displayProducts = [...displayProducts].sort((a,b) => b.price - a.price); return displayProducts.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit"), /* @__PURE__ */ React.createElement("p", null, vendorStatus !== 'approved' ? "Votre boutique est en attente d'approbation" : productSearch ? `Aucun résultat pour "${productSearch}"` : "Commencez à vendre en ajoutant votre premier produit"), vendorStatus === 'approved' && !productSearch && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setShowAddProduct(true) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-plus", "aria-hidden": "true" }), " Ajouter un produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, displayProducts.map((p) => /* @__PURE__ */ React.createElement("div", { key: p.id, className: "product-card", role: "article", "aria-label": p.name }, /* @__PURE__ */ React.createElement(ProductImg, { product: p, height: 180 }), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, p.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, p.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product: p }), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: p.rating }), " ", /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "(", p.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("span", { className: `badge ${p.stock > 10 ? "badge-success" : p.stock > 0 ? "badge-warning" : "badge-danger"}` }, p.stock > 0 ? p.stock + " stock" : "\xC9puis\xE9")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", style: { marginBottom: "0.35rem" }, onClick: (e) => { e.stopPropagation(); const url = `${location.origin}${location.pathname}?product=${p.id}`; navigator.clipboard ? navigator.clipboard.writeText(url).then(() => addToast("🔗 URL copiée !", "success")).catch(() => addToast("Copie impossible", "error")) : addToast("Copie impossible", "error"); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-link" }), " Copier URL"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm btn-block", onClick: () => setEditProduct(p) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-edit" }), " Modifier / Supprimer"),
+/* @__PURE__ */ React.createElement("button", {
+  className: "btn btn-sm btn-block",
+  style: {
+    marginTop: "0.3rem",
+    background: activBoosts.some(b => b.product_id === p.id && b.active)
+      ? "linear-gradient(135deg,#FDEE42,#f5c800)"
+      : "linear-gradient(135deg,#1a1a2e,#16213e)",
+    color: activBoosts.some(b => b.product_id === p.id && b.active) ? "#1a1a1a" : "white",
+    border: "none", cursor: "pointer", fontWeight: 700,
+  },
+  onClick: (e) => { e.stopPropagation(); setBoostProduct(p); }
+},
+  React.createElement("i", { className: activBoosts.some(b => b.product_id === p.id && b.active) ? "fas fa-bolt" : "fas fa-rocket" }),
+  " ",
+  activBoosts.some(b => b.product_id === p.id && b.active) ? "Boosté ⚡" : "Booster"
+))))); })()), view === "boost" && React.createElement(React.Fragment, null,
+  /* En-tête boost */
+  React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } },
+    React.createElement("h2", { className: "section-title" },
+      React.createElement("i", { className: "fas fa-rocket", style: { color: "#FDEE42", marginRight: "0.5rem" } }),
+      "Booster mes annonces"
+    ),
+    React.createElement("span", { className: "badge badge-warning" }, "Tier 1 — Visibilité payante")
+  ),
+
+  /* Bannière explicative */
+  React.createElement("div", { style: {
+    background: "linear-gradient(135deg,#1a1a2e,#16213e)",
+    borderRadius: 16, padding: "1.25rem 1.5rem",
+    marginBottom: "1.5rem", color: "white"
+  }},
+    React.createElement("div", { style: { fontWeight: 800, fontSize: "1.05rem", marginBottom: "0.5rem" } },
+      "⚡ Vos annonces boostées apparaissent en PREMIER dans le catalogue"
+    ),
+    React.createElement("div", { style: { fontSize: "0.85rem", color: "rgba(255,255,255,0.7)", marginBottom: "1rem" } },
+      "3× à 8× plus de vues · Badge ‘Annonce en vedette’ · Remonte automatiquement chaque 6h"
+    ),
+    React.createElement("div", { style: { display: "flex", gap: "0.75rem", flexWrap: "wrap" } },
+      [
+        { type: "top_3j",       label: "TOP Express",    price: 500,  days: 3,  desc: "En tête de liste 3 jours" },
+        { type: "boost_semaine",label: "Boost Semaine",  price: 1200, days: 7,  desc: "Remonte 2×/jour, 7 jours" },
+        { type: "pro_mensuel",  label: "Pro Mensuel",    price: 8000, days: 30, desc: "Remonte 4×/jour + badge Pro" },
+      ].map(f => React.createElement("div", { key: f.type, style: {
+        background: "rgba(255,255,255,0.08)", borderRadius: 10,
+        padding: "0.65rem 1rem", flex: "1 1 140px", minWidth: "140px"
+      }},
+        React.createElement("div", { style: { fontWeight: 700, fontSize: "0.9rem", color: "#FDEE42" } }, f.label),
+        React.createElement("div", { style: { fontSize: "0.82rem", color: "rgba(255,255,255,0.75)", margin: "0.2rem 0" } }, f.desc),
+        React.createElement("div", { style: { fontWeight: 800, fontSize: "1.1rem" } },
+          f.price.toLocaleString("fr-FR") + " FCFA / " + f.days + "j"
+        )
+      ))
+    )
+  ),
+
+  /* Boosts actifs */
+  activBoosts.length > 0 && React.createElement("div", { className: "card", style: { marginBottom: "1.5rem" } },
+    React.createElement("div", { className: "card-header" },
+      React.createElement("h3", { className: "card-title" }, "⚡ Boosts actifs"),
+    ),
+    React.createElement("div", { className: "table-wrapper" },
+      React.createElement("table", { className: "data-table" },
+        React.createElement("thead", null,
+          React.createElement("tr", null,
+            React.createElement("th", null, "Produit"),
+            React.createElement("th", null, "Forfait"),
+            React.createElement("th", null, "Expiration"),
+            React.createElement("th", null, "Statut"),
+          )
+        ),
+        React.createElement("tbody", null,
+          activBoosts.map(b => {
+            const prod = products.find(p => p.id === b.product_id);
+            const ends = new Date(b.ends_at);
+            const now = new Date();
+            const daysLeft = Math.max(0, Math.ceil((ends - now) / 86400000));
+            const typeLabels = { top_3j: "TOP Express", boost_semaine: "Boost Semaine", pro_mensuel: "Pro Mensuel" };
+            return React.createElement("tr", { key: b.id },
+              React.createElement("td", null, React.createElement("strong", null, prod ? prod.name : b.product_id)),
+              React.createElement("td", null, React.createElement("span", { className: "badge badge-warning" }, typeLabels[b.boost_type] || b.boost_type)),
+              React.createElement("td", null, ends.toLocaleDateString("fr-FR")),
+              React.createElement("td", null,
+                b.active
+                  ? React.createElement("span", { className: "badge badge-success" }, "⚡ Actif — ", daysLeft, "j restant", daysLeft > 1 ? "s" : "")
+                  : React.createElement("span", { className: "badge badge-danger" }, "Expiré")
+              )
+            );
+          })
+        )
+      )
+    )
+  ),
+
+  /* Grille produits à booster */
+  React.createElement("div", { className: "card" },
+    React.createElement("div", { className: "card-header" },
+      React.createElement("h3", { className: "card-title" }, "Choisir un produit à booster")
+    ),
+    products.length === 0
+      ? React.createElement("div", { className: "empty-state" },
+          React.createElement("i", { className: "fas fa-box" }),
+          React.createElement("p", null, "Ajoutez d’abord des produits pour les booster")
+        )
+      : React.createElement("div", { className: "product-grid" },
+          products.map(p => {
+            const isB = activBoosts.some(b => b.product_id === p.id && b.active);
+            return React.createElement("div", { key: p.id, className: "product-card" },
+              React.createElement(ProductImg, { product: p, height: 140 }),
+              isB && React.createElement("div", { style: {
+                position: "absolute", top: 8, left: 8,
+                background: "#FDEE42", color: "#1a1a1a",
+                borderRadius: 20, padding: "2px 10px",
+                fontSize: "0.7rem", fontWeight: 800,
+              }}, "⚡ BOOSTÉ"),
+              React.createElement("div", { className: "product-info" },
+                React.createElement("div", { className: "product-name" }, p.name),
+                React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "0.5rem" } },
+                  formatPrice(p.price), " · Stock : ", p.stock
+                ),
+                React.createElement("button", {
+                  className: "btn btn-sm btn-block",
+                  style: {
+                    background: isB ? "linear-gradient(135deg,#FDEE42,#f5c800)" : "linear-gradient(135deg,#1a1a2e,#16213e)",
+                    color: isB ? "#1a1a1a" : "white", border: "none", fontWeight: 700,
+                  },
+                  onClick: () => setBoostProduct(p)
+                },
+                  React.createElement("i", { className: isB ? "fas fa-bolt" : "fas fa-rocket" }),
+                  " ", isB ? "Gérer le boost" : "Booster cette annonce"
+                )
+              )
+            );
+          })
+        )
+  )
+),
+
+view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Offres re\xE7ues (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Les offres de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Acheteur"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Acheteur" }, offer.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, offer.status === "pending" ? /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleOffer(offer.id, true) }, "Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleOffer(offer.id, false) }, "Refuser")) : /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : "danger"}` }, offer.status)))))))), !isLoading && view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.6rem", flexWrap: "wrap", padding: "0.75rem 1rem", background: "var(--bg-light)", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("input", { type: "search", className: "form-input", placeholder: "Rechercher ID ou client…", value: orderSearch, onChange: e => { setOrderSearch(e.target.value); setOrdersPage(1); }, style: { flex: "1 1 160px", padding: "0.45rem 0.75rem", fontSize: "0.88rem" } }), /* @__PURE__ */ React.createElement("select", { className: "form-select", value: orderStatusFilter, onChange: e => { setOrderStatusFilter(e.target.value); setOrdersPage(1); }, style: { flex: "0 0 auto", padding: "0.45rem 0.65rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("option", { value: "all" }, "Tous les statuts"), /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livré"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annulé"))), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande")) : (() => { const filteredOrders = orders.filter(o => { const ms = !orderSearch || o.id.toLowerCase().includes(orderSearch.toLowerCase()) || (o.buyerName||'').toLowerCase().includes(orderSearch.toLowerCase()); const mst = orderStatusFilter === 'all' || o.status === orderStatusFilter; return ms && mst; }); return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Toutes mes commandes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Produits"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, filteredOrders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE).map((o) => {
     var _a, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Produits" }, (o.products || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: "0.82rem" } }, p.name, " ×", p.quantity))), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("select", { className: "form-select", style: { padding: "0.3rem", fontSize: "0.8rem", width: "auto" }, value: o.status, onChange: (e) => updateOrderStatus(o.id, e.target.value), "aria-label": `Statut commande ${o.id}` }, /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livré"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annulé")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => downloadBuyerInvoicePDF(o), title: "Facture client PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Client"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-sm", style: { background: "#ea580c", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => downloadVendorInvoicePDF(o), title: "Relevé de vente PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-chart-line" }), " Relevé"),
             /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { background: "#1e40af", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => { const m = new Date(o.date || o.created_at || Date.now()).toISOString().slice(0,7); _downloadStatement(m); }, title: "Relevé mensuel PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-calendar-alt" }), " Mois"))));
@@ -19415,7 +19879,18 @@ React.createElement("div", { className: "form-group" },
       onClose: () => setShowBulkImport(false),
       addToast
     }
-  ), showScraper && /* @__PURE__ */ React.createElement(
+  ), boostProduct && React.createElement(BoostModal, {
+    product: boostProduct,
+    currentUser: currentUser2,
+    activBoosts,
+    addToast,
+    onBoostSuccess: (newBoost) => {
+      setActivBoosts(prev => [...prev.filter(b => b.product_id !== newBoost.product_id), newBoost]);
+      setBoostProduct(null);
+      addToast("⚡ Boost activé avec succès ! Votre annonce est maintenant mise en avant.", "success");
+    },
+    onClose: () => setBoostProduct(null),
+  }), showScraper && /* @__PURE__ */ React.createElement(
     ProductScraperModal,
     {
       currentUser: currentUser2,
@@ -21628,6 +22103,21 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     setWishlist(newWish);
   };
   const cartTotalEur = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  // Boosts actifs dans le catalogue (tri prioritaire)
+  const [catalogBoosts, setCatalogBoosts] = React.useState([]);
+  React.useEffect(() => {
+    const fetchBoosts = async () => {
+      if (!isSupabaseConfigured() || !DataService._sb) return;
+      try {
+        const { data } = await DataService._sb
+          .from('product_boosts').select('product_id')
+          .eq('active', true).gte('ends_at', new Date().toISOString());
+        if (data) setCatalogBoosts(data.map(b => b.product_id));
+      } catch(_) {}
+    };
+    fetchBoosts();
+  }, []);
+
   const filtered = useMemo(() => {
     if (view === "wishlist") {
       return products.filter((p) => wishlist.includes(p.id) && p.stock > 0);
@@ -21644,6 +22134,14 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     if (sortBy === "price-asc") result = [...result].sort((a, b) => a.price - b.price);
     else if (sortBy === "price-desc") result = [...result].sort((a, b) => b.price - a.price);
     else if (sortBy === "rating") result = [...result].sort((a, b) => b.rating - a.rating);
+    else {
+      // Tri par défaut : produits boostés en premier
+      result = [...result].sort((a, b) => {
+        const aB = catalogBoosts.includes(a.id) ? 1 : 0;
+        const bB = catalogBoosts.includes(b.id) ? 1 : 0;
+        return bB - aB;
+      });
+    }
     return result;
   }, [products, searchTerm, filterCategory, sortBy, view, wishlist, priceRange]);
   useEffect(() => {
@@ -21710,7 +22208,15 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   ), /* @__PURE__ */ React.createElement("div", { className: "filters", role: "group", "aria-label": "Filtrer par cat\xE9gorie" }, categories.map((cat) => /* @__PURE__ */ React.createElement("button", { key: cat, className: `filter-tag ${filterCategory === cat ? "active" : ""}`, onClick: () => setFilterCategory(cat), "aria-pressed": filterCategory === cat }, cat === "all" ? "Tous" : cat))), (() => { const priceMin = products.length > 0 ? Math.min(...products.map(p => p.price)) : 0; const priceMax = products.length > 0 ? Math.max(...products.map(p => p.price)) : 1e6; const step = Math.max(1, Math.round((priceMax - priceMin) / 100)); const isFiltered = priceRange[0] > priceMin || priceRange[1] < priceMax; return React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', background: isFiltered ? 'rgba(0,133,62,0.06)' : 'var(--bg-light)', borderRadius: '10px', padding: '0.6rem 1rem', flexWrap: 'wrap' } }, React.createElement('span', { style: { fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600, whiteSpace: 'nowrap' } }, '💰 Prix :'), React.createElement('span', { style: { fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' } }, formatPrice(priceRange[0])), React.createElement('input', { type: 'range', min: priceMin, max: priceMax, step, value: priceRange[0], onChange: e => setPriceRange([Math.min(+e.target.value, priceRange[1] - step), priceRange[1]]), style: { flex: 1, minWidth: '60px', accentColor: 'var(--primary)' }, 'aria-label': 'Prix minimum' }), React.createElement('input', { type: 'range', min: priceMin, max: priceMax, step, value: priceRange[1], onChange: e => setPriceRange([priceRange[0], Math.max(+e.target.value, priceRange[0] + step)]), style: { flex: 1, minWidth: '60px', accentColor: 'var(--primary)' }, 'aria-label': 'Prix maximum' }), React.createElement('span', { style: { fontSize: '0.78rem', fontWeight: 700, color: 'var(--primary)', whiteSpace: 'nowrap' } }, formatPrice(priceRange[1])), isFiltered && React.createElement('button', { onClick: () => setPriceRange([priceMin, priceMax]), style: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: '0.75rem', fontWeight: 600 }, title: 'Réinitialiser' }, '✕')); })(), currentItems.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-search", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun r\xE9sultat"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => {
     setSearchTerm("");
     setFilterCategory("all");
-  } }, "Voir tout")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "product-grid", role: "list", "aria-label": "Produits disponibles" }, currentItems.map((product) => /* @__PURE__ */ React.createElement("article", { key: product.id, className: "product-card", role: "listitem", onClick: () => setSelectedProduct(product), tabIndex: 0, onKeyDown: (e) => e.key === "Enter" && setSelectedProduct(product), "aria-label": `${product.name}, ${formatPrice(product.price)}` }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
+  } }, "Voir tout")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "product-grid", role: "list", "aria-label": "Produits disponibles" }, currentItems.map((product) => /* @__PURE__ */ React.createElement("article", { key: product.id, className: "product-card", role: "listitem", onClick: () => setSelectedProduct(product), tabIndex: 0, onKeyDown: (e) => e.key === "Enter" && setSelectedProduct(product), "aria-label": `${product.name}, ${formatPrice(product.price)}` }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } },
+  catalogBoosts.includes(product.id) && /* @__PURE__ */ React.createElement("div", { style: {
+    position: "absolute", top: 8, left: 8, zIndex: 2,
+    background: "linear-gradient(135deg,#FDEE42,#f5c800)",
+    color: "#1a1a1a", borderRadius: 20,
+    padding: "2px 10px", fontSize: "0.68rem", fontWeight: 800,
+    boxShadow: "0 2px 6px rgba(253,238,66,0.5)", pointerEvents: "none",
+  }}, "\u26a1 En vedette"),
+  /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(product);
   }, role: "button", tabIndex: 0, "aria-label": wishlist.includes(product.id) ? "Retirer des favoris" : "Ajouter aux favoris" }, /* @__PURE__ */ React.createElement("i", { className: `fa${wishlist.includes(product.id) ? "s" : "r"} fa-heart`, "aria-hidden": "true" })), product.flashDiscount && /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: "8px", left: "8px", background: "#e74c3c", color: "white", fontSize: "0.68rem", fontWeight: 800, padding: "0.18rem 0.42rem", borderRadius: "5px", zIndex: 2 } }, `-${product.flashDiscount}%`), !product.flashDiscount && product.createdAt && (Date.now() - new Date(product.createdAt).getTime()) < 14 * 86400000 && /* @__PURE__ */ React.createElement("span", { style: { position: "absolute", top: "8px", left: "8px", background: "#16a34a", color: "white", fontSize: "0.68rem", fontWeight: 800, padding: "0.18rem 0.42rem", borderRadius: "5px", zIndex: 2 } }, "NEW")), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, product.category), /* @__PURE__ */ React.createElement("h3", { className: "product-name" }, product.name), /* @__PURE__ */ React.createElement("div", { className: "product-vendor vendor-link", title: "Voir la boutique de " + product.vendorName, role: "button", tabIndex: 0, onClick: (e) => { e.stopPropagation(); setShowVendorPage({ id: product.vendor||null, name: product.vendorName||"Boutique" }); }, onKeyDown: (e) => { if (e.key==="Enter") { e.stopPropagation(); setShowVendorPage({ id: product.vendor||null, name: product.vendorName||"Boutique" }); } } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store", "aria-hidden": "true" }), " ", product.vendorName), /* @__PURE__ */ React.createElement("div", { className: "product-rating" }, /* @__PURE__ */ React.createElement(Stars, { rating: product.rating }), /* @__PURE__ */ React.createElement("span", { className: "text-muted", style: { fontSize: "0.82rem" } }, "(", product.reviewsCount || 0, ")")), /* @__PURE__ */ React.createElement("div", { className: "product-footer" }, /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1" }, /* @__PURE__ */ React.createElement(PriceDisplay, { product, currentUser: currentUser2 }), product.stock <= 5 && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning" }, "\u26A0\uFE0F ", product.stock, " restants")), /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, product.stock === 0
