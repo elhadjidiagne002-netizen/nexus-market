@@ -10718,6 +10718,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const submittingRef = React.useRef(false); // anti-double-submit guard
   const handleLogin = async () => {
     if (!email || !password) {
       setError("Veuillez remplir tous les champs");
@@ -15073,6 +15074,301 @@ const VFlashCountdown = ({ endsAt }) => {
   return /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "monospace", fontSize: "0.85rem", color: "var(--danger)", fontWeight: 700 } }, rem);
 };
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// Phase0ConfigPanel — Checklist + formulaires Paiements / NINEA / VAPID
+// (extrait hors IIFE pour respecter les Rules of Hooks — React error #310)
+// ════════════════════════════════════════════════════════════════════════════
+const Phase0ConfigPanel = ({ addToast }) => {
+  const [_waveNum, _setWaveNum] = React.useState(NEXUS_CONFIG.payments.waveNumber === '77XXXXXXX' ? '' : NEXUS_CONFIG.payments.waveNumber);
+  const [_omNum,   _setOmNum]   = React.useState(NEXUS_CONFIG.payments.orangeMoneyNumber === '77XXXXXXX' ? '' : NEXUS_CONFIG.payments.orangeMoneyNumber);
+  const [_waNum,   _setWaNum]   = React.useState(NEXUS_CONFIG.admin.whatsapp === '77XXXXXXX' ? '' : NEXUS_CONFIG.admin.whatsapp);
+  const [_ninea,   _setNinea]   = React.useState(NEXUS_CONFIG.legal.ninea || '');
+  const [_rccm,    _setRccm]    = React.useState(NEXUS_CONFIG.legal.rccm  || '');
+  const [_company, _setCompany] = React.useState(NEXUS_CONFIG.legal.companyName || '');
+  const [_vapid,   _setVapid]   = React.useState(NEXUS_CONFIG.vapid.publicKey || '');
+
+  const _saveField = (key, val) => {
+    try {
+      const sc = JSON.parse(localStorage.getItem('nexus_saved_config') || '{}');
+      sc[key] = val;
+      localStorage.setItem('nexus_saved_config', JSON.stringify(sc));
+    } catch(_) {}
+  };
+
+  const _waveOk  = _waveNum  && _waveNum.replace(/\D/g,'').length >= 8;
+  const _omOk    = _omNum    && _omNum.replace(/\D/g,'').length >= 8;
+  const _waOk    = _waNum    && _waNum.replace(/\D/g,'').length >= 8;
+  const _nineaOk = !!_ninea;
+  const _rccmOk  = !!_rccm;
+  const _vapidOk = _vapid && _vapid.length > 40;
+  const _missing = [!_waveOk, !_omOk, !_waOk, !_nineaOk, !_rccmOk, !_vapidOk, !IS_SUPABASE_CONFIGURED].filter(Boolean).length;
+
+  const E = React.createElement;
+
+  const inp = (label, val, setter, key, placeholder, isError) =>
+    E('div', { className:'form-group' },
+      E('label', { className:'form-label' }, label),
+      E('input', { type:'text', className:'form-input'+(isError?' error':''),
+        value: val, placeholder,
+        style: ['legalNinea','legalRccm','vapidPublicKey'].includes(key) ? { fontFamily:'monospace', fontSize:'.82rem' } : {},
+        onChange: ev => {
+          const v = ['waveNumber','orangeMoneyNumber','adminWhatsapp'].includes(key) ? ev.target.value.replace(/\D/g,'') : ev.target.value;
+          setter(v);
+          if (key === 'waveNumber')        NEXUS_CONFIG.payments.waveNumber        = v;
+          if (key === 'orangeMoneyNumber') NEXUS_CONFIG.payments.orangeMoneyNumber = v;
+          if (key === 'adminWhatsapp')     NEXUS_CONFIG.admin.whatsapp             = v;
+          if (key === 'legalNinea')        NEXUS_CONFIG.legal.ninea                = v;
+          if (key === 'legalRccm')         NEXUS_CONFIG.legal.rccm                 = v;
+          if (key === 'legalCompanyName')  NEXUS_CONFIG.legal.companyName          = v;
+          if (key === 'vapidPublicKey')    NEXUS_CONFIG.vapid.publicKey            = v;
+          _saveField(key, v);
+        }
+      })
+    );
+
+  return E(React.Fragment, null,
+    /* Checklist rouge */
+    _missing > 0 && E('div', { className:'card', style:{ marginBottom:'1.5rem', border:'2px solid #ef4444' } },
+      E('div', { className:'card-header', style:{ background:'#fef2f2' } },
+        E('h2', { className:'card-title', style:{ color:'#dc2626' } },
+          E('i',{className:'fas fa-exclamation-triangle'}), ' Phase 0 \u2014 ', _missing, ' configuration(s) critique(s)'
+        )
+      ),
+      E('div', { style:{ padding:'1rem', display:'flex', flexDirection:'column', gap:'.4rem' } },
+        [
+          [_waveOk,   '\uD83D\uDD35 Num\u00e9ro Wave Marchand',   '\u2192 Section Paiements ci-dessous'],
+          [_omOk,     '\uD83D\uDFE0 Num\u00e9ro Orange Money',    '\u2192 Section Paiements ci-dessous'],
+          [_waOk,     '\uD83D\uDCAC WhatsApp Admin',              '\u2192 Section Paiements ci-dessous'],
+          [_nineaOk,  '\uD83E\uDDFE NINEA configur\u00e9',        '\u2192 Section Mentions l\u00e9gales'],
+          [_rccmOk,   '\uD83E\uDDFE RCCM configur\u00e9',         '\u2192 Section Mentions l\u00e9gales'],
+          [_vapidOk,  '\uD83D\uDD14 Cl\u00e9 VAPID push',         '\u2192 Section Notifications'],
+          [IS_SUPABASE_CONFIGURED, '\uD83D\uDDC4\uFE0F Supabase connect\u00e9', '\u2192 Cliquer Reconfigurer'],
+        ].map(([ok,lbl,fix],i) =>
+          E('div', { key:i, style:{ display:'flex', alignItems:'center', gap:'.75rem', padding:'.5rem .85rem', background: ok?'#f0fdf4':'#fff7ed', borderRadius:'8px' } },
+            E('i',{ className:'fas fa-'+(ok?'check-circle':'exclamation-circle'), style:{ color: ok?'#22c55e':'#f97316', flexShrink:0 } }),
+            E('span',{ style:{ fontWeight:600, fontSize:'.88rem', flex:1 } }, lbl),
+            !ok && E('span',{ style:{ fontSize:'.72rem', color:'#9ca3af', fontStyle:'italic' } }, fix)
+          )
+        )
+      )
+    ),
+    /* Paiements mobiles */
+    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-mobile-alt text-primary'}), ' Paiements mobiles & Contact')
+      ),
+      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+        (!_waveOk||!_omOk) && E('div', { className:'alert alert-danger', style:{ fontSize:'.82rem' } },
+          E('i',{className:'fas fa-exclamation-triangle'}),
+          ' Sans ces num\u00e9ros, Wave et Orange Money affichent une erreur \u00e0 chaque paiement.'
+        ),
+        E('div', { className:'form-row' },
+          inp('\uD83D\uDD35 Wave Marchand (sans +221)', _waveNum, _setWaveNum, 'waveNumber', '771234567', !_waveOk),
+          inp('\uD83D\uDFE0 Orange Money (sans +221)',  _omNum,   _setOmNum,   'orangeMoneyNumber', '776543210', !_omOk)
+        ),
+        inp(E(React.Fragment,null,E('i',{className:'fab fa-whatsapp',style:{color:'#25D366',marginRight:'.4rem'}}),'WhatsApp Admin (sans +221)'), _waNum, _setWaNum, 'adminWhatsapp', '775678901', !_waOk)
+      )
+    ),
+    /* Mentions l\u00e9gales */
+    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-balance-scale text-primary'}), ' Mentions l\u00e9gales \u2014 Factures PDF')
+      ),
+      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+        (!_nineaOk||!_rccmOk) && E('div', { className:'alert alert-danger', style:{ fontSize:'.82rem' } },
+          E('i',{className:'fas fa-exclamation-triangle'}),
+          ' NINEA / RCCM manquants \u2192 factures PDF non opposables (OHADA art.\u00a029).'
+        ),
+        E('div', { className:'form-row' },
+          inp('NINEA *', _ninea, _setNinea, 'legalNinea', '007123456 2T3', !_nineaOk),
+          inp('RCCM *',  _rccm,  _setRccm,  'legalRccm',  'SN-DKR-2024-B-12345', !_rccmOk)
+        ),
+        inp('Raison sociale', _company, _setCompany, 'legalCompanyName', 'NEXUS Market SARL', false)
+      )
+    ),
+    /* VAPID */
+    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-bell text-primary'}), ' Notifications Push VAPID')
+      ),
+      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+        E('div', { className:'alert alert-info', style:{ fontSize:'.82rem' } },
+          E('i',{className:'fas fa-info-circle'}), ' G\u00e9n\u00e9rer sur ',
+          E('a',{href:'https://web-push-codelab.glitch.me/',target:'_blank',style:{color:'var(--primary)'}},'web-push-codelab.glitch.me'),
+          ' \u2192 copier la cl\u00e9 PUBLIQUE. Taux d\u2019ouverture push\u00a0: 30% vs 3% email.'
+        ),
+        inp('Cl\u00e9 publique VAPID', _vapid, _setVapid, 'vapidPublicKey', 'BXxxxxxx...', !_vapidOk)
+      )
+    )
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// SqlScriptsPanel — Scripts SQL Phase 0 avec bouton Copier
+// ════════════════════════════════════════════════════════════════════════════
+const SqlScriptsPanel = () => {
+  const [_copiedAx, _setCopiedAx] = React.useState(false);
+  const [_copiedBo, _setCopiedBo] = React.useState(false);
+  const E = React.createElement;
+
+  const SQL_EXPRESS = `-- TABLE annonces_express (Annonces sans inscription)\nCREATE TABLE IF NOT EXISTS annonces_express (\n  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),\n  photo_url   text,\n  price_fcfa  integer     NOT NULL CHECK (price_fcfa >= 100),\n  category    text        NOT NULL DEFAULT 'autres',\n  description text,\n  phone       text        NOT NULL,\n  email       text,\n  city        text        NOT NULL DEFAULT 'Dakar',\n  status      text        NOT NULL DEFAULT 'active'\n              CHECK (status IN ('active','expired','deleted','pending')),\n  created_at  timestamptz NOT NULL DEFAULT now(),\n  expires_at  timestamptz NOT NULL DEFAULT (now() + INTERVAL '30 days'),\n  views_count     integer NOT NULL DEFAULT 0,\n  whatsapp_clicks integer NOT NULL DEFAULT 0\n);\nALTER TABLE annonces_express ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "ae_public_read"   ON annonces_express FOR SELECT USING (status = 'active' AND expires_at > now());\nCREATE POLICY "ae_public_insert" ON annonces_express FOR INSERT WITH CHECK (true);`;
+
+  const SQL_BOOSTS = `-- TABLE product_boosts + invoice_sequences\nCREATE TABLE IF NOT EXISTS product_boosts (\n  id             uuid  PRIMARY KEY DEFAULT gen_random_uuid(),\n  product_id     text  NOT NULL,\n  vendor_id      uuid  REFERENCES auth.users(id) ON DELETE CASCADE,\n  boost_type     text  NOT NULL CHECK (boost_type IN ('top_3j','boost_semaine','boost_mensuel','pro_mensuel','pro_annuel')),\n  price_fcfa     integer NOT NULL,\n  started_at     timestamptz NOT NULL DEFAULT now(),\n  ends_at        timestamptz NOT NULL,\n  active         boolean NOT NULL DEFAULT true,\n  payment_method text,\n  payment_ref    text,\n  payment_status text NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending','paid','failed','refunded'))\n);\nALTER TABLE products ADD COLUMN IF NOT EXISTS is_boosted    boolean DEFAULT false;\nALTER TABLE products ADD COLUMN IF NOT EXISTS boost_ends_at timestamptz;\nCREATE TABLE IF NOT EXISTS invoice_sequences (\n  prefix TEXT NOT NULL, year SMALLINT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY (prefix, year)\n);\nCREATE OR REPLACE FUNCTION invoice_next_seq(p_prefix TEXT, p_year SMALLINT)\nRETURNS INTEGER LANGUAGE plpgsql AS $$\nDECLARE next_val INTEGER;\nBEGIN\n  INSERT INTO invoice_sequences(prefix,year,last_seq) VALUES(p_prefix,p_year,1)\n    ON CONFLICT(prefix,year) DO UPDATE SET last_seq = invoice_sequences.last_seq+1\n    RETURNING last_seq INTO next_val;\n  RETURN next_val;\nEND; $$;`;
+
+  const copy = (sql, set) => {
+    navigator.clipboard.writeText(sql).then(() => { set(true); setTimeout(() => set(false), 2500); });
+  };
+
+  return E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+    E('div', { className:'card-header' },
+      E('h2', { className:'card-title' }, E('i',{className:'fas fa-database text-primary'}), ' Tables SQL \u00e0 ex\u00e9cuter dans Supabase')
+    ),
+    E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1.25rem' } },
+      E('div', { className:'alert alert-warning', style:{ fontSize:'.82rem' } },
+        E('i',{className:'fas fa-exclamation-triangle'}),
+        ' Copier chaque script \u2192 Supabase Dashboard \u2192 SQL Editor \u2192 New query \u2192 Run.'
+      ),
+      E('div', null,
+        E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'.5rem', flexWrap:'wrap', gap:'.5rem' } },
+          E('h3', { style:{ fontWeight:700, fontSize:'.9rem', color:'var(--danger)' } }, '\u26A1 1. annonces_express'),
+          E('button', { className:'btn btn-sm btn-'+(_copiedAx?'success':'primary'), onClick:() => copy(SQL_EXPRESS, _setCopiedAx) },
+            E('i',{className:'fas fa-'+(_copiedAx?'check':'copy')}), ' ', _copiedAx?'Copi\u00e9 !':'Copier'
+          )
+        ),
+        E('pre', { style:{ background:'#1e1e2e', color:'#a6e3a1', borderRadius:'10px', padding:'1rem', fontSize:'.7rem', overflowX:'auto', maxHeight:'160px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_EXPRESS)
+      ),
+      E('div', null,
+        E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'.5rem', flexWrap:'wrap', gap:'.5rem' } },
+          E('h3', { style:{ fontWeight:700, fontSize:'.9rem', color:'var(--primary)' } }, '\uD83D\uDE80 2. product_boosts + invoice_sequences'),
+          E('button', { className:'btn btn-sm btn-'+(_copiedBo?'success':'primary'), onClick:() => copy(SQL_BOOSTS, _setCopiedBo) },
+            E('i',{className:'fas fa-'+(_copiedBo?'check':'copy')}), ' ', _copiedBo?'Copi\u00e9 !':'Copier'
+          )
+        ),
+        E('pre', { style:{ background:'#1e1e2e', color:'#89b4fa', borderRadius:'10px', padding:'1rem', fontSize:'.7rem', overflowX:'auto', maxHeight:'160px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_BOOSTS)
+      ),
+      E('a', { href:'https://supabase.com/dashboard', target:'_blank', className:'btn btn-secondary', style:{ alignSelf:'flex-start' } },
+        E('i',{className:'fas fa-external-link-alt'}), ' Ouvrir Supabase Dashboard'
+      )
+    )
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// WhatsAppAdminPanel — Config Green API dans Admin → Configuration
+// ════════════════════════════════════════════════════════════════════════════
+const WhatsAppAdminPanel = ({ addToast }) => {
+  const [_waInst,   _setWaInst]   = React.useState(NexusWA._cfg.instanceId || '');
+  const [_waToken,  _setWaToken]  = React.useState(NexusWA._cfg.apiToken   || '');
+  const [_waSec,    _setWaSec]    = React.useState(NexusWA._cfg.secret     || '');
+  const [_waOn,     _setWaOn]     = React.useState(NexusWA._cfg.enabled    || false);
+  const [_waSaving, _setWaSaving] = React.useState(false);
+  const [_waTest,   _setWaTest]   = React.useState('');
+  const [_waTesting,_setWaTesting]= React.useState(false);
+  const [_ambSend,  _setAmbSend]  = React.useState(false);
+  const WE = React.createElement;
+
+  const saveWA = async () => {
+    _setWaSaving(true);
+    await NexusWA.saveConfig({ instanceId:_waInst, apiToken:_waToken, secret:_waSec, enabled:_waOn });
+    addToast('\u2705 Config WhatsApp sauvegard\u00e9e', 'success');
+    _setWaSaving(false);
+  };
+  const testWA = async () => {
+    if (!_waTest || _waTest.replace(/\D/g,'').length < 8) { addToast('Saisissez un num\u00e9ro valide', 'warning'); return; }
+    _setWaTesting(true);
+    const r = await NexusWA.send(_waTest.replace(/\D/g,''), '\u2705 *Test NEXUS Market*\nInt\u00e9gration WhatsApp Green API op\u00e9rationnelle\u00a0! \uD83C\uDF89\nnexus.sn', 'test');
+    addToast(r.ok ? '\u2705 Message envoy\u00e9\u00a0!' : '\u274C \u00c9chec\u00a0: ' + (r.error||'V\u00e9rifiez les credentials'), r.ok?'success':'error');
+    _setWaTesting(false);
+  };
+  const sendAmbReports = async () => {
+    _setAmbSend(true);
+    if (DataService._sb) {
+      const { data } = await DataService._sb.rpc('send_ambassador_monthly_report').catch(() => ({ data:0 }));
+      addToast('\uD83D\uDCCA ' + (data||0) + ' relev\u00e9s ambassadeurs envoy\u00e9s', 'success');
+    } else addToast('Supabase requis', 'warning');
+    _setAmbSend(false);
+  };
+
+  return WE('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+    WE('div', { className:'card-header' },
+      WE('h2', { className:'card-title' },
+        WE('i',{ className:'fab fa-whatsapp', style:{ color:'#25D366', marginRight:'.5rem' } }),
+        'WhatsApp automatique \u2014 Green API',
+        WE('span', { className:'badge badge-'+(_waOn?'success':'secondary'), style:{ marginLeft:'.75rem' } }, _waOn?'\uD83D\uDFE2 Actif':'\u26AB Inactif')
+      )
+    ),
+    WE('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+      WE('div', { className:'alert alert-info', style:{ fontSize:'.82rem' } },
+        WE('i',{className:'fas fa-info-circle'}), ' Compte gratuit sur ',
+        WE('a',{href:'https://green-api.com',target:'_blank',style:{color:'var(--primary)'}},'green-api.com'),
+        ' \u2192 Cr\u00e9er une instance \u2192 Scanner le QR code avec votre t\u00e9l\u00e9phone.'
+      ),
+      WE('div', { className:'form-row' },
+        WE('div', { className:'form-group' },
+          WE('label',{className:'form-label'},'Instance ID'),
+          WE('input',{type:'text',className:'form-input',placeholder:'7103123456',style:{fontFamily:'monospace'},
+            value:_waInst, onChange: e=>_setWaInst(e.target.value)})
+        ),
+        WE('div', { className:'form-group' },
+          WE('label',{className:'form-label'},'API Token'),
+          WE('input',{type:'password',className:'form-input',placeholder:'abc123...',style:{fontFamily:'monospace'},
+            value:_waToken, onChange: e=>_setWaToken(e.target.value)})
+        )
+      ),
+      WE('div', { className:'form-row' },
+        WE('div', { className:'form-group' },
+          WE('label',{className:'form-label'},'Secret (partag\u00e9 avec Cloudflare)'),
+          WE('input',{type:'text',className:'form-input',placeholder:'nexus-wa-secret-2026',style:{fontFamily:'monospace'},
+            value:_waSec, onChange: e=>_setWaSec(e.target.value)})
+        ),
+        WE('div', { className:'form-group', style:{display:'flex',alignItems:'flex-end'} },
+          WE('label',{style:{display:'flex',alignItems:'center',gap:'.5rem',cursor:'pointer',fontSize:'.88rem',fontWeight:600,marginBottom:0}},
+            WE('input',{type:'checkbox',checked:_waOn,onChange:e=>_setWaOn(e.target.checked),style:{width:18,height:18,accentColor:'var(--primary)'}}),
+            'Activer les envois automatiques'
+          )
+        )
+      ),
+      WE('div',{style:{display:'flex',gap:'.75rem',flexWrap:'wrap'}},
+        WE('button',{className:'btn btn-primary'+(_waSaving?' btn-loading':''),onClick:saveWA,disabled:_waSaving},
+          WE('i',{className:'fas fa-save'}),' Sauvegarder'),
+        WE('a',{href:'https://green-api.com',target:'_blank',className:'btn btn-secondary'},
+          WE('i',{className:'fas fa-external-link-alt'}),' Dashboard Green API')
+      ),
+      WE('hr',{style:{margin:'.5rem 0'}}),
+      WE('div',{style:{fontWeight:700,fontSize:'.88rem',marginBottom:'.5rem'}},'\uD83E\uDDEA Test d\'envoi'),
+      WE('div',{style:{display:'flex',gap:'.75rem',flexWrap:'wrap',alignItems:'flex-end'}},
+        WE('div',{className:'form-group',style:{flex:2,marginBottom:0}},
+          WE('input',{type:'tel',className:'form-input',placeholder:'771234567 (sans +221)',
+            value:_waTest,onChange:e=>_setWaTest(e.target.value)})
+        ),
+        WE('button',{className:'btn btn-secondary'+(_waTesting?' btn-loading':''),onClick:testWA,disabled:_waTesting},
+          WE('i',{className:'fab fa-whatsapp',style:{color:'#25D366'}}),' Envoyer test')
+      ),
+      WE('hr',{style:{margin:'.5rem 0'}}),
+      WE('div',{style:{fontWeight:700,fontSize:'.88rem',marginBottom:'.5rem'}},'\uD83D\uDCCA Actions manuelles'),
+      WE('div',{style:{display:'flex',gap:'.75rem',flexWrap:'wrap'}},
+        WE('button',{className:'btn btn-secondary'+(_ambSend?' btn-loading':''),onClick:sendAmbReports,disabled:_ambSend},
+          WE('i',{className:'fas fa-paper-plane'}),' Relev\u00e9s mensuels ambassadeurs'),
+        WE('button',{className:'btn btn-secondary',onClick:async()=>{
+          const _wa=NEXUS_CONFIG.admin.whatsapp;
+          if(!_wa||_wa==='77XXXXXXX'){addToast('Configurez le n\u00b0 WhatsApp admin','warning');return;}
+          const r=await NexusWA.send(_wa,'\u26A1 *Ventes Flash du vendredi \u2014 NEXUS Market*\n\nDes promotions exceptionnelles vous attendent ce weekend\u00a0!\n\uD83D\uDED2 Connectez-vous sur nexus.sn','flash_broadcast');
+          addToast(r.ok||r.skipped?'Broadcast envoy\u00e9':'Erreur\u00a0:'+(r.error||''),r.ok||r.skipped?'success':'error');
+        }},
+          WE('i',{className:'fas fa-bolt'}),' Broadcast ventes flash')
+      ),
+      WE('div',{className:'alert alert-success',style:{fontSize:'.78rem',marginTop:'.25rem'}},
+        WE('strong',null,'\uD83E\uDD16 Automatique\u00a0: '),
+        'f\u00e9licitations 1\u00e8re vente \u2022 alerte nouvelle commande \u2022 vente flash cr\u00e9\u00e9e',
+        WE('br',null),
+        WE('strong',null,'\uD83D\uDC46 Manuel\u00a0: '),
+        'relev\u00e9s mensuels ambassadeurs \u2022 broadcast ventes flash du vendredi'
+      )
+    )
+  );
+};
+
 const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -17596,362 +17892,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && (() => {
-  const [_waveNum, _setWaveNum] = React.useState(NEXUS_CONFIG.payments.waveNumber === '77XXXXXXX' ? '' : NEXUS_CONFIG.payments.waveNumber);
-  const [_omNum,   _setOmNum]   = React.useState(NEXUS_CONFIG.payments.orangeMoneyNumber === '77XXXXXXX' ? '' : NEXUS_CONFIG.payments.orangeMoneyNumber);
-  const [_waNum,   _setWaNum]   = React.useState(NEXUS_CONFIG.admin.whatsapp === '77XXXXXXX' ? '' : NEXUS_CONFIG.admin.whatsapp);
-  const [_ninea,   _setNinea]   = React.useState(NEXUS_CONFIG.legal.ninea || '');
-  const [_rccm,    _setRccm]    = React.useState(NEXUS_CONFIG.legal.rccm  || '');
-  const [_company, _setCompany] = React.useState(NEXUS_CONFIG.legal.companyName || '');
-  const [_vapid,   _setVapid]   = React.useState(NEXUS_CONFIG.vapid.publicKey || '');
-  const [_copiedAx, _setCopiedAx] = React.useState(false);
-  const [_copiedBo, _setCopiedBo] = React.useState(false);
-
-  const _saveField = (key, val) => {
-    try {
-      const sc = JSON.parse(localStorage.getItem('nexus_saved_config') || '{}');
-      sc[key] = val;
-      localStorage.setItem('nexus_saved_config', JSON.stringify(sc));
-    } catch(_) {}
-  };
-
-  const _waveOk  = _waveNum  && _waveNum  !== '77XXXXXXX' && _waveNum.replace(/\D/g,'').length >= 8;
-  const _omOk    = _omNum    && _omNum    !== '77XXXXXXX' && _omNum.replace(/\D/g,'').length >= 8;
-  const _waOk    = _waNum    && _waNum    !== '77XXXXXXX' && _waNum.replace(/\D/g,'').length >= 8;
-  const _nineaOk = !!_ninea;
-  const _rccmOk  = !!_rccm;
-  const _vapidOk = _vapid && _vapid.length > 40;
-  const _missing = [!_waveOk, !_omOk, !_waOk, !_nineaOk, !_rccmOk, !_vapidOk, !IS_SUPABASE_CONFIGURED].filter(Boolean).length;
-
-  const SQL_EXPRESS = `-- ═══════════════════════════════════════════════════════
--- TABLE annonces_express — Annonces sans inscription (Phase 0)
--- Supabase Dashboard → SQL Editor → New query → Run
--- ═══════════════════════════════════════════════════════
-CREATE TABLE IF NOT EXISTS annonces_express (
-  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  photo_url   text,
-  price_fcfa  integer     NOT NULL CHECK (price_fcfa >= 100),
-  category    text        NOT NULL DEFAULT 'autres',
-  description text,
-  phone       text        NOT NULL,
-  email       text,
-  city        text        NOT NULL DEFAULT 'Dakar',
-  status      text        NOT NULL DEFAULT 'active'
-              CHECK (status IN ('active','expired','deleted')),
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  expires_at  timestamptz NOT NULL DEFAULT (now() + INTERVAL '30 days')
-);
-CREATE INDEX IF NOT EXISTS idx_ae_status_created ON annonces_express(status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_ae_category       ON annonces_express(category);
-CREATE INDEX IF NOT EXISTS idx_ae_city           ON annonces_express(city);
-ALTER TABLE annonces_express ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "ae_public_read"   ON annonces_express FOR SELECT USING (status = 'active' AND expires_at > now());
-CREATE POLICY "ae_public_insert" ON annonces_express FOR INSERT WITH CHECK (true);`;
-
-  const SQL_BOOSTS = `-- ═══════════════════════════════════════════════════════
--- TABLE product_boosts — Forfaits Boost payants (Phase 0)
--- Supabase Dashboard → SQL Editor → New query → Run
--- ═══════════════════════════════════════════════════════
-CREATE TABLE IF NOT EXISTS product_boosts (
-  id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id     text        NOT NULL,
-  vendor_id      uuid        REFERENCES auth.users(id) ON DELETE CASCADE,
-  boost_type     text        NOT NULL
-                 CHECK (boost_type IN ('top_3j','boost_semaine','boost_mensuel','pro_mensuel','pro_annuel')),
-  price_fcfa     integer     NOT NULL,
-  started_at     timestamptz NOT NULL DEFAULT now(),
-  ends_at        timestamptz NOT NULL,
-  active         boolean     NOT NULL DEFAULT true,
-  payment_method text        CHECK (payment_method IN ('wave','orange_money','paytech','stripe')),
-  payment_ref    text,
-  payment_status text        NOT NULL DEFAULT 'pending'
-                 CHECK (payment_status IN ('pending','paid','failed','refunded'))
-);
-CREATE INDEX IF NOT EXISTS idx_pb_vendor     ON product_boosts(vendor_id);
-CREATE INDEX IF NOT EXISTS idx_pb_product    ON product_boosts(product_id);
-CREATE INDEX IF NOT EXISTS idx_pb_active_end ON product_boosts(active, ends_at);
-ALTER TABLE product_boosts ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "boosts_vendor_own"  ON product_boosts FOR ALL  USING (auth.uid() = vendor_id);
-CREATE POLICY "boosts_public_read" ON product_boosts FOR SELECT USING (active = true AND ends_at > now());
--- Colonnes sur la table products (si absentes)
-ALTER TABLE products ADD COLUMN IF NOT EXISTS is_boosted    boolean     DEFAULT false;
-ALTER TABLE products ADD COLUMN IF NOT EXISTS boost_ends_at timestamptz;
--- Séquences factures légales
-CREATE TABLE IF NOT EXISTS invoice_sequences (
-  prefix TEXT NOT NULL, year SMALLINT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (prefix, year)
-);
-CREATE OR REPLACE FUNCTION invoice_next_seq(p_prefix TEXT, p_year SMALLINT)
-RETURNS INTEGER LANGUAGE plpgsql AS $$
-DECLARE next_val INTEGER;
-BEGIN
-  INSERT INTO invoice_sequences(prefix,year,last_seq) VALUES(p_prefix,p_year,1)
-    ON CONFLICT(prefix,year) DO UPDATE SET last_seq = invoice_sequences.last_seq+1
-    RETURNING last_seq INTO next_val;
-  RETURN next_val;
-END; $$;`;
-
-  const E = React.createElement;
-  const inp = (label, val, setter, key, placeholder, isError) =>
-    E('div', { className:'form-group' },
-      E('label', { className:'form-label' }, label),
-      E('input', { type:'text', className:'form-input'+(isError?' error':''),
-        value: val, placeholder,
-        style: key==='legalNinea'||key==='legalRccm'||key==='vapidPublicKey' ? { fontFamily:'monospace',fontSize:'0.82rem' } : {},
-        onChange: ev => {
-          const v = (key==='waveNumber'||key==='orangeMoneyNumber'||key==='adminWhatsapp') ? ev.target.value.replace(/\D/g,'') : ev.target.value;
-          setter(v);
-          if(key==='waveNumber')        NEXUS_CONFIG.payments.waveNumber        = v;
-          if(key==='orangeMoneyNumber') NEXUS_CONFIG.payments.orangeMoneyNumber = v;
-          if(key==='adminWhatsapp')     NEXUS_CONFIG.admin.whatsapp             = v;
-          if(key==='legalNinea')        NEXUS_CONFIG.legal.ninea                = v;
-          if(key==='legalRccm')         NEXUS_CONFIG.legal.rccm                 = v;
-          if(key==='legalCompanyName')  NEXUS_CONFIG.legal.companyName          = v;
-          if(key==='vapidPublicKey')    NEXUS_CONFIG.vapid.publicKey            = v;
-          _saveField(key, v);
-        }
-      })
-    );
-
-  return E('div', null,
-
-    /* ── Checklist Phase 0 ── */
-    _missing > 0 && E('div', { className:'card', style:{ marginBottom:'1.5rem', border:'2px solid #ef4444' } },
-      E('div', { className:'card-header', style:{ background:'#fef2f2' } },
-        E('h2', { className:'card-title', style:{ color:'#dc2626' } },
-          E('i',{className:'fas fa-exclamation-triangle'}), ' Phase 0 — ', _missing, ' configuration(s) critique(s)'
-        )
-      ),
-      E('div', { style:{ padding:'1rem', display:'flex', flexDirection:'column', gap:'0.4rem' } },
-        [
-          [_waveOk,   '🔵 Numéro Wave Marchand',     '→ Section Paiements ci-dessous'],
-          [_omOk,     '🟠 Numéro Orange Money',       '→ Section Paiements ci-dessous'],
-          [_waOk,     '💬 WhatsApp Admin',             '→ Section Paiements ci-dessous'],
-          [_nineaOk,  '🧾 NINEA configuré',            '→ Section Mentions légales ci-dessous'],
-          [_rccmOk,   '🧾 RCCM configuré',             '→ Section Mentions légales ci-dessous'],
-          [_vapidOk,  '🔔 Clé VAPID push (custom)',   '→ Section Notifications ci-dessous'],
-          [IS_SUPABASE_CONFIGURED, '🗄️ Supabase connecté', '→ Cliquer Reconfigurer'],
-        ].map(([ok,lbl,fix],i) =>
-          E('div', { key:i, style:{ display:'flex', alignItems:'center', gap:'0.75rem', padding:'0.5rem 0.85rem', background: ok?'#f0fdf4':'#fff7ed', borderRadius:'8px' } },
-            E('i',{ className:'fas fa-'+(ok?'check-circle':'exclamation-circle'), style:{ color: ok?'#22c55e':'#f97316', flexShrink:0 } }),
-            E('span',{ style:{ fontWeight:600, fontSize:'0.88rem', flex:1 } }, lbl),
-            !ok && E('span',{ style:{ fontSize:'0.72rem', color:'#9ca3af', fontStyle:'italic' } }, fix)
-          )
-        )
-      )
-    ),
-
-    /* ── Paiements mobiles ── */
-    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
-      E('div', { className:'card-header' },
-        E('h2', { className:'card-title' }, E('i',{className:'fas fa-mobile-alt text-primary'}), ' Paiements mobiles & Contact')
-      ),
-      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
-        (!_waveOk || !_omOk) && E('div', { className:'alert alert-danger', style:{ fontSize:'0.82rem' } },
-          E('i',{className:'fas fa-exclamation-triangle'}),
-          ' ⚠️ Sans ces numéros marchands, Wave et Orange Money renvoient une erreur à chaque paiement.'
-        ),
-        E('div', { className:'form-row' },
-          inp('🔵 Wave Marchand (sans +221)', _waveNum, _setWaveNum, 'waveNumber', '771234567', !_waveOk),
-          inp('🟠 Orange Money (sans +221)',  _omNum,   _setOmNum,   'orangeMoneyNumber', '776543210', !_omOk)
-        ),
-        inp(E(React.Fragment,null,E('i',{className:'fab fa-whatsapp',style:{color:'#25D366',marginRight:'0.4rem'}}),'WhatsApp Admin (sans +221)'), _waNum, _setWaNum, 'adminWhatsapp', '775678901', !_waOk)
-      )
-    ),
-
-    /* ── Mentions légales ── */
-    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
-      E('div', { className:'card-header' },
-        E('h2', { className:'card-title' }, E('i',{className:'fas fa-balance-scale text-primary'}), ' Mentions légales — Factures PDF')
-      ),
-      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
-        (!_nineaOk||!_rccmOk) && E('div', { className:'alert alert-danger', style:{ fontSize:'0.82rem' } },
-          E('i',{className:'fas fa-exclamation-triangle'}),
-          ' NINEA / RCCM manquants → factures PDF non opposables (OHADA art. 29, CGI sén. art. 667).'
-        ),
-        E('div', { className:'form-row' },
-          inp('NINEA *', _ninea, _setNinea, 'legalNinea', '007123456 2T3', !_nineaOk),
-          inp('RCCM *',  _rccm,  _setRccm,  'legalRccm',  'SN-DKR-2024-B-12345', !_rccmOk)
-        ),
-        inp('Raison sociale', _company, _setCompany, 'legalCompanyName', 'NEXUS Market SARL', false)
-      )
-    ),
-
-    /* ── VAPID ── */
-    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
-      E('div', { className:'card-header' },
-        E('h2', { className:'card-title' }, E('i',{className:'fas fa-bell text-primary'}), ' Notifications Push VAPID')
-      ),
-      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
-        E('div', { className:'alert alert-info', style:{ fontSize:'0.82rem' } },
-          E('i',{className:'fas fa-info-circle'}), ' Générer sur ',
-          E('a',{href:'https://web-push-codelab.glitch.me/',target:'_blank',style:{color:'var(--primary)'}},'web-push-codelab.glitch.me'),
-          ' \u2192 copier la cl\u00e9 PUBLIQUE. Taux d\u2019ouverture push\u00a0: 30% vs 3% email.'
-        ),
-        inp('Clé publique VAPID', _vapid, _setVapid, 'vapidPublicKey', 'BXxxxxxx...', !_vapidOk)
-      )
-    ),
-
-    /* ── SQL Tables Phase 0 ── */
-    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
-      E('div', { className:'card-header' },
-        E('h2', { className:'card-title' }, E('i',{className:'fas fa-database text-primary'}), ' Tables SQL à exécuter dans Supabase')
-      ),
-      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1.25rem' } },
-        E('div', { className:'alert alert-warning', style:{ fontSize:'0.82rem' } },
-          E('i',{className:'fas fa-exclamation-triangle'}),
-          ' Copier chaque script → Supabase Dashboard → SQL Editor → New query → Coller → Run. À faire une seule fois.'
-        ),
-        /* annonces_express */
-        E('div', null,
-          E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.5rem', flexWrap:'wrap', gap:'0.5rem' } },
-            E('h3', { style:{ fontWeight:700, fontSize:'0.9rem', color:'var(--danger)' } },
-              E('i',{className:'fas fa-bolt',style:{marginRight:'0.4rem', color:'var(--danger)'}}), '1. annonces_express (Annonces sans inscription)'
-            ),
-            E('button', { className:'btn btn-sm btn-'+(  _copiedAx?'success':'primary'), onClick:() => { navigator.clipboard.writeText(SQL_EXPRESS); _setCopiedAx(true); setTimeout(()=>_setCopiedAx(false),2500); } },
-              E('i',{className:'fas fa-'+(  _copiedAx?'check':'copy')}), ' ', _copiedAx?'Copié !':'Copier'
-            )
-          ),
-          E('pre', { style:{ background:'#1e1e2e', color:'#a6e3a1', borderRadius:'10px', padding:'1rem', fontSize:'0.7rem', overflowX:'auto', maxHeight:'180px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_EXPRESS)
-        ),
-        /* product_boosts */
-        E('div', null,
-          E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.5rem', flexWrap:'wrap', gap:'0.5rem' } },
-            E('h3', { style:{ fontWeight:700, fontSize:'0.9rem', color:'var(--primary)' } },
-              E('i',{className:'fas fa-rocket',style:{marginRight:'0.4rem'}}), '2. product_boosts + invoice_sequences (Boost & Facturation)'
-            ),
-            E('button', { className:'btn btn-sm btn-'+(  _copiedBo?'success':'primary'), onClick:() => { navigator.clipboard.writeText(SQL_BOOSTS); _setCopiedBo(true); setTimeout(()=>_setCopiedBo(false),2500); } },
-              E('i',{className:'fas fa-'+(  _copiedBo?'check':'copy')}), ' ', _copiedBo?'Copié !':'Copier'
-            )
-          ),
-          E('pre', { style:{ background:'#1e1e2e', color:'#89b4fa', borderRadius:'10px', padding:'1rem', fontSize:'0.7rem', overflowX:'auto', maxHeight:'180px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_BOOSTS)
-        ),
-        E('a', { href:'https://supabase.com/dashboard', target:'_blank', className:'btn btn-secondary', style:{ alignSelf:'flex-start' } },
-          E('i',{className:'fas fa-external-link-alt'}), ' Ouvrir Supabase Dashboard'
-        )
-      )
-    ),
-
-    /* ── WhatsApp Green API ─────────────────────────────────────────────── */
-    (() => {
-      const [_waInst,   _setWaInst]   = React.useState(NexusWA._cfg.instanceId || '');
-      const [_waToken,  _setWaToken]  = React.useState(NexusWA._cfg.apiToken   || '');
-      const [_waSec,    _setWaSec]    = React.useState(NexusWA._cfg.secret     || '');
-      const [_waOn,     _setWaOn]     = React.useState(NexusWA._cfg.enabled    || false);
-      const [_waSaving, _setWaSaving] = React.useState(false);
-      const [_waTest,   _setWaTest]   = React.useState('');
-      const [_waTesting,_setWaTesting]= React.useState(false);
-      const [_ambSend,  _setAmbSend]  = React.useState(false);
-      const WE = React.createElement;
-
-      const saveWA = async () => {
-        _setWaSaving(true);
-        await NexusWA.saveConfig({ instanceId:_waInst, apiToken:_waToken, secret:_waSec, enabled:_waOn });
-        addToast('\u2705 Config WhatsApp sauvegard\u00e9e', 'success');
-        _setWaSaving(false);
-      };
-      const testWA = async () => {
-        if (!_waTest || _waTest.replace(/\D/g,'').length < 8) { addToast('Saisissez un num\u00e9ro valide', 'warning'); return; }
-        _setWaTesting(true);
-        const r = await NexusWA.send(_waTest.replace(/\D/g,''), '\u2705 *Test NEXUS Market*\nInt\u00e9gration WhatsApp Green API op\u00e9rationnelle ! \uD83C\uDF89\nnexus.sn', 'test');
-        addToast(r.ok ? '\u2705 Message envoy\u00e9 !' : '\u274C \u00c9chec : ' + (r.error || 'V\u00e9rifiez les credentials'), r.ok ? 'success' : 'error');
-        _setWaTesting(false);
-      };
-      const sendAmbReports = async () => {
-        _setAmbSend(true);
-        if (DataService._sb) {
-          const { data } = await DataService._sb.rpc('send_ambassador_monthly_report').catch(() => ({ data: 0 }));
-          addToast('\uD83D\uDCCA ' + (data || 0) + ' relev\u00e9s ambassadeurs envoy\u00e9s', 'success');
-        } else addToast('Supabase requis', 'warning');
-        _setAmbSend(false);
-      };
-
-      return WE('div', { className:'card', style:{ marginBottom:'1.5rem' } },
-        WE('div', { className:'card-header' },
-          WE('h2', { className:'card-title' },
-            WE('i',{ className:'fab fa-whatsapp', style:{ color:'#25D366', marginRight:'.5rem' } }),
-            'WhatsApp automatique \u2014 Green API',
-            WE('span', { className:'badge badge-'+(_waOn?'success':'secondary'), style:{ marginLeft:'.75rem' } }, _waOn ? '\uD83D\uDFE2 Actif' : '\u26AB Inactif')
-          )
-        ),
-        WE('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
-          WE('div', { className:'alert alert-info', style:{ fontSize:'.82rem' } },
-            WE('i',{ className:'fas fa-info-circle' }),
-            ' Compte gratuit sur ',
-            WE('a',{ href:'https://green-api.com', target:'_blank', style:{ color:'var(--primary)' } }, 'green-api.com'),
-            ' \u2192 Cr\u00e9er une instance \u2192 Scanner le QR code avec votre t\u00e9l\u00e9phone.'
-          ),
-          WE('div', { className:'form-row' },
-            WE('div', { className:'form-group' },
-              WE('label',{ className:'form-label' }, 'Instance ID'),
-              WE('input',{ type:'text', className:'form-input', placeholder:'7103123456', style:{ fontFamily:'monospace' },
-                value:_waInst, onChange: e => _setWaInst(e.target.value) })
-            ),
-            WE('div', { className:'form-group' },
-              WE('label',{ className:'form-label' }, 'API Token'),
-              WE('input',{ type:'password', className:'form-input', placeholder:'abc123...', style:{ fontFamily:'monospace' },
-                value:_waToken, onChange: e => _setWaToken(e.target.value) })
-            )
-          ),
-          WE('div', { className:'form-row' },
-            WE('div', { className:'form-group' },
-              WE('label',{ className:'form-label' }, 'Secret (partag\u00e9 avec Cloudflare)'),
-              WE('input',{ type:'text', className:'form-input', placeholder:'nexus-wa-secret-2026', style:{ fontFamily:'monospace' },
-                value:_waSec, onChange: e => _setWaSec(e.target.value) })
-            ),
-            WE('div', { className:'form-group', style:{ display:'flex', alignItems:'flex-end' } },
-              WE('label', { style:{ display:'flex', alignItems:'center', gap:'.5rem', cursor:'pointer', fontSize:'.88rem', fontWeight:600, marginBottom:0 } },
-                WE('input',{ type:'checkbox', checked:_waOn, onChange: e => _setWaOn(e.target.checked),
-                  style:{ width:18, height:18, accentColor:'var(--primary)' } }),
-                'Activer les envois automatiques'
-              )
-            )
-          ),
-          WE('div', { style:{ display:'flex', gap:'.75rem', flexWrap:'wrap' } },
-            WE('button', { className:'btn btn-primary'+(_waSaving?' btn-loading':''), onClick:saveWA, disabled:_waSaving },
-              WE('i',{ className:'fas fa-save' }), ' Sauvegarder'
-            ),
-            WE('a', { href:'https://green-api.com', target:'_blank', className:'btn btn-secondary' },
-              WE('i',{ className:'fas fa-external-link-alt' }), ' Dashboard Green API'
-            )
-          ),
-          WE('hr', { style:{ margin:'.5rem 0' } }),
-          WE('div', { style:{ fontWeight:700, fontSize:'.88rem', marginBottom:'.5rem' } }, '\uD83E\uDDEA Test d\'envoi'),
-          WE('div', { style:{ display:'flex', gap:'.75rem', flexWrap:'wrap', alignItems:'flex-end' } },
-            WE('div', { className:'form-group', style:{ flex:2, marginBottom:0 } },
-              WE('input',{ type:'tel', className:'form-input', placeholder:'771234567 (sans +221)',
-                value:_waTest, onChange: e => _setWaTest(e.target.value) })
-            ),
-            WE('button', { className:'btn btn-secondary'+(_waTesting?' btn-loading':''), onClick:testWA, disabled:_waTesting },
-              WE('i',{ className:'fab fa-whatsapp', style:{ color:'#25D366' } }), ' Envoyer test'
-            )
-          ),
-          WE('hr', { style:{ margin:'.5rem 0' } }),
-          WE('div', { style:{ fontWeight:700, fontSize:'.88rem', marginBottom:'.5rem' } }, '\uD83D\uDCCA Actions manuelles'),
-          WE('div', { style:{ display:'flex', gap:'.75rem', flexWrap:'wrap' } },
-            WE('button', { className:'btn btn-secondary'+(_ambSend?' btn-loading':''), onClick:sendAmbReports, disabled:_ambSend },
-              WE('i',{ className:'fas fa-paper-plane' }), ' Relev\u00e9s mensuels ambassadeurs'
-            ),
-            WE('button', { className:'btn btn-secondary', onClick: async () => {
-              const _wa = NEXUS_CONFIG.admin.whatsapp;
-              if (!_wa || _wa === '77XXXXXXX') { addToast('Configurez le n\u00b0 WhatsApp admin', 'warning'); return; }
-              const r = await NexusWA.send(_wa, '\u26A1 *Ventes Flash du vendredi \u2014 NEXUS Market*\n\nDes promotions exceptionnelles vous attendent ce weekend !\n\uD83D\uDED2 Connectez-vous sur nexus.sn', 'flash_broadcast');
-              addToast(r.ok||r.skipped ? 'Broadcast envoy\u00e9' : 'Erreur : '+(r.error||''), r.ok||r.skipped?'success':'error');
-            }},
-              WE('i',{ className:'fas fa-bolt' }), ' Broadcast ventes flash'
-            )
-          ),
-          WE('div', { className:'alert alert-success', style:{ fontSize:'.78rem', marginTop:'.25rem' } },
-            WE('strong', null, '\uD83E\uDD16 Automatique : '),
-            'f\u00e9licitations 1\u00e8re vente \u2022 alerte nouvelle commande \u2022 vente flash cr\u00e9\u00e9e',
-            WE('br', null),
-            WE('strong', null, '\uD83D\uDC46 Manuel : '),
-            'relev\u00e9s mensuels ambassadeurs \u2022 broadcast ventes flash du vendredi'
-          )
-        )
-      );
-    })(),
-
+  })(), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement("div", null,
     /* ── Services système existants ── */
     E('div', { className:'card' },
       E('div', { className:'card-header' }, E('h2', { className:'card-title' }, "Configuration Syst\xE8me")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Base de donn\xE9es"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_SUPABASE_CONFIGURED ? NEXUS_CONFIG.supabase.url : "localStorage (mode d\xE9monstration)")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_SUPABASE_CONFIGURED ? "success" : "warning"}` }, IS_SUPABASE_CONFIGURED ? "Supabase actif" : "localStorage")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Paiements Stripe"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_STRIPE_CONFIGURED ? NEXUS_CONFIG.stripe.publishableKey.slice(0, 20) + "..." : "Mode simulation uniquement")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_STRIPE_CONFIGURED ? "success" : "warning"}` }, IS_STRIPE_CONFIGURED ? "Stripe actif" : "Simulation")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Emails (EmailJS)"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_EMAILJS_CONFIGURED ? `Service: ${NEXUS_CONFIG.emailjs.serviceId}` : "Mode journalisation locale")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_EMAILJS_CONFIGURED ? "success" : "warning"}` }, IS_EMAILJS_CONFIGURED ? "EmailJS actif" : "Simulation"))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => {
@@ -17981,8 +17922,7 @@ _memStore.clear();
 window.location.reload(); });
     inp.focus();
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset données")))
-    ); // close Services card
-  })(), view === "flash_sales" && (() => {
+  ), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
