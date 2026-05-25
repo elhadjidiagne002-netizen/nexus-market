@@ -1763,6 +1763,57 @@
         }
 
 </style>
+
+<!-- ══ Google AdSense ══════════════════════════════════════════════════════
+     NEXUS Market — Publicité display passive
+     ⚠️  Remplacer ca-pub-XXXXXXXXXX par votre vrai Publisher ID AdSense
+         (Admin → Configuration → AdSense → votre Publisher ID)
+     Obtenir un compte : adsense.google.com → Démarrer → nexus.sn
+     Revenus estimés : 50k-100k FCFA/mois dès 200 visiteurs/jour
+══════════════════════════════════════════════════════════════════════════ -->
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2619517375287262"
+     crossorigin="anonymous"></script>
+
+<style>
+/* ── Blocs publicitaires AdSense — NEXUS Market ─────────────────────────── */
+.nexus-ad-unit {
+  display: block;
+  width: 100%;
+  min-height: 90px;
+  background: var(--bg-light);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+  transition: opacity 0.3s;
+}
+.nexus-ad-unit::before {
+  content: "Publicité";
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 0.62rem;
+  color: var(--muted, #9ca3af);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  z-index: 1;
+  pointer-events: none;
+}
+/* Leaderboard (728×90 → responsive) */
+.nexus-ad-leaderboard  { min-height: 90px;  margin: 1.25rem 0; }
+/* Rectangle (336×280 ou 300×250) dans la grille produits */
+.nexus-ad-rectangle    { min-height: 250px; margin: 0; }
+/* Banner bas de fiche produit */
+.nexus-ad-banner       { min-height: 100px; margin: 1.5rem 0 0.5rem; }
+/* Mobile banner -->
+@media (max-width: 600px) {
+  .nexus-ad-leaderboard { min-height: 60px; }
+  .nexus-ad-rectangle   { min-height: 200px; }
+}
+/* Masquer sur l'interface admin pour ne pas gêner le travail */
+[data-nexus-admin="true"] .nexus-ad-unit { display: none !important; }
+</style>
+
 </head>
 <body>
     <a href="#main-content" class="skip-link">Aller au contenu principal</a>
@@ -1988,6 +2039,138 @@ try {
 } catch(e) {}
 
 
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// NexusAdSense — Service Google AdSense NEXUS Market
+// ════════════════════════════════════════════════════════════════════════════
+// Slots configurés (à renseigner depuis Admin → Configuration → AdSense) :
+//   leaderboard  : bannière 728×90 en haut du catalogue
+//   rectangle    : 300×250 intégrée dans la grille produits (toutes les 8 cards)
+//   banner       : 320×100 en bas de fiche produit
+//   sidebar      : 160×600 sidebar desktop (si applicable)
+//
+// Publisher ID : ca-pub-XXXXXXXXXX  ← remplacer dans NEXUS_CONFIG ci-dessous
+// ════════════════════════════════════════════════════════════════════════════
+
+// Injecter les slots dans NEXUS_CONFIG si absents
+if (typeof NEXUS_CONFIG !== 'undefined' && !NEXUS_CONFIG.adsense) {
+  NEXUS_CONFIG.adsense = {
+    publisherId: 'ca-pub-2619517375287262', // Publisher ID NEXUS Market
+    enabled:     true,                // Activé — Publisher ID configuré
+    slots: {
+      leaderboard: '',  // Slot ID leaderboard 728×90
+      rectangle:   '',  // Slot ID rectangle 300×250 (grille produits)
+      banner:      '',  // Slot ID banner fiche produit
+    },
+  };
+  // Restaurer depuis localStorage si déjà configuré
+  try {
+    const _sc = JSON.parse(localStorage.getItem('nexus_saved_config') || '{}');
+    if (_sc.adsensePublisherId) NEXUS_CONFIG.adsense.publisherId = _sc.adsensePublisherId;
+    if (_sc.adsenseEnabled !== undefined) NEXUS_CONFIG.adsense.enabled = _sc.adsenseEnabled;
+    if (_sc.adsenseSlotLeaderboard) NEXUS_CONFIG.adsense.slots.leaderboard = _sc.adsenseSlotLeaderboard;
+    if (_sc.adsenseSlotRectangle)   NEXUS_CONFIG.adsense.slots.rectangle   = _sc.adsenseSlotRectangle;
+    if (_sc.adsenseSlotBanner)      NEXUS_CONFIG.adsense.slots.banner       = _sc.adsenseSlotBanner;
+  } catch(_) {}
+}
+
+// Mettre à jour la balise script AdSense dès que l'ID Publisher est connu
+const NexusAdSense = {
+  init() {
+    const cfg = NEXUS_CONFIG?.adsense;
+    if (!cfg?.enabled || !cfg?.publisherId || cfg.publisherId === 'ca-pub-XXXXXXXXXX') return;
+    // Mettre à jour l'attribut client sur le script AdSense existant
+    const script = document.querySelector('script[src*="adsbygoogle"]');
+    if (script && script.src.includes('ca-pub-XXXXXXXXXX')) {
+      const newSrc = script.src.replace('ca-pub-XXXXXXXXXX', cfg.publisherId);
+      const ns = document.createElement('script');
+      ns.async = true;
+      ns.crossOrigin = 'anonymous';
+      ns.src = newSrc;
+      document.head.appendChild(ns);
+    }
+    // Pousser les annonces en attente
+    try {
+      (window.adsbygoogle = window.adsbygoogle || []);
+      document.querySelectorAll('.adsbygoogle:not([data-adsbygoogle-status])').forEach(() => {
+        window.adsbygoogle.push({});
+      });
+    } catch(_) {}
+  },
+
+  push() {
+    try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch(_) {}
+  },
+
+  isReady() {
+    const cfg = NEXUS_CONFIG?.adsense;
+    return !!(cfg?.enabled && cfg?.publisherId && cfg.publisherId !== 'ca-pub-XXXXXXXXXX');
+  },
+};
+
+// ── Composant React NexusAdUnit ──────────────────────────────────────────
+// Usage :
+//   React.createElement(NexusAdUnit, { format: 'leaderboard' })
+//   React.createElement(NexusAdUnit, { format: 'rectangle' })
+//   React.createElement(NexusAdUnit, { format: 'banner' })
+const NexusAdUnit = ({ format = 'rectangle', style: extraStyle = {} }) => {
+  const ref = React.useRef(null);
+  const adPushed = React.useRef(false);
+
+  React.useEffect(() => {
+    if (!NexusAdSense.isReady() || adPushed.current) return;
+    adPushed.current = true;
+    // Délai court pour laisser le DOM se stabiliser avant push
+    const t = setTimeout(() => NexusAdSense.push(), 150);
+    return () => clearTimeout(t);
+  }, []);
+
+  const cfg = NEXUS_CONFIG?.adsense;
+  const slot = cfg?.slots?.[format] || '';
+
+  // Si AdSense non configuré : placeholder discret visible uniquement côté admin
+  if (!NexusAdSense.isReady()) {
+    // En production sans config → invisible (height:0)
+    const isAdmin = document.body?.getAttribute('data-nexus-admin') === 'true';
+    if (!isAdmin) return null;
+    return React.createElement('div', {
+      style: {
+        border: '2px dashed #e5e7eb', borderRadius: 10,
+        padding: '0.75rem', margin: '0.75rem 0',
+        background: '#fffbeb', textAlign: 'center',
+        fontSize: '0.75rem', color: '#92400e',
+        ...extraStyle
+      }
+    },
+      '📢 Emplacement publicitaire AdSense (',format,') — Configurer dans Admin → Configuration → AdSense'
+    );
+  }
+
+  const sizeMap = {
+    leaderboard: { width: '100%',   height: 90,  style: { display:'inline-block', width:'100%', height:90 } },
+    rectangle:   { width: '100%',   height: 250, style: { display:'inline-block', width:'100%', height:250 } },
+    banner:      { width: '100%',   height: 100, style: { display:'inline-block', width:'100%', height:100 } },
+  };
+  const sz = sizeMap[format] || sizeMap.rectangle;
+
+  return React.createElement('div', { className: 'nexus-ad-unit nexus-ad-' + format, style: extraStyle },
+    React.createElement('ins', {
+      ref,
+      className:          'adsbygoogle',
+      style:              sz.style,
+      'data-ad-client':   cfg.publisherId,
+      'data-ad-slot':     slot,
+      'data-ad-format':   format === 'leaderboard' ? 'horizontal' : 'auto',
+      'data-full-width-responsive': 'true',
+    })
+  );
+};
+
+// Initialiser AdSense après le chargement de la page
+if (typeof window !== 'undefined') {
+  window.addEventListener('load', () => setTimeout(() => NexusAdSense.init(), 500));
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // NexusWA — Service WhatsApp automatique via Green API / /api/whatsapp
@@ -15298,6 +15481,148 @@ const VFlashCountdown = ({ endsAt }) => {
 // Phase0ConfigPanel — Checklist + formulaires Paiements / NINEA / VAPID
 // (extrait hors IIFE pour respecter les Rules of Hooks — React error #310)
 // ════════════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════════════
+// AdSenseConfigPanel — Configuration Google AdSense dans Admin → Configuration
+// ════════════════════════════════════════════════════════════════════════════
+const AdSenseConfigPanel = ({ addToast }) => {
+  const cfg = NEXUS_CONFIG?.adsense || {};
+  const [_pubId,   _setPubId]   = React.useState(cfg.publisherId  || '');
+  const [_on,      _setOn]      = React.useState(cfg.enabled      || false);
+  const [_slotLdr, _setSlotLdr] = React.useState(cfg.slots?.leaderboard || '');
+  const [_slotRec, _setSlotRec] = React.useState(cfg.slots?.rectangle   || '');
+  const [_slotBnr, _setSlotBnr] = React.useState(cfg.slots?.banner      || '');
+  const [_saving,  _setSaving]  = React.useState(false);
+  const E = React.createElement;
+
+  const save = () => {
+    _setSaving(true);
+    if (NEXUS_CONFIG.adsense) {
+      NEXUS_CONFIG.adsense.publisherId   = _pubId;
+      NEXUS_CONFIG.adsense.enabled       = _on;
+      NEXUS_CONFIG.adsense.slots.leaderboard = _slotLdr;
+      NEXUS_CONFIG.adsense.slots.rectangle   = _slotRec;
+      NEXUS_CONFIG.adsense.slots.banner      = _slotBnr;
+    }
+    try {
+      const sc = JSON.parse(localStorage.getItem('nexus_saved_config') || '{}');
+      sc.adsensePublisherId      = _pubId;
+      sc.adsenseEnabled          = _on;
+      sc.adsenseSlotLeaderboard  = _slotLdr;
+      sc.adsenseSlotRectangle    = _slotRec;
+      sc.adsenseSlotBanner       = _slotBnr;
+      localStorage.setItem('nexus_saved_config', JSON.stringify(sc));
+    } catch(_) {}
+    // Mettre à jour le script AdSense si nouveau Publisher ID valide
+    if (_on && _pubId && _pubId.startsWith('ca-pub-') && _pubId !== 'ca-pub-XXXXXXXXXX') {
+      NexusAdSense.init();
+    }
+    addToast('\u2705 Config AdSense sauvegard\u00e9e \u2014 reload pour activer', 'success');
+    setTimeout(() => _setSaving(false), 800);
+  };
+
+  const isConfigured = _pubId && _pubId.startsWith('ca-pub-') && _pubId !== 'ca-pub-XXXXXXXXXX';
+  const FCFA = 655.957;
+
+  const inp = (label, val, set, ph) => E('div', { className:'form-group' },
+    E('label', { className:'form-label' }, label),
+    E('input', { type:'text', className:'form-input', value:val, placeholder:ph,
+      style:{ fontFamily:'monospace', fontSize:'.82rem' }, onChange: e => set(e.target.value) })
+  );
+
+  return E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+    E('div', { className:'card-header', style:{ background:'linear-gradient(135deg,rgba(66,133,244,0.07),rgba(52,168,83,0.05))' } },
+      E('h2', { className:'card-title' },
+        E('img', { src:'https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg',
+          style:{ width:18, height:18, marginRight:'.5rem', verticalAlign:'middle' }, alt:'', onError:e=>e.target.style.display='none' }),
+        'Google AdSense \u2014 Revenus passifs',
+        E('span', { className:'badge badge-'+(isConfigured&&_on?'success':isConfigured?'warning':'secondary'), style:{ marginLeft:'.75rem' } },
+          isConfigured && _on ? '\uD83D\uDFE2 Actif' : isConfigured ? '\uD83D\uDFE1 Inactif' : '\u26AB Non configur\u00e9'
+        )
+      )
+    ),
+    E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+
+      /* Revenus estimés */
+      E('div', { style:{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'.6rem', marginBottom:'.25rem' } },
+        [
+          { v:'50k-100k FCFA/mois', l:'200 visiteurs/jour', i:'chart-line', c:'#16a34a' },
+          { v:'150k-300k FCFA/mois',l:'500 visiteurs/jour', i:'chart-bar',  c:'#0284c7' },
+          { v:'500k+ FCFA/mois',    l:'2000 visiteurs/jour',i:'trophy',     c:'#d97706' },
+        ].map((k,i) => E('div', { key:i, style:{ background:'var(--bg-light)', borderRadius:10, padding:'.6rem .85rem', border:'1px solid var(--border)' } },
+          E('div', { style:{ fontWeight:800, fontSize:'.88rem', color:k.c } }, k.v),
+          E('div', { style:{ fontSize:'.72rem', color:'var(--text-secondary)', marginTop:'.1rem' } }, k.l)
+        ))
+      ),
+
+      /* Alerte si pas configuré */
+      !isConfigured && E('div', { className:'alert alert-warning', style:{ fontSize:'.82rem' } },
+        E('i',{className:'fas fa-exclamation-triangle'}),
+        ' Cr\u00e9er un compte sur ',
+        E('a',{href:'https://adsense.google.com',target:'_blank',style:{color:'var(--primary)'}},'adsense.google.com'),
+        ' \u2192 ajouter nexus.sn \u2192 copier votre Publisher ID (format ca-pub-XXXXXXXXXXXXXXXX).'
+      ),
+
+      /* Publisher ID + toggle */
+      E('div', { className:'form-row' },
+        E('div', { className:'form-group', style:{ flex:2 } },
+          E('label',{className:'form-label'},'Publisher ID *'),
+          E('input',{ type:'text', className:'form-input'+(isConfigured?'':' error'),
+            value:_pubId, placeholder:'ca-pub-XXXXXXXXXXXXXXXX',
+            style:{ fontFamily:'monospace', fontSize:'.82rem' },
+            onChange: e => _setPubId(e.target.value.trim()) })
+        ),
+        E('div', { className:'form-group', style:{ display:'flex', alignItems:'flex-end' } },
+          E('label',{ style:{ display:'flex', alignItems:'center', gap:'.5rem', cursor:'pointer', fontSize:'.88rem', fontWeight:600, marginBottom:0 } },
+            E('input',{ type:'checkbox', checked:_on, onChange:e=>_setOn(e.target.checked),
+              style:{ width:18, height:18, accentColor:'var(--primary)' } }),
+            'Activer les pubs'
+          )
+        )
+      ),
+
+      /* Slots */
+      E('div', { style:{ fontWeight:700, fontSize:'.88rem', color:'var(--text-secondary)', borderBottom:'1px solid var(--border)', paddingBottom:'.4rem' } },
+        'Slot IDs (depuis votre compte AdSense \u2192 Annonces \u2192 Cr\u00e9er une unit\u00e9)'
+      ),
+      E('div', { className:'form-row' },
+        inp('Leaderboard 728\xD790 (haut catalogue)',    _slotLdr, _setSlotLdr, '1234567890'),
+        inp('Rectangle 300\xD7250 (grille produits)',    _slotRec, _setSlotRec, '0987654321')
+      ),
+      inp('Banner 320\xD7100 (fiche produit)', _slotBnr, _setSlotBnr, '1122334455'),
+
+      /* Positions */
+      E('div', { style:{ background:'var(--bg-light)', borderRadius:10, padding:'.75rem 1rem' } },
+        E('div', { style:{ fontWeight:700, fontSize:'.82rem', marginBottom:'.5rem' } }, '\uD83D\uDDFA\uFE0F Positions des blocs publicitaires'),
+        E('div', { style:{ display:'flex', flexDirection:'column', gap:'.3rem' } },
+          [
+            { pos:'Leaderboard', where:'Au-dessus de la grille produits (catalogue public + connexion)', slot:'leaderboard' },
+            { pos:'Rectangle',   where:'Dans la grille produits, toutes les 8 cartes (full-width)',       slot:'rectangle' },
+            { pos:'Banner',      where:'Fiche produit — entre les boutons d\'action et les avis clients',  slot:'banner' },
+          ].map((p,i) => E('div', { key:i, style:{ display:'flex', gap:'.75rem', fontSize:'.78rem', padding:'.3rem 0', borderBottom: i<2?'1px solid var(--border)':'none' } },
+            E('span', { style:{ fontWeight:700, minWidth:90, color:'var(--primary)' } }, p.pos),
+            E('span', { style:{ color:'var(--text-secondary)' } }, p.where)
+          ))
+        )
+      ),
+
+      E('div', { style:{ display:'flex', gap:'.75rem', flexWrap:'wrap' } },
+        E('button', { className:'btn btn-primary'+(_saving?' btn-loading':''), onClick:save, disabled:_saving },
+          E('i',{className:'fas fa-save'}), ' Sauvegarder'),
+        E('a', { href:'https://adsense.google.com', target:'_blank', className:'btn btn-secondary' },
+          E('i',{className:'fas fa-external-link-alt'}), ' Google AdSense'),
+        E('a', { href:'https://support.google.com/adsense/answer/9274028', target:'_blank', className:'btn btn-secondary' },
+          E('i',{className:'fas fa-question-circle'}), ' Guide officiel')
+      ),
+
+      isConfigured && E('div', { className:'alert alert-info', style:{ fontSize:'.78rem' } },
+        E('i',{className:'fas fa-info-circle'}),
+        ' Apr\u00e8s activation, AdSense analyse le site 24-72h avant de montrer les premi\u00e8res annonces. Le tableau de bord AdSense affiche les impressions, clics et revenus en temps r\u00e9el.'
+      )
+    )
+  );
+};
+
 const Phase0ConfigPanel = ({ addToast }) => {
   const [_waveNum, _setWaveNum] = React.useState(NEXUS_CONFIG.payments.waveNumber === '77XXXXXXX' ? '' : NEXUS_CONFIG.payments.waveNumber);
   const [_omNum,   _setOmNum]   = React.useState(NEXUS_CONFIG.payments.orangeMoneyNumber === '77XXXXXXX' ? '' : NEXUS_CONFIG.payments.orangeMoneyNumber);
@@ -18344,7 +18669,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
@@ -22775,6 +23100,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
         React.createElement('p', { className: 'products-result-count' },
           `${filteredHome.length} produit${filteredHome.length !== 1 ? 's' : ''} trouvé${filteredHome.length !== 1 ? 's' : ''}${filterCategory !== 'all' ? ` dans "${filterCategory}"` : ''}${searchTerm ? ` pour "${searchTerm}"` : ''}`
         ),
+        /* ── AdSense Leaderboard — au-dessus de la grille ── */
+        React.createElement(NexusAdUnit, { format: 'leaderboard' }),
         currentItems.length === 0
           ? React.createElement('div', { className: 'empty-state' },
               React.createElement('i', { className: 'fas fa-search' }),
@@ -22784,8 +23111,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             )
           : React.createElement(React.Fragment, null,
               React.createElement('div', { className: 'product-grid', role: 'list' },
-                currentItems.map(product => React.createElement('article', {
-                  key: product.id, className: 'product-card', role: 'listitem',
+                currentItems.flatMap((product, idx) => {
+                  const card = React.createElement('article', {
+                    key: product.id, className: 'product-card', role: 'listitem',
                   onClick: () => { setSelectedProduct(product); addViewedPub(product); }, tabIndex: 0,
                   onKeyDown: e => e.key === 'Enter' && (setSelectedProduct(product), addViewedPub(product))
                 },
@@ -22835,7 +23163,17 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                       )
                     )
                   )
-                ))
+                );
+                  // Injecter un bloc AdSense rectangle toutes les 8 cartes
+                  const items = [card];
+                  if ((idx + 1) % 8 === 0) {
+                    items.push(React.createElement('div', {
+                      key: 'ad-' + idx,
+                      style: { gridColumn: '1 / -1' }
+                    }, React.createElement(NexusAdUnit, { format: 'rectangle' })));
+                  }
+                  return items;
+                })
               ),
               React.createElement(Pagination, {
                 currentPage, totalPages,
@@ -22959,6 +23297,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             currentUser: null,
             addToast
           }),
+          /* AdSense banner — avant les avis */
+          React.createElement(NexusAdUnit, { format: 'banner' }),
           React.createElement('h3', { style: { fontWeight: 700, marginBottom: '1rem' } }, 'Avis clients'),
           reviews.filter(r => r.productId === selectedProduct.id).length === 0
             ? React.createElement('p', { className: 'text-muted' }, 'Aucun avis pour ce produit.')
