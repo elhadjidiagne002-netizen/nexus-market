@@ -202,12 +202,12 @@
     <meta property="og:title"       content="NEXUS Market Sénégal — Achetez et vendez en toute confiance">
     <meta property="og:description" content="La marketplace sécurisée du Sénégal. Orange Money, Wave, carte bancaire. Protection acheteur garantie. Vendez en 2 minutes sans compte. Livraison partout au Sénégal.">
     <meta property="og:type"        content="website">
-    <meta property="og:url"         content="https://nexus-market-asb.pages.dev/">
+    <meta property="og:url"         content="https://nexus.sn/">
     <meta property="og:site_name"   content="NEXUS Market Sénégal">
     <!-- og:image — Image de partage social NEXUS (1200×630) -->
-    <!-- TODO : remplacer cette URL par une vraie image hébergée sur Supabase Storage ou Cloudflare R2 -->
-    <!-- Créer une image 1200x630 sur https://www.canva.com (gratuit) et uploader dans Supabase Storage -->
-    <meta property="og:image"       content="https://nexus-market-asb.pages.dev/og-image.png">
+    <!-- ✅ Uploader og-image.png (1200×630) dans Supabase Storage bucket "nexus-images" -->
+    <!-- Créer sur Canva.com (gratuit) — texte : "NEXUS Market · Marketplace sécurisée Sénégal · Orange Money · Wave" -->
+    <meta property="og:image"       content="https://nexus.sn/og-image.png">
     <meta property="og:image:width"  content="1200">
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt"    content="NEXUS Market Sénégal — Marketplace B2B/B2C sécurisée">
@@ -220,12 +220,11 @@
     <meta name="twitter:creator"     content="@NexusMarketSN">
     <meta name="twitter:title"       content="NEXUS Market Sénégal — Marketplace sécurisée · Orange Money · Wave">
     <meta name="twitter:description" content="Achetez et vendez en toute confiance au Sénégal. Orange Money, Wave, carte bancaire. Protection acheteur garantie. Vendez en 2 min sans compte.">
-    <meta name="twitter:image"       content="https://nexus-market-asb.pages.dev/og-image.png">
+    <meta name="twitter:image"       content="https://nexus.sn/og-image.png">
     <meta name="twitter:image:alt"   content="NEXUS Market Sénégal — Marketplace B2B/B2C sécurisée">
     <!-- Canonical & robots -->
-    <!-- Canonical — pointe vers le domaine de production actuel -->
-    <!-- TODO : mettre à jour vers https://nexus.sn/ quand le domaine custom sera actif -->
-    <link rel="canonical" href="https://nexus-market-asb.pages.dev/">
+    <!-- TODO : activer le domaine nexus.sn sur Cloudflare Pages + NIC Sénégal -->
+    <link rel="canonical" href="https://nexus.sn/">
     <!-- Alternate hreflang pour Wolof -->
     <link rel="alternate" hreflang="fr" href="https://nexus-market-asb.pages.dev/">
     <link rel="alternate" hreflang="wo" href="https://nexus-market-asb.pages.dev/?lang=wo">
@@ -1926,7 +1925,7 @@ const NEXUS_CONFIG = {
     address:     "Immeuble Fahd, Avenue Cheikh Anta Diop, Dakar, Sénégal",
     phone:       "+221 33 123 45 67",
     email:       "contact@nexus.sn",
-    website:     "nexus-market-asb.pages.dev", // TODO : mettre à jour vers nexus.sn quand domaine actif
+    website:     "nexus.sn", // domaine de production
     get isComplete() { return !!(this.ninea && this.rccm && this.address); },
     get nineaDisplay()  { return this.ninea || "⚠️ NON CONFIGURÉ"; },
     get rccmDisplay()   { return this.rccm  || "⚠️ NON CONFIGURÉ"; },
@@ -1976,6 +1975,11 @@ try {
     if (_sc.legalPhone)       NEXUS_CONFIG.legal.phone        = _sc.legalPhone;
     if (_sc.legalEmail)       NEXUS_CONFIG.legal.email        = _sc.legalEmail;
     if (_sc.legalCompanyName) NEXUS_CONFIG.legal.companyName  = _sc.legalCompanyName;
+    // ── Paiements mobiles ────────────────────────────────────────────────────
+    if (_sc.waveNumber)       NEXUS_CONFIG.payments.waveNumber        = _sc.waveNumber;
+    if (_sc.orangeMoneyNumber)NEXUS_CONFIG.payments.orangeMoneyNumber = _sc.orangeMoneyNumber;
+    if (_sc.adminWhatsapp)    NEXUS_CONFIG.admin.whatsapp             = _sc.adminWhatsapp;
+    if (_sc.vapidPublicKey)   NEXUS_CONFIG.vapid.publicKey            = _sc.vapidPublicKey;
     // BUG FIX: on ne restaure PAS confirmUrl depuis localStorage — l'ancien domaine
     // (nexus-market-md360.vercel.app) y était mémorisé et cassait la confirmation email.
     // confirmUrl est maintenant un getter dynamique basé sur window.location.pathname.
@@ -16357,7 +16361,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           { label: "Meta description + keywords",        ok: true,  detail: "Meta description enrichie (160 car.) + keywords SEO Sénégal" },
           { label: "Sitemap.xml",                        ok: false, detail: "Générer ci-dessous → uploader à la racine du domaine Cloudflare Pages" },
           { label: "robots.txt",                         ok: false, detail: "Générer ci-dessous → uploader à la racine du domaine Cloudflare Pages" },
-          { label: "Google Search Console",              ok: false, detail: "PRIORITÉ : Vérifier le site via meta tag (guide ci-dessous) et soumettre sitemap.xml" },
+          { label: "Google Search Console",              ok: false, detail: "⚡ Action Phase 0 — Vérifier le site et soumettre sitemap.xml (guide ci-dessous)" },
           { label: "Google Analytics GA4 (G-2N3MPBQ6Z8)", ok: true, detail: "ID configuré dans NEXUS_CONFIG.analytics.ga4Id — événements purchase et sign_up trackés" },
           { label: "Google Merchant Center (Shopping)",  ok: false, detail: "Créer un flux de produits XML depuis l'export CSV admin — accès gratuit au Shopping Google" },
         ].map((item, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", alignItems: "flex-start", gap: "0.75rem", padding: "0.65rem 0", borderBottom: "1px solid var(--border)" } },
@@ -17397,7 +17401,245 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Configuration Syst\xE8me")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Base de donn\xE9es"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_SUPABASE_CONFIGURED ? NEXUS_CONFIG.supabase.url : "localStorage (mode d\xE9monstration)")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_SUPABASE_CONFIGURED ? "success" : "warning"}` }, IS_SUPABASE_CONFIGURED ? "Supabase actif" : "localStorage")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Paiements Stripe"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_STRIPE_CONFIGURED ? NEXUS_CONFIG.stripe.publishableKey.slice(0, 20) + "..." : "Mode simulation uniquement")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_STRIPE_CONFIGURED ? "success" : "warning"}` }, IS_STRIPE_CONFIGURED ? "Stripe actif" : "Simulation")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Emails (EmailJS)"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_EMAILJS_CONFIGURED ? `Service: ${NEXUS_CONFIG.emailjs.serviceId}` : "Mode journalisation locale")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_EMAILJS_CONFIGURED ? "success" : "warning"}` }, IS_EMAILJS_CONFIGURED ? "EmailJS actif" : "Simulation"))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => {
+  })(), view === "config" && (() => {
+  const [_waveNum, _setWaveNum] = React.useState(NEXUS_CONFIG.payments.waveNumber === '77XXXXXXX' ? '' : NEXUS_CONFIG.payments.waveNumber);
+  const [_omNum,   _setOmNum]   = React.useState(NEXUS_CONFIG.payments.orangeMoneyNumber === '77XXXXXXX' ? '' : NEXUS_CONFIG.payments.orangeMoneyNumber);
+  const [_waNum,   _setWaNum]   = React.useState(NEXUS_CONFIG.admin.whatsapp === '77XXXXXXX' ? '' : NEXUS_CONFIG.admin.whatsapp);
+  const [_ninea,   _setNinea]   = React.useState(NEXUS_CONFIG.legal.ninea || '');
+  const [_rccm,    _setRccm]    = React.useState(NEXUS_CONFIG.legal.rccm  || '');
+  const [_company, _setCompany] = React.useState(NEXUS_CONFIG.legal.companyName || '');
+  const [_vapid,   _setVapid]   = React.useState(NEXUS_CONFIG.vapid.publicKey || '');
+  const [_copiedAx, _setCopiedAx] = React.useState(false);
+  const [_copiedBo, _setCopiedBo] = React.useState(false);
+
+  const _saveField = (key, val) => {
+    try {
+      const sc = JSON.parse(localStorage.getItem('nexus_saved_config') || '{}');
+      sc[key] = val;
+      localStorage.setItem('nexus_saved_config', JSON.stringify(sc));
+    } catch(_) {}
+  };
+
+  const _waveOk  = _waveNum  && _waveNum  !== '77XXXXXXX' && _waveNum.replace(/\D/g,'').length >= 8;
+  const _omOk    = _omNum    && _omNum    !== '77XXXXXXX' && _omNum.replace(/\D/g,'').length >= 8;
+  const _waOk    = _waNum    && _waNum    !== '77XXXXXXX' && _waNum.replace(/\D/g,'').length >= 8;
+  const _nineaOk = !!_ninea;
+  const _rccmOk  = !!_rccm;
+  const _vapidOk = _vapid && _vapid.length > 40;
+  const _missing = [!_waveOk, !_omOk, !_waOk, !_nineaOk, !_rccmOk, !_vapidOk, !IS_SUPABASE_CONFIGURED].filter(Boolean).length;
+
+  const SQL_EXPRESS = `-- ═══════════════════════════════════════════════════════
+-- TABLE annonces_express — Annonces sans inscription (Phase 0)
+-- Supabase Dashboard → SQL Editor → New query → Run
+-- ═══════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS annonces_express (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  photo_url   text,
+  price_fcfa  integer     NOT NULL CHECK (price_fcfa >= 100),
+  category    text        NOT NULL DEFAULT 'autres',
+  description text,
+  phone       text        NOT NULL,
+  email       text,
+  city        text        NOT NULL DEFAULT 'Dakar',
+  status      text        NOT NULL DEFAULT 'active'
+              CHECK (status IN ('active','expired','deleted')),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  expires_at  timestamptz NOT NULL DEFAULT (now() + INTERVAL '30 days')
+);
+CREATE INDEX IF NOT EXISTS idx_ae_status_created ON annonces_express(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ae_category       ON annonces_express(category);
+CREATE INDEX IF NOT EXISTS idx_ae_city           ON annonces_express(city);
+ALTER TABLE annonces_express ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "ae_public_read"   ON annonces_express FOR SELECT USING (status = 'active' AND expires_at > now());
+CREATE POLICY "ae_public_insert" ON annonces_express FOR INSERT WITH CHECK (true);`;
+
+  const SQL_BOOSTS = `-- ═══════════════════════════════════════════════════════
+-- TABLE product_boosts — Forfaits Boost payants (Phase 0)
+-- Supabase Dashboard → SQL Editor → New query → Run
+-- ═══════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS product_boosts (
+  id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id     text        NOT NULL,
+  vendor_id      uuid        REFERENCES auth.users(id) ON DELETE CASCADE,
+  boost_type     text        NOT NULL
+                 CHECK (boost_type IN ('top_3j','boost_semaine','boost_mensuel','pro_mensuel','pro_annuel')),
+  price_fcfa     integer     NOT NULL,
+  started_at     timestamptz NOT NULL DEFAULT now(),
+  ends_at        timestamptz NOT NULL,
+  active         boolean     NOT NULL DEFAULT true,
+  payment_method text        CHECK (payment_method IN ('wave','orange_money','paytech','stripe')),
+  payment_ref    text,
+  payment_status text        NOT NULL DEFAULT 'pending'
+                 CHECK (payment_status IN ('pending','paid','failed','refunded'))
+);
+CREATE INDEX IF NOT EXISTS idx_pb_vendor     ON product_boosts(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_pb_product    ON product_boosts(product_id);
+CREATE INDEX IF NOT EXISTS idx_pb_active_end ON product_boosts(active, ends_at);
+ALTER TABLE product_boosts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "boosts_vendor_own"  ON product_boosts FOR ALL  USING (auth.uid() = vendor_id);
+CREATE POLICY "boosts_public_read" ON product_boosts FOR SELECT USING (active = true AND ends_at > now());
+-- Colonnes sur la table products (si absentes)
+ALTER TABLE products ADD COLUMN IF NOT EXISTS is_boosted    boolean     DEFAULT false;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS boost_ends_at timestamptz;
+-- Séquences factures légales
+CREATE TABLE IF NOT EXISTS invoice_sequences (
+  prefix TEXT NOT NULL, year SMALLINT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (prefix, year)
+);
+CREATE OR REPLACE FUNCTION invoice_next_seq(p_prefix TEXT, p_year SMALLINT)
+RETURNS INTEGER LANGUAGE plpgsql AS $$
+DECLARE next_val INTEGER;
+BEGIN
+  INSERT INTO invoice_sequences(prefix,year,last_seq) VALUES(p_prefix,p_year,1)
+    ON CONFLICT(prefix,year) DO UPDATE SET last_seq = invoice_sequences.last_seq+1
+    RETURNING last_seq INTO next_val;
+  RETURN next_val;
+END; $$;`;
+
+  const E = React.createElement;
+  const inp = (label, val, setter, key, placeholder, isError) =>
+    E('div', { className:'form-group' },
+      E('label', { className:'form-label' }, label),
+      E('input', { type:'text', className:'form-input'+(isError?' error':''),
+        value: val, placeholder,
+        style: key==='legalNinea'||key==='legalRccm'||key==='vapidPublicKey' ? { fontFamily:'monospace',fontSize:'0.82rem' } : {},
+        onChange: ev => {
+          const v = (key==='waveNumber'||key==='orangeMoneyNumber'||key==='adminWhatsapp') ? ev.target.value.replace(/\D/g,'') : ev.target.value;
+          setter(v);
+          if(key==='waveNumber')        NEXUS_CONFIG.payments.waveNumber        = v;
+          if(key==='orangeMoneyNumber') NEXUS_CONFIG.payments.orangeMoneyNumber = v;
+          if(key==='adminWhatsapp')     NEXUS_CONFIG.admin.whatsapp             = v;
+          if(key==='legalNinea')        NEXUS_CONFIG.legal.ninea                = v;
+          if(key==='legalRccm')         NEXUS_CONFIG.legal.rccm                 = v;
+          if(key==='legalCompanyName')  NEXUS_CONFIG.legal.companyName          = v;
+          if(key==='vapidPublicKey')    NEXUS_CONFIG.vapid.publicKey            = v;
+          _saveField(key, v);
+        }
+      })
+    );
+
+  return E('div', null,
+
+    /* ── Checklist Phase 0 ── */
+    _missing > 0 && E('div', { className:'card', style:{ marginBottom:'1.5rem', border:'2px solid #ef4444' } },
+      E('div', { className:'card-header', style:{ background:'#fef2f2' } },
+        E('h2', { className:'card-title', style:{ color:'#dc2626' } },
+          E('i',{className:'fas fa-exclamation-triangle'}), ' Phase 0 — ', _missing, ' configuration(s) critique(s)'
+        )
+      ),
+      E('div', { style:{ padding:'1rem', display:'flex', flexDirection:'column', gap:'0.4rem' } },
+        [
+          [_waveOk,   '🔵 Numéro Wave Marchand',     '→ Section Paiements ci-dessous'],
+          [_omOk,     '🟠 Numéro Orange Money',       '→ Section Paiements ci-dessous'],
+          [_waOk,     '💬 WhatsApp Admin',             '→ Section Paiements ci-dessous'],
+          [_nineaOk,  '🧾 NINEA configuré',            '→ Section Mentions légales ci-dessous'],
+          [_rccmOk,   '🧾 RCCM configuré',             '→ Section Mentions légales ci-dessous'],
+          [_vapidOk,  '🔔 Clé VAPID push (custom)',   '→ Section Notifications ci-dessous'],
+          [IS_SUPABASE_CONFIGURED, '🗄️ Supabase connecté', '→ Cliquer Reconfigurer'],
+        ].map(([ok,lbl,fix],i) =>
+          E('div', { key:i, style:{ display:'flex', alignItems:'center', gap:'0.75rem', padding:'0.5rem 0.85rem', background: ok?'#f0fdf4':'#fff7ed', borderRadius:'8px' } },
+            E('i',{ className:'fas fa-'+(ok?'check-circle':'exclamation-circle'), style:{ color: ok?'#22c55e':'#f97316', flexShrink:0 } }),
+            E('span',{ style:{ fontWeight:600, fontSize:'0.88rem', flex:1 } }, lbl),
+            !ok && E('span',{ style:{ fontSize:'0.72rem', color:'#9ca3af', fontStyle:'italic' } }, fix)
+          )
+        )
+      )
+    ),
+
+    /* ── Paiements mobiles ── */
+    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-mobile-alt text-primary'}), ' Paiements mobiles & Contact')
+      ),
+      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+        (!_waveOk || !_omOk) && E('div', { className:'alert alert-danger', style:{ fontSize:'0.82rem' } },
+          E('i',{className:'fas fa-exclamation-triangle'}),
+          ' ⚠️ Sans ces numéros marchands, Wave et Orange Money renvoient une erreur à chaque paiement.'
+        ),
+        E('div', { className:'form-row' },
+          inp('🔵 Wave Marchand (sans +221)', _waveNum, _setWaveNum, 'waveNumber', '771234567', !_waveOk),
+          inp('🟠 Orange Money (sans +221)',  _omNum,   _setOmNum,   'orangeMoneyNumber', '776543210', !_omOk)
+        ),
+        inp(E(React.Fragment,null,E('i',{className:'fab fa-whatsapp',style:{color:'#25D366',marginRight:'0.4rem'}}),'WhatsApp Admin (sans +221)'), _waNum, _setWaNum, 'adminWhatsapp', '775678901', !_waOk)
+      )
+    ),
+
+    /* ── Mentions légales ── */
+    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-balance-scale text-primary'}), ' Mentions légales — Factures PDF')
+      ),
+      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+        (!_nineaOk||!_rccmOk) && E('div', { className:'alert alert-danger', style:{ fontSize:'0.82rem' } },
+          E('i',{className:'fas fa-exclamation-triangle'}),
+          ' NINEA / RCCM manquants → factures PDF non opposables (OHADA art. 29, CGI sén. art. 667).'
+        ),
+        E('div', { className:'form-row' },
+          inp('NINEA *', _ninea, _setNinea, 'legalNinea', '007123456 2T3', !_nineaOk),
+          inp('RCCM *',  _rccm,  _setRccm,  'legalRccm',  'SN-DKR-2024-B-12345', !_rccmOk)
+        ),
+        inp('Raison sociale', _company, _setCompany, 'legalCompanyName', 'NEXUS Market SARL', false)
+      )
+    ),
+
+    /* ── VAPID ── */
+    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-bell text-primary'}), ' Notifications Push VAPID')
+      ),
+      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+        E('div', { className:'alert alert-info', style:{ fontSize:'0.82rem' } },
+          E('i',{className:'fas fa-info-circle'}), ' Générer sur ',
+          E('a',{href:'https://web-push-codelab.glitch.me/',target:'_blank',style:{color:'var(--primary)'}},'web-push-codelab.glitch.me'),
+          ' \u2192 copier la cl\u00e9 PUBLIQUE. Taux d\u2019ouverture push\u00a0: 30% vs 3% email.'
+        ),
+        inp('Clé publique VAPID', _vapid, _setVapid, 'vapidPublicKey', 'BXxxxxxx...', !_vapidOk)
+      )
+    ),
+
+    /* ── SQL Tables Phase 0 ── */
+    E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+      E('div', { className:'card-header' },
+        E('h2', { className:'card-title' }, E('i',{className:'fas fa-database text-primary'}), ' Tables SQL à exécuter dans Supabase')
+      ),
+      E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1.25rem' } },
+        E('div', { className:'alert alert-warning', style:{ fontSize:'0.82rem' } },
+          E('i',{className:'fas fa-exclamation-triangle'}),
+          ' Copier chaque script → Supabase Dashboard → SQL Editor → New query → Coller → Run. À faire une seule fois.'
+        ),
+        /* annonces_express */
+        E('div', null,
+          E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.5rem', flexWrap:'wrap', gap:'0.5rem' } },
+            E('h3', { style:{ fontWeight:700, fontSize:'0.9rem', color:'var(--danger)' } },
+              E('i',{className:'fas fa-bolt',style:{marginRight:'0.4rem', color:'var(--danger)'}}), '1. annonces_express (Annonces sans inscription)'
+            ),
+            E('button', { className:'btn btn-sm btn-'+(  _copiedAx?'success':'primary'), onClick:() => { navigator.clipboard.writeText(SQL_EXPRESS); _setCopiedAx(true); setTimeout(()=>_setCopiedAx(false),2500); } },
+              E('i',{className:'fas fa-'+(  _copiedAx?'check':'copy')}), ' ', _copiedAx?'Copié !':'Copier'
+            )
+          ),
+          E('pre', { style:{ background:'#1e1e2e', color:'#a6e3a1', borderRadius:'10px', padding:'1rem', fontSize:'0.7rem', overflowX:'auto', maxHeight:'180px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_EXPRESS)
+        ),
+        /* product_boosts */
+        E('div', null,
+          E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.5rem', flexWrap:'wrap', gap:'0.5rem' } },
+            E('h3', { style:{ fontWeight:700, fontSize:'0.9rem', color:'var(--primary)' } },
+              E('i',{className:'fas fa-rocket',style:{marginRight:'0.4rem'}}), '2. product_boosts + invoice_sequences (Boost & Facturation)'
+            ),
+            E('button', { className:'btn btn-sm btn-'+(  _copiedBo?'success':'primary'), onClick:() => { navigator.clipboard.writeText(SQL_BOOSTS); _setCopiedBo(true); setTimeout(()=>_setCopiedBo(false),2500); } },
+              E('i',{className:'fas fa-'+(  _copiedBo?'check':'copy')}), ' ', _copiedBo?'Copié !':'Copier'
+            )
+          ),
+          E('pre', { style:{ background:'#1e1e2e', color:'#89b4fa', borderRadius:'10px', padding:'1rem', fontSize:'0.7rem', overflowX:'auto', maxHeight:'180px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_BOOSTS)
+        ),
+        E('a', { href:'https://supabase.com/dashboard', target:'_blank', className:'btn btn-secondary', style:{ alignSelf:'flex-start' } },
+          E('i',{className:'fas fa-external-link-alt'}), ' Ouvrir Supabase Dashboard'
+        )
+      )
+    ),
+
+    /* ── Services système existants ── */
+    E('div', { className:'card' },
+      E('div', { className:'card-header' }, E('h2', { className:'card-title' }, "Configuration Syst\xE8me")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Base de donn\xE9es"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_SUPABASE_CONFIGURED ? NEXUS_CONFIG.supabase.url : "localStorage (mode d\xE9monstration)")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_SUPABASE_CONFIGURED ? "success" : "warning"}` }, IS_SUPABASE_CONFIGURED ? "Supabase actif" : "localStorage")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Paiements Stripe"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_STRIPE_CONFIGURED ? NEXUS_CONFIG.stripe.publishableKey.slice(0, 20) + "..." : "Mode simulation uniquement")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_STRIPE_CONFIGURED ? "success" : "warning"}` }, IS_STRIPE_CONFIGURED ? "Stripe actif" : "Simulation")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Emails (EmailJS)"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_EMAILJS_CONFIGURED ? `Service: ${NEXUS_CONFIG.emailjs.serviceId}` : "Mode journalisation locale")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_EMAILJS_CONFIGURED ? "success" : "warning"}` }, IS_EMAILJS_CONFIGURED ? "EmailJS actif" : "Simulation"))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => {
     storage.delete("nexus_setup_done");
     window.location.reload();
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cog" }), " Reconfigurer les services"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => {
@@ -17423,7 +17665,9 @@ _memStore.clear();
 ['nexus_ss_guest_cart','nexus_ss_cookie_consent','nexus_ss_onboarding_done','nexus_ss_nexus_setup_done'].forEach(k => { try { sessionStorage.removeItem(k); } catch(e){} });
 window.location.reload(); });
     inp.focus();
-  } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset données"))), view === "flash_sales" && (() => {
+  } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset données")))
+    ); // close Services card
+  })(), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
@@ -23307,6 +23551,17 @@ const SetupWizard = ({ onComplete }) => {
     if (config.emailjsOrderTpl) NEXUS_CONFIG.emailjs.orderTemplateId = config.emailjsOrderTpl;
     if (config.emailjsResetTpl) NEXUS_CONFIG.emailjs.resetTemplateId = config.emailjsResetTpl;
     NEXUS_CONFIG.github.enabled = !!config.githubEnabled;
+    // ── Paiements mobiles & admin ─────────────────────────────────────────
+    if (config.waveNumber)        NEXUS_CONFIG.payments.waveNumber        = config.waveNumber;
+    if (config.orangeMoneyNumber) NEXUS_CONFIG.payments.orangeMoneyNumber = config.orangeMoneyNumber;
+    if (config.adminWhatsapp)     NEXUS_CONFIG.admin.whatsapp             = config.adminWhatsapp;
+    // ── Mentions légales ──────────────────────────────────────────────────
+    if (config.legalNinea)        NEXUS_CONFIG.legal.ninea       = config.legalNinea;
+    if (config.legalRccm)         NEXUS_CONFIG.legal.rccm        = config.legalRccm;
+    if (config.legalAddress)      NEXUS_CONFIG.legal.address     = config.legalAddress;
+    if (config.legalCompanyName)  NEXUS_CONFIG.legal.companyName = config.legalCompanyName;
+    // ── VAPID push ───────────────────────────────────────────────────────
+    if (config.vapidPublicKey)    NEXUS_CONFIG.vapid.publicKey   = config.vapidPublicKey;
     // ── Persister la config complète pour survie au rechargement ────────────
     localStorage.setItem("nexus_saved_config", JSON.stringify({
       supabaseUrl: config.supabaseUrl,
@@ -23317,7 +23572,15 @@ const SetupWizard = ({ onComplete }) => {
       emailjsOrderTpl: config.emailjsOrderTpl,
       emailjsResetTpl: config.emailjsResetTpl,
       apiUrl: config.apiUrl || "",
-      githubEnabled: config.githubEnabled !== false
+      githubEnabled: config.githubEnabled !== false,
+      waveNumber:        config.waveNumber        || "",
+      orangeMoneyNumber: config.orangeMoneyNumber || "",
+      adminWhatsapp:     config.adminWhatsapp     || "",
+      legalNinea:        config.legalNinea        || "",
+      legalRccm:         config.legalRccm         || "",
+      legalAddress:      config.legalAddress      || "",
+      legalCompanyName:  config.legalCompanyName  || "",
+      vapidPublicKey:    config.vapidPublicKey     || "",
     }));
     storage.set("nexus_setup_done", true);
     // FIX Gemini #3 — On nullifie le client existant puis on appelle initSupabase() normalement
@@ -24760,7 +25023,19 @@ window.nexusPush.subscribe = async function(apiToken) {
 
     if (!vapidRes || !vapidRes.ok) {
       console.warn('[Push] VAPID key non disponible :', vapidRes?.status);
-      return false;
+      // Fallback : utiliser la clé VAPID configurée dans NEXUS_CONFIG (Admin → Configuration → VAPID)
+      const _fbKey = NEXUS_CONFIG?.vapid?.publicKey;
+      if (!_fbKey || _fbKey.length < 40) { console.warn('[Push] Aucune clé VAPID de fallback configurée'); return false; }
+      console.info('[Push] Utilisation de la clé VAPID de NEXUS_CONFIG (fallback)');
+      try {
+        const existing = await window.__nexusSWReg.pushManager.getSubscription();
+        let sub = existing;
+        if (!sub) {
+          sub = await window.__nexusSWReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(_fbKey) });
+        }
+        console.log('[Push] ✅ Abonnement push enregistré (mode fallback NEXUS_CONFIG)');
+        return true;
+      } catch(_e) { console.warn('[Push] Échec fallback VAPID:', _e.message); return false; }
     }
     const { publicKey } = await vapidRes.json();
 
