@@ -1275,6 +1275,13 @@
         }
         .payment-method-btn img { height: 40px; width: auto; }
         .payment-method-btn span { font-weight: 600; color: var(--text-primary); }
+        /* ── IA Chat dots animation ── */
+        @keyframes pulse {
+          0%, 100% { opacity: .3; transform: scale(0.85); }
+          50%       { opacity: 1;  transform: scale(1.1);  }
+        }
+        .ai-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary);
+                  animation: pulse 1.2s infinite; display: inline-block; }
         /* ── PayTech operators visual ── */
         .paytech-operator-bar { display: flex; gap: 0.5rem; margin: 0.75rem 0; }
         .paytech-operator-bar .op { flex: 1; text-align: center; background: white; border-radius: 10px; padding: 0.5rem 0.25rem; font-size: 0.65rem; font-weight: 700; border: 1.5px solid #e5e7eb; }
@@ -23893,6 +23900,99 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast }) => {
   const [message, setMessage] = React.useState('');
   const [phone,   setPhone]   = React.useState(currentUser2?.phone || '');
 
+  // ── IA Groq ───────────────────────────────────────────────────────────────
+  const GROQ_KEY_OD   = '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';
+  const GROQ_MODEL_OD = 'llama-3.3-70b-versatile';
+
+  // Chat IA
+  const [aiInput,    setAiInput]    = React.useState('');
+  const [aiMessages, setAiMessages] = React.useState([{
+    role: 'assistant',
+    content: 'Bonjour ! 👋 Je suis votre assistant NEXUS pour vous aider à construire votre liste de courses.\n\nDécrivez-moi ce que vous cherchez — en français, en wolof, ou mélangé !\n\nPar exemple : "Je cherche un ordinateur portable pas cher pour mon enfant" ou "Dama soxor téléphone iPhone pas cher".',
+  }]);
+  const [aiLoading,  setAiLoading]  = React.useState(false);
+  const [aiPanel,    setAiPanel]    = React.useState(true);  // panel IA visible
+  const aiChatRef = React.useRef(null);
+
+  // Auto-scroll du chat
+  React.useEffect(() => {
+    if (aiChatRef.current) aiChatRef.current.scrollTop = aiChatRef.current.scrollHeight;
+  }, [aiMessages]);
+
+  // ── Appel Groq ─────────────────────────────────────────────────────────────
+  const callGroq = async (userMsg) => {
+    setAiLoading(true);
+    const history = [
+      {
+        role: 'system',
+        content: 'Tu es l’assistant de commande NEXUS Market Sénégal. Tu aides les clients à construire leur liste de courses pour des produits introuvables sur le site. Tu parles français et comprends le wolof.\n\nTon rôle :\n1. Comprendre ce que veut le client (produit, caractéristiques, budget, quantité)\n2. L’aider à détailler (marque, couleur, taille, usage)\n3. Suggérer un budget réaliste en FCFA\n4. Quand tu as assez d’infos sur UN article, ajoute-le OBLIGATOIREMENT avec ce format JSON sur une seule ligne sans explication avant:\n\nADD_ITEM:{"name":"Nom produit","qty":1,"budget":15000,"category":"Electronique","notes":"précisions"}\n\n5. Après chaque ajout, demande s’il y a d’autres articles.\n6. Si client dit c’est tout, résume.\n\nCatégories : Electronique, Mode & Vetements, Alimentation, Maison & Deco, Beaute & Sante, Informatique, Sport & Loisirs, Auto-Moto, Autres.\nConnais les prix du marché sénégalais (FCFA). Sois chaleureux et efficace.',
+      },
+      ...aiMessages.map(m => ({ role: m.role, content: m.content.replace(/```json[\s\S]*?```/g, '[Article ajouté]') })),
+      { role: 'user', content: userMsg },
+    ];
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GROQ_KEY_OD },
+        body: JSON.stringify({ model: GROQ_MODEL_OD, max_tokens: 600, temperature: 0.5, messages: history }),
+      });
+      if (!res.ok) throw new Error('Groq ' + res.status);
+      const data = await res.json();
+      const reply = data?.choices?.[0]?.message?.content || 'Désolé, je n’ai pas compris.';
+
+      // Détecter ADD_ITEM: dans la réponse IA
+      let parsedItem = null;
+      const addItemMatch = reply.match(/ADD_ITEM:(\{[^\n]+\})/);
+      if (addItemMatch) {
+        try {
+          const parsed = JSON.parse(addItemMatch[1]);
+          if (parsed.name) parsedItem = parsed;
+        } catch(_) {
+          // Essayer aussi le format {"add_item": ...}
+          const altMatch = reply.match(/\{"add_item"\s*:\s*(\{[^}]+\})\}/);
+          if (altMatch) { try { parsedItem = JSON.parse(altMatch[1]); } catch(_2) {} }
+        }
+      }
+
+      // Ajouter le message IA dans le chat
+      setAiMessages(prev => [...prev, { role: 'assistant', content: reply, parsedItem }]);
+
+      // Auto-ajouter l'article à la liste si détecté
+      if (parsedItem) {
+        const newItem = {
+          name:     parsedItem.name     || '',
+          qty:      String(parsedItem.qty || '1'),
+          budget:   String(parsedItem.budget || ''),
+          category: parsedItem.category || 'Autres',
+          notes:    parsedItem.notes    || '',
+        };
+        setItems(prev => {
+          // Remplacer le premier item vide ou ajouter
+          const emptyIdx = prev.findIndex(it => !it.name.trim());
+          if (emptyIdx >= 0) {
+            const updated = [...prev];
+            updated[emptyIdx] = newItem;
+            return updated;
+          }
+          return [...prev, newItem];
+        });
+        addToast('✅ Article ajouté : ' + newItem.name, 'success', 3000);
+      }
+    } catch(e) {
+      setAiMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Erreur IA : ' + e.message + '. Vérifiez votre connexion.' }]);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const sendAiMessage = async () => {
+    const msg = aiInput.trim();
+    if (!msg || aiLoading) return;
+    setAiMessages(prev => [...prev, { role: 'user', content: msg }]);
+    setAiInput('');
+    await callGroq(msg);
+  };
+
   const E = React.createElement;
 
   // ── Charger les demandes du buyer ──────────────────────────────────────────
@@ -24086,7 +24186,78 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast }) => {
       E('button', { className: 'btn btn-secondary btn-sm', onClick: () => setView('list') },
         E('i', { className: 'fas fa-arrow-left' }), ' Retour'
       ),
-      E('h2', { className: 'section-title' }, '\U0001f4cb Ma liste de courses')
+      E('h2', { className: 'section-title' }, '\U0001f4cb Ma liste de courses'),
+      E('button', {
+        className: 'btn btn-sm',
+        style: { background: aiPanel ? 'var(--primary)' : 'var(--bg-light)', color: aiPanel ? 'white' : 'var(--text-secondary)', border: 'none', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '.4rem', fontSize: '.8rem' },
+        onClick: function() { setAiPanel(function(p){ return !p; }); },
+      },
+        E('i', { className: 'fas fa-robot' }), aiPanel ? ' Masquer l\'IA' : ' \U0001f916 Assistant IA'
+      )
+    ),
+
+    aiPanel && E('div', { className: 'card', style: { marginBottom: '1.25rem', border: '2px solid var(--primary)', overflow: 'hidden', borderRadius: 14 } },
+      E('div', { style: { background: 'linear-gradient(135deg,#1a1a2e,#16213e)', padding: '.8rem 1.25rem', display: 'flex', alignItems: 'center', gap: '.65rem' } },
+        E('div', { style: { width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#FDEE42,#f5c800)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 } }, '\U0001f916'),
+        E('div', { style: { flex: 1 } },
+          E('div', { style: { color: 'white', fontWeight: 800, fontSize: '.9rem' } }, 'Assistant NEXUS IA'),
+          E('div', { style: { color: 'rgba(255,255,255,.55)', fontSize: '.7rem' } }, 'Groq Llama 3.3 \u2014 Fran\xe7ais & Wolof \u2014 Ajoute vos articles automatiquement')
+        ),
+        items.filter(function(it){ return it.name.trim(); }).length > 0 && E('span', { style: { background: 'rgba(253,238,66,.18)', color: '#FDEE42', borderRadius: 20, padding: '2px 10px', fontSize: '.7rem', fontWeight: 700 } },
+          items.filter(function(it){ return it.name.trim(); }).length, ' article(s)'
+        )
+      ),
+      E('div', { ref: aiChatRef, style: { height: 260, overflowY: 'auto', padding: '.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '.6rem', background: '#f9fafb' } },
+        aiMessages.map(function(msg, idx_m) {
+          return E('div', { key: idx_m, style: { display: 'flex', gap: '.5rem', alignItems: 'flex-start', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row' } },
+            msg.role === 'assistant' && E('div', { style: { width: 26, height: 26, borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.65rem', flexShrink: 0, marginTop: 2 } }, '\U0001f916'),
+            E('div', { style: {
+              maxWidth: '82%', background: msg.role === 'user' ? 'var(--primary)' : 'white',
+              color: msg.role === 'user' ? 'white' : 'var(--text-primary)',
+              borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+              padding: '.5rem .8rem', fontSize: '.82rem', lineHeight: 1.5,
+              boxShadow: '0 1px 3px rgba(0,0,0,.07)', border: msg.parsedItem ? '1.5px solid #059669' : 'none',
+            }},
+              msg.content.split('\n').map(function(line, li) {
+                if (line.startsWith('ADD_ITEM:') || line.includes('```')) return null;
+                return E('div', { key: li }, line || E('br', null));
+              }),
+              msg.parsedItem && E('div', { style: { marginTop: '.4rem', background: 'rgba(5,150,105,.1)', borderRadius: 8, padding: '.35rem .65rem', fontSize: '.75rem', fontWeight: 700, color: '#059669' } },
+                '\u2705 Ajout\xe9 : ', msg.parsedItem.name,
+                msg.parsedItem.budget ? ' \u2014 ' + parseInt(msg.parsedItem.budget).toLocaleString('fr-FR') + ' FCFA' : ''
+              )
+            )
+          );
+        }),
+        aiLoading && E('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center' } },
+          E('div', { style: { width: 26, height: 26, borderRadius: '50%', background: 'var(--primary)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.65rem', flexShrink: 0 } }, '\U0001f916'),
+          E('div', { style: { background: 'white', borderRadius: 12, padding: '.4rem .75rem', display: 'flex', gap: '.3rem', alignItems: 'center' } },
+            [0,1,2].map(function(d) { return E('div', { key: d, className: 'ai-dot', style: { animationDelay: d * .2 + 's' } }); })
+          )
+        )
+      ),
+      aiMessages.length <= 1 && E('div', { style: { padding: '.5rem 1rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '.4rem', flexWrap: 'wrap', background: 'white' } },
+        ['\U0001f4f1 Smartphone', '\U0001f457 V\xeatements', '\U0001f371 Alimentaire', '\U0001f697 Pi\xe8ces auto', '\U0001f4bb Ordinateur'].map(function(s) {
+          var lbl = s.slice(2);
+          return E('button', { key: s,
+            onClick: function() { setAiMessages(function(prev) { return [...prev, { role: 'user', content: lbl }]; }); callGroq(lbl); },
+            style: { padding: '.25rem .65rem', borderRadius: 99, background: 'var(--bg-light)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: '.73rem', fontWeight: 600, color: 'var(--text-secondary)' }
+          }, s);
+        })
+      ),
+      E('div', { style: { padding: '.65rem 1rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '.5rem', background: 'white' } },
+        E('input', {
+          type: 'text', className: 'form-input', style: { flex: 1, fontSize: '.87rem' },
+          value: aiInput, placeholder: 'Dites ce que vous cherchez... (fran\xe7ais ou wolof)',
+          onChange: function(e) { setAiInput(e.target.value); },
+          onKeyDown: function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAiMessage(); } },
+          disabled: aiLoading,
+        }),
+        E('button', {
+          className: 'btn btn-primary', onClick: sendAiMessage,
+          disabled: aiLoading || !aiInput.trim(), style: { padding: '.5rem .85rem', flexShrink: 0 }
+        }, aiLoading ? E('i', { className: 'fas fa-spinner fa-spin' }) : E('i', { className: 'fas fa-paper-plane' }))
+      )
     ),
 
     E('div', { className: 'card', style: { marginBottom: '1.25rem' } },
