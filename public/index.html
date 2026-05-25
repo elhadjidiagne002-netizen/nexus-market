@@ -1930,6 +1930,13 @@ const NEXUS_CONFIG = {
   // ── Paiements mobiles ──────────────────────────────────────────────────────
   // Configurer ici vos numéros marchands Wave et Orange Money
   // Ces numéros reçoivent les paiements Boost directement
+  // ── Admin Contact (OnDemand, support) ───────────────────────────────────
+  admin: {
+    // Numéro WhatsApp de l'administrateur NEXUS (reçoit les nouvelles demandes OnDemand)
+    whatsapp: "77XXXXXXX",    // ex: "775678901" — À configurer
+    email:    "admin@nexus.sn",
+  },
+
   payments: {
     // Numéro Wave Business NEXUS Market (sans l'indicatif +221)
     // Remplacer par votre vrai numéro marchand Wave
@@ -14202,6 +14209,231 @@ const AdminAmbassadorsPanel = ({ addToast }) => {
 };
 // ── Fin AdminAmbassadorsPanel ─────────────────────────────────────────────────
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AdminOnDemandPanel — Gestion des commandes sur demande (côté admin)
+// ══════════════════════════════════════════════════════════════════════════════
+const AdminOnDemandPanel = ({ addToast }) => {
+  const [requests, setReqs]   = React.useState([]);
+  const [loading,  setLoading] = React.useState(true);
+  const [selected, setSelected] = React.useState(null);
+  const [reply,    setReply]   = React.useState('');
+  const [saving,   setSaving]  = React.useState(false);
+  const [tab,      setTab]     = React.useState('pending'); // pending | all
+
+  const STATUS_LABEL = { pending:'⏳ En attente', processing:'🔍 Recherche', replied:'✅ Répondu', closed:'🔒 Fermé' };
+  const STATUS_BADGE = { pending:'warning', processing:'info', replied:'success', closed:'secondary' };
+
+  const E = React.createElement;
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      if (isSupabaseConfigured() && DataService._sb) {
+        let q = DataService._sb.from('ondemand_requests').select('*').order('created_at', { ascending: false });
+        if (tab === 'pending') q = q.in('status', ['pending','processing']);
+        const { data, error } = await q;
+        if (!error) setReqs(data || []);
+        else throw error;
+      } else {
+        const all = storage.getArray('ondemand_requests');
+        setReqs(tab === 'pending' ? all.filter(r => ['pending','processing'].includes(r.status)) : all);
+      }
+    } catch(e) { addToast('Erreur : ' + e.message, 'error'); }
+    finally { setLoading(false); }
+  };
+
+  React.useEffect(() => { load(); }, [tab]);
+
+  const updateStatus = async (id, status) => {
+    try {
+      if (DataService._sb) {
+        await DataService._sb.from('ondemand_requests').update({ status }).eq('id', id);
+      } else {
+        const all = storage.getArray('ondemand_requests');
+        const idx = all.findIndex(r => r.id === id);
+        if (idx >= 0) { all[idx].status = status; storage.set('ondemand_requests', all); }
+      }
+      addToast('Statut mis à jour : ' + STATUS_LABEL[status], 'success');
+      load();
+      if (selected && selected.id === id) setSelected(s => ({ ...s, status }));
+    } catch(e) { addToast(e.message, 'error'); }
+  };
+
+  const sendReply = async () => {
+    if (!reply.trim() || !selected) return;
+    setSaving(true);
+    try {
+      const now = new Date().toISOString();
+      if (DataService._sb) {
+        await DataService._sb.from('ondemand_requests')
+          .update({ admin_reply: reply, admin_reply_at: now, status: 'replied' })
+          .eq('id', selected.id);
+      } else {
+        const all = storage.getArray('ondemand_requests');
+        const idx = all.findIndex(r => r.id === selected.id);
+        if (idx >= 0) { all[idx] = { ...all[idx], admin_reply: reply, admin_reply_at: now, status: 'replied' }; storage.set('ondemand_requests', all); }
+      }
+      // Notifier le client via WhatsApp
+      const clientPhone = selected.buyer_phone || '';
+      if (clientPhone) {
+        const wamsg = encodeURIComponent(
+          'Bonjour ' + (selected.buyer_name || '') + ' 👋\n\n' +
+          'Voici la réponse NEXUS Market pour votre liste de courses :\n\n' +
+          reply + '\n\n' +
+          '📱 Répondez ici pour passer commande — NEXUS Market'
+        );
+        window.open('https://wa.me/221' + clientPhone.replace(/\D/g,'').replace(/^221/,'') + '?text=' + wamsg, '_blank');
+      }
+      addToast('✅ Réponse envoyée ! Client notifié par WhatsApp.', 'success', 7000);
+      setReply('');
+      setSelected(s => ({ ...s, status: 'replied', admin_reply: reply, admin_reply_at: now }));
+      load();
+    } catch(e) { addToast(e.message, 'error'); }
+    finally { setSaving(false); }
+  };
+
+  const pending = requests.filter(r => r.status === 'pending').length;
+
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header' },
+      E('div', null,
+        E('h2', { className: 'card-title' },
+          E('i', { className: 'fas fa-concierge-bell', style:{ marginRight:'.5rem', color:'var(--primary)' } }),
+          'Commandes OnDemand'
+        ),
+        pending > 0 && E('span', { className: 'badge badge-warning', style:{ marginLeft:'.5rem' } }, pending, ' en attente')
+      ),
+      selected && E('button', { className: 'btn btn-secondary btn-sm', onClick: () => setSelected(null) },
+        E('i', { className: 'fas fa-arrow-left' }), ' Retour liste'
+      )
+    ),
+
+    !selected && E(React.Fragment, null,
+      // Tabs
+      E('div', { style:{ display:'flex', gap:'.5rem', marginBottom:'1.25rem' } },
+        [['pending','⏳ En attente'],['all','📋 Toutes']].map(([id, label]) =>
+          E('button', { key: id, onClick: () => setTab(id),
+            style:{ padding:'.4rem .9rem', borderRadius:8, border:'none', cursor:'pointer', fontWeight:600, fontSize:'.82rem',
+                    background: tab===id ? 'var(--primary)' : 'var(--bg-light)', color: tab===id ? '#fff' : 'var(--text-secondary)' }
+          }, label)
+        )
+      ),
+      loading ? E('div', { className:'empty-state' }, E('i', { className:'fas fa-spinner fa-spin' })) :
+      requests.length === 0 ? E('div', { className:'empty-state' },
+        E('i', { className:'fas fa-concierge-bell' }),
+        E('p', null, tab === 'pending' ? 'Aucune demande en attente' : 'Aucune demande')
+      ) :
+      E('div', { style:{ display:'flex', flexDirection:'column', gap:'.6rem' } },
+        requests.map(req => E('div', {
+          key: req.id,
+          style:{ border:'1px solid var(--border)', borderRadius:12, padding:'1rem 1.25rem', cursor:'pointer',
+                  background: req.status === 'pending' ? 'rgba(234,179,8,.04)' : 'white' },
+          onClick: () => { setSelected(req); setReply(req.admin_reply || ''); }
+        },
+          E('div', { style:{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:'.5rem' } },
+            E('div', null,
+              E('div', { style:{ fontWeight:700, fontSize:'.9rem' } },
+                req.buyer_name || 'Client', ' \u2014 ', req.items.length, ' article', req.items.length>1?'s':'',
+                ' : ', req.items.map(it=>it.name).join(', ').slice(0,60)
+              ),
+              E('div', { style:{ fontSize:'.75rem', color:'var(--text-secondary)', marginTop:'.2rem' } },
+                '\u260e\ufe0f ', req.buyer_phone, ' \u00b7 ',
+                new Date(req.created_at).toLocaleString('fr-FR')
+              )
+            ),
+            E('div', { style:{ display:'flex', gap:'.4rem', alignItems:'center' } },
+              E('span', { className:'badge badge-'+(STATUS_BADGE[req.status]||'warning') }, STATUS_LABEL[req.status]||req.status),
+              E('i', { className:'fas fa-chevron-right', style:{ color:'var(--text-secondary)', fontSize:'.8rem' } })
+            )
+          )
+        ))
+      )
+    ),
+
+    // ── DÉTAIL + RÉPONSE ADMIN ──────────────────────────────────────────────
+    selected && E('div', null,
+      // Info client
+      E('div', { style:{ background:'var(--bg-light)', borderRadius:12, padding:'1rem 1.25rem', marginBottom:'1.25rem' } },
+        E('div', { style:{ display:'flex', gap:'1rem', flexWrap:'wrap', alignItems:'center', justifyContent:'space-between' } },
+          E('div', null,
+            E('div', { style:{ fontWeight:700, fontSize:'.95rem' } }, selected.buyer_name || 'Client'),
+            E('div', { style:{ fontSize:'.83rem', color:'var(--text-secondary)', marginTop:'.2rem' } },
+              E('i', { className:'fab fa-whatsapp', style:{ color:'#25D366', marginRight:'.3rem' } }),
+              selected.buyer_phone, ' \u2014 ', selected.buyer_email
+            )
+          ),
+          E('div', { style:{ display:'flex', gap:'.5rem', flexWrap:'wrap' } },
+            ['processing','replied','closed'].map(s =>
+              E('button', { key:s,
+                onClick: () => updateStatus(selected.id, s),
+                style:{ padding:'.35rem .8rem', borderRadius:8, border:'none', cursor:'pointer', fontSize:'.78rem', fontWeight:600,
+                        background: selected.status===s ? 'var(--primary)' : 'var(--bg-light)',
+                        color: selected.status===s ? 'white' : 'var(--text-secondary)' }
+              }, STATUS_LABEL[s])
+            )
+          )
+        )
+      ),
+
+      // Liste des articles
+      E('div', { className:'card', style:{ marginBottom:'1.25rem' } },
+        E('div', { className:'card-header' }, E('h3', { className:'card-title' }, '\U0001f4cb Liste de courses')),
+        E('table', { className:'data-table' },
+          E('thead', null, E('tr', null,
+            ['#','Article','Qté','Budget max','Catégorie','Précisions'].map(h => E('th', { key:h }, h))
+          )),
+          E('tbody', null,
+            selected.items.map((it, i) => E('tr', { key:i },
+              E('td', null, i+1),
+              E('td', null, E('strong', null, it.name)),
+              E('td', { style:{ textAlign:'center' } }, it.qty || 1),
+              E('td', null, it.budget ? parseInt(it.budget).toLocaleString('fr-FR')+' FCFA' : '\u2014'),
+              E('td', null, it.category || '\u2014'),
+              E('td', { style:{ color:'var(--text-secondary)', fontSize:'.82rem' } }, it.notes || '\u2014')
+            ))
+          )
+        )
+      ),
+
+      selected.message && E('div', { style:{ background:'var(--bg-light)', borderRadius:10, padding:'.85rem 1rem', marginBottom:'1.25rem', fontSize:'.88rem' } },
+        E('strong', null, '\U0001f4ac Message du client : '), selected.message
+      ),
+
+      // Zone de réponse admin
+      E('div', { className:'card' },
+        E('div', { className:'card-header' },
+          E('h3', { className:'card-title' }, selected.status === 'replied' ? '\u2705 R\xe9ponse envoy\xe9e' : '\U0001f4dd R\xe9pondre au client')
+        ),
+        E('div', { style:{ padding:'1rem 1.25rem' } },
+          E('textarea', {
+            className:'form-textarea', rows:6,
+            value: reply,
+            onChange: e => setReply(e.target.value),
+            placeholder: 'Indiquez la disponibilité des articles, les prix, les délais de livraison…\n\nEx: ✅ Chargeur iPhone 14 — disponible à 8 500 FCFA\n❌ Rizière Basmati 5kg — introuvable, je propose Riz Uncle Ben 5kg à 4 200 FCFA\n\n🚚 Livraison Dakar : 1 500 FCFA — délai 2-3 jours',
+            style:{ resize:'vertical', fontSize:'.88rem' }
+          }),
+          E('div', { style:{ display:'flex', gap:'.75rem', marginTop:'.75rem', flexWrap:'wrap' } },
+            E('button', {
+              className: saving ? 'btn btn-primary flex-1 btn-loading' : 'btn btn-primary flex-1',
+              onClick: sendReply, disabled: saving || !reply.trim(),
+              style:{ background:'linear-gradient(135deg,#00853E,#006b32)' }
+            },
+              !saving && E(React.Fragment, null,
+                E('i', { className:'fab fa-whatsapp' }), ' Envoyer la r\xe9ponse par WhatsApp'
+              )
+            )
+          ),
+          selected.status === 'replied' && selected.admin_reply_at && E('div', { style:{ fontSize:'.75rem', color:'var(--text-secondary)', marginTop:'.5rem' } },
+            'Dernière réponse : ', new Date(selected.admin_reply_at).toLocaleString('fr-FR')
+          )
+        )
+      )
+    )
+  );
+};
+// ── Fin AdminOnDemandPanel ────────────────────────────────────────────────────
+
 // AdminB2BPanel — Tableau admin des acheteurs professionnels B2B
 // Rendu dans AdminDashboard quand view === "b2b"
 // ══════════════════════════════════════════════════════════════════════════
@@ -15378,6 +15610,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     { id: "users", icon: "users-cog", label: "Utilisateurs" },
     { id: "b2b", icon: "building", label: "Acheteurs Pro B2B" },
     { id: "ambassadors", icon: "award", label: "Ambassadeurs" },
+    { id: "ondemand_admin", icon: "concierge-bell", label: "Commandes OnDemand" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
     { id: "logs", icon: "history", label: "Journal activité" },
@@ -15605,7 +15838,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
               )
             )
     );
-  })(), view === "b2b" && /* @__PURE__ */ React.createElement(AdminB2BPanel, { addToast }), view === "ambassadors" && React.createElement(AdminAmbassadorsPanel, { addToast }), view === "coupons" && (() => {
+  })(), view === "b2b" && /* @__PURE__ */ React.createElement(AdminB2BPanel, { addToast }), view === "ambassadors" && React.createElement(AdminAmbassadorsPanel, { addToast }), view === "ondemand_admin" && React.createElement(AdminOnDemandPanel, { addToast }), view === "coupons" && (() => {
     const newCoupon = adminNewCoupon;
     const setNewCoupon = setAdminNewCoupon;
     const COUPON_CATS = ["", "Électronique","Informatique","Mode","Beauté","Maison","Sport","Alimentation","Tissus & Wax","Artisanat","Produits locaux","Autre"];
@@ -20803,6 +21036,32 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     ),
 
 
+    // ── VOUS NE TROUVEZ PAS ? CTA OnDemand ──
+    React.createElement('div', {
+      onClick: () => typeof setView === 'function' && setView('ondemand'),
+      style: {
+        margin: '0 1rem 0.5rem',
+        background: 'linear-gradient(135deg,#fff8e1,#fffde7)',
+        border: '1.5px solid rgba(234,179,8,.3)',
+        borderRadius: 12, padding: '.7rem 1rem',
+        display: 'flex', alignItems: 'center', gap: '.75rem',
+        cursor: 'pointer', transition: 'all .18s',
+      }
+    },
+      React.createElement('div', { style:{ fontSize:'1.4rem', lineHeight:1 } }, '🔍'),
+      React.createElement('div', { style:{ flex:1, minWidth:0 } },
+        React.createElement('div', { style:{ fontWeight:700, fontSize:'.85rem', color:'#92400e' } },
+          'Vous ne trouvez pas ce que vous cherchez ?'
+        ),
+        React.createElement('div', { style:{ fontSize:'.75rem', color:'#b45309' } },
+          'Envoyez votre liste — l\u2019administrateur NEXUS le trouve pour vous en 24h'
+        )
+      ),
+      React.createElement('span', { style:{ fontSize:'.78rem', fontWeight:700, color:'#d97706', whiteSpace:'nowrap' } },
+        'Demander →'
+      )
+    ),
+
     // ── NEWCOMER SELL CTA ──
     React.createElement('div', {
       style: {
@@ -22178,7 +22437,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           { id: "b2b_statement", icon: "file-pdf",      label: "Relevé mensuel",     b2b: true },
         ]
       : [
-          { id: "ondemand",    icon: "magic",        label: "🔥 OnDemand",      badge: 0, highlight: true },
+          { id: "ondemand",    icon: "concierge-bell", label: "🛒 Commande sur mesure", badge: 0, highlight: true },
           { id: "loyalty",     icon: "star",         label: "Fidélité & Points" },
           { id: "ambassador",  icon: "award",        label: "Ambassadeur", badge: (() => {
       try {
@@ -23593,738 +23852,467 @@ const AppWithUserSync = ({ onUserChange }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── OnDemandPanel ─────────────────────────────────────────────────────────────
+
+// ── SQL SUPABASE REQUIS ────────────────────────────────────────────────────
+// CREATE TABLE ondemand_requests (
+//   id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+//   buyer_id    uuid        REFERENCES auth.users(id),
+//   buyer_name  text,
+//   buyer_phone text,
+//   buyer_email text,
+//   items       jsonb       NOT NULL,   -- [{name, qty, budget, notes}]
+//   message     text,
+//   status      text        DEFAULT 'pending'
+//                           CHECK (status IN ('pending','processing','replied','closed')),
+//   admin_reply text,
+//   admin_reply_at timestamptz,
+//   created_at  timestamptz DEFAULT now()
+// );
+// ALTER TABLE ondemand_requests ENABLE ROW LEVEL SECURITY;
+// CREATE POLICY "buyer_read_own" ON ondemand_requests FOR SELECT USING (buyer_id = auth.uid());
+// CREATE POLICY "buyer_insert"   ON ondemand_requests FOR INSERT WITH CHECK (buyer_id = auth.uid());
+// CREATE POLICY "admin_all"      ON ondemand_requests FOR ALL USING (true); -- restreindre en prod
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OnDemandPanel — Commande sur demande (acheteur → liste de courses → admin)
+// ══════════════════════════════════════════════════════════════════════════════
 const OnDemandPanel = ({ currentUser: currentUser2, addToast }) => {
-  const CATS = ["Électronique","Mode & Vêtements","Alimentation","Maison & Déco","Beauté & Santé","Services","Informatique","Sport & Loisirs","Autres"];
-  const [tab, setTab]             = React.useState("my");       // "my" | "marketplace"
-  const [view, setView]           = React.useState("list");     // "list" | "form" | "detail"
-  const [requests, setRequests]   = React.useState([]);
-  const [allRequests, setAllReqs] = React.useState([]);         // marketplace (all open)
-  const [loading, setLoading]     = React.useState(true);
-  const [selected, setSelected]   = React.useState(null);
-  const [offers, setOffers]       = React.useState([]);
-  const [offerForm, setOfferForm] = React.useState({ price:"", delivery_days:"", message:"" });
-  const [submitting, setSubmitting] = React.useState(false);
-  const [filterCat, setFilterCat] = React.useState("");
-  const [filterUrgency, setFilterUrgency] = React.useState("");
-  const [form, setForm] = React.useState({ title:"", category:"", description:"", budget_max:"", quantity:1, urgency:"normal", localisation:"Dakar" });
-  const upd = (k,v) => setForm(f=>({...f,[k]:v}));
+  const CATS = ['Électronique','Mode & Vêtements','Alimentation','Maison & Déco',
+                'Beauté & Santé','Informatique','Sport & Loisirs','Auto-Moto','Autres'];
+  const EMPTY_ITEM = { name:'', qty:'1', budget:'', category:'Autres', notes:'' };
 
-  const isVendor = ["vendor","admin"].includes(currentUser2.role);
+  const [view,     setView]     = React.useState('list'); // list | form | detail
+  const [requests, setReqs]     = React.useState([]);
+  const [loading,  setLoading]  = React.useState(true);
+  const [selected, setSelected] = React.useState(null);
+  const [saving,   setSaving]   = React.useState(false);
 
+  // Formulaire
+  const [items,   setItems]   = React.useState([{ ...EMPTY_ITEM }]);
+  const [message, setMessage] = React.useState('');
+  const [phone,   setPhone]   = React.useState(currentUser2?.phone || '');
+
+  const E = React.createElement;
+
+  // ── Charger les demandes du buyer ──────────────────────────────────────────
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
-      if (isVendor) {
-        // Vendors see marketplace
-        const data = await DataService.getBuyerRequests({ status:"open", limit:100 });
-        setAllReqs(data||[]);
-        // Their submitted offers
-        const myOffers = await DataService.getVendorOffers(null, currentUser2.id);
-        setOffers(myOffers||[]);
+      if (isSupabaseConfigured() && DataService._sb) {
+        const { data, error } = await DataService._sb
+          .from('ondemand_requests')
+          .select('*')
+          .eq('buyer_id', currentUser2.id)
+          .order('created_at', { ascending: false });
+        if (!error) setReqs(data || []);
       } else {
-        // Buyers see their own requests
-        const data = await DataService.getBuyerRequests({ buyerId: currentUser2.id });
-        setRequests(data||[]);
+        // Fallback localStorage
+        const all = storage.getArray('ondemand_requests');
+        setReqs(all.filter(r => r.buyer_id === currentUser2.id));
       }
-    } catch(e) { addToast("Erreur de chargement", "error"); }
-    finally { setLoading(false); }
-  }, [currentUser2.id, isVendor]);
-
-  React.useEffect(() => { load(); }, [load]);
-
-  const openDetail = async (req) => {
-    setSelected(req);
-    setView("detail");
-    const data = await DataService.getVendorOffers(req.id);
-    setOffers(data||[]);
-  };
-
-  const submit = async () => {
-    if (!form.title.trim()) { addToast("Décrivez le produit recherché.", "error"); return; }
-    setSubmitting(true);
-    try {
-      const req = await DataService.createBuyerRequest({
-        buyer_id: currentUser2.id, buyer_name: currentUser2.name || currentUser2.email,
-        ...form, budget_max: form.budget_max ? parseFloat(form.budget_max) : null,
-        quantity: parseInt(form.quantity)||1,
-      });
-      setRequests(r=>[req,...r]);
-      setForm({ title:"", category:"", description:"", budget_max:"", quantity:1, urgency:"normal", localisation:"Dakar" });
-      setView("list");
-      addToast("Demande publiée ! Les vendeurs seront notifiés.", "success");
-    } catch(e) { addToast("Erreur : "+e.message, "error"); }
-    finally { setSubmitting(false); }
-  };
-
-  const submitVendorOffer = async () => {
-    if (!offerForm.price) { addToast("Indiquez votre prix.", "error"); return; }
-    setSubmitting(true);
-    try {
-      await DataService.createVendorOffer({
-        request_id: selected.id,
-        vendor_id:  currentUser2.id,
-        vendor_name: currentUser2.name,
-        price: parseFloat(offerForm.price),
-        delivery_days: offerForm.delivery_days ? parseInt(offerForm.delivery_days) : null,
-        message: offerForm.message || null,
-      });
-      addToast("Offre envoyée ! L'acheteur sera notifié.", "success");
-      setOfferForm({ price:"", delivery_days:"", message:"" });
-      setView(tab==="marketplace"?"marketplace":"list");
-      setSelected(null);
-      load();
-    } catch(e) { addToast(e.message||"Erreur", "error"); }
-    finally { setSubmitting(false); }
-  };
-
-  const acceptOffer = async (offer) => {
-    setSubmitting(true);
-    try {
-      await DataService.acceptOffer(offer.id, selected.id);
-      setOffers(prev=>prev.map(o=>o.id===offer.id?{...o,status:"accepted"}:{...o,status:"rejected"}));
-      setRequests(prev=>prev.map(r=>r.id===selected.id?{...r,status:"accepted"}:r));
-      addToast("Offre acceptée ! Vous pouvez passer commande.", "success");
-    } catch(e) { addToast("Erreur", "error"); }
-    finally { setSubmitting(false); }
-  };
-
-  const cancelRequest = async (reqId) => {
-    try {
-      await DataService._sb?.from("buyer_requests").update({status:"cancelled"}).eq("id",reqId).eq("buyer_id",currentUser2.id);
-      setRequests(prev=>prev.map(r=>r.id===reqId?{...r,status:"cancelled"}:r));
-      addToast("Demande annulée","info");
-    } catch(e){}
-  };
-
-  const URGENCY = { low:"🟢 Flexible", normal:"🟡 Normal", high:"🟠 Urgent", urgent:"🔴 Très urgent" };
-  const STATUS  = { open:"Ouverte", offers_received:"Offres reçues", accepted:"Acceptée", expired:"Expirée", cancelled:"Annulée" };
-  const SCOL    = { open:"var(--primary)", offers_received:"#d97706", accepted:"#16a34a", expired:"#94a3b8", cancelled:"#dc2626" };
-
-  // Marketplace filtered list
-  const filteredMarket = allRequests.filter(r=>{
-    if (filterCat && r.category !== filterCat) return false;
-    if (filterUrgency && r.urgency !== filterUrgency) return false;
-    return true;
-  });
-
-  // Check if vendor already offered on a request
-  const alreadyOffered = (reqId) => offers.some(o => (o.request_id||o.original_offer_id) === reqId);
-
-  const renderCard = (req, ctx="buyer") => React.createElement("div", {
-    key:req.id, className:"card",
-    style:{ cursor: (ctx==="buyer"&&req.offers_count>0)||ctx==="vendor"?"pointer":undefined,
-      border: req.status==="offers_received"?"2px solid #d97706":undefined,
-      marginBottom:".75rem" },
-    onClick: () => { if (ctx==="vendor"||req.offers_count>0) openDetail(req); }
-  },
-    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:".5rem"}},
-      React.createElement("div",{style:{flex:1}},
-        React.createElement("div",{style:{fontWeight:700,fontSize:"1rem",marginBottom:".25rem"}},req.title),
-        React.createElement("div",{style:{fontSize:".8rem",color:"var(--text-secondary)",display:"flex",gap:".75rem",flexWrap:"wrap",marginBottom:".3rem"}},
-          req.category&&React.createElement("span",null,"🏷 ",req.category),
-          req.budget_max&&React.createElement("span",null,"💰 ",Math.round(req.budget_max).toLocaleString("fr-FR")," FCFA max"),
-          req.quantity>1&&React.createElement("span",null,"📦 Qté: ",req.quantity),
-          React.createElement("span",null,URGENCY[req.urgency]||req.urgency),
-          req.localisation&&React.createElement("span",null,"📍 ",req.localisation)
-        ),
-        req.description&&React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)",marginTop:".25rem",fontStyle:"italic"}},
-          req.description.slice(0,120)+(req.description.length>120?"…":"")
-        ),
-        ctx==="buyer"&&req.buyer_name&&React.createElement("div",{style:{fontSize:".75rem",color:"var(--text-secondary)",marginTop:".25rem"}},
-          "Demandé par ",React.createElement("strong",null,req.buyer_name)
-        )
-      ),
-      React.createElement("div",{style:{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:".35rem"}},
-        React.createElement("span",{style:{background:SCOL[req.status]||"var(--primary)",color:"white",borderRadius:"99px",padding:"2px 10px",fontSize:".75rem",fontWeight:600}},
-          STATUS[req.status]||req.status
-        ),
-        (req.offers_count>0)&&React.createElement("span",{style:{color:"#d97706",fontSize:".8rem",fontWeight:600}},
-          React.createElement("i",{className:"fas fa-tag"})," ",(req.offers_count||req.vendor_offers_count)," offre",(req.offers_count>1?"s":"")
-        ),
-        ctx==="vendor"&&alreadyOffered(req.id)&&React.createElement("span",{style:{color:"var(--primary)",fontSize:".75rem"}},
-          React.createElement("i",{className:"fas fa-check"})," Offre soumise"
-        ),
-        ctx==="buyer"&&req.status==="open"&&React.createElement("button",{
-          className:"btn btn-secondary btn-sm",
-          onClick:(e)=>{e.stopPropagation();cancelRequest(req.id);}
-        },"Annuler")
-      )
-    )
-  );
-
-  if (loading) return React.createElement("div",{className:"empty-state"},React.createElement("i",{className:"fas fa-spinner fa-spin"}),React.createElement("p",null,"Chargement..."));
-
-  // Afficher un message si l'ambassadeur est en attente de validation
-  if (amb && amb.status === 'pending') return React.createElement("div", {style:{maxWidth:600,margin:"0 auto"}},
-    React.createElement("div", {style:{background:"linear-gradient(135deg,rgba(234,179,8,.08),rgba(234,179,8,.02))",border:"2px solid rgba(234,179,8,.3)",borderRadius:16,padding:"2rem",textAlign:"center"}},
-      React.createElement("div",{style:{fontSize:"3rem",marginBottom:"1rem"}},"⏳"),
-      React.createElement("h2",{style:{fontWeight:800,marginBottom:".5rem"}},"Candidature en cours d'examen"),
-      React.createElement("p",{style:{color:"var(--text-secondary)",marginBottom:"1.5rem",fontSize:".9rem"}},
-        "Votre demande d'ambassadeur est en cours de validation par l'équipe NEXUS. Vous recevrez une notification sous 24-48h."
-      ),
-      React.createElement("div",{style:{background:"white",borderRadius:12,padding:"1rem",marginBottom:"1rem",textAlign:"left"}},
-        React.createElement("div",{style:{fontSize:".8rem",fontWeight:700,color:"var(--text-secondary)",marginBottom:".5rem",textTransform:"uppercase"}},"Votre code (activé après validation)"),
-        React.createElement("div",{style:{fontFamily:"monospace",fontSize:"1.4rem",fontWeight:800,color:"var(--primary)",letterSpacing:".15rem"}},(amb.code||amb.referral_code||"—"))
-      ),
-      React.createElement("p",{style:{fontSize:".78rem",color:"var(--text-secondary)"}},
-        "Contact : ", React.createElement("a",{href:"mailto:contact@nexus.sn",style:{color:"var(--primary)"}},"contact@nexus.sn")
-      )
-    )
-  );
-
-  // Statut refusé
-  if (amb && amb.status === 'rejected') return React.createElement("div", {style:{maxWidth:600,margin:"0 auto"}},
-    React.createElement("div", {style:{background:"rgba(220,38,38,.05)",border:"2px solid rgba(220,38,38,.2)",borderRadius:16,padding:"2rem",textAlign:"center"}},
-      React.createElement("div",{style:{fontSize:"3rem",marginBottom:"1rem"}},"❌"),
-      React.createElement("h2",{style:{fontWeight:800,marginBottom:".5rem"}},"Candidature refusée"),
-      React.createElement("p",{style:{color:"var(--text-secondary)",fontSize:".9rem"}},
-        "Votre candidature n'a pas été retenue. Pour plus d'informations, contactez ", React.createElement("a",{href:"mailto:contact@nexus.sn",style:{color:"var(--primary)"}},"contact@nexus.sn")
-      )
-    )
-  );
-
-  return React.createElement("div",{style:{maxWidth:820,margin:"0 auto"}},
-    // Header
-    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}},
-      React.createElement("div",null,
-        React.createElement("h2",{className:"card-title"},"🔥 NEXUS OnDemand"),
-        React.createElement("p",{style:{fontSize:".85rem",color:"var(--text-secondary)",margin:0}},
-          isVendor ? "Répondez aux demandes des acheteurs et développez votre activité." : "Vous ne trouvez pas ce que vous cherchez ? Demandez-le !"
-        )
-      ),
-      !isVendor&&view==="list"&&React.createElement("button",{className:"btn btn-primary",onClick:()=>setView("form")},
-        React.createElement("i",{className:"fas fa-plus"})," Nouvelle demande"
-      )
-    ),
-
-    // Tabs (vendor only)
-    isVendor&&React.createElement("div",{style:{display:"flex",gap:".5rem",marginBottom:"1rem"}},
-      [["marketplace","🛒 Demandes ouvertes"],["my_offers","📋 Mes offres"]].map(([id,label])=>
-        React.createElement("button",{key:id,className:`btn btn-sm ${tab===id?"btn-primary":"btn-secondary"}`,onClick:()=>{setTab(id);setView("list");}},label)
-      )
-    ),
-
-    // BUYER: Form view
-    !isVendor&&view==="form"&&React.createElement("div",{className:"card"},
-      React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"📝 Décrire votre besoin")),
-      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".75rem",padding:"1rem"}},
-        React.createElement("div",{style:{gridColumn:"span 2"}},
-          React.createElement("label",{className:"form-label"},"Produit recherché *"),
-          React.createElement("input",{className:"form-input",value:form.title,onChange:e=>upd("title",e.target.value),placeholder:"ex: iPhone 14 Pro 256GB..."})
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{className:"form-label"},"Catégorie"),
-          React.createElement("select",{className:"form-select",value:form.category,onChange:e=>upd("category",e.target.value)},
-            React.createElement("option",{value:""},"— Choisir"),
-            ...CATS.map(c=>React.createElement("option",{key:c,value:c},c))
-          )
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{className:"form-label"},"Urgence"),
-          React.createElement("select",{className:"form-select",value:form.urgency,onChange:e=>upd("urgency",e.target.value)},
-            React.createElement("option",{value:"low"},"🟢 Flexible"),React.createElement("option",{value:"normal"},"🟡 Normal"),
-            React.createElement("option",{value:"high"},"🟠 Urgent"),React.createElement("option",{value:"urgent"},"🔴 Très urgent")
-          )
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{className:"form-label"},"Budget max (FCFA)"),
-          React.createElement("input",{className:"form-input",type:"number",value:form.budget_max,onChange:e=>upd("budget_max",e.target.value),placeholder:"ex: 150000"})
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{className:"form-label"},"Quantité"),
-          React.createElement("input",{className:"form-input",type:"number",min:1,value:form.quantity,onChange:e=>upd("quantity",e.target.value)})
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{className:"form-label"},"Ville / Localisation"),
-          React.createElement("input",{className:"form-input",value:form.localisation,onChange:e=>upd("localisation",e.target.value),placeholder:"ex: Dakar, Plateau"})
-        ),
-        React.createElement("div",{style:{gridColumn:"span 2"}},
-          React.createElement("label",{className:"form-label"},"Description détaillée"),
-          React.createElement("textarea",{className:"form-input",rows:3,value:form.description,onChange:e=>upd("description",e.target.value),placeholder:"Couleur, marque, modèle précis, état (neuf/occasion)..."})
-        ),
-        React.createElement("div",{style:{gridColumn:"span 2",display:"flex",gap:".75rem"}},
-          React.createElement("button",{className:"btn btn-primary",onClick:submit,disabled:submitting},
-            submitting?React.createElement("i",{className:"fas fa-spinner fa-spin"}):React.createElement(React.Fragment,null,React.createElement("i",{className:"fas fa-paper-plane"})," Publier la demande")
-          ),
-          React.createElement("button",{className:"btn btn-secondary",onClick:()=>setView("list")},"Annuler")
-        )
-      )
-    ),
-
-    // BUYER: My requests list
-    !isVendor&&view==="list"&&React.createElement("div",null,
-      requests.length===0?React.createElement("div",{className:"empty-state"},
-        React.createElement("div",{style:{fontSize:"3rem",marginBottom:".75rem"}},"🔍"),
-        React.createElement("h3",null,"Aucune demande"),
-        React.createElement("p",null,"Créez votre première demande OnDemand — les vendeurs vous répondront en moins de 24h."),
-        React.createElement("button",{className:"btn btn-primary",onClick:()=>setView("form")},React.createElement("i",{className:"fas fa-plus"})," Créer une demande")
-      ):requests.map(r=>renderCard(r,"buyer"))
-    ),
-
-    // VENDOR: Marketplace
-    isVendor&&tab==="marketplace"&&view==="list"&&React.createElement("div",null,
-      React.createElement("div",{style:{display:"flex",gap:".75rem",marginBottom:"1rem",flexWrap:"wrap",alignItems:"center"}},
-        React.createElement("select",{className:"form-select",style:{width:"auto"},value:filterCat,onChange:e=>setFilterCat(e.target.value)},
-          React.createElement("option",{value:""},"Toutes catégories"),
-          ...CATS.map(c=>React.createElement("option",{key:c,value:c},c))
-        ),
-        React.createElement("select",{className:"form-select",style:{width:"auto"},value:filterUrgency,onChange:e=>setFilterUrgency(e.target.value)},
-          React.createElement("option",{value:""},"Toute urgence"),
-          React.createElement("option",{value:"urgent"},"🔴 Très urgent"),
-          React.createElement("option",{value:"high"},"🟠 Urgent"),
-          React.createElement("option",{value:"normal"},"🟡 Normal"),
-          React.createElement("option",{value:"low"},"🟢 Flexible")
-        ),
-        React.createElement("span",{style:{fontSize:".85rem",color:"var(--text-secondary)"}},(filteredMarket.length)," demande"+(filteredMarket.length!==1?"s":"")+" ouverte"+(filteredMarket.length!==1?"s":""))
-      ),
-      filteredMarket.length===0?React.createElement("div",{className:"empty-state"},
-        React.createElement("div",{style:{fontSize:"3rem"}},"🔍"),
-        React.createElement("h3",null,"Aucune demande ouverte"),
-        React.createElement("p",null,"Aucune demande ne correspond à vos filtres. Revenez régulièrement !")
-      ):filteredMarket.map(r=>renderCard(r,"vendor"))
-    ),
-
-    // VENDOR: My offers list
-    isVendor&&tab==="my_offers"&&view==="list"&&React.createElement("div",null,
-      offers.length===0?React.createElement("div",{className:"empty-state"},
-        React.createElement("div",{style:{fontSize:"3rem"}},"💼"),
-        React.createElement("h3",null,"Aucune offre soumise"),
-        React.createElement("p",null,"Parcourez le marketplace et répondez aux demandes des acheteurs.")
-      ):offers.map(o=>React.createElement("div",{key:o.id,className:"card",style:{marginBottom:".75rem"}},
-        React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:".5rem"}},
-          React.createElement("div",null,
-            React.createElement("div",{style:{fontWeight:700}},"Offre de ",Math.round(o.counter_price||o.price).toLocaleString("fr-FR")," FCFA"),
-            o.delivery_days&&React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)"}},React.createElement("i",{className:"fas fa-truck"})," Livraison en ",o.delivery_days,"j"),
-            o.message&&React.createElement("div",{style:{fontSize:".82rem",fontStyle:"italic",marginTop:".25rem"}},o.message)
-          ),
-          React.createElement("span",{style:{
-            background:o.status==="accepted"?"#16a34a":o.status==="rejected"?"#dc2626":"#d97706",
-            color:"white",borderRadius:"99px",padding:"2px 10px",fontSize:".75rem",fontWeight:600
-          }},o.status==="accepted"?"✅ Acceptée":o.status==="rejected"?"❌ Refusée":"⏳ En attente")
-        )
-      ))
-    ),
-
-    // DETAIL VIEW (both buyer and vendor)
-    view==="detail"&&selected&&React.createElement("div",null,
-      React.createElement("button",{className:"btn btn-secondary btn-sm",onClick:()=>{setView("list");setSelected(null);},style:{marginBottom:"1rem"}},
-        React.createElement("i",{className:"fas fa-arrow-left"})," Retour"
-      ),
-
-      // Request summary
-      React.createElement("div",{className:"card",style:{marginBottom:"1rem"}},
-        React.createElement("div",{className:"card-header"},
-          React.createElement("h3",{className:"card-title"},selected.title),
-          React.createElement("span",{style:{background:SCOL[selected.status]||"var(--primary)",color:"white",borderRadius:"99px",padding:"2px 12px",fontSize:".8rem",fontWeight:600}},
-            STATUS[selected.status]||selected.status
-          )
-        ),
-        React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:".75rem",fontSize:".85rem",color:"var(--text-secondary)",padding:"0 .5rem .5rem"}},
-          selected.category&&React.createElement("span",null,"🏷 ",selected.category),
-          selected.budget_max&&React.createElement("span",null,"💰 ",Math.round(selected.budget_max).toLocaleString("fr-FR")," FCFA max"),
-          selected.quantity>1&&React.createElement("span",null,"📦 Qté: ",selected.quantity),
-          React.createElement("span",null,URGENCY[selected.urgency]||selected.urgency),
-          selected.localisation&&React.createElement("span",null,"📍 ",selected.localisation)
-        ),
-        selected.description&&React.createElement("div",{style:{padding:".5rem",fontSize:".9rem"}},selected.description)
-      ),
-
-      // VENDOR: Submit offer form
-      isVendor&&selected.status==="open"&&!alreadyOffered(selected.id)&&React.createElement("div",{className:"card",style:{marginBottom:"1rem"}},
-        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"💼 Soumettre votre offre")),
-        React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".75rem",padding:".75rem"}},
-          React.createElement("div",null,
-            React.createElement("label",{className:"form-label"},"Votre prix (FCFA) *"),
-            React.createElement("input",{className:"form-input",type:"number",value:offerForm.price,onChange:e=>setOfferForm(f=>({...f,price:e.target.value})),placeholder:selected.budget_max?`max ${Math.round(selected.budget_max).toLocaleString("fr-FR")}`:"Prix proposé"})
-          ),
-          React.createElement("div",null,
-            React.createElement("label",{className:"form-label"},"Délai de livraison (jours)"),
-            React.createElement("input",{className:"form-input",type:"number",min:1,value:offerForm.delivery_days,onChange:e=>setOfferForm(f=>({...f,delivery_days:e.target.value})),placeholder:"ex: 2"})
-          ),
-          React.createElement("div",{style:{gridColumn:"span 2"}},
-            React.createElement("label",{className:"form-label"},"Message pour l'acheteur"),
-            React.createElement("textarea",{className:"form-input",rows:2,value:offerForm.message,onChange:e=>setOfferForm(f=>({...f,message:e.target.value})),placeholder:"Décrivez votre offre : marque, état, garantie..."})
-          ),
-          React.createElement("div",{style:{gridColumn:"span 2",display:"flex",gap:".75rem"}},
-            React.createElement("button",{className:"btn btn-primary",onClick:submitVendorOffer,disabled:submitting||!offerForm.price},
-              submitting?React.createElement("i",{className:"fas fa-spinner fa-spin"}):React.createElement(React.Fragment,null,React.createElement("i",{className:"fas fa-paper-plane"})," Envoyer l'offre")
-            ),
-            React.createElement("button",{className:"btn btn-secondary",onClick:()=>{setView(tab==="marketplace"?"marketplace":"list");setSelected(null);}},"Annuler")
-          )
-        )
-      ),
-
-      isVendor&&alreadyOffered(selected.id)&&React.createElement("div",{className:"alert alert-info",style:{marginBottom:"1rem"}},
-        React.createElement("i",{className:"fas fa-check-circle"}),
-        React.createElement("span",null," Vous avez déjà soumis une offre pour cette demande.")
-      ),
-
-      // BUYER: Offers list
-      !isVendor&&React.createElement("div",null,
-        React.createElement("h3",{style:{fontWeight:700,marginBottom:".75rem"}},"📬 Offres reçues (",offers.length,")"),
-        offers.length===0?React.createElement("div",{className:"empty-state"},
-          React.createElement("i",{className:"fas fa-clock"}),
-          React.createElement("p",null,"Aucune offre pour l'instant. Les vendeurs notifiés vont vous répondre bientôt.")
-        ):offers.map(offer=>React.createElement("div",{key:offer.id,className:"card",style:{marginBottom:".75rem",border:offer.status==="accepted"?"2px solid var(--primary)":undefined}},
-          React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:".75rem"}},
-            React.createElement("div",{style:{flex:1}},
-              React.createElement("div",{style:{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}},
-                React.createElement("div",{style:{fontWeight:700,fontSize:".95rem"}},offer.vendor_name||"Vendeur"),
-                offer.vendor_rating&&React.createElement("span",{style:{fontSize:".78rem",color:"#d97706"}},"⭐ ",parseFloat(offer.vendor_rating).toFixed(1))
-              ),
-              React.createElement("div",{style:{fontSize:"1.15rem",color:"var(--primary)",fontWeight:800,margin:".2rem 0"}},
-                Math.round(offer.counter_price||offer.price).toLocaleString("fr-FR")," FCFA"
-              ),
-              offer.delivery_days&&React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)"}},
-                React.createElement("i",{className:"fas fa-truck"})," Livraison en ",offer.delivery_days," jour(s)"
-              ),
-              offer.message&&React.createElement("div",{style:{fontSize:".85rem",marginTop:".5rem",padding:".5rem",background:"var(--bg-light)",borderRadius:"8px"}},offer.message)
-            ),
-            React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:".5rem"}},
-              offer.status==="accepted"?React.createElement("span",{style:{color:"var(--primary)",fontWeight:700,fontSize:".9rem"}},"✅ Acceptée"):
-              offer.status==="rejected"?React.createElement("span",{style:{color:"#dc2626",fontSize:".9rem"}},"❌ Refusée"):
-              (selected.status==="open"||selected.status==="offers_received")&&React.createElement("button",{className:"btn btn-primary btn-sm",onClick:()=>acceptOffer(offer),disabled:submitting},
-                React.createElement("i",{className:"fas fa-check"})," Accepter"
-              ),
-              React.createElement("button",{className:"btn btn-secondary btn-sm",onClick:async()=>{
-                let vProfile = null;
-                if (offer.vendor_id && DataService._sb) {
-                  try { const r = await DataService._sb.from("profiles").select("whatsapp_number,whatsapp_prefix,phone").eq("id", offer.vendor_id).single(); vProfile = r.data; } catch (_) {}
-                }
-                const wn = vProfile?.whatsapp_number || vProfile?.phone || "";
-                const prefix = vProfile?.whatsapp_prefix || "+221";
-                const fullNum = wn ? (prefix + wn.replace(/\D/g,"")).replace(/^\+221221/,"+221") : "";
-                const msg = encodeURIComponent(`Bonjour 👋, j'ai vu votre offre sur *NEXUS OnDemand* !\n\n📋 *Demande :* ${selected?.title||""}\n💰 *Votre offre :* ${Math.round(offer.counter_price||offer.price||0).toLocaleString("fr-FR")} FCFA\n\nJe voudrais discuter des détails.`);
-                window.open((fullNum?`https://wa.me/${fullNum.replace(/\D/g,"")}`:"https://wa.me")+`?text=${msg}`,"_blank");
-              }},React.createElement("i",{className:"fab fa-whatsapp",style:{color:"#25D366"}}),"\u00a0Discuter")
-            )
-          )
-        ))
-      )
-    )
-  );
-};
-
-const AmbassadorPanel = ({ currentUser: currentUser2, addToast }) => {
-  const [tab, setTab]               = React.useState("overview"); // overview | referrals | commissions | withdraw
-  const [amb, setAmb]               = React.useState(null);
-  const [leaderboard, setLeaderboard] = React.useState([]);
-  const [referrals, setReferrals]   = React.useState([]);
-  const [commissions, setCommissions] = React.useState([]);
-  const [cashbackHistory, setCashbackHistory] = React.useState([]);
-  const [loading, setLoading]       = React.useState(true);
-  const [copied, setCopied]         = React.useState(false);
-  const [withdrawForm, setWithdrawForm] = React.useState({ amount:"", phone:"", provider:"orange" });
-  const [withdrawing, setWithdrawing] = React.useState(false);
-
-  const load = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const [a, lb] = await Promise.all([
-        DataService.ensureAmbassador(currentUser2),
-        DataService.getLeaderboard(),
-      ]);
-      setAmb(a); setLeaderboard(lb||[]);
-    } catch(e) {}
+    } catch(e) { addToast('Erreur chargement : ' + e.message, 'error'); }
     finally { setLoading(false); }
   }, [currentUser2.id]);
 
   React.useEffect(() => { load(); }, [load]);
 
-  const loadReferrals = React.useCallback(async () => {
-    if (!amb) return;
-    const { data } = await (DataService._sb?.from("ambassador_referrals")
-      .select("*, profiles!referred_user_id(name,email,created_at,role)")
-      .eq("ambassador_id", amb.id)
-      .order("created_at",{ascending:false}) || Promise.resolve({data:[]}));
-    setReferrals(data||[]);
-  }, [amb?.id]);
+  // ── Ajouter / supprimer un article de la liste ─────────────────────────────
+  const addItem = () => setItems(prev => [...prev, { ...EMPTY_ITEM }]);
+  const removeItem = (i) => setItems(prev => prev.filter((_, idx) => idx !== i));
+  const updateItem = (i, field, val) =>
+    setItems(prev => prev.map((it, idx) => idx === i ? { ...it, [field]: val } : it));
 
-  const loadCommissions = React.useCallback(async () => {
-    if (!amb) return;
-    const [refData, cbData] = await Promise.all([
-      DataService._sb?.from("ambassador_referrals").select("*, orders!order_id(id,total,status,created_at)").eq("ambassador_id",amb.id).in("status",["confirmed","paid"]).order("created_at",{ascending:false}).then(r=>r?.data||[]).catch(()=>[]),
-      DataService._sb?.from("cashback_transactions").select("*").eq("user_id",currentUser2.id).order("created_at",{ascending:false}).then(r=>r?.data||[]).catch(()=>[]),
-    ]);
-    setCommissions(refData||[]);
-    setCashbackHistory(cbData||[]);
-  }, [amb?.id, currentUser2.id]);
-
-  React.useEffect(() => {
-    if (tab==="referrals")   loadReferrals();
-    if (tab==="commissions") loadCommissions();
-  }, [tab, loadReferrals, loadCommissions]);
-
-  const copyCode = () => {
-    if (!amb?.code && !amb?.referral_code) return;
-    navigator.clipboard.writeText(amb.code||amb.referral_code);
-    setCopied(true); setTimeout(()=>setCopied(false),2000);
-    addToast("Code copié !","success");
-  };
-
-  const shareWA = () => {
-    const code = amb?.code||amb?.referral_code;
-    if (!code) return;
-    const msg = encodeURIComponent(`🛍️ Rejoins NEXUS Market avec mon code *${code}* et bénéficie de 5% de réduction sur ta première commande !\n🔗 https://nexus-market-asb.pages.dev?ref=${code}\n\n✨ Paiement Orange Money & Wave · Livraison partout au Sénégal`);
-    window.open("https://wa.me/?text="+msg,"_blank");
-  };
-
-  const withdraw = async () => {
-    if (!withdrawForm.amount || parseFloat(withdrawForm.amount)<2000) { addToast("Montant minimum 2 000 FCFA","error"); return; }
-    if (!withdrawForm.phone) { addToast("Numéro de téléphone requis","error"); return; }
-    setWithdrawing(true);
+  // ── Soumettre la demande ───────────────────────────────────────────────────
+  const handleSubmit = async () => {
+    const validItems = items.filter(it => it.name.trim().length >= 2);
+    if (validItems.length === 0) { addToast('Ajoutez au moins 1 article avec un nom.', 'error'); return; }
+    if (!phone.trim()) { addToast('Indiquez votre numéro WhatsApp.', 'error'); return; }
+    setSaving(true);
     try {
-      await DataService._sb?.from("payout_requests").insert({
-        vendor_id:  currentUser2.id,
-        amount:     parseFloat(withdrawForm.amount),
-        method:     "mobile",
-        phone:      withdrawForm.phone,
-        provider:   withdrawForm.provider,
-        status:     "pending"
-      });
-      await DataService._sb?.from("cashback_transactions").insert({
-        user_id: currentUser2.id,
-        amount_fcfa: parseFloat(withdrawForm.amount),
-        transaction_type: "redeem",
-        status: "withdrawn",
-        description: "Retrait cashback ambassadeur"
-      });
-      setWithdrawForm({amount:"",phone:"",provider:"orange"});
-      addToast("Demande de retrait envoyée ! Traitement sous 24-48h.","success");
+      const row = {
+        id:          crypto.randomUUID(),
+        buyer_id:    currentUser2.id,
+        buyer_name:  currentUser2.name,
+        buyer_phone: phone.trim(),
+        buyer_email: currentUser2.email || '',
+        items:       validItems,
+        message:     message.trim(),
+        status:      'pending',
+        created_at:  new Date().toISOString(),
+      };
+      if (isSupabaseConfigured() && DataService._sb) {
+        const { error } = await DataService._sb.from('ondemand_requests').insert(row);
+        if (error) throw error;
+      } else {
+        const all = storage.getArray('ondemand_requests');
+        all.unshift(row);
+        storage.set('ondemand_requests', all);
+      }
+      // Notif admin via WhatsApp (optionnel)
+      const adminWa = NEXUS_CONFIG.admin && NEXUS_CONFIG.admin.whatsapp;
+      if (adminWa) {
+        const summary = validItems.slice(0,3).map(it => '\u2022 ' + it.name + (it.qty > 1 ? ' \u00d7' + it.qty : '')).join('\n');
+        const msg = encodeURIComponent(
+          '\U0001f6d2 Nouvelle demande NEXUS OnDemand\n\n' +
+          'Client : ' + currentUser2.name + '\n' +
+          'Tel : ' + phone + '\n\n' +
+          'Articles (' + validItems.length + ') :\n' + summary +
+          (validItems.length > 3 ? '\n\u2026 et ' + (validItems.length - 3) + ' autre(s)' : '') +
+          (message ? '\n\nMessage : ' + message : '')
+        );
+        window.open('https://wa.me/' + adminWa.replace(/\D/g,'') + '?text=' + msg, '_blank');
+      }
+      addToast('\u2705 Demande envoy\xe9e ! L\'administrateur NEXUS vous contactera sous 24h.', 'success', 8000);
+      setItems([{ ...EMPTY_ITEM }]);
+      setMessage('');
+      setView('list');
       load();
-    } catch(e) { addToast(e.message||"Erreur","error"); }
-    finally { setWithdrawing(false); }
+    } catch(e) { addToast('Erreur envoi : ' + e.message, 'error'); }
+    finally { setSaving(false); }
   };
 
-  const LEVELS = { bronze:{label:"🥉 Bronze",color:"#CD7F32",next:"Argent",nextMin:50000}, silver:{label:"🥈 Argent",color:"#C0C0C0",next:"Or",nextMin:200000}, gold:{label:"🥇 Or",color:"#FFD700",next:"Platine",nextMin:500000}, platinum:{label:"💎 Platine",color:"#B9F2FF",next:null,nextMin:null} };
-  const lvl = LEVELS[amb?.level]||LEVELS.bronze;
-  const progress = lvl.nextMin ? Math.min(100, Math.round(((amb?.total_earned||0)/lvl.nextMin)*100)) : 100;
-  const cashback = (cashbackHistory).filter(t=>["earn","bonus"].includes(t.transaction_type)&&t.status!=="withdrawn").reduce((s,t)=>s+(t.amount_fcfa||0),0)
-                 - (cashbackHistory).filter(t=>t.transaction_type==="redeem"&&t.status==="withdrawn").reduce((s,t)=>s+(t.amount_fcfa||0),0);
-  const code = amb?.code||amb?.referral_code||"—";
+  // ── STATUS helpers ─────────────────────────────────────────────────────────
+  const STATUS = {
+    pending:    { label: '\u23f3 En attente',   badge: 'warning',  icon: 'clock' },
+    processing: { label: '\U0001f50d Recherche en cours', badge: 'info', icon: 'search' },
+    replied:    { label: '\u2705 R\xe9ponse re\xe7ue',   badge: 'success', icon: 'check-circle' },
+    closed:     { label: '\U0001f512 Ferm\xe9',         badge: 'secondary', icon: 'lock' },
+  };
 
-  if (loading) return React.createElement("div",{className:"empty-state"},React.createElement("i",{className:"fas fa-spinner fa-spin"}),React.createElement("p",null,"Chargement..."));
-
-  return React.createElement("div",{style:{maxWidth:820,margin:"0 auto"}},
-    React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}},
-      React.createElement("div",null,
-        React.createElement("h2",{className:"card-title"},"🏆 Programme Ambassadeur"),
-        React.createElement("p",{style:{fontSize:".85rem",color:"var(--text-secondary)",margin:0}},"Parrainez et gagnez des commissions sur chaque vente de vos filleuls.")
-      ),
-      React.createElement("span",{style:{background:lvl.color,color:"#1a1a1a",borderRadius:"99px",padding:"4px 16px",fontWeight:800,fontSize:".85rem"}},lvl.label)
-    ),
-
-    // KPI cards
-    React.createElement("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:".75rem",marginBottom:"1.25rem"}},
-      [
-        ["Parrainages",amb?.total_referrals||0,"users"],
-        ["Commissions gagnées",Math.round(amb?.total_earned||0).toLocaleString("fr-FR")+" FCFA","coins"],
-        ["Ventes générées",Math.round(amb?.total_sales||0).toLocaleString("fr-FR")+" FCFA","shopping-bag"],
-        ["Cashback dispo",Math.max(0,Math.round(cashback)).toLocaleString("fr-FR")+" FCFA","wallet"],
-      ].map(([label,value,icon])=>React.createElement("div",{key:label,className:"stat-card"},
-        React.createElement("div",{className:"stat-icon"},React.createElement("i",{className:`fas fa-${icon}`})),
-        React.createElement("div",{className:"stat-value",style:{fontSize:"1rem"}},value),
-        React.createElement("div",{className:"stat-label"},label)
-      ))
-    ),
-
-    // Tabs
-    React.createElement("div",{style:{display:"flex",gap:".4rem",marginBottom:"1rem",borderBottom:"2px solid var(--border)",paddingBottom:".4rem",flexWrap:"wrap"}},
-      [["overview","🎯 Mon code"],["referrals","👥 Filleuls"],["commissions","💰 Commissions"],["withdraw","🏧 Retrait"],["leaderboard","🏅 Classement"]].map(([id,label])=>
-        React.createElement("button",{key:id,className:`btn btn-sm ${tab===id?"btn-primary":"btn-secondary"}`,onClick:()=>setTab(id)},label)
-      )
-    ),
-
-    // ── OVERVIEW ──
-    tab==="overview"&&React.createElement("div",null,
-      React.createElement("div",{className:"card",style:{marginBottom:"1.25rem"}},
-        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"🎯 Votre code de parrainage")),
-        React.createElement("div",{style:{textAlign:"center",padding:"1.5rem",background:`linear-gradient(135deg,${lvl.color}22,rgba(0,133,62,.06))`,border:"2px dashed rgba(0,133,62,.3)",borderRadius:"12px",margin:"0 .5rem .75rem"}},
-          React.createElement("div",{style:{fontFamily:"monospace",fontSize:"2rem",fontWeight:800,letterSpacing:".2rem",color:"var(--primary)",marginBottom:".5rem"}},code),
-          React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)",marginBottom:"1rem"}},
-            "Vos amis obtiennent ",React.createElement("strong",null,"5% de réduction"),", vous gagnez ",React.createElement("strong",null,"commission sur chaque commande"),"."
-          ),
-          React.createElement("div",{style:{display:"flex",gap:".75rem",justifyContent:"center",flexWrap:"wrap"}},
-            React.createElement("button",{className:"btn btn-secondary",onClick:copyCode},
-              React.createElement("i",{className:`fas fa-${copied?"check":"copy"}`})," ",copied?"Copié !":"Copier"
-            ),
-            React.createElement("button",{className:"btn btn-primary",onClick:shareWA},
-              React.createElement("i",{className:"fab fa-whatsapp"})," WhatsApp"
-            ),
-            React.createElement("button",{className:"btn btn-secondary",onClick:()=>{
-              const url = `https://nexus-market-asb.pages.dev?ref=${code}`;
-              const msg = encodeURIComponent(`🛍️ NEXUS Market Sénégal — Code: ${code}\n${url}`);
-              window.open("sms:?body="+msg,"_blank");
-            }},React.createElement("i",{className:"fas fa-sms"})," SMS")
-          )
+  // ══════════════════════════════════════════════════════════════════════════
+  // VUE LISTE
+  // ══════════════════════════════════════════════════════════════════════════
+  if (view === 'list') return E('div', null,
+    // En-tête
+    E('div', { className: 'card-header', style: { marginBottom: '1.5rem' } },
+      E('div', null,
+        E('h2', { className: 'section-title' },
+          E('i', { className: 'fas fa-concierge-bell', style: { color: 'var(--primary)', marginRight: '.5rem' } }),
+          'Commande sur demande'
         ),
-        // Progress bar
-        React.createElement("div",{style:{padding:"0 .5rem .5rem"}},
-          React.createElement("div",{style:{display:"flex",justifyContent:"space-between",fontSize:".82rem",marginBottom:".3rem"}},
-            React.createElement("span",null,"Progression vers ",lvl.next||"MAX"),
-            React.createElement("span",{style:{fontWeight:600}},Math.round(amb?.total_earned||0).toLocaleString("fr-FR")," / ",lvl.nextMin?.toLocaleString("fr-FR")||"∞"," FCFA")
-          ),
-          React.createElement("div",{style:{background:"var(--bg-light)",borderRadius:"99px",height:10}},
-            React.createElement("div",{style:{background:`linear-gradient(90deg,var(--primary),${lvl.color})`,height:10,borderRadius:"99px",width:progress+"%",transition:"width .6s"}})
-          ),
-          lvl.nextMin&&React.createElement("div",{style:{fontSize:".75rem",color:"var(--text-secondary)",marginTop:".3rem",textAlign:"right"}},
-            Math.max(0,lvl.nextMin-(amb?.total_earned||0)).toLocaleString("fr-FR")," FCFA pour atteindre ",lvl.next
-          )
+        E('p', { style: { color: 'var(--text-secondary)', fontSize: '.88rem', marginTop: '.25rem' } },
+          'Vous ne trouvez pas ce que vous cherchez ? Soumettez votre liste \u2014 l\'administrateur NEXUS le trouve pour vous.'
         )
       ),
-      // How it works
-      React.createElement("div",{className:"card"},
-        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"📋 Comment ça marche")),
-        React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:".5rem",padding:".5rem"}},
-          [["1","Partagez votre code","Envoyez votre lien de parrainage à vos contacts."],
-           ["2","Ils s'inscrivent","Votre contact crée un compte avec votre code."],
-           ["3","Ils passent commande","À chaque commande de votre filleul, vous gagnez 5% de commission."],
-           ["4","Montez de niveau","Plus vous parrainez, plus votre taux de commission augmente !"],
-          ].map(([num,title,desc])=>React.createElement("div",{key:num,style:{display:"flex",gap:"1rem",alignItems:"flex-start",padding:".6rem",background:"var(--bg-light)",borderRadius:"8px"}},
-            React.createElement("div",{style:{width:28,height:28,background:"var(--primary)",color:"white",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,flexShrink:0}},num),
-            React.createElement("div",null,
-              React.createElement("div",{style:{fontWeight:600,fontSize:".9rem"}},title),
-              React.createElement("div",{style:{fontSize:".82rem",color:"var(--text-secondary)"}},desc)
-            )
-          ))
+      E('button', { className: 'btn btn-primary', onClick: () => setView('form') },
+        E('i', { className: 'fas fa-plus' }), ' Nouvelle demande'
+      )
+    ),
+
+    // Bannière explicative
+    E('div', { style: {
+      background: 'linear-gradient(135deg,#1a1a2e,#16213e)',
+      borderRadius: 16, padding: '1.25rem 1.5rem', marginBottom: '1.5rem', color: 'white',
+      display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center',
+    }},
+      E('div', { style: { flex: 1, minWidth: 220 } },
+        E('div', { style: { fontWeight: 800, fontSize: '1rem', marginBottom: '.4rem' } },
+          '\U0001f6d2 Comment \xe7a marche ?'
+        ),
+        E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.35rem', fontSize: '.83rem', color: 'rgba(255,255,255,.75)' } },
+          [
+            '1\ufe0f\u20e3  Cr\xe9ez votre liste de courses (articles introuvables sur le site)',
+            '2\ufe0f\u20e3  L\'administrateur NEXUS recherche pour vous (d\xe9lai : 24h ouvr\xe9es)',
+            '3\ufe0f\u20e3  Vous recevez un devis par WhatsApp avec disponibilit\xe9 et prix',
+            '4\ufe0f\u20e3  Vous confirmez et passez commande directement sur NEXUS',
+          ].map((s, i) => E('div', { key: i }, s))
+        )
+      ),
+      E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.5rem', flexShrink: 0 } },
+        E('button', {
+          className: 'btn',
+          style: { background: '#FDEE42', color: '#1a1a1a', border: 'none', fontWeight: 800 },
+          onClick: () => setView('form'),
+        },
+          E('i', { className: 'fas fa-list-ul' }), ' Cr\xe9er ma liste'
         )
       )
     ),
 
-    // ── REFERRALS ──
-    tab==="referrals"&&React.createElement("div",{className:"card"},
-      React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"👥 Mes filleuls")),
-      referrals.length===0?React.createElement("div",{className:"empty-state"},
-        React.createElement("i",{className:"fas fa-users"}),
-        React.createElement("p",null,"Aucun filleul pour l'instant. Partagez votre code pour commencer !")
-      ):React.createElement("div",{className:"table-wrapper"},
-        React.createElement("table",{className:"data-table"},
-          React.createElement("thead",null,React.createElement("tr",null,
-            React.createElement("th",null,"Filleul"),React.createElement("th",null,"Date"),
-            React.createElement("th",null,"Rôle"),React.createElement("th",null,"Statut"),React.createElement("th",null,"Commission")
-          )),
-          React.createElement("tbody",null,referrals.map(r=>React.createElement("tr",{key:r.id},
-            React.createElement("td",null,React.createElement("strong",null,r.profiles?.name||"—")," ",React.createElement("span",{style:{fontSize:".75rem",color:"var(--text-secondary)"}},r.profiles?.email||"")),
-            React.createElement("td",null,r.created_at?new Date(r.created_at).toLocaleDateString("fr-FR"):"—"),
-            React.createElement("td",null,React.createElement("span",{className:"badge badge-info"},r.profiles?.role||"—")),
-            React.createElement("td",null,React.createElement("span",{className:`badge badge-${r.status==="paid"?"success":r.status==="confirmed"?"info":"warning"}`},
-              r.status==="paid"?"✅ Payé":r.status==="confirmed"?"✔ Confirmé":"⏳ En attente"
-            )),
-            React.createElement("td",null,r.commission?React.createElement("strong",{style:{color:"var(--primary)"}},Math.round(r.commission).toLocaleString("fr-FR")," FCFA"):"—")
-          )))
-        )
-      )
-    ),
-
-    // ── COMMISSIONS ──
-    tab==="commissions"&&React.createElement("div",null,
-      React.createElement("div",{className:"card",style:{marginBottom:"1rem"}},
-        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"💰 Historique des commissions")),
-        commissions.length===0?React.createElement("div",{className:"empty-state"},
-          React.createElement("i",{className:"fas fa-coins"}),
-          React.createElement("p",null,"Aucune commission pour l'instant.")
-        ):React.createElement("div",{className:"table-wrapper"},
-          React.createElement("table",{className:"data-table"},
-            React.createElement("thead",null,React.createElement("tr",null,
-              React.createElement("th",null,"Commande"),React.createElement("th",null,"Date"),
-              React.createElement("th",null,"Montant commande"),React.createElement("th",null,"Commission"),React.createElement("th",null,"Statut")
-            )),
-            React.createElement("tbody",null,commissions.map(c=>React.createElement("tr",{key:c.id},
-              React.createElement("td",null,React.createElement("code",null,(c.order_id||c.id||"").slice(-8))),
-              React.createElement("td",null,c.created_at?new Date(c.created_at).toLocaleDateString("fr-FR"):"—"),
-              React.createElement("td",null,c.order_amount?Math.round(c.order_amount).toLocaleString("fr-FR")+" FCFA":"—"),
-              React.createElement("td",null,React.createElement("strong",{style:{color:"var(--primary)"}},Math.round(c.commission||0).toLocaleString("fr-FR")," FCFA")),
-              React.createElement("td",null,React.createElement("span",{className:"badge badge-success"},"Crédité"))
-            )))
+    // Mes demandes
+    loading ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-spinner fa-spin' })) :
+    requests.length === 0
+      ? E('div', { className: 'empty-state' },
+          E('i', { className: 'fas fa-concierge-bell' }),
+          E('h3', null, 'Aucune demande'),
+          E('p', null, 'Cr\xe9ez votre premi\xe8re liste de courses — l\'administrateur s\'occupe du reste.'),
+          E('button', { className: 'btn btn-primary', onClick: () => setView('form') },
+            E('i', { className: 'fas fa-plus' }), ' Cr\xe9er ma premi\xe8re liste'
           )
         )
-      ),
-      React.createElement("div",{className:"card"},
-        React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"📊 Cashback & Transactions")),
-        cashbackHistory.length===0?React.createElement("div",{className:"empty-state"},React.createElement("p",null,"Aucune transaction.")):
-        React.createElement("div",{className:"table-wrapper"},
-          React.createElement("table",{className:"data-table"},
-            React.createElement("thead",null,React.createElement("tr",null,
-              React.createElement("th",null,"Date"),React.createElement("th",null,"Description"),React.createElement("th",null,"Montant"),React.createElement("th",null,"Statut")
-            )),
-            React.createElement("tbody",null,cashbackHistory.map(t=>React.createElement("tr",{key:t.id},
-              React.createElement("td",null,new Date(t.created_at).toLocaleDateString("fr-FR")),
-              React.createElement("td",null,t.description||t.transaction_type),
-              React.createElement("td",null,
-                React.createElement("strong",{style:{color:["earn","bonus"].includes(t.transaction_type)?"var(--success)":"var(--danger)"}},
-                  (["earn","bonus"].includes(t.transaction_type)?"+":"-"),Math.round(t.amount_fcfa||0).toLocaleString("fr-FR")," FCFA"
+      : E('div', { className: 'card' },
+          E('div', { className: 'card-header' },
+            E('h3', { className: 'card-title' }, 'Mes demandes (', requests.length, ')')
+          ),
+          E('div', { style: { display: 'flex', flexDirection: 'column' } },
+            requests.map(req => {
+              const st = STATUS[req.status] || STATUS.pending;
+              return E('div', {
+                key: req.id,
+                style: { padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background .15s' },
+                onClick: () => { setSelected(req); setView('detail'); },
+                onMouseEnter: e => e.currentTarget.style.background = 'var(--bg-light)',
+                onMouseLeave: e => e.currentTarget.style.background = '',
+              },
+                E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '.5rem' } },
+                  E('div', null,
+                    E('div', { style: { fontWeight: 700, fontSize: '.95rem', marginBottom: '.2rem' } },
+                      '\U0001f4cb ', req.items.length, ' article', req.items.length > 1 ? 's' : '',
+                      ' \u2014 ', (req.items[0].name || '').slice(0,30),
+                      req.items.length > 1 ? ' et ' + (req.items.length-1) + ' autre(s)' : ''
+                    ),
+                    E('div', { style: { fontSize: '.78rem', color: 'var(--text-secondary)' } },
+                      new Date(req.created_at).toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'numeric' })
+                    )
+                  ),
+                  E('div', { style: { display: 'flex', alignItems: 'center', gap: '.75rem' } },
+                    req.status === 'replied' && E('span', { style: { fontSize: '.72rem', fontWeight: 700, color: '#059669' } }, '\U0001f4ac R\xe9ponse !'),
+                    E('span', { className: 'badge badge-' + st.badge }, st.label),
+                    E('i', { className: 'fas fa-chevron-right', style: { color: 'var(--text-secondary)', fontSize: '.8rem' } })
+                  )
                 )
-              ),
-              React.createElement("td",null,React.createElement("span",{className:`badge badge-${t.status==="credited"||t.status==="earned"?"success":t.status==="withdrawn"?"info":"warning"}`},t.status||"—"))
-            )))
+              );
+            })
           )
         )
-      )
-    ),
+  );
 
-    // ── WITHDRAW ──
-    tab==="withdraw"&&React.createElement("div",{className:"card"},
-      React.createElement("div",{className:"card-header"},
-        React.createElement("h3",{className:"card-title"},"🏧 Retirer mon cashback"),
-        React.createElement("span",{style:{fontWeight:700,color:"var(--primary)"}},Math.max(0,Math.round(cashback)).toLocaleString("fr-FR")," FCFA disponibles")
+  // ══════════════════════════════════════════════════════════════════════════
+  // VUE FORMULAIRE
+  // ══════════════════════════════════════════════════════════════════════════
+  if (view === 'form') return E('div', null,
+    E('div', { className: 'card-header', style: { marginBottom: '1.5rem' } },
+      E('button', { className: 'btn btn-secondary btn-sm', onClick: () => setView('list') },
+        E('i', { className: 'fas fa-arrow-left' }), ' Retour'
       ),
-      React.createElement("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".75rem",padding:".75rem"}},
-        React.createElement("div",{style:{gridColumn:"span 2"}},
-          React.createElement("label",{className:"form-label"},"Montant à retirer (FCFA, min 2 000)"),
-          React.createElement("input",{className:"form-input",type:"number",min:2000,max:Math.max(0,cashback),value:withdrawForm.amount,onChange:e=>setWithdrawForm(f=>({...f,amount:e.target.value})),placeholder:"ex: 5000"})
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{className:"form-label"},"Opérateur"),
-          React.createElement("select",{className:"form-select",value:withdrawForm.provider,onChange:e=>setWithdrawForm(f=>({...f,provider:e.target.value}))},
-            React.createElement("option",{value:"orange"},"🟠 Orange Money"),
-            React.createElement("option",{value:"wave"},"🔵 Wave"),
-            React.createElement("option",{value:"free"},"🟣 Free Money")
-          )
-        ),
-        React.createElement("div",null,
-          React.createElement("label",{className:"form-label"},"Numéro de téléphone"),
-          React.createElement("input",{className:"form-input",type:"tel",value:withdrawForm.phone,onChange:e=>setWithdrawForm(f=>({...f,phone:e.target.value})),placeholder:"77 123 45 67"})
-        ),
-        React.createElement("div",{style:{gridColumn:"span 2"}},
-          React.createElement("div",{className:"alert alert-info",style:{fontSize:".82rem"}},
-            React.createElement("i",{className:"fas fa-info-circle"}),
-            React.createElement("span",null," Le retrait est traité sous 24-48h ouvrables. Minimum 2 000 FCFA.")
-          ),
-          React.createElement("button",{className:"btn btn-primary",onClick:withdraw,disabled:withdrawing||!withdrawForm.amount||!withdrawForm.phone||parseFloat(withdrawForm.amount)<2000||parseFloat(withdrawForm.amount)>Math.max(0,cashback)},
-            withdrawing?React.createElement("i",{className:"fas fa-spinner fa-spin"}):React.createElement(React.Fragment,null,React.createElement("i",{className:"fas fa-paper-plane"})," Demander le retrait")
-          )
-        )
-      )
+      E('h2', { className: 'section-title' }, '\U0001f4cb Ma liste de courses')
     ),
 
-    // ── LEADERBOARD ──
-    tab==="leaderboard"&&React.createElement("div",{className:"card"},
-      React.createElement("div",{className:"card-header"},React.createElement("h3",{className:"card-title"},"🏅 Classement des ambassadeurs")),
-      leaderboard.length===0?React.createElement("div",{className:"empty-state"},React.createElement("p",null,"Aucun ambassadeur pour l'instant. Soyez le premier !")):
-      React.createElement("div",null,
-        leaderboard.slice(0,10).map((a,i)=>React.createElement("div",{key:a.id||i,style:{display:"flex",alignItems:"center",gap:".75rem",padding:".65rem",borderBottom:"1px solid var(--border)",background:a.user_id===currentUser2.id?"rgba(0,133,62,.05)":"transparent"}},
-          React.createElement("div",{style:{width:30,height:30,borderRadius:"50%",background:i===0?"#FFD700":i===1?"#C0C0C0":i===2?"#CD7F32":"var(--bg-light)",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:".85rem",flexShrink:0,color:i<3?"#1a1a1a":"var(--text-secondary)"}},i+1),
-          React.createElement("div",{style:{width:36,height:36,borderRadius:"50%",background:"linear-gradient(135deg,var(--primary),var(--primary-light))",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,flexShrink:0}},
-            (a.profiles?.name||"?")[0]?.toUpperCase()
-          ),
-          React.createElement("div",{style:{flex:1}},
-            React.createElement("div",{style:{fontWeight:a.user_id===currentUser2.id?700:500,fontSize:".9rem"}},
-              a.profiles?.name||"Ambassadeur",
-              a.user_id===currentUser2.id&&React.createElement("span",{style:{color:"var(--primary)",fontSize:".72rem",marginLeft:".3rem"}},"(vous)")
+    E('div', { className: 'card', style: { marginBottom: '1.25rem' } },
+      E('div', { className: 'card-header' },
+        E('h3', { className: 'card-title' }, 'Articles recherch\xe9s'),
+        E('span', { style: { fontSize: '.8rem', color: 'var(--text-secondary)' } },
+          items.filter(it=>it.name.trim()).length, ' article(s)'
+        )
+      ),
+      E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.75rem', padding: '.5rem 0' } },
+        items.map((it, i) => E('div', {
+          key: i,
+          style: { background: 'var(--bg-light)', borderRadius: 12, padding: '.85rem 1rem', border: '1.5px solid var(--border)' }
+        },
+          E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '.65rem' } },
+            E('span', { style: { fontWeight: 700, color: 'var(--primary)', fontSize: '.88rem' } },
+              'Article ', i+1
             ),
-            React.createElement("div",{style:{fontSize:".75rem",color:"var(--text-secondary)"}},
-              LEVELS[a.level]?.label||a.level," · ",a.total_referrals||0," filleul"+(a.total_referrals!==1?"s":"")
+            items.length > 1 && E('button', {
+              onClick: () => removeItem(i),
+              style: { background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '.8rem', padding: '2px 6px' }
+            },
+              E('i', { className: 'fas fa-trash-alt' }), ' Supprimer'
             )
           ),
-          React.createElement("div",{style:{textAlign:"right"}},
-            React.createElement("div",{style:{fontWeight:800,color:"var(--primary)",fontSize:".9rem"}},Math.round(a.total_earned||0).toLocaleString("fr-FR")," FCFA"),
-            React.createElement("div",{style:{fontSize:".72rem",color:"var(--text-secondary)"}},Math.round(a.total_sales||0).toLocaleString("fr-FR")," FCFA de ventes")
+          E('div', { style: { display: 'grid', gridTemplateColumns: '1fr 80px', gap: '.5rem', marginBottom: '.5rem' } },
+            E('div', { className: 'form-group', style: { margin: 0 } },
+              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Nom du produit *'),
+              E('input', {
+                type: 'text', className: 'form-input',
+                value: it.name, placeholder: 'ex: Chargeur iPhone 14, Rizière Basmati 5kg…',
+                onChange: e => updateItem(i, 'name', e.target.value),
+                style: { fontSize: '.88rem' }
+              })
+            ),
+            E('div', { className: 'form-group', style: { margin: 0 } },
+              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Qté'),
+              E('input', {
+                type: 'number', className: 'form-input', min: '1', max: '99',
+                value: it.qty, onChange: e => updateItem(i, 'qty', e.target.value),
+                style: { fontSize: '.88rem', textAlign: 'center' }
+              })
+            )
+          ),
+          E('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.5rem' } },
+            E('div', { className: 'form-group', style: { margin: 0 } },
+              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Budget max (FCFA)'),
+              E('input', {
+                type: 'number', className: 'form-input',
+                value: it.budget, placeholder: 'Optionnel',
+                onChange: e => updateItem(i, 'budget', e.target.value),
+                style: { fontSize: '.88rem' }
+              })
+            ),
+            E('div', { className: 'form-group', style: { margin: 0 } },
+              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Catégorie'),
+              E('select', {
+                className: 'form-select',
+                value: it.category, onChange: e => updateItem(i, 'category', e.target.value),
+                style: { fontSize: '.85rem' }
+              },
+                CATS.map(cat => E('option', { key: cat, value: cat }, cat))
+              )
+            )
+          ),
+          E('div', { className: 'form-group', style: { margin: '.5rem 0 0' } },
+            E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Précisions (couleur, marque, taille…)'),
+            E('input', {
+              type: 'text', className: 'form-input',
+              value: it.notes, placeholder: 'ex: Couleur bleue, taille M, marque Samsung…',
+              onChange: e => updateItem(i, 'notes', e.target.value),
+              style: { fontSize: '.85rem' }
+            })
           )
         ))
+      ),
+      E('button', {
+        className: 'btn btn-secondary btn-sm',
+        onClick: addItem,
+        style: { margin: '.5rem 1rem 1rem', width: 'calc(100% - 2rem)' }
+      },
+        E('i', { className: 'fas fa-plus' }), ' Ajouter un article'
+      )
+    ),
+
+    E('div', { className: 'card', style: { marginBottom: '1.25rem' } },
+      E('div', { style: { padding: '1rem 1.25rem' } },
+        E('div', { className: 'form-group', style: { marginBottom: '1rem' } },
+          E('label', { className: 'form-label' },
+            E('i', { className: 'fab fa-whatsapp', style: { color: '#25D366', marginRight: '.3rem' } }),
+            'Votre numéro WhatsApp *'
+          ),
+          E('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center' } },
+            E('span', { style: { padding: '.5rem .75rem', background: 'var(--bg-light)', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '.9rem', fontWeight: 600, whiteSpace: 'nowrap' } }, '+221'),
+            E('input', {
+              type: 'tel', className: 'form-input',
+              value: phone.replace(/^\+?221/, ''),
+              placeholder: '77 123 45 67',
+              onChange: e => setPhone(e.target.value.replace(/\D/g,'')),
+              style: { flex: 1, fontSize: '.9rem' }
+            })
+          ),
+          E('div', { style: { fontSize: '.75rem', color: 'var(--text-secondary)', marginTop: '.25rem' } },
+            'L\'administrateur vous contactera sur ce numéro avec le devis.'
+          )
+        ),
+        E('div', { className: 'form-group' },
+          E('label', { className: 'form-label' }, 'Message complémentaire (optionnel)'),
+          E('textarea', {
+            className: 'form-textarea', rows: 3,
+            value: message,
+            placeholder: 'Précisions sur vos besoins, délai souhaité, zone de livraison…',
+            onChange: e => setMessage(e.target.value),
+            style: { fontSize: '.88rem', resize: 'vertical' }
+          }),
+          E('div', { style: { textAlign: 'right', fontSize: '.72rem', color: 'var(--text-secondary)' } }, message.length, '/500')
+        )
+      )
+    ),
+
+    E('div', { style: { display: 'flex', gap: '.75rem', flexWrap: 'wrap' } },
+      E('button', { className: 'btn btn-secondary flex-1', onClick: () => setView('list') }, 'Annuler'),
+      E('button', {
+        className: saving ? 'btn btn-primary flex-1 btn-loading' : 'btn btn-primary flex-1',
+        onClick: handleSubmit, disabled: saving,
+        style: { background: 'linear-gradient(135deg,#00853E,#006b32)' }
+      },
+        !saving && E(React.Fragment, null,
+          E('i', { className: 'fas fa-paper-plane' }), ' Envoyer ma liste à NEXUS'
+        )
       )
     )
   );
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // VUE DÉTAIL d'une demande
+  // ══════════════════════════════════════════════════════════════════════════
+  if (view === 'detail' && selected) {
+    const st = STATUS[selected.status] || STATUS.pending;
+    return E('div', null,
+      E('div', { className: 'card-header', style: { marginBottom: '1.25rem' } },
+        E('button', { className: 'btn btn-secondary btn-sm', onClick: () => { setSelected(null); setView('list'); } },
+          E('i', { className: 'fas fa-arrow-left' }), ' Retour'
+        ),
+        E('span', { className: 'badge badge-' + st.badge, style: { fontSize: '.82rem', padding: '.3rem .8rem' } }, st.label)
+      ),
+
+      E('div', { className: 'card', style: { marginBottom: '1.25rem' } },
+        E('div', { className: 'card-header' },
+          E('h3', { className: 'card-title' }, '\U0001f4cb Ma liste de courses'),
+          E('span', { style: { fontSize: '.78rem', color: 'var(--text-secondary)' } },
+            new Date(selected.created_at).toLocaleDateString('fr-FR', { dateStyle: 'long' })
+          )
+        ),
+        E('div', { style: { padding: '0 .5rem .5rem' } },
+          selected.items.map((it, i) => E('div', {
+            key: i,
+            style: { display: 'flex', gap: '.75rem', padding: '.75rem 1rem', borderBottom: '1px solid var(--border)', alignItems: 'flex-start' }
+          },
+            E('div', { style: { background: 'var(--primary)', color: 'white', borderRadius: '50%', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '.8rem', flexShrink: 0 } }, i+1),
+            E('div', { style: { flex: 1, minWidth: 0 } },
+              E('div', { style: { fontWeight: 700, fontSize: '.92rem' } }, it.name),
+              E('div', { style: { display: 'flex', gap: '.75rem', fontSize: '.78rem', color: 'var(--text-secondary)', flexWrap: 'wrap', marginTop: '.2rem' } },
+                E('span', null, '\U0001f4e6 Qté\xa0: ', it.qty),
+                it.budget && E('span', null, '\U0001f4b0 Budget\xa0: ', parseInt(it.budget).toLocaleString('fr-FR'), ' FCFA max'),
+                it.category && E('span', null, '\U0001f3f7\ufe0f ', it.category),
+                it.notes && E('span', { style: { color: 'var(--text-primary)' } }, '\U0001f4dd ', it.notes)
+              )
+            )
+          ))
+        )
+      ),
+
+      selected.message && E('div', { className: 'card', style: { marginBottom: '1.25rem' } },
+        E('div', { style: { padding: '1rem 1.25rem' } },
+          E('div', { style: { fontWeight: 600, marginBottom: '.4rem', fontSize: '.88rem' } },
+            E('i', { className: 'fas fa-comment-alt', style: { marginRight: '.4rem', color: 'var(--primary)' } }),
+            'Votre message'
+          ),
+          E('p', { style: { color: 'var(--text-secondary)', fontSize: '.88rem', margin: 0 } }, selected.message)
+        )
+      ),
+
+      // Réponse de l'admin
+      selected.status === 'replied' && selected.admin_reply
+        ? E('div', { style: {
+            background: 'linear-gradient(135deg,rgba(0,133,62,.06),rgba(0,133,62,.02))',
+            border: '2px solid rgba(0,133,62,.25)', borderRadius: 16,
+            padding: '1.25rem', marginBottom: '1.25rem',
+          }},
+            E('div', { style: { display: 'flex', alignItems: 'center', gap: '.5rem', fontWeight: 800, color: 'var(--primary)', marginBottom: '.75rem', fontSize: '.95rem' } },
+              E('i', { className: 'fas fa-check-circle' }), ' R\xe9ponse de l\'administrateur NEXUS'
+            ),
+            E('div', { style: { fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', marginBottom: '1rem' } },
+              selected.admin_reply
+            ),
+            E('div', { style: { fontSize: '.75rem', color: 'var(--text-secondary)', marginBottom: '1rem' } },
+              'R\xe9pondu le ', new Date(selected.admin_reply_at).toLocaleString('fr-FR')
+            ),
+            // Bouton WhatsApp pour finaliser
+            E('button', {
+              className: 'btn btn-block',
+              style: { background: '#25D366', color: 'white', border: 'none', fontWeight: 700 },
+              onClick: () => {
+                const phone2 = (NEXUS_CONFIG.admin && NEXUS_CONFIG.admin.whatsapp) || '';
+                const msg = encodeURIComponent('\U0001f44b Bonjour ! Je souhaite passer commande suite à votre réponse NEXUS OnDemand.\n\nDemande : ' + selected.items.map(it => it.name).join(', '));
+                window.open('https://wa.me/' + phone2.replace(/\D/g,'') + '?text=' + msg, '_blank');
+              }
+            },
+              E('i', { className: 'fab fa-whatsapp' }), ' Contacter NEXUS pour commander'
+            )
+          )
+        : E('div', { style: { background: 'rgba(234,179,8,.08)', border: '1.5px solid rgba(234,179,8,.3)', borderRadius: 14, padding: '1rem 1.25rem', textAlign: 'center' } },
+            E('i', { className: 'fas fa-hourglass-half', style: { fontSize: '1.5rem', color: '#d97706', marginBottom: '.5rem', display: 'block' } }),
+            E('div', { style: { fontWeight: 700, color: '#92400e' } }, 'En attente de réponse'),
+            E('div', { style: { fontSize: '.83rem', color: '#92400e', marginTop: '.3rem' } },
+              'Délai habituel : 24h ouvr\xe9es. Vous serez contacté(e) par WhatsApp au ', selected.buyer_phone, '.'
+            )
+          )
+    );
+  }
+
+  return null;
 };
+// ── Fin OnDemandPanel ─────────────────────────────────────────────────────────
+
 
 // ─── WhatsAppButton (réutilisable) ─────────────────────────────────────────────
 const WhatsAppButton = ({ product, size = "sm", style = {} }) => {
