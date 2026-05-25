@@ -1987,6 +1987,170 @@ try {
 } catch(e) {}
 
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// NexusWA — Service WhatsApp automatique via Green API / /api/whatsapp
+// ════════════════════════════════════════════════════════════════════════════
+const NexusWA = {
+  // Config (peuplée depuis Admin → WhatsApp ou Supabase whatsapp_config)
+  _cfg: { instanceId: '', apiToken: '', secret: '', enabled: false },
+
+  // Charger la config depuis Supabase
+  async loadConfig() {
+    try {
+      if (!DataService._sb) return;
+      const { data } = await DataService._sb.from('whatsapp_config').select('*').eq('id', 1).single();
+      if (data) {
+        this._cfg = {
+          instanceId: data.instance_id || '',
+          apiToken:   data.api_token   || '',
+          secret:     data.wa_secret   || '',
+          enabled:    data.enabled     || false,
+        };
+        // Persister dans localStorage pour survie rechargement
+        try { localStorage.setItem('nexus_wa_cfg', JSON.stringify(this._cfg)); } catch(_) {}
+      }
+    } catch(_) {
+      // Fallback localStorage
+      try {
+        const saved = JSON.parse(localStorage.getItem('nexus_wa_cfg') || '{}');
+        if (saved.instanceId) this._cfg = saved;
+      } catch(_) {}
+    }
+  },
+
+  // Enregistrer la config dans Supabase
+  async saveConfig(cfg) {
+    this._cfg = { ...this._cfg, ...cfg };
+    try { localStorage.setItem('nexus_wa_cfg', JSON.stringify(this._cfg)); } catch(_) {}
+    if (!DataService._sb) return;
+    try {
+      await DataService._sb.from('whatsapp_config').upsert({
+        id: 1,
+        instance_id: cfg.instanceId || this._cfg.instanceId,
+        api_token:   cfg.apiToken   || this._cfg.apiToken,
+        wa_secret:   cfg.secret     || this._cfg.secret,
+        enabled:     cfg.enabled    !== undefined ? cfg.enabled : this._cfg.enabled,
+        updated_at:  new Date().toISOString(),
+      }, { onConflict: 'id' });
+    } catch(e) { console.warn('[NexusWA] saveConfig error:', e.message); }
+  },
+
+  // Envoyer un message via /api/whatsapp (Cloudflare Function)
+  async send(phone, message, template = null) {
+    if (!this._cfg.enabled && !this._cfg.instanceId) {
+      console.info('[NexusWA] Non configuré — message non envoyé:', template);
+      return { ok: false, skipped: true };
+    }
+    // Normaliser le numéro (format sénégalais)
+    const rawPhone = String(phone).replace(/\D/g, '');
+    const intlPhone = rawPhone.startsWith('221') ? rawPhone
+                    : rawPhone.length === 9      ? '221' + rawPhone
+                    : rawPhone;
+
+    // Via Cloudflare Function /api/whatsapp (prod)
+    const endpoint = typeof NEXUS_CONFIG !== 'undefined' && NEXUS_CONFIG.apiUrl
+      ? NEXUS_CONFIG.apiUrl + '/api/whatsapp'
+      : '/api/whatsapp';
+
+    try {
+      const res = await fetch(endpoint, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          phone:    intlPhone,
+          message,
+          template,
+          secret: this._cfg.secret || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { console.warn('[NexusWA] API error:', data); return { ok: false, error: data.error }; }
+      return { ok: true, idMessage: data.idMessage };
+    } catch(err) {
+      console.warn('[NexusWA] fetch error:', err.message);
+      return { ok: false, error: err.message };
+    }
+  },
+
+  // ── Templates ─────────────────────────────────────────────────────────
+
+  async firstSale(vendorPhone, vendorName, orderTotal, orderId) {
+    const msg = `🎉 *Félicitations ${vendorName || 'Vendeur'} !*
+Votre *1ère vente sur NEXUS Market* vient d\'être livrée ! 🛍️
+
+💰 Montant : *${Math.round(orderTotal)} FCFA*
+📦 Commande : #${String(orderId).slice(0, 8).toUpperCase()}
+
+✨ *Tip* : Parrainez un vendeur → votre commission passe de 15% à 8% !
+👉 nexus.sn → Tableau de bord → Parrainage`;
+    return this.send(vendorPhone, msg, 'first_sale');
+  },
+
+  async saleDelivered(vendorPhone, vendorName, orderTotal, orderId, totalSales) {
+    const msg = `🎊 *Nouvelle vente livrée — NEXUS Market*
+Commande #${String(orderId).slice(0, 8).toUpperCase()} · *${Math.round(orderTotal)} FCFA*
+
+📊 Total cumulé : ${Math.round(totalSales).toLocaleString('fr-FR')} FCFA
+💳 Reversement le 1er du mois via Wave/Orange Money.`;
+    return this.send(vendorPhone, msg, 'sale_delivered');
+  },
+
+  async newOrder(vendorPhone, vendorName, orderTotal, orderId, buyerName) {
+    const msg = `🛒 *Nouvelle commande NEXUS !*
+Commande #${String(orderId).slice(0, 8).toUpperCase()}
+💰 *${Math.round(orderTotal)} FCFA* — Client : ${buyerName || 'Acheteur NEXUS'}
+
+⚡ Confirmez l\'expédition sur nexus.sn`;
+    return this.send(vendorPhone, msg, 'new_order');
+  },
+
+  async flashSaleAlert(vendorPhone, vendorName, productName, discount, endsAt) {
+    const end = new Date(endsAt).toLocaleString('fr-FR', { weekday:'short', hour:'2-digit', minute:'2-digit' });
+    const msg = `⚡ *Vente Flash NEXUS — Votre produit est en promotion !*
+
+🏷️ *${productName}* — Réduction : *${discount}%*
+⏰ Fin : ${end}
+
+📈 Les ventes flash génèrent en moyenne *3× plus de vues* sur NEXUS.
+👉 nexus.sn pour suivre vos ventes en temps réel.`;
+    return this.send(vendorPhone, msg, 'flash_sale');
+  },
+
+  async ambassadorReminder(phone, name, code, totalEarned, level) {
+    const msg = `🏅 *Rappel Programme Ambassadeur NEXUS*
+
+Bonjour ${name || 'Ambassadeur'} !
+Votre niveau actuel : *${(level||'bronze').charAt(0).toUpperCase()+(level||'bronze').slice(1)}*
+Commissions gagnées : *${Math.round(totalEarned || 0).toLocaleString('fr-FR')} FCFA*
+
+🔗 Partagez votre lien : nexus.sn/?ref=${code}
+Chaque filleul qui vend vous rapporte 5% de sa commission.
+
+*Astuce* : Publiez votre lien dans les groupes WhatsApp de commerçants !`;
+    return this.send(phone, msg, 'ambassador_reminder');
+  },
+
+  async commissionReport(phone, name, month, earned, referrals, code) {
+    const msg = `📊 *Relevé Ambassadeur NEXUS — ${month}*
+──────────────────────────
+👤 ${name}
+💰 Commissions ce mois : *${Math.round(earned).toLocaleString('fr-FR')} FCFA*
+👥 Filleuls actifs : ${referrals}
+
+💳 Reversement dans les 5 jours ouvrés (Wave/Orange Money).
+🔗 nexus.sn/?ref=${code}`;
+    return this.send(phone, msg, 'commission_report');
+  },
+};
+
+// Charger la config au démarrage (silencieux)
+if (typeof window !== 'undefined') {
+  window.addEventListener('load', () => {
+    setTimeout(() => NexusWA.loadConfig().catch(() => {}), 2000);
+  });
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // i18n — INTERNATIONALISATION LÉGÈRE (FR / EN / WO)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15509,6 +15673,30 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     // Libérer le verrou après 3s
     setTimeout(() => _pendingStatusUpdates.current.delete(orderId), 3000);
 
+    // ── NexusWA : notifications WhatsApp automatiques ──────────────────────
+    try {
+      const _waOrder = orders.find(o => o.id === orderId) || {};
+      const _waVendorPhone = currentUser?.phone || '';
+      const _waVendorName  = currentUser?.name  || currentUser?.storeName || '';
+      const _waTotalFcfa   = Math.round((_waOrder.total || 0) * EUR_TO_FCFA);
+      if (_waVendorPhone && typeof NexusWA !== 'undefined') {
+        if (newStatus === 'delivered') {
+          // Compter les ventes livrées pour distinguer 1ère vente
+          const _delivCount = orders.filter(o => o.status === 'delivered' || o.id === orderId).length;
+          const _totalFcfaCum = orders
+            .filter(o => o.status === 'delivered' || o.id === orderId)
+            .reduce((s, o) => s + Math.round((o.total || 0) * EUR_TO_FCFA), 0);
+          if (_delivCount === 1) {
+            NexusWA.firstSale(_waVendorPhone, _waVendorName, _waTotalFcfa, orderId).catch(() => {});
+          } else {
+            NexusWA.saleDelivered(_waVendorPhone, _waVendorName, _waTotalFcfa, orderId, _totalFcfaCum).catch(() => {});
+          }
+        } else if (newStatus === 'in_transit') {
+          // Pas de message vendeur pour in_transit, mais on pourrait notifier l'acheteur
+        }
+      }
+    } catch(_waErr) { console.warn('[NexusWA hook]', _waErr.message); }
+
     try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
     // Déclenchement unique sur "delivered". Idempotent : vérifie en DB qu'aucun
@@ -15801,6 +15989,13 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       await DataService.saveFlashSale({ ...sale, _new: true }).catch(() => {});
       DataService.getFlashSales().then(d => { if (d) setVFlashSales(d.filter(s => { const p = products.find(x => x.id === s.productId); return p && p.vendor === currentUser2.id; })); }).catch(() => {});
       addToast("Vente flash cr\xE9\xE9e !", "success");
+      // NexusWA : notifier le vendeur que sa vente flash est active
+      try {
+        if (typeof NexusWA !== 'undefined' && currentUser2?.phone) {
+          const _fsProduct = products.find(p => p.id === vFlashForm.productId);
+          if (_fsProduct) NexusWA.flashSaleAlert(currentUser2.phone, currentUser2.name, _fsProduct.name, parseInt(vFlashForm.discount), endsAt).catch(() => {});
+        }
+      } catch(_) {}
       setVFlashForm({ productId: "", discount: "20", hours: "24" });
     };
     const removeVFlash = async (id) => { await DataService.deleteFlashSale(id).catch(() => {}); setVFlashSales(prev => prev.filter(s => s.id !== id)); addToast("Vente flash supprim\xE9e", "info"); };
@@ -17636,6 +17831,126 @@ END; $$;`;
         )
       )
     ),
+
+    /* ── WhatsApp Green API ─────────────────────────────────────────────── */
+    (() => {
+      const [_waInst,   _setWaInst]   = React.useState(NexusWA._cfg.instanceId || '');
+      const [_waToken,  _setWaToken]  = React.useState(NexusWA._cfg.apiToken   || '');
+      const [_waSec,    _setWaSec]    = React.useState(NexusWA._cfg.secret     || '');
+      const [_waOn,     _setWaOn]     = React.useState(NexusWA._cfg.enabled    || false);
+      const [_waSaving, _setWaSaving] = React.useState(false);
+      const [_waTest,   _setWaTest]   = React.useState('');
+      const [_waTesting,_setWaTesting]= React.useState(false);
+      const [_ambSend,  _setAmbSend]  = React.useState(false);
+      const WE = React.createElement;
+
+      const saveWA = async () => {
+        _setWaSaving(true);
+        await NexusWA.saveConfig({ instanceId:_waInst, apiToken:_waToken, secret:_waSec, enabled:_waOn });
+        addToast('\u2705 Config WhatsApp sauvegard\u00e9e', 'success');
+        _setWaSaving(false);
+      };
+      const testWA = async () => {
+        if (!_waTest || _waTest.replace(/\D/g,'').length < 8) { addToast('Saisissez un num\u00e9ro valide', 'warning'); return; }
+        _setWaTesting(true);
+        const r = await NexusWA.send(_waTest.replace(/\D/g,''), '\u2705 *Test NEXUS Market*\nInt\u00e9gration WhatsApp Green API op\u00e9rationnelle ! \uD83C\uDF89\nnexus.sn', 'test');
+        addToast(r.ok ? '\u2705 Message envoy\u00e9 !' : '\u274C \u00c9chec : ' + (r.error || 'V\u00e9rifiez les credentials'), r.ok ? 'success' : 'error');
+        _setWaTesting(false);
+      };
+      const sendAmbReports = async () => {
+        _setAmbSend(true);
+        if (DataService._sb) {
+          const { data } = await DataService._sb.rpc('send_ambassador_monthly_report').catch(() => ({ data: 0 }));
+          addToast('\uD83D\uDCCA ' + (data || 0) + ' relev\u00e9s ambassadeurs envoy\u00e9s', 'success');
+        } else addToast('Supabase requis', 'warning');
+        _setAmbSend(false);
+      };
+
+      return WE('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+        WE('div', { className:'card-header' },
+          WE('h2', { className:'card-title' },
+            WE('i',{ className:'fab fa-whatsapp', style:{ color:'#25D366', marginRight:'.5rem' } }),
+            'WhatsApp automatique \u2014 Green API',
+            WE('span', { className:'badge badge-'+(_waOn?'success':'secondary'), style:{ marginLeft:'.75rem' } }, _waOn ? '\uD83D\uDFE2 Actif' : '\u26AB Inactif')
+          )
+        ),
+        WE('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+          WE('div', { className:'alert alert-info', style:{ fontSize:'.82rem' } },
+            WE('i',{ className:'fas fa-info-circle' }),
+            ' Compte gratuit sur ',
+            WE('a',{ href:'https://green-api.com', target:'_blank', style:{ color:'var(--primary)' } }, 'green-api.com'),
+            ' \u2192 Cr\u00e9er une instance \u2192 Scanner le QR code avec votre t\u00e9l\u00e9phone.'
+          ),
+          WE('div', { className:'form-row' },
+            WE('div', { className:'form-group' },
+              WE('label',{ className:'form-label' }, 'Instance ID'),
+              WE('input',{ type:'text', className:'form-input', placeholder:'7103123456', style:{ fontFamily:'monospace' },
+                value:_waInst, onChange: e => _setWaInst(e.target.value) })
+            ),
+            WE('div', { className:'form-group' },
+              WE('label',{ className:'form-label' }, 'API Token'),
+              WE('input',{ type:'password', className:'form-input', placeholder:'abc123...', style:{ fontFamily:'monospace' },
+                value:_waToken, onChange: e => _setWaToken(e.target.value) })
+            )
+          ),
+          WE('div', { className:'form-row' },
+            WE('div', { className:'form-group' },
+              WE('label',{ className:'form-label' }, 'Secret (partag\u00e9 avec Cloudflare)'),
+              WE('input',{ type:'text', className:'form-input', placeholder:'nexus-wa-secret-2026', style:{ fontFamily:'monospace' },
+                value:_waSec, onChange: e => _setWaSec(e.target.value) })
+            ),
+            WE('div', { className:'form-group', style:{ display:'flex', alignItems:'flex-end' } },
+              WE('label', { style:{ display:'flex', alignItems:'center', gap:'.5rem', cursor:'pointer', fontSize:'.88rem', fontWeight:600, marginBottom:0 } },
+                WE('input',{ type:'checkbox', checked:_waOn, onChange: e => _setWaOn(e.target.checked),
+                  style:{ width:18, height:18, accentColor:'var(--primary)' } }),
+                'Activer les envois automatiques'
+              )
+            )
+          ),
+          WE('div', { style:{ display:'flex', gap:'.75rem', flexWrap:'wrap' } },
+            WE('button', { className:'btn btn-primary'+(_waSaving?' btn-loading':''), onClick:saveWA, disabled:_waSaving },
+              WE('i',{ className:'fas fa-save' }), ' Sauvegarder'
+            ),
+            WE('a', { href:'https://green-api.com', target:'_blank', className:'btn btn-secondary' },
+              WE('i',{ className:'fas fa-external-link-alt' }), ' Dashboard Green API'
+            )
+          ),
+          WE('hr', { style:{ margin:'.5rem 0' } }),
+          WE('div', { style:{ fontWeight:700, fontSize:'.88rem', marginBottom:'.5rem' } }, '\uD83E\uDDEA Test d\'envoi'),
+          WE('div', { style:{ display:'flex', gap:'.75rem', flexWrap:'wrap', alignItems:'flex-end' } },
+            WE('div', { className:'form-group', style:{ flex:2, marginBottom:0 } },
+              WE('input',{ type:'tel', className:'form-input', placeholder:'771234567 (sans +221)',
+                value:_waTest, onChange: e => _setWaTest(e.target.value) })
+            ),
+            WE('button', { className:'btn btn-secondary'+(_waTesting?' btn-loading':''), onClick:testWA, disabled:_waTesting },
+              WE('i',{ className:'fab fa-whatsapp', style:{ color:'#25D366' } }), ' Envoyer test'
+            )
+          ),
+          WE('hr', { style:{ margin:'.5rem 0' } }),
+          WE('div', { style:{ fontWeight:700, fontSize:'.88rem', marginBottom:'.5rem' } }, '\uD83D\uDCCA Actions manuelles'),
+          WE('div', { style:{ display:'flex', gap:'.75rem', flexWrap:'wrap' } },
+            WE('button', { className:'btn btn-secondary'+(_ambSend?' btn-loading':''), onClick:sendAmbReports, disabled:_ambSend },
+              WE('i',{ className:'fas fa-paper-plane' }), ' Relev\u00e9s mensuels ambassadeurs'
+            ),
+            WE('button', { className:'btn btn-secondary', onClick: async () => {
+              const _wa = NEXUS_CONFIG.admin.whatsapp;
+              if (!_wa || _wa === '77XXXXXXX') { addToast('Configurez le n\u00b0 WhatsApp admin', 'warning'); return; }
+              const r = await NexusWA.send(_wa, '\u26A1 *Ventes Flash du vendredi \u2014 NEXUS Market*\n\nDes promotions exceptionnelles vous attendent ce weekend !\n\uD83D\uDED2 Connectez-vous sur nexus.sn', 'flash_broadcast');
+              addToast(r.ok||r.skipped ? 'Broadcast envoy\u00e9' : 'Erreur : '+(r.error||''), r.ok||r.skipped?'success':'error');
+            }},
+              WE('i',{ className:'fas fa-bolt' }), ' Broadcast ventes flash'
+            )
+          ),
+          WE('div', { className:'alert alert-success', style:{ fontSize:'.78rem', marginTop:'.25rem' } },
+            WE('strong', null, '\uD83E\uDD16 Automatique : '),
+            'f\u00e9licitations 1\u00e8re vente \u2022 alerte nouvelle commande \u2022 vente flash cr\u00e9\u00e9e',
+            WE('br', null),
+            WE('strong', null, '\uD83D\uDC46 Manuel : '),
+            'relev\u00e9s mensuels ambassadeurs \u2022 broadcast ventes flash du vendredi'
+          )
+        )
+      );
+    })(),
 
     /* ── Services système existants ── */
     E('div', { className:'card' },
