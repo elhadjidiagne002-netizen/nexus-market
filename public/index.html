@@ -15503,6 +15503,203 @@ const VFlashCountdown = ({ endsAt }) => {
 // ════════════════════════════════════════════════════════════════════════════
 // AdSenseConfigPanel — Configuration Google AdSense dans Admin → Configuration
 // ════════════════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════════════════
+// AffiliateConfigPanel — Configuration affiliation dans Admin → Configuration
+// ════════════════════════════════════════════════════════════════════════════
+const AffiliateConfigPanel = ({ addToast }) => {
+  const cfg = NEXUS_CONFIG?.affiliate || {};
+  const [_on,       _setOn]       = React.useState(cfg.enabled !== false);
+  const [_amzTag,   _setAmzTag]   = React.useState(cfg.amazon?.tag            || 'nexusmarket-21');
+  const [_amzOn,    _setAmzOn]    = React.useState(cfg.amazon?.enabled        !== false);
+  const [_aliId,    _setAliId]    = React.useState(cfg.aliexpress?.affiliateId|| '');
+  const [_aliCamp,  _setAliCamp]  = React.useState(cfg.aliexpress?.campaignId || '');
+  const [_aliOn,    _setAliOn]    = React.useState(cfg.aliexpress?.enabled    !== false);
+  const [_jumCode,  _setJumCode]  = React.useState(cfg.jumia?.affiliateCode   || '');
+  const [_jumOn,    _setJumOn]    = React.useState(cfg.jumia?.enabled         !== false);
+  const [_clicks,   _setClicks]   = React.useState([]);
+  const [_saving,   _setSaving]   = React.useState(false);
+  const E = React.createElement;
+
+  React.useEffect(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem('nexus_aff_clicks') || '[]');
+      _setClicks(c.slice(0, 20));
+    } catch(_) {}
+  }, []);
+
+  const save = () => {
+    _setSaving(true);
+    if (NEXUS_CONFIG.affiliate) {
+      NEXUS_CONFIG.affiliate.enabled = _on;
+      NEXUS_CONFIG.affiliate.amazon.tag       = _amzTag;
+      NEXUS_CONFIG.affiliate.amazon.enabled   = _amzOn;
+      NEXUS_CONFIG.affiliate.aliexpress.affiliateId = _aliId;
+      NEXUS_CONFIG.affiliate.aliexpress.campaignId  = _aliCamp;
+      NEXUS_CONFIG.affiliate.aliexpress.enabled     = _aliOn;
+      NEXUS_CONFIG.affiliate.jumia.affiliateCode    = _jumCode;
+      NEXUS_CONFIG.affiliate.jumia.enabled          = _jumOn;
+    }
+    try {
+      const sc = JSON.parse(localStorage.getItem('nexus_saved_config') || '{}');
+      sc.affiliateEnabled    = _on;
+      sc.affiliateAmazonTag  = _amzTag;
+      sc.affiliateAliId      = _aliId;
+      sc.affiliateAliCampaign = _aliCamp;
+      sc.affiliateJumiaCode  = _jumCode;
+      localStorage.setItem('nexus_saved_config', JSON.stringify(sc));
+    } catch(_) {}
+    addToast('\u2705 Config affiliation sauvegard\u00e9e', 'success');
+    setTimeout(() => _setSaving(false), 600);
+  };
+
+  const testLink = (platform) => {
+    const url = platform === 'amazon'     ? NexusAffiliateLinks.amazon('smartphone occasion', _amzTag)
+              : platform === 'aliexpress' ? NexusAffiliateLinks.aliexpress('smartphone', _aliId, _aliCamp)
+              :                             NexusAffiliateLinks.jumia('t\u00e9l\u00e9phone', _jumCode);
+    window.open(url, '_blank');
+  };
+
+  const platformBlock = ({ id, name, logo, color, bgColor, enabled, setEnabled, children }) =>
+    E('div', { style:{ border:'1.5px solid '+(enabled?color+'44':'var(--border)'), borderRadius:12, padding:'1rem', background: enabled?bgColor:'#f9fafb', transition:'all .2s', opacity: enabled?1:0.6 } },
+      E('div', { style:{ display:'flex', alignItems:'center', gap:'0.75rem', marginBottom: enabled?'0.85rem':'0' } },
+        E('span', { style:{ fontSize:'1.3rem' } }, logo),
+        E('span', { style:{ fontWeight:800, fontSize:'0.95rem', color, flex:1 } }, name),
+        E('label', { style:{ display:'flex', alignItems:'center', gap:'0.4rem', cursor:'pointer', fontSize:'0.82rem', fontWeight:600 } },
+          E('input', { type:'checkbox', checked:enabled, onChange:e=>setEnabled(e.target.checked),
+            style:{ width:16, height:16, accentColor: color } }),
+          enabled ? 'Actif' : 'Inactif'
+        ),
+        E('button', { className:'btn btn-sm btn-secondary', onClick:()=>testLink(id) },
+          E('i',{className:'fas fa-external-link-alt'}), ' Tester'
+        )
+      ),
+      enabled && children
+    );
+
+  const FCFA = n => Math.round((n||0)*655.957);
+
+  return E('div', { className:'card', style:{ marginBottom:'1.5rem' } },
+    E('div', { className:'card-header' },
+      E('h2', { className:'card-title' },
+        E('i',{className:'fas fa-link text-primary'}), ' Affiliation — Amazon · AliExpress · Jumia',
+        E('span', { className:'badge badge-'+(_on?'success':'secondary'), style:{marginLeft:'.75rem'} },
+          _on ? '\uD83D\uDFE2 Actif' : '\u26AB Inactif'
+        )
+      )
+    ),
+    E('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1.25rem' } },
+
+      /* Info revenus */
+      E('div', { style:{ background:'linear-gradient(135deg,#f0fdf4,#e0f2fe)', borderRadius:12, padding:'0.85rem 1rem', display:'flex', gap:'1.5rem', flexWrap:'wrap' } },
+        [
+          { v:'3-8%', l:'Commission Amazon Associates', i:'amazon', c:'#FF9900' },
+          { v:'2-6%', l:'Commission AliExpress Portals', i:'shopping-bag', c:'#e63312' },
+          { v:'3-5%', l:'Commission Jumia Sénégal', i:'globe-africa', c:'#f68b1e' },
+        ].map((k,i) => E('div', { key:i, style:{ display:'flex', alignItems:'center', gap:'0.5rem' } },
+          E('i', { className:'fas fa-'+k.i, style:{ color:k.c, fontSize:'1rem' } }),
+          E('div', null,
+            E('div', { style:{ fontWeight:800, color:k.c } }, k.v),
+            E('div', { style:{ fontSize:'0.72rem', color:'var(--text-secondary)' } }, k.l)
+          )
+        ))
+      ),
+
+      /* Toggle global */
+      E('label', { style:{ display:'flex', alignItems:'center', gap:'0.6rem', cursor:'pointer', fontWeight:700, fontSize:'0.9rem' } },
+        E('input', { type:'checkbox', checked:_on, onChange:e=>_setOn(e.target.checked), style:{width:18,height:18,accentColor:'var(--primary)'} }),
+        'Activer les liens d\'affiliation sur le site'
+      ),
+
+      /* Amazon */
+      platformBlock({ id:'amazon', name:'Amazon Associates', logo:'📦', color:'#FF9900', bgColor:'#fff8f0', enabled:_amzOn, setEnabled:_setAmzOn,
+        children: E('div', { display:'flex', flexDirection:'column', gap:'0.6rem' },
+          E('div', { className:'form-row', style:{ gap:'.6rem' } },
+            E('div', { className:'form-group', style:{flex:2} },
+              E('label', { className:'form-label' }, 'Tag Amazon Associates *'),
+              E('input', { type:'text', className:'form-input', value:_amzTag, placeholder:'nexusmarket-21',
+                style:{ fontFamily:'monospace' }, onChange:e=>_setAmzTag(e.target.value.trim()) })
+            )
+          ),
+          E('div', { className:'alert alert-info', style:{ fontSize:'.78rem', marginBottom:0 } },
+            E('i',{className:'fas fa-info-circle'}),
+            ' Créer un compte sur ',
+            E('a',{href:'https://affiliate-program.amazon.fr',target:'_blank',style:{color:'var(--primary)'}},'affiliate-program.amazon.fr'),
+            ' → "Inscription" → votre tag apparaît dans "ID associé" (ex: nexusmarket-21).'
+          )
+        )
+      }),
+
+      /* AliExpress */
+      platformBlock({ id:'aliexpress', name:'AliExpress Portals', logo:'🛒', color:'#e63312', bgColor:'#fff5f5', enabled:_aliOn, setEnabled:_setAliOn,
+        children: E('div', { display:'flex', flexDirection:'column', gap:'0.6rem' },
+          E('div', { className:'form-row', style:{ gap:'.6rem' } },
+            E('div', { className:'form-group' },
+              E('label', { className:'form-label' }, 'Affiliate ID (optionnel)'),
+              E('input', { type:'text', className:'form-input', value:_aliId, placeholder:'12345678',
+                style:{ fontFamily:'monospace' }, onChange:e=>_setAliId(e.target.value.trim()) })
+            ),
+            E('div', { className:'form-group' },
+              E('label', { className:'form-label' }, 'Campaign ID (optionnel)'),
+              E('input', { type:'text', className:'form-input', value:_aliCamp, placeholder:'NEXUS001',
+                style:{ fontFamily:'monospace' }, onChange:e=>_setAliCamp(e.target.value.trim()) })
+            )
+          ),
+          E('div', { className:'alert alert-info', style:{ fontSize:'.78rem', marginBottom:0 } },
+            E('i',{className:'fas fa-info-circle'}),
+            ' S\'inscrire sur ',
+            E('a',{href:'https://portals.aliexpress.com',target:'_blank',style:{color:'var(--primary)'}},'portals.aliexpress.com'),
+            ' → "Affiliate Program" → créer une campagne NEXUS. Sans ID, les liens fonctionnent sans commission.'
+          )
+        )
+      }),
+
+      /* Jumia */
+      platformBlock({ id:'jumia', name:'Jumia Sénégal', logo:'🌍', color:'#f68b1e', bgColor:'#fffbf0', enabled:_jumOn, setEnabled:_setJumOn,
+        children: E('div', { display:'flex', flexDirection:'column', gap:'0.6rem' },
+          E('div', { className:'form-group' },
+            E('label', { className:'form-label' }, 'Code affilié Jumia (optionnel)'),
+            E('input', { type:'text', className:'form-input', value:_jumCode, placeholder:'NEXUS2026',
+              style:{ fontFamily:'monospace' }, onChange:e=>_setJumCode(e.target.value.trim()) })
+          ),
+          E('div', { className:'alert alert-info', style:{ fontSize:'.78rem', marginBottom:0 } },
+            E('i',{className:'fas fa-info-circle'}),
+            ' Contacter Jumia Sénégal via ',
+            E('a',{href:'https://affiliate.jumia.sn',target:'_blank',style:{color:'var(--primary)'}},'affiliate.jumia.sn'),
+            ' pour obtenir un code affilié. Commission 3-5% sur chaque achat généré.'
+          )
+        )
+      }),
+
+      /* Bouton save */
+      E('button', { className:'btn btn-primary'+(_saving?' btn-loading':''), onClick:save, disabled:_saving },
+        E('i',{className:'fas fa-save'}), ' Sauvegarder la configuration'
+      ),
+
+      /* Historique clics */
+      _clicks.length > 0 && E('div', { className:'card', style:{border:'1px solid var(--border)'} },
+        E('div', { className:'card-header' },
+          E('h3', { style:{fontWeight:700,fontSize:'.88rem'} }, E('i',{className:'fas fa-mouse-pointer text-primary'}), ' Derniers clics affiliés (20 derniers)')
+        ),
+        E('div', { className:'table-wrapper' },
+          E('table', { className:'data-table' },
+            E('thead', null, E('tr', null,
+              E('th',null,'Plateforme'), E('th',null,'Recherche'), E('th',null,'Date')
+            )),
+            E('tbody', null, _clicks.map((c,i) =>
+              E('tr', { key:i },
+                E('td', null, E('span', { className:'badge badge-'+(c.platform==='amazon'?'warning':c.platform==='aliexpress'?'danger':'success') }, c.platform)),
+                E('td', null, E('span', { style:{fontFamily:'monospace',fontSize:'.78rem'} }, c.searchTerm)),
+                E('td', null, new Date(c.ts).toLocaleString('fr-FR'))
+              )
+            ))
+          )
+        )
+      )
+    )
+  );
+};
+
 const AdSenseConfigPanel = ({ addToast }) => {
   const cfg = NEXUS_CONFIG?.adsense || {};
   const [_pubId,   _setPubId]   = React.useState(cfg.publisherId  || '');
@@ -18687,7 +18884,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
@@ -20517,6 +20714,238 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
           )
         )
       )
+    )
+  );
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// NexusAffiliate — Système de liens d'affiliation Amazon / AliExpress / Jumia
+// ════════════════════════════════════════════════════════════════════════════
+// Config par défaut (modifiable depuis Admin → Configuration → Affiliation)
+if (typeof NEXUS_CONFIG !== 'undefined' && !NEXUS_CONFIG.affiliate) {
+  NEXUS_CONFIG.affiliate = {
+    enabled:         true,
+    amazon: {
+      enabled:    true,
+      tag:        'nexusmarket-21',        // ← Votre tag Amazon Associates
+      baseUrl:    'https://www.amazon.fr', // Amazon France (livraison Afrique)
+      alternates: ['https://www.amazon.com'],
+    },
+    aliexpress: {
+      enabled:    true,
+      affiliateId: '',                     // ← Votre ID AliExpress portals
+      campaignId:  '',
+    },
+    jumia: {
+      enabled:    true,
+      affiliateCode: '',                   // ← Code affilié Jumia Sénégal
+      baseUrl:    'https://www.jumia.sn',
+    },
+  };
+  try {
+    const _sc = JSON.parse(localStorage.getItem('nexus_saved_config') || '{}');
+    if (_sc.affiliateAmazonTag)     NEXUS_CONFIG.affiliate.amazon.tag              = _sc.affiliateAmazonTag;
+    if (_sc.affiliateAliId)         NEXUS_CONFIG.affiliate.aliexpress.affiliateId  = _sc.affiliateAliId;
+    if (_sc.affiliateAliCampaign)   NEXUS_CONFIG.affiliate.aliexpress.campaignId   = _sc.affiliateAliCampaign;
+    if (_sc.affiliateJumiaCode)     NEXUS_CONFIG.affiliate.jumia.affiliateCode      = _sc.affiliateJumiaCode;
+    if (_sc.affiliateEnabled !== undefined) NEXUS_CONFIG.affiliate.enabled = _sc.affiliateEnabled;
+  } catch(_) {}
+}
+
+// Générateur d'URLs affiliées
+const NexusAffiliateLinks = {
+  // Amazon Associates — recherche par mot-clé
+  amazon(searchTerm, tag) {
+    const t   = tag || NEXUS_CONFIG?.affiliate?.amazon?.tag || 'nexusmarket-21';
+    const q   = encodeURIComponent(searchTerm);
+    return `https://www.amazon.fr/s?k=${q}&tag=${t}&linkCode=ll2&language=fr_FR`;
+  },
+
+  // AliExpress — deep search link
+  aliexpress(searchTerm, affiliateId, campaignId) {
+    const q   = encodeURIComponent(searchTerm);
+    const aid = affiliateId || NEXUS_CONFIG?.affiliate?.aliexpress?.affiliateId || '';
+    const cid = campaignId  || NEXUS_CONFIG?.affiliate?.aliexpress?.campaignId  || '';
+    const base = `https://www.aliexpress.com/wholesale?SearchText=${q}&SortType=total_tranpro_desc`;
+    if (aid) return `${base}&aff_platform=portals-tool&aff_trace_key=${aid}&terminal_id=${cid || aid}`;
+    return base;
+  },
+
+  // Jumia Sénégal — recherche
+  jumia(searchTerm, code) {
+    const q    = encodeURIComponent(searchTerm);
+    const c    = code || NEXUS_CONFIG?.affiliate?.jumia?.affiliateCode || '';
+    const base = `https://www.jumia.sn/catalog/?q=${q}`;
+    if (c) return `${base}&aff_source=${c}`;
+    return base;
+  },
+
+  // Tracker de clics (log + whatsapp admin si configuré)
+  async trackClick(platform, searchTerm, url) {
+    try {
+      const log = JSON.parse(localStorage.getItem('nexus_aff_clicks') || '[]');
+      log.unshift({ platform, searchTerm, url, ts: Date.now() });
+      localStorage.setItem('nexus_aff_clicks', JSON.stringify(log.slice(0, 200)));
+      // Log Supabase si disponible
+      if (DataService._sb) {
+        await DataService._sb.from('affiliate_clicks').insert({
+          platform, search_term: searchTerm, url,
+          created_at: new Date().toISOString()
+        }).catch(() => {}); // silencieux si table absente
+      }
+    } catch(_) {}
+  },
+};
+
+// ── AffiliateWidget — Widget affiché quand aucun produit n'est trouvé ────
+const AffiliateWidget = ({ searchTerm = '', category = '' }) => {
+  const E = React.createElement;
+  const cfg = NEXUS_CONFIG?.affiliate;
+  if (!cfg?.enabled) return null;
+
+  const query = searchTerm || category || 'produits';
+
+  const platforms = [
+    {
+      id: 'amazon',
+      name: 'Amazon.fr',
+      logo: '📦',
+      color: '#FF9900',
+      bg: '#fff8f0',
+      border: '#FF9900',
+      tagline: 'Livraison internationale · Retours faciles',
+      badge: 'Livraison Afrique',
+      badgeColor: '#FF9900',
+      url: NexusAffiliateLinks.amazon(query),
+      enabled: cfg.amazon?.enabled !== false,
+      cta: 'Chercher sur Amazon',
+    },
+    {
+      id: 'aliexpress',
+      name: 'AliExpress',
+      logo: '🛒',
+      color: '#e63312',
+      bg: '#fff5f5',
+      border: '#e63312',
+      tagline: 'Prix fabricant · Millions de références',
+      badge: 'Moins cher',
+      badgeColor: '#e63312',
+      url: NexusAffiliateLinks.aliexpress(query),
+      enabled: cfg.aliexpress?.enabled !== false,
+      cta: 'Chercher sur AliExpress',
+    },
+    {
+      id: 'jumia',
+      name: 'Jumia Sénégal',
+      logo: '🌍',
+      color: '#f68b1e',
+      bg: '#fffbf0',
+      border: '#f68b1e',
+      tagline: 'Livraison rapide au Sénégal · Paiement local',
+      badge: '🇸🇳 Local',
+      badgeColor: '#00853E',
+      url: NexusAffiliateLinks.jumia(query),
+      enabled: cfg.jumia?.enabled !== false,
+      cta: 'Chercher sur Jumia SN',
+    },
+  ].filter(p => p.enabled);
+
+  if (!platforms.length) return null;
+
+  return E('div', {
+    style: {
+      margin: '1.5rem 0',
+      padding: '1.25rem',
+      background: 'linear-gradient(135deg,#f8faff,#f0f9ff)',
+      borderRadius: 16,
+      border: '1.5px solid #e0f2fe',
+    }
+  },
+    // En-tête
+    E('div', { style: { display:'flex', alignItems:'center', gap:'0.75rem', marginBottom:'1rem' } },
+      E('div', { style: { width:40, height:40, borderRadius:'50%', background:'#e0f2fe', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'1.2rem', flexShrink:0 } }, '🔗'),
+      E('div', null,
+        E('div', { style: { fontWeight:800, fontSize:'0.95rem', color:'#0c4a6e' } },
+          searchTerm
+            ? `"${searchTerm}" introuvable sur NEXUS — voir ailleurs`
+            : 'Produit non disponible sur NEXUS'
+        ),
+        E('div', { style: { fontSize:'0.76rem', color:'#64748b', marginTop:'0.15rem' } },
+          'Trouvez-le sur nos plateformes partenaires — ',
+          E('strong', { style:{ color:'var(--primary)' } }, 'commissions reversées à NEXUS')
+        )
+      )
+    ),
+
+    // Cartes plateformes
+    E('div', { style: { display:'flex', flexDirection:'column', gap:'0.6rem' } },
+      platforms.map(p => E('a', {
+        key:     p.id,
+        href:    p.url,
+        target:  '_blank',
+        rel:     'noopener noreferrer sponsored',
+        onClick: () => NexusAffiliateLinks.trackClick(p.id, query, p.url),
+        style: {
+          display: 'flex', alignItems: 'center', gap: '0.85rem',
+          padding: '0.85rem 1rem',
+          background: p.bg,
+          borderRadius: 12,
+          border: `1.5px solid ${p.border}22`,
+          textDecoration: 'none',
+          transition: 'transform 0.15s, box-shadow 0.15s',
+          cursor: 'pointer',
+        },
+        onMouseEnter: ev => { ev.currentTarget.style.transform = 'translateX(3px)'; ev.currentTarget.style.boxShadow = `0 4px 16px ${p.color}22`; },
+        onMouseLeave: ev => { ev.currentTarget.style.transform = ''; ev.currentTarget.style.boxShadow = ''; },
+      },
+        E('div', { style:{ fontSize:'1.6rem', lineHeight:1, flexShrink:0 } }, p.logo),
+        E('div', { style:{ flex:1, minWidth:0 } },
+          E('div', { style:{ display:'flex', alignItems:'center', gap:'0.5rem', flexWrap:'wrap' } },
+            E('span', { style:{ fontWeight:800, fontSize:'0.9rem', color: p.color } }, p.name),
+            E('span', { style:{ background: p.badgeColor, color:'white', fontSize:'0.62rem', fontWeight:800, padding:'0.15rem 0.5rem', borderRadius:99 } }, p.badge)
+          ),
+          E('div', { style:{ fontSize:'0.75rem', color:'#64748b', marginTop:'0.1rem' } }, p.tagline)
+        ),
+        E('div', { style:{ display:'flex', alignItems:'center', gap:'0.4rem', background: p.color, color:'white', borderRadius:99, padding:'0.4rem 0.85rem', fontSize:'0.75rem', fontWeight:700, whiteSpace:'nowrap', flexShrink:0 } },
+          p.cta,
+          E('i', { className:'fas fa-arrow-right', style:{ fontSize:'0.65rem' } })
+        )
+      ))
+    ),
+
+    // Disclaimer
+    E('div', { style:{ marginTop:'0.85rem', fontSize:'0.68rem', color:'#94a3b8', textAlign:'center' } },
+      '🔗 Liens affiliés — NEXUS Market touche une petite commission sur vos achats, sans surcoût pour vous.'
+    )
+  );
+};
+
+// ── AffiliateSidebar — Widget latéral dans la fiche produit ──────────────
+// Affiché dans les produits similaires quand certains sont introuvables
+const AffiliateProductCard = ({ productName, category }) => {
+  const E = React.createElement;
+  const cfg = NEXUS_CONFIG?.affiliate;
+  if (!cfg?.enabled) return null;
+  const q = productName || category || '';
+  return E('div', {
+    style: {
+      padding:'0.75rem', borderRadius:10, border:'1.5px dashed #e2e8f0',
+      background:'#f8faff', textAlign:'center', fontSize:'0.78rem'
+    }
+  },
+    E('div', { style:{ fontSize:'1.5rem', marginBottom:'0.35rem' } }, '🔗'),
+    E('div', { style:{ fontWeight:700, color:'#0c4a6e', marginBottom:'0.35rem', fontSize:'0.82rem' } }, 'Voir sur d\'autres sites'),
+    E('div', { style:{ display:'flex', flexDirection:'column', gap:'0.3rem' } },
+      [
+        { label:'Amazon.fr', url: NexusAffiliateLinks.amazon(q),     color:'#FF9900', id:'amazon' },
+        { label:'AliExpress',url: NexusAffiliateLinks.aliexpress(q), color:'#e63312', id:'aliexpress' },
+        { label:'Jumia.sn',  url: NexusAffiliateLinks.jumia(q),      color:'#f68b1e', id:'jumia' },
+      ].map(l => E('a', {
+        key: l.id, href: l.url, target:'_blank', rel:'noopener noreferrer sponsored',
+        onClick: () => NexusAffiliateLinks.trackClick(l.id, q, l.url),
+        style: { display:'block', padding:'0.3rem 0.6rem', borderRadius:8, background: l.color+'15', color: l.color, fontWeight:700, textDecoration:'none', fontSize:'0.75rem' }
+      }, l.label, ' →'))
     )
   );
 };
@@ -23121,11 +23550,14 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
         /* ── AdSense Leaderboard — au-dessus de la grille ── */
         React.createElement(NexusAdUnit, { format: 'leaderboard' }),
         currentItems.length === 0
-          ? React.createElement('div', { className: 'empty-state' },
-              React.createElement('i', { className: 'fas fa-search' }),
-              React.createElement('h3', null, 'Aucun produit trouvé'),
-              React.createElement('p', null, 'Essayez d\'autres termes ou catégories'),
-              React.createElement('button', { className: 'btn btn-primary', onClick: () => { setSearchTerm(''); setDisplaySearch(''); setFilterCategory('all'); } }, 'Voir tous les produits')
+          ? React.createElement('div', null,
+              React.createElement('div', { className: 'empty-state' },
+                React.createElement('i', { className: 'fas fa-search' }),
+                React.createElement('h3', null, 'Aucun produit trouvé sur NEXUS'),
+                React.createElement('p', null, 'Essayez d\'autres termes ou catégories'),
+                React.createElement('button', { className: 'btn btn-primary', onClick: () => { setSearchTerm(''); setDisplaySearch(''); setFilterCategory('all'); } }, 'Voir tous les produits')
+              ),
+              React.createElement(AffiliateWidget, { searchTerm: searchTerm || displaySearch, category: filterCategory !== 'all' ? filterCategory : '' })
             )
           : React.createElement(React.Fragment, null,
               React.createElement('div', { className: 'product-grid', role: 'list' },
@@ -24848,7 +25280,12 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       },
       onAddToCart: addToCart
     }
-  ))), showCart && /* @__PURE__ */ React.createElement(
+  ),
+  selectedProduct.stock === 0 && /* @__PURE__ */ React.createElement(AffiliateWidget, {
+    searchTerm: selectedProduct.name,
+    category:   selectedProduct.category
+  })
+)), showCart && /* @__PURE__ */ React.createElement(
     CartGrouped,
     {
       cart,
