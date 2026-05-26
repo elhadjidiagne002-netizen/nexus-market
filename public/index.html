@@ -1991,7 +1991,7 @@ const NEXUS_CONFIG = {
   // ── Admin Contact (OnDemand, support) ───────────────────────────────────
   admin: {
     // Numéro WhatsApp de l'administrateur NEXUS (reçoit les nouvelles demandes OnDemand)
-    whatsapp: "77XXXXXXX",    // ex: "775678901" — À configurer
+    whatsapp: "776254895",    // Numéro admin NEXUS — connecté à Green API instance 7107631852
     email:    "admin@nexus.sn",
   },
 
@@ -2032,6 +2032,12 @@ try {
     if (_sc.orangeMoneyNumber)NEXUS_CONFIG.payments.orangeMoneyNumber = _sc.orangeMoneyNumber;
     if (_sc.adminWhatsapp)    NEXUS_CONFIG.admin.whatsapp             = _sc.adminWhatsapp;
     if (_sc.vapidPublicKey)   NEXUS_CONFIG.vapid.publicKey            = _sc.vapidPublicKey;
+    // ── Green API WhatsApp ────────────────────────────────────────────────
+    if (_sc.waInstanceId)  NexusWA._cfg.instanceId = _sc.waInstanceId;
+    if (_sc.waApiToken)    NexusWA._cfg.apiToken   = _sc.waApiToken;
+    if (_sc.waApiUrl)      NexusWA._cfg.apiUrl     = _sc.waApiUrl;
+    if (_sc.waSecret)      NexusWA._cfg.secret     = _sc.waSecret;
+    if (_sc.waEnabled !== undefined) NexusWA._cfg.enabled = _sc.waEnabled;
     // BUG FIX: on ne restaure PAS confirmUrl depuis localStorage — l'ancien domaine
     // (nexus-market-md360.vercel.app) y était mémorisé et cassait la confirmation email.
     // confirmUrl est maintenant un getter dynamique basé sur window.location.pathname.
@@ -2177,7 +2183,13 @@ if (typeof window !== 'undefined') {
 // ════════════════════════════════════════════════════════════════════════════
 const NexusWA = {
   // Config (peuplée depuis Admin → WhatsApp ou Supabase whatsapp_config)
-  _cfg: { instanceId: '', apiToken: '', secret: '', enabled: false },
+  _cfg: {
+    instanceId:  '7107631852',
+    apiToken:    'a2aa17093f8843eb932c54d7c775c3f286f498da1cf34e8da7',
+    apiUrl:      'https://7107.api.greenapi.com',
+    secret:      'nexus-wa-2026',
+    enabled:     true,
+  },
 
   // Charger la config depuis Supabase
   async loadConfig() {
@@ -2232,24 +2244,29 @@ const NexusWA = {
                     : rawPhone.length === 9      ? '221' + rawPhone
                     : rawPhone;
 
-    // Via Cloudflare Function /api/whatsapp (prod)
-    const endpoint = typeof NEXUS_CONFIG !== 'undefined' && NEXUS_CONFIG.apiUrl
-      ? NEXUS_CONFIG.apiUrl + '/api/whatsapp'
-      : '/api/whatsapp';
+    // Appel direct Green API — instance URL custom https://7107.api.greenapi.com
+    const _gaBase    = this._cfg.apiUrl     || 'https://api.green-api.com';
+    const _gaInst    = this._cfg.instanceId || '';
+    const _gaToken   = this._cfg.apiToken   || '';
+    const _chatId    = intlPhone + '@c.us';
+
+    if (!_gaInst || !_gaToken) {
+      console.warn('[NexusWA] Credentials manquants — message non envoyé');
+      return { ok: false, skipped: true };
+    }
 
     try {
-      const res = await fetch(endpoint, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          phone:    intlPhone,
-          message,
-          template,
-          secret: this._cfg.secret || undefined,
-        }),
-      });
+      const res = await fetch(
+        `${_gaBase}/waInstance${_gaInst}/sendMessage/${_gaToken}`,
+        {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ chatId: _chatId, message }),
+        }
+      );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { console.warn('[NexusWA] API error:', data); return { ok: false, error: data.error }; }
+      if (!res.ok) { console.warn('[NexusWA] API error:', res.status, data); return { ok: false, error: data.message || data.error || 'erreur Green API' }; }
+      console.info('[NexusWA] ✅ Message envoyé →', intlPhone, '| template:', template, '| id:', data.idMessage);
       return { ok: true, idMessage: data.idMessage };
     } catch(err) {
       console.warn('[NexusWA] fetch error:', err.message);
@@ -15802,10 +15819,10 @@ const SqlScriptsPanel = () => {
 // WhatsAppAdminPanel — Config Green API dans Admin → Configuration
 // ════════════════════════════════════════════════════════════════════════════
 const WhatsAppAdminPanel = ({ addToast }) => {
-  const [_waInst,   _setWaInst]   = React.useState(NexusWA._cfg.instanceId || '');
-  const [_waToken,  _setWaToken]  = React.useState(NexusWA._cfg.apiToken   || '');
-  const [_waSec,    _setWaSec]    = React.useState(NexusWA._cfg.secret     || '');
-  const [_waOn,     _setWaOn]     = React.useState(NexusWA._cfg.enabled    || false);
+  const [_waInst,   _setWaInst]   = React.useState(NexusWA._cfg.instanceId || '7107631852');
+  const [_waToken,  _setWaToken]  = React.useState(NexusWA._cfg.apiToken   || 'a2aa17093f8843eb932c54d7c775c3f286f498da1cf34e8da7');
+  const [_waSec,    _setWaSec]    = React.useState(NexusWA._cfg.secret     || 'nexus-wa-2026');
+  const [_waOn,     _setWaOn]     = React.useState(NexusWA._cfg.enabled !== undefined ? NexusWA._cfg.enabled : true);
   const [_waSaving, _setWaSaving] = React.useState(false);
   const [_waTest,   _setWaTest]   = React.useState('');
   const [_waTesting,_setWaTesting]= React.useState(false);
