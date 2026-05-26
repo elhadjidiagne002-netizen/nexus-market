@@ -23106,6 +23106,45 @@ function normalizeExpressToProduct(ax) {
   };
 }
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// CategoryGridPanel — Grille catégories collapsible (extrait hors IIFE)
+// Évite React error #300 (useState dans IIFE pendant le rendu)
+// ════════════════════════════════════════════════════════════════════════════
+const CategoryGridPanel = ({ allCats, filterCategory, setFilterCategory, setCurrentPage, products, getCatIcon }) => {
+  const [open, setOpen] = React.useState(false);
+  const visible = allCats.filter(c => c !== 'all');
+  return React.createElement('div', { className: 'home-section' },
+    React.createElement('div', { style: { background:'white', borderRadius:'12px', padding:'.6rem 1rem' } },
+      React.createElement('div', {
+        style: { display:'flex', alignItems:'center', justifyContent:'space-between', cursor:'pointer' },
+        onClick: () => setOpen(o => !o)
+      },
+        React.createElement('div', { className:'section-title', style:{ margin:0, fontSize:'.88rem' } },
+          React.createElement('span', { className:'title-icon', style:{ fontSize:'1rem' } }, '\uD83D\uDDC2\uFE0F'),
+          'Explorer par cat\u00E9gorie ',
+          React.createElement('span', { style:{ fontSize:'.72rem', color:'var(--text-secondary)', fontWeight:400 } }, `(${visible.length})`)
+        ),
+        React.createElement('span', { style:{ fontSize:'.75rem', fontWeight:700, color:'var(--primary)', padding:'.15rem .6rem', border:'1px solid var(--border)', borderRadius:99, userSelect:'none' } },
+          open ? '\u25B2 R\u00E9duire' : '\u25BC Afficher'
+        )
+      ),
+      open && React.createElement('div', { className:'category-grid', style:{ marginTop:'.6rem' } },
+        visible.map(cat => React.createElement('div', {
+          key: cat,
+          className: `category-card ${filterCategory === cat ? 'active' : ''}`,
+          onClick: () => { setFilterCategory(cat); setCurrentPage(1); setOpen(false); document.getElementById('all-products-anchor')?.scrollIntoView({ behavior:'smooth' }); }
+        },
+          React.createElement('span', { className:'cat-icon' }, getCatIcon(cat)),
+          React.createElement('span', { className:'cat-name' }, cat),
+          products.filter(p => p.category === cat).length > 0 &&
+            React.createElement('span', { className:'cat-count' }, `(${products.filter(p => p.category === cat).length})`)
+        ))
+      )
+    )
+  );
+};
+
 const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, currentUser: currentUserProp = null, onBackToDashboard = null }) => {
   // [FIX] showOnDemandPage manquait dans PublicCatalog → ReferenceError au clic CTA OnDemand
   const [showOnDemandPage, setShowOnDemandPage] = useState(false);
@@ -23730,40 +23769,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       )
     ),
 
-    // ── CATEGORY GRID (collapsible) ──
-    (() => {
-      const [_catOpen, _setCatOpen] = React.useState(false);
-      const _visibleCats = allCats.filter(c => c !== 'all');
-      return React.createElement('div', { className: 'home-section' },
-        React.createElement('div', { style: { background:'white', borderRadius:'12px', padding:'.6rem 1rem' } },
-          React.createElement('div', {
-            style: { display:'flex', alignItems:'center', justifyContent:'space-between', cursor:'pointer' },
-            onClick: () => _setCatOpen(o => !o)
-          },
-            React.createElement('div', { className:'section-title', style:{ margin:0, fontSize:'.88rem' } },
-              React.createElement('span', { className:'title-icon', style:{ fontSize:'1rem' } }, '🗂️'),
-              'Explorer par catégorie ',
-              React.createElement('span', { style:{ fontSize:'.72rem', color:'var(--text-secondary)', fontWeight:400 } }, `(${_visibleCats.length})`)
-            ),
-            React.createElement('span', { style:{ fontSize:'.75rem', fontWeight:700, color:'var(--primary)', padding:'.15rem .6rem', border:'1px solid var(--border)', borderRadius:99, userSelect:'none' } },
-              _catOpen ? '▲ Réduire' : '▼ Afficher'
-            )
-          ),
-          _catOpen && React.createElement('div', { className:'category-grid', style:{ marginTop:'.6rem' } },
-            _visibleCats.map(cat => React.createElement('div', {
-              key: cat,
-              className: `category-card ${filterCategory === cat ? 'active' : ''}`,
-              onClick: () => { setFilterCategory(cat); setCurrentPage(1); _setCatOpen(false); document.getElementById('all-products-anchor')?.scrollIntoView({ behavior:'smooth' }); }
-            },
-              React.createElement('span', { className:'cat-icon' }, getCatIcon(cat)),
-              React.createElement('span', { className:'cat-name' }, cat),
-              products.filter(p => p.category === cat).length > 0 &&
-                React.createElement('span', { className:'cat-count' }, `(${products.filter(p => p.category === cat).length})`)
-            ))
-          )
-        )
-      );
-    })(),
+    // ── CATEGORY GRID (collapsible) — composant nommé (fix React error #300) ──
+    React.createElement(CategoryGridPanel, { allCats, filterCategory, setFilterCategory, setCurrentPage, products, getCatIcon }),
 
     // ── PROMO BANNERS ──
     React.createElement('div', { className: 'home-section' },
