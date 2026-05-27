@@ -8448,6 +8448,115 @@ const ReferralWidget = ({ currentUser: currentUser2, compact = false }) => {
     "3\uFE0F\u20E3  Vous recevez automatiquement votre r\xE9compense"
   ].map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "0.35rem 0", color: "var(--text-secondary)", borderBottom: i < 2 ? "1px solid var(--border)" : "none" } }, s))));
 };
+// ─── AmbassadorPanel — vue programme ambassadeur pour les acheteurs ──────────
+const AmbassadorPanel = ({ currentUser: currentUser2, addToast }) => {
+  const [ambData, setAmbData]   = React.useState(null);
+  const [referrals, setReferrals] = React.useState([]);
+  const [loading, setLoading]   = React.useState(true);
+
+  React.useEffect(() => {
+    if (!currentUser2) { setLoading(false); return; }
+    (async () => {
+      if (DataService._sb) {
+        try {
+          const { data: amb } = await DataService._sb
+            .from('ambassadors').select('*').eq('user_id', currentUser2.id).maybeSingle();
+          setAmbData(amb || null);
+          if (amb) {
+            const { data: refs } = await DataService._sb
+              .from('ambassador_referrals').select('*').eq('ambassador_id', amb.id).order('created_at', { ascending: false });
+            setReferrals(refs || []);
+          }
+        } catch(_) {}
+      }
+      setLoading(false);
+    })();
+  }, [currentUser2?.id]);
+
+  const LEVEL_COLORS = { bronze: '#cd7f32', silver: '#a8a9ad', gold: '#ffd700', platinum: '#e5e4e2' };
+  const LEVEL_ICONS  = { bronze: '🥉', silver: '🥈', gold: '🥇', platinum: '💎' };
+
+  const handleBecomeAmbassador = async () => {
+    if (!DataService._sb || !currentUser2) return;
+    const code = 'NEXUS-' + (currentUser2.name || '').replace(/\s+/g,'').toUpperCase().slice(0,5) + '-' + (currentUser2.id || '').slice(-4).toUpperCase();
+    try {
+      const { data, error } = await DataService._sb.from('ambassadors').insert({
+        id: crypto.randomUUID(), user_id: currentUser2.id, name: currentUser2.name,
+        email: currentUser2.email, referral_code: code, is_active: true,
+        level: 'bronze', total_referrals: 0, total_sales: 0, total_earned: 0,
+        created_at: new Date().toISOString(),
+      }).select().single();
+      if (!error && data) { setAmbData(data); addToast('🎉 Vous êtes maintenant ambassadeur !', 'success'); }
+      else addToast('Erreur inscription ambassadeur', 'error');
+    } catch(e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  if (loading) return /* @__PURE__ */ React.createElement('div', { className: 'empty-state' }, React.createElement('i', { className: 'fas fa-spinner fa-spin' }));
+
+  return /* @__PURE__ */ React.createElement('div', null,
+    /* Stats header */
+    ambData && /* @__PURE__ */ React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: '0.75rem', marginBottom: '1.5rem' } },
+      [
+        { icon: 'users',       label: 'Filleuls',   value: ambData.total_referrals || 0 },
+        { icon: 'shopping-bag',label: 'Ventes',     value: (ambData.total_sales || 0).toLocaleString('fr-FR') + ' FCFA' },
+        { icon: 'coins',       label: 'Commissions',value: (ambData.total_earned || 0).toLocaleString('fr-FR') + ' FCFA' },
+        { icon: 'award',       label: 'Niveau',     value: (LEVEL_ICONS[ambData.level] || '🥉') + ' ' + (ambData.level || 'bronze').charAt(0).toUpperCase() + (ambData.level || 'bronze').slice(1) },
+      ].map((s, i) => /* @__PURE__ */ React.createElement('div', { key: i, style: { background: 'var(--bg-light)', borderRadius: '12px', padding: '1rem', textAlign: 'center' } },
+        /* @__PURE__ */ React.createElement('i', { className: `fas fa-${s.icon} text-primary`, style: { marginBottom: '0.3rem', display: 'block' } }),
+        /* @__PURE__ */ React.createElement('div', { style: { fontWeight: 700, fontSize: '1.1rem', color: LEVEL_COLORS[ambData.level] || 'var(--primary)' } }, s.value),
+        /* @__PURE__ */ React.createElement('div', { style: { fontSize: '0.75rem', color: 'var(--text-secondary)' } }, s.label)
+      ))
+    ),
+    /* ReferralWidget (code + partage WhatsApp) */
+    /* @__PURE__ */ React.createElement(ReferralWidget, { currentUser: currentUser2 }),
+    /* Devenir ambassadeur CTA si pas encore inscrit */
+    !ambData && /* @__PURE__ */ React.createElement('div', { className: 'card', style: { textAlign: 'center', padding: '2rem' } },
+      /* @__PURE__ */ React.createElement('div', { style: { fontSize: '3rem', marginBottom: '0.75rem' } }, '🏅'),
+      /* @__PURE__ */ React.createElement('h3', { style: { fontWeight: 700, marginBottom: '0.5rem' } }, 'Devenez Ambassadeur NEXUS'),
+      /* @__PURE__ */ React.createElement('p', { style: { color: 'var(--text-secondary)', marginBottom: '1.25rem', fontSize: '0.9rem' } },
+        'Parrainez vos proches et gagnez ', /* @__PURE__ */ React.createElement('strong', null, '5% de commission'),
+        ' sur chaque vente générée par votre code.'
+      ),
+      /* @__PURE__ */ React.createElement('button', { className: 'btn btn-primary btn-lg', onClick: handleBecomeAmbassador },
+        /* @__PURE__ */ React.createElement('i', { className: 'fas fa-award' }), ' Rejoindre le programme'
+      )
+    ),
+    /* Historique filleuls */
+    ambData && referrals.length > 0 && /* @__PURE__ */ React.createElement('div', { className: 'card', style: { marginTop: '1.25rem' } },
+      /* @__PURE__ */ React.createElement('div', { className: 'card-header' },
+        /* @__PURE__ */ React.createElement('h3', { className: 'card-title' }, '📋 Historique des filleuls')
+      ),
+      /* @__PURE__ */ React.createElement('div', { className: 'table-wrapper' },
+        /* @__PURE__ */ React.createElement('table', { className: 'data-table' },
+          /* @__PURE__ */ React.createElement('thead', null,
+            /* @__PURE__ */ React.createElement('tr', null,
+              /* @__PURE__ */ React.createElement('th', null, 'Date'),
+              /* @__PURE__ */ React.createElement('th', null, 'Commande'),
+              /* @__PURE__ */ React.createElement('th', null, 'Montant'),
+              /* @__PURE__ */ React.createElement('th', null, 'Commission'),
+              /* @__PURE__ */ React.createElement('th', null, 'Statut')
+            )
+          ),
+          /* @__PURE__ */ React.createElement('tbody', null,
+            referrals.map(r => /* @__PURE__ */ React.createElement('tr', { key: r.id },
+              /* @__PURE__ */ React.createElement('td', null, new Date(r.created_at).toLocaleDateString('fr-FR')),
+              /* @__PURE__ */ React.createElement('td', null, r.order_id ? r.order_id.slice(-8).toUpperCase() : '—'),
+              /* @__PURE__ */ React.createElement('td', null, r.order_amount ? (r.order_amount).toLocaleString('fr-FR') + ' FCFA' : '—'),
+              /* @__PURE__ */ React.createElement('td', { style: { color: 'var(--primary)', fontWeight: 700 } },
+                r.commission ? (r.commission).toLocaleString('fr-FR') + ' FCFA' : '—'
+              ),
+              /* @__PURE__ */ React.createElement('td', null,
+                /* @__PURE__ */ React.createElement('span', { className: `badge badge-${r.status === 'paid' ? 'success' : 'warning'}` },
+                  r.status === 'paid' ? '✅ Payé' : '⏳ En attente'
+                )
+              )
+            ))
+          )
+        )
+      )
+    )
+  );
+};
 const CompareBar = ({ compareList: compareList2, products, onRemove, onClear, onCompare }) => {
   if (compareList2.length === 0) return null;
   const compared = products.filter((p) => compareList2.includes(p.id));
@@ -14940,7 +15049,8 @@ const AdminAmbassadorsPanel = ({ addToast }) => {
       let q = DataService._sb.from('ambassadors')
         .select('*, profiles!user_id(name,email,phone,avatar,created_at)')
         .order('created_at', { ascending: false });
-      if (tab !== 'all') q = q.eq('status', tab);
+      // N'appliquer le filtre status que si la colonne existe (évite 400)
+      if (tab !== 'all') q = q.eq('is_active', tab === 'active' || tab === 'pending');
       const { data, error } = await q;
       if (error) throw error;
       setList(data || []);
@@ -15518,6 +15628,9 @@ const AdminB2BPanel = ({ addToast }) => {
   const loadStats = async () => {
     if (!DataService._sb) return;
     try {
+      // Vérifier que la table existe avant de requêter
+      const probe = await DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}).limit(1);
+      if (probe.status === 404 || (probe.error && probe.error.code === '42P01')) { return; }
       const [all, verified, newMonth] = await Promise.all([
         DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}),
         DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}).eq('ninea_verified', true),
@@ -15544,6 +15657,9 @@ const AdminB2BPanel = ({ addToast }) => {
       if (search)         q = q.or('company.ilike.%' + search + '%,ninea.ilike.%' + search + '%');
       if (filterVerified) q = q.eq('ninea_verified', filterVerified === 'true');
       const { data, count, error } = await q;
+      if (error && (error.code === '42P01' || error.message?.includes('does not exist'))) {
+        setBuyers([]); setTotal(0); setLoading(false); return;
+      }
       if (!error) { setBuyers(data || []); setTotal(count || 0); }
     } catch (_) {}
     setLoading(false);
@@ -15584,11 +15700,15 @@ const AdminB2BPanel = ({ addToast }) => {
       let q = DataService._sb.from('b2b_buyers').select('*, profiles!user_id(name,email,phone)').order('created_at',{ascending:false}).limit(1000);
       if (search)         q = q.or('company.ilike.%' + search + '%');
       if (filterVerified) q = q.eq('ninea_verified', filterVerified === 'true');
-      const { data: all } = await q;
+      const { data: all, error: exportErr } = await q;
+      if (exportErr && (exportErr.code === '42P01' || exportErr.message?.includes('does not exist'))) {
+        addToast('Table b2b_buyers introuvable — créez-la via le script SQL dans Admin → SQL', 'warning', 7000);
+        setExporting(false); return;
+      }
       const rows = [
         'Entreprise,NINEA,RC,Responsable,Email,Téléphone,Adresse,NINEA vérifié,Date inscription'
       ];
-      all.forEach(b => rows.push([
+      (all || []).forEach(b => rows.push([
         b.company || '', b.ninea || '', b.rc || '',
         b.profiles?.name || '', b.profiles?.email || '',
         b.profiles?.phone || '', (b.address || '').replace(/,/g,' '),
