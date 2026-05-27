@@ -15613,6 +15613,7 @@ const AdminB2BPanel = ({ addToast }) => {
   const [page, setPage]         = useState(1);
   const [noteModal, setNoteModal] = useState(null); // { userId, company, currentNote }
   const [noteText, setNoteText] = useState('');
+  const [tableMissing, setTableMissing] = useState(false);
   const [suspendModal, setSuspendModal] = useState(null); // { userId, company }
   const [loading, setLoading]   = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -15630,7 +15631,7 @@ const AdminB2BPanel = ({ addToast }) => {
     try {
       // Vérifier que la table existe avant de requêter
       const probe = await DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}).limit(1);
-      if (probe.status === 404 || (probe.error && probe.error.code === '42P01')) { return; }
+      if (probe.status === 404 || (probe.error && probe.error.code === '42P01')) { setTableMissing(true); return; }
       const [all, verified, newMonth] = await Promise.all([
         DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}),
         DataService._sb.from('b2b_buyers').select('id', {count:'exact',head:true}).eq('ninea_verified', true),
@@ -15726,6 +15727,28 @@ const AdminB2BPanel = ({ addToast }) => {
   const totalPages = Math.ceil(total / LIMIT);
 
   return React.createElement(React.Fragment, null,
+    // Bandeau table manquante
+    tableMissing && React.createElement('div', {
+      style: { background: 'rgba(220,38,38,0.07)', border: '2px solid rgba(220,38,38,0.35)', borderRadius: '12px', padding: '1.25rem 1.5rem', marginBottom: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'flex-start' }
+    },
+      React.createElement('i', { className: 'fas fa-exclamation-triangle', style: { color: '#dc2626', fontSize: '1.4rem', marginTop: '0.1rem', flexShrink: 0 } }),
+      React.createElement('div', null,
+        React.createElement('div', { style: { fontWeight: 700, color: '#dc2626', marginBottom: '0.35rem' } }, 'Table b2b_buyers introuvable dans Supabase'),
+        React.createElement('div', { style: { fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' } },
+          'La table n\'existe pas encore dans votre base de données. Copiez le script SQL ci-dessous et exécutez-le dans ', React.createElement('strong', null, 'Supabase Dashboard → SQL Editor.')
+        ),
+        React.createElement('div', { style: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' } },
+          React.createElement('a', {
+            href: 'https://supabase.com/dashboard', target: '_blank',
+            className: 'btn btn-primary btn-sm'
+          }, React.createElement('i', { className: 'fas fa-external-link-alt' }), ' Ouvrir SQL Editor'),
+          React.createElement('button', {
+            className: 'btn btn-secondary btn-sm',
+            onClick: () => { const el = document.querySelector('[data-sql-b2b]'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }
+          }, React.createElement('i', { className: 'fas fa-scroll' }), ' Voir le script → Admin → SQL')
+        )
+      )
+    ),
     // Stats cards
     React.createElement('div', { className:'stats-grid', style:{marginBottom:'1.5rem'} },
       [
@@ -16550,11 +16573,14 @@ const Phase0ConfigPanel = ({ addToast }) => {
 const SqlScriptsPanel = () => {
   const [_copiedAx, _setCopiedAx] = React.useState(false);
   const [_copiedBo, _setCopiedBo] = React.useState(false);
+  const [_copiedB2b, _setCopiedB2b] = React.useState(false);
   const E = React.createElement;
 
   const SQL_EXPRESS = `-- TABLE annonces_express (Annonces sans inscription)\nCREATE TABLE IF NOT EXISTS annonces_express (\n  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),\n  photo_url   text,\n  price_fcfa  integer     NOT NULL CHECK (price_fcfa >= 100),\n  category    text        NOT NULL DEFAULT 'autres',\n  description text,\n  phone       text        NOT NULL,\n  email       text,\n  city        text        NOT NULL DEFAULT 'Dakar',\n  status      text        NOT NULL DEFAULT 'active'\n              CHECK (status IN ('active','expired','deleted','pending')),\n  created_at  timestamptz NOT NULL DEFAULT now(),\n  expires_at  timestamptz NOT NULL DEFAULT (now() + INTERVAL '30 days'),\n  views_count     integer NOT NULL DEFAULT 0,\n  whatsapp_clicks integer NOT NULL DEFAULT 0\n);\nALTER TABLE annonces_express ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "ae_public_read"   ON annonces_express FOR SELECT USING (status = 'active' AND expires_at > now());\nCREATE POLICY "ae_public_insert" ON annonces_express FOR INSERT WITH CHECK (true);`;
 
   const SQL_BOOSTS = `-- TABLE product_boosts + invoice_sequences\nCREATE TABLE IF NOT EXISTS product_boosts (\n  id             uuid  PRIMARY KEY DEFAULT gen_random_uuid(),\n  product_id     text  NOT NULL,\n  vendor_id      uuid  REFERENCES auth.users(id) ON DELETE CASCADE,\n  boost_type     text  NOT NULL CHECK (boost_type IN ('top_3j','boost_semaine','boost_mensuel','pro_mensuel','pro_annuel')),\n  price_fcfa     integer NOT NULL,\n  started_at     timestamptz NOT NULL DEFAULT now(),\n  ends_at        timestamptz NOT NULL,\n  active         boolean NOT NULL DEFAULT true,\n  payment_method text,\n  payment_ref    text,\n  payment_status text NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending','paid','failed','refunded'))\n);\nALTER TABLE products ADD COLUMN IF NOT EXISTS is_boosted    boolean DEFAULT false;\nALTER TABLE products ADD COLUMN IF NOT EXISTS boost_ends_at timestamptz;\nCREATE TABLE IF NOT EXISTS invoice_sequences (\n  prefix TEXT NOT NULL, year SMALLINT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY (prefix, year)\n);\nCREATE OR REPLACE FUNCTION invoice_next_seq(p_prefix TEXT, p_year SMALLINT)\nRETURNS INTEGER LANGUAGE plpgsql AS $$\nDECLARE next_val INTEGER;\nBEGIN\n  INSERT INTO invoice_sequences(prefix,year,last_seq) VALUES(p_prefix,p_year,1)\n    ON CONFLICT(prefix,year) DO UPDATE SET last_seq = invoice_sequences.last_seq+1\n    RETURNING last_seq INTO next_val;\n  RETURN next_val;\nEND; $$;`;
+
+  const SQL_B2B = `-- TABLE b2b_buyers — Acheteurs professionnels (NINEA, RC, vérification admin)\nCREATE TABLE IF NOT EXISTS b2b_buyers (\n  id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id         uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,\n  company         text        NOT NULL,\n  ninea           text,\n  rc              text,\n  address         text,\n  website         text,\n  ninea_verified  boolean     NOT NULL DEFAULT false,\n  admin_note      text,\n  verified_at     timestamptz,\n  created_at      timestamptz NOT NULL DEFAULT now(),\n  updated_at      timestamptz NOT NULL DEFAULT now()\n);\nCREATE UNIQUE INDEX IF NOT EXISTS b2b_buyers_user_id_idx ON b2b_buyers (user_id);\nALTER TABLE b2b_buyers ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "b2b_buyer_select_own" ON b2b_buyers FOR SELECT USING (auth.uid() = user_id);\nCREATE POLICY "b2b_buyer_insert_own" ON b2b_buyers FOR INSERT WITH CHECK (auth.uid() = user_id);\nCREATE POLICY "b2b_buyer_update_own" ON b2b_buyers FOR UPDATE USING (auth.uid() = user_id);\nCREATE POLICY "b2b_admin_all"        ON b2b_buyers FOR ALL USING (\n  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')\n);\n-- Trigger updated_at automatique\nCREATE OR REPLACE FUNCTION update_b2b_buyers_updated_at()\nRETURNS TRIGGER LANGUAGE plpgsql AS $$\nBEGIN NEW.updated_at = now(); RETURN NEW; END; $$;\nDROP TRIGGER IF EXISTS trg_b2b_buyers_updated_at ON b2b_buyers;\nCREATE TRIGGER trg_b2b_buyers_updated_at\n  BEFORE UPDATE ON b2b_buyers\n  FOR EACH ROW EXECUTE FUNCTION update_b2b_buyers_updated_at();\n-- Vue agrégée pour l'admin (join profiles)\nCREATE OR REPLACE VIEW b2b_buyers_admin AS\n  SELECT b.*, p.name, p.email, p.phone, p.avatar\n  FROM b2b_buyers b\n  LEFT JOIN profiles p ON p.id = b.user_id;`;
 
   const copy = (sql, set) => {
     navigator.clipboard.writeText(sql).then(() => { set(true); setTimeout(() => set(false), 2500); });
@@ -16586,6 +16612,15 @@ const SqlScriptsPanel = () => {
           )
         ),
         E('pre', { style:{ background:'#1e1e2e', color:'#89b4fa', borderRadius:'10px', padding:'1rem', fontSize:'.7rem', overflowX:'auto', maxHeight:'160px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_BOOSTS)
+      ),
+      E('div', null,
+        E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'.5rem', flexWrap:'wrap', gap:'.5rem' } },
+          E('h3', { style:{ fontWeight:700, fontSize:'.9rem', color:'#0284c7' } }, '\uD83C\uDFE2 3. b2b_buyers'),
+          E('button', { className:'btn btn-sm btn-'+(_copiedB2b?'success':'primary'), onClick:() => copy(SQL_B2B, _setCopiedB2b) },
+            E('i',{className:'fas fa-'+(_copiedB2b?'check':'copy')}), ' ', _copiedB2b?'Copi\u00e9 !':'Copier'
+          )
+        ),
+        E('pre', { style:{ background:'#1e1e2e', color:'#7dd3fc', borderRadius:'10px', padding:'1rem', fontSize:'.7rem', overflowX:'auto', maxHeight:'200px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_B2B)
       ),
       E('a', { href:'https://supabase.com/dashboard', target:'_blank', className:'btn btn-secondary', style:{ alignSelf:'flex-start' } },
         E('i',{className:'fas fa-external-link-alt'}), ' Ouvrir Supabase Dashboard'
