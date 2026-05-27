@@ -8489,6 +8489,55 @@ const ReferralWidget = ({ currentUser: currentUser2, compact = false }) => {
     "3\uFE0F\u20E3  Vous recevez automatiquement votre r\xE9compense"
   ].map((s, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "0.35rem 0", color: "var(--text-secondary)", borderBottom: i < 2 ? "1px solid var(--border)" : "none" } }, s))));
 };
+// ─── B2BUpgradeForm — formulaire d'inscription acheteur pro ──────────────────
+const B2BUpgradeForm = ({ currentUser: currentUser2, addToast }) => {
+  const [b2bForm, setB2bForm] = useState({ company: '', ninea: '', rc: '', address: '' });
+  const [b2bSaving, setB2bSaving] = useState(false);
+  const [b2bDone, setB2bDone] = useState(false);
+  const submit = async () => {
+    if (!b2bForm.company.trim()) { addToast("Nom de l'entreprise requis", "warning"); return; }
+    setB2bSaving(true);
+    try {
+      if (DataService._sb) {
+        await DataService._sb.from('b2b_buyers').upsert(
+          { user_id: currentUser2.id, ...b2bForm, created_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        );
+      }
+      setB2bDone(true);
+      addToast("✅ Demande Pro B2B envoyée ! Vérification NINEA sous 24h.", "success", 6000);
+    } catch(e) { addToast("Erreur : " + e.message, "error"); }
+    setB2bSaving(false);
+  };
+  if (b2bDone) return /* @__PURE__ */ React.createElement("div", { style: { textAlign:"center", padding:"2rem" } },
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize:"3rem", marginBottom:".5rem" } }, "✅"),
+    /* @__PURE__ */ React.createElement("div", { style: { fontWeight:700, color:"var(--primary)" } }, "Demande envoyée !"),
+    /* @__PURE__ */ React.createElement("p", { style: { color:"var(--text-secondary)", marginTop:".4rem", fontSize:".88rem" } }, "Notre équipe vérifie votre NINEA sous 24h.")
+  );
+  return /* @__PURE__ */ React.createElement(React.Fragment, null,
+    /* @__PURE__ */ React.createElement("div", { className:"form-group" },
+      /* @__PURE__ */ React.createElement("label", { className:"form-label" }, "Nom de l'entreprise ", /* @__PURE__ */ React.createElement("span", { className:"required" }, "*")),
+      /* @__PURE__ */ React.createElement("input", { type:"text", className:"form-input", value:b2bForm.company, onChange:e=>setB2bForm(f=>({...f,company:e.target.value})), placeholder:"SARL Mon Entreprise" })
+    ),
+    /* @__PURE__ */ React.createElement("div", { className:"form-row" },
+      /* @__PURE__ */ React.createElement("div", { className:"form-group" },
+        /* @__PURE__ */ React.createElement("label", { className:"form-label" }, "NINEA"),
+        /* @__PURE__ */ React.createElement("input", { type:"text", className:"form-input", value:b2bForm.ninea, onChange:e=>setB2bForm(f=>({...f,ninea:e.target.value})), placeholder:"12345678 2A3" })
+      ),
+      /* @__PURE__ */ React.createElement("div", { className:"form-group" },
+        /* @__PURE__ */ React.createElement("label", { className:"form-label" }, "N° RC"),
+        /* @__PURE__ */ React.createElement("input", { type:"text", className:"form-input", value:b2bForm.rc, onChange:e=>setB2bForm(f=>({...f,rc:e.target.value})), placeholder:"SN DKR 2024 B12345" })
+      )
+    ),
+    /* @__PURE__ */ React.createElement("div", { className:"form-group" },
+      /* @__PURE__ */ React.createElement("label", { className:"form-label" }, "Adresse professionnelle"),
+      /* @__PURE__ */ React.createElement("input", { type:"text", className:"form-input", value:b2bForm.address, onChange:e=>setB2bForm(f=>({...f,address:e.target.value})), placeholder:"12 Rue du Commerce, Dakar" })
+    ),
+    /* @__PURE__ */ React.createElement("button", { className:`btn btn-primary btn-block${b2bSaving?" btn-loading":""}`, onClick:submit, disabled:b2bSaving },
+      b2bSaving ? "Envoi en cours…" : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className:"fas fa-building" }), " Soumettre ma demande Pro B2B")
+    )
+  );
+};
 // ─── AmbassadorPanel — vue programme ambassadeur pour les acheteurs ──────────
 const AmbassadorPanel = ({ currentUser: currentUser2, addToast }) => {
   const [ambData, setAmbData]   = React.useState(null);
@@ -16639,6 +16688,8 @@ const SqlScriptsPanel = () => {
   const [_copiedAx, _setCopiedAx] = React.useState(false);
   const [_copiedBo, _setCopiedBo] = React.useState(false);
   const [_copiedB2b, _setCopiedB2b] = React.useState(false);
+  const [_copiedSl, _setCopiedSl] = React.useState(false);
+  const [_copiedVdm, _setCopiedVdm] = React.useState(false);
   const E = React.createElement;
 
   const SQL_EXPRESS = `-- TABLE annonces_express (Annonces sans inscription)\nCREATE TABLE IF NOT EXISTS annonces_express (\n  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),\n  photo_url   text,\n  price_fcfa  integer     NOT NULL CHECK (price_fcfa >= 100),\n  category    text        NOT NULL DEFAULT 'autres',\n  description text,\n  phone       text        NOT NULL,\n  email       text,\n  city        text        NOT NULL DEFAULT 'Dakar',\n  status      text        NOT NULL DEFAULT 'active'\n              CHECK (status IN ('active','expired','deleted','pending')),\n  created_at  timestamptz NOT NULL DEFAULT now(),\n  expires_at  timestamptz NOT NULL DEFAULT (now() + INTERVAL '30 days'),\n  views_count     integer NOT NULL DEFAULT 0,\n  whatsapp_clicks integer NOT NULL DEFAULT 0\n);\nALTER TABLE annonces_express ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "ae_public_read"   ON annonces_express FOR SELECT USING (status = 'active' AND expires_at > now());\nCREATE POLICY "ae_public_insert" ON annonces_express FOR INSERT WITH CHECK (true);`;
@@ -16646,6 +16697,10 @@ const SqlScriptsPanel = () => {
   const SQL_BOOSTS = `-- TABLE product_boosts + invoice_sequences\nCREATE TABLE IF NOT EXISTS product_boosts (\n  id             uuid  PRIMARY KEY DEFAULT gen_random_uuid(),\n  product_id     text  NOT NULL,\n  vendor_id      uuid  REFERENCES auth.users(id) ON DELETE CASCADE,\n  boost_type     text  NOT NULL CHECK (boost_type IN ('top_3j','boost_semaine','boost_mensuel','pro_mensuel','pro_annuel')),\n  price_fcfa     integer NOT NULL,\n  started_at     timestamptz NOT NULL DEFAULT now(),\n  ends_at        timestamptz NOT NULL,\n  active         boolean NOT NULL DEFAULT true,\n  payment_method text,\n  payment_ref    text,\n  payment_status text NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending','paid','failed','refunded'))\n);\nALTER TABLE products ADD COLUMN IF NOT EXISTS is_boosted    boolean DEFAULT false;\nALTER TABLE products ADD COLUMN IF NOT EXISTS boost_ends_at timestamptz;\nCREATE TABLE IF NOT EXISTS invoice_sequences (\n  prefix TEXT NOT NULL, year SMALLINT NOT NULL, last_seq INTEGER NOT NULL DEFAULT 0,\n  PRIMARY KEY (prefix, year)\n);\nCREATE OR REPLACE FUNCTION invoice_next_seq(p_prefix TEXT, p_year SMALLINT)\nRETURNS INTEGER LANGUAGE plpgsql AS $$\nDECLARE next_val INTEGER;\nBEGIN\n  INSERT INTO invoice_sequences(prefix,year,last_seq) VALUES(p_prefix,p_year,1)\n    ON CONFLICT(prefix,year) DO UPDATE SET last_seq = invoice_sequences.last_seq+1\n    RETURNING last_seq INTO next_val;\n  RETURN next_val;\nEND; $$;`;
 
   const SQL_B2B = `-- TABLE b2b_buyers — Acheteurs professionnels (NINEA, RC, vérification admin)\nCREATE TABLE IF NOT EXISTS b2b_buyers (\n  id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id         uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,\n  company         text        NOT NULL,\n  ninea           text,\n  rc              text,\n  address         text,\n  website         text,\n  ninea_verified  boolean     NOT NULL DEFAULT false,\n  admin_note      text,\n  verified_at     timestamptz,\n  created_at      timestamptz NOT NULL DEFAULT now(),\n  updated_at      timestamptz NOT NULL DEFAULT now()\n);\nCREATE UNIQUE INDEX IF NOT EXISTS b2b_buyers_user_id_idx ON b2b_buyers (user_id);\nALTER TABLE b2b_buyers ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "b2b_buyer_select_own" ON b2b_buyers FOR SELECT USING (auth.uid() = user_id);\nCREATE POLICY "b2b_buyer_insert_own" ON b2b_buyers FOR INSERT WITH CHECK (auth.uid() = user_id);\nCREATE POLICY "b2b_buyer_update_own" ON b2b_buyers FOR UPDATE USING (auth.uid() = user_id);\nCREATE POLICY "b2b_admin_all"        ON b2b_buyers FOR ALL USING (\n  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')\n);\n-- Trigger updated_at automatique\nCREATE OR REPLACE FUNCTION update_b2b_buyers_updated_at()\nRETURNS TRIGGER LANGUAGE plpgsql AS $$\nBEGIN NEW.updated_at = now(); RETURN NEW; END; $$;\nDROP TRIGGER IF EXISTS trg_b2b_buyers_updated_at ON b2b_buyers;\nCREATE TRIGGER trg_b2b_buyers_updated_at\n  BEFORE UPDATE ON b2b_buyers\n  FOR EACH ROW EXECUTE FUNCTION update_b2b_buyers_updated_at();\n-- Vue agrégée pour l'admin (join profiles)\nCREATE OR REPLACE VIEW b2b_buyers_admin AS\n  SELECT b.*, p.name, p.email, p.phone, p.avatar\n  FROM b2b_buyers b\n  LEFT JOIN profiles p ON p.id = b.user_id;`;
+
+  const SQL_SEARCH_LOGS = `-- TABLE search_logs — Historique des recherches + analytics\nCREATE TABLE IF NOT EXISTS search_logs (\n  id            bigserial   PRIMARY KEY,\n  query         text        NOT NULL,\n  results_count integer     NOT NULL DEFAULT 0,\n  user_id       uuid        REFERENCES auth.users(id) ON DELETE SET NULL,\n  created_at    timestamptz NOT NULL DEFAULT now()\n);\nCREATE INDEX IF NOT EXISTS search_logs_query_idx      ON search_logs (query);\nCREATE INDEX IF NOT EXISTS search_logs_created_at_idx ON search_logs (created_at DESC);\nALTER TABLE search_logs ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "sl_insert_anon"  ON search_logs FOR INSERT WITH CHECK (true);\nCREATE POLICY "sl_select_admin" ON search_logs FOR SELECT USING (\n  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')\n);\n-- Vue top 50 recherches des 30 derniers jours\nCREATE OR REPLACE VIEW search_popular AS\n  SELECT query, COUNT(*) AS freq, SUM(results_count) AS total_results\n  FROM search_logs\n  WHERE created_at > now() - INTERVAL '30 days'\n  GROUP BY query ORDER BY freq DESC LIMIT 50;`;
+
+  const SQL_VENDOR_METRICS = `-- VUE vendor_daily_metrics — Stats de ventes vendeur par jour\n-- Utilisée par VendorAnalyticsDashboard\nCREATE OR REPLACE VIEW vendor_daily_metrics AS\n  SELECT\n    vendor_id,\n    DATE(created_at)                                          AS date,\n    COUNT(*)                                                  AS orders_count,\n    COALESCE(SUM(total), 0)                                   AS revenue,\n    COALESCE(AVG(total), 0)                                   AS avg_basket,\n    COUNT(DISTINCT buyer_id)                                  AS unique_buyers,\n    COALESCE(SUM(CASE WHEN status = 'delivered' THEN total ELSE 0 END), 0) AS delivered_revenue,\n    COUNT(CASE WHEN status = 'cancelled' THEN 1 END)          AS cancelled_count\n  FROM orders\n  GROUP BY vendor_id, DATE(created_at);\n\n-- Index pour performances\nCREATE INDEX IF NOT EXISTS orders_vendor_date_idx\n  ON orders (vendor_id, created_at DESC);\n\n-- Vue matérialisée (optionnel, meilleures perfs sur gros volume)\n-- Rafraîchir avec : REFRESH MATERIALIZED VIEW CONCURRENTLY vendor_daily_metrics_mat\nCREATE MATERIALIZED VIEW IF NOT EXISTS vendor_daily_metrics_mat AS\n  SELECT * FROM vendor_daily_metrics;\nCREATE UNIQUE INDEX IF NOT EXISTS vdm_mat_pk\n  ON vendor_daily_metrics_mat (vendor_id, date);`;
 
   const copy = (sql, set) => {
     navigator.clipboard.writeText(sql).then(() => { set(true); setTimeout(() => set(false), 2500); });
@@ -16686,6 +16741,24 @@ const SqlScriptsPanel = () => {
           )
         ),
         E('pre', { style:{ background:'#1e1e2e', color:'#7dd3fc', borderRadius:'10px', padding:'1rem', fontSize:'.7rem', overflowX:'auto', maxHeight:'200px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_B2B)
+      ),
+      E('div', null,
+        E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'.5rem', flexWrap:'wrap', gap:'.5rem' } },
+          E('h3', { style:{ fontWeight:700, fontSize:'.9rem', color:'#7c3aed' } }, '\uD83D\uDD0D 4. search_logs'),
+          E('button', { className:'btn btn-sm btn-'+(_copiedSl?'success':'primary'), onClick:() => copy(SQL_SEARCH_LOGS, _setCopiedSl) },
+            E('i',{className:'fas fa-'+(_copiedSl?'check':'copy')}), ' ', _copiedSl?'Copi\u00e9 !':'Copier'
+          )
+        ),
+        E('pre', { style:{ background:'#1e1e2e', color:'#c4b5fd', borderRadius:'10px', padding:'1rem', fontSize:'.7rem', overflowX:'auto', maxHeight:'180px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_SEARCH_LOGS)
+      ),
+      E('div', null,
+        E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'.5rem', flexWrap:'wrap', gap:'.5rem' } },
+          E('h3', { style:{ fontWeight:700, fontSize:'.9rem', color:'#059669' } }, '\uD83D\uDCC8 5. vendor_daily_metrics'),
+          E('button', { className:'btn btn-sm btn-'+(_copiedVdm?'success':'primary'), onClick:() => copy(SQL_VENDOR_METRICS, _setCopiedVdm) },
+            E('i',{className:'fas fa-'+(_copiedVdm?'check':'copy')}), ' ', _copiedVdm?'Copi\u00e9 !':'Copier'
+          )
+        ),
+        E('pre', { style:{ background:'#1e1e2e', color:'#6ee7b7', borderRadius:'10px', padding:'1rem', fontSize:'.7rem', overflowX:'auto', maxHeight:'200px', overflowY:'auto', margin:0, whiteSpace:'pre' } }, SQL_VENDOR_METRICS)
       ),
       E('a', { href:'https://supabase.com/dashboard', target:'_blank', className:'btn btn-secondary', style:{ alignSelf:'flex-start' } },
         E('i',{className:'fas fa-external-link-alt'}), ' Ouvrir Supabase Dashboard'
@@ -16828,51 +16901,138 @@ const ServicesConfigPanel = ({ addToast }) => {
     setSmsTesting(false);
   };
   return E('div', { className:'card' },
-    E('div', { className:'card-header' }, E('h2', { className:'card-title' },
-
-      E('div', { className:'card-header' }, E('h2', { className:'card-title' }, "Configuration Syst\xE8me")), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Base de donn\xE9es"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_SUPABASE_CONFIGURED ? NEXUS_CONFIG.supabase.url : "localStorage (mode d\xE9monstration)")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_SUPABASE_CONFIGURED ? "success" : "warning"}` }, IS_SUPABASE_CONFIGURED ? "Supabase actif" : "localStorage")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Paiements Stripe"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_STRIPE_CONFIGURED ? NEXUS_CONFIG.stripe.publishableKey.slice(0, 20) + "..." : "Mode simulation uniquement")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_STRIPE_CONFIGURED ? "success" : "warning"}` }, IS_STRIPE_CONFIGURED ? "Stripe actif" : "Simulation")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem", background: "var(--bg-light)", borderRadius: "12px", marginBottom: "1rem" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700 } }, "Emails (EmailJS)"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, IS_EMAILJS_CONFIGURED ? `Service: ${NEXUS_CONFIG.emailjs.serviceId}` : "Mode journalisation locale")), /* @__PURE__ */ React.createElement("span", { className: `badge badge-${IS_EMAILJS_CONFIGURED ? "success" : "warning"}` }, IS_EMAILJS_CONFIGURED ? "EmailJS actif" : "Simulation"))), /* @__PURE__ */ React.createElement("div", { className: "flex gap-2" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary flex-1", onClick: () => {
-    try { localStorage.removeItem("nexus_setup_done"); sessionStorage.removeItem("nexus_ss_nexus_setup_done"); } catch(_) {}
-    window.location.reload();
-  } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cog" }), " Reconfigurer les services"),
-  E('div', { style:{marginTop:'1rem', padding:'1rem', background:'var(--bg-light)', borderRadius:'10px'} },
-    E('div', {style:{fontWeight:700,marginBottom:'.5rem',fontSize:'.9rem'}}, '📱 Tester l\'envoi SMS'),
-    E('div', {style:{display:'flex', gap:'.5rem', flexWrap:'wrap'}},
-      E('input', { type:'tel', className:'form-input', placeholder:'77 123 45 67', value: smsTestPhone,
-        onChange: ev => setSmsTestPhone(ev.target.value), style:{flex:1,minWidth:140} }),
-      E('button', { className:'btn btn-primary btn-sm', onClick: testSms, disabled: smsTesting },
-        smsTesting ? E('i',{className:'fas fa-spinner fa-spin'}) : E('i',{className:'fas fa-paper-plane'}),
-        ' ', smsTesting ? 'Envoi…' : 'Tester SMS'
-      )
+    E('div', { className:'card-header' },
+      E('h2', { className:'card-title' }, E('i',{className:'fas fa-cogs text-primary'}), ' Configuration Système')
     ),
-    E('p', {style:{fontSize:'.75rem',color:'var(--text-secondary)',marginTop:'.35rem'}},
-      'Envoi un OTP fictif (123456) au numéro. Confirme que l\'API SMS est bien configurée.')
-  ),
-  /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => {
-    // [FIX] Modale React avec double confirmation — confirm() natif retiré
-    const modal = document.createElement('div');
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
-    modal.innerHTML = `<div style="background:var(--bg-card,#1e1e2e);border:2px solid #ef4444;border-radius:16px;padding:2rem;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
-      <h3 style="color:#ef4444;margin:0 0 .75rem;font-size:1.1rem">⚠️ Réinitialisation complète</h3>
-      <p style="color:var(--text-secondary,#aaa);margin:0 0 1.25rem;font-size:.9rem">Cette action supprime <strong>toutes</strong> les données locales de manière <strong>irréversible</strong>.<br><br>Tapez <code style="background:#2a2a3e;padding:2px 6px;border-radius:4px;color:#ef4444">RESET</code> pour confirmer :</p>
-      <input id="_resetInput" type="text" placeholder="RESET" autocomplete="off"
-        style="width:100%;padding:.6rem .85rem;border-radius:8px;border:1px solid #444;background:#2a2a3e;color:#fff;font-size:1rem;box-sizing:border-box;margin-bottom:1rem">
-      <div style="display:flex;gap:.75rem;justify-content:flex-end">
-        <button id="_resetCancel" style="padding:.5rem 1.2rem;border-radius:8px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;font-size:.9rem">Annuler</button>
-        <button id="_resetConfirm" style="padding:.5rem 1.2rem;border-radius:8px;border:none;background:#ef4444;color:#fff;cursor:pointer;font-size:.9rem;opacity:.4" disabled>Réinitialiser</button>
-      </div></div>`;
-    document.body.appendChild(modal);
-    const inp = modal.querySelector('#_resetInput');
-    const btn = modal.querySelector('#_resetConfirm');
-    inp.addEventListener('input', () => { const ok = inp.value === 'RESET'; btn.disabled = !ok; btn.style.opacity = ok ? '1' : '.4'; });
-    modal.querySelector('#_resetCancel').addEventListener('click', () => document.body.removeChild(modal));
-    btn.addEventListener('click', () => { document.body.removeChild(modal); // Effacement des données session mémoire + sessionStorage
-_memStore.clear(); 
-['nexus_ss_guest_cart','nexus_ss_cookie_consent','nexus_ss_onboarding_done','nexus_ss_nexus_setup_done'].forEach(k => { try { sessionStorage.removeItem(k); } catch(e){} });
-window.location.reload(); });
-    inp.focus();
-  } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-trash" }), " Reset données")))
-  ));
+    E('div', { style:{padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem'} },
+      E('div', { style:{marginBottom:'.5rem'} },
+        ['Base de données', 'Paiements Stripe', 'Emails (EmailJS)'].map((label, i) => {
+          const ok = [IS_SUPABASE_CONFIGURED, IS_STRIPE_CONFIGURED, IS_EMAILJS_CONFIGURED][i];
+          const sub = [
+            ok ? NEXUS_CONFIG.supabase.url : 'localStorage (mode démonstration)',
+            ok ? NEXUS_CONFIG.stripe.publishableKey.slice(0,20)+'...' : 'Mode simulation uniquement',
+            ok ? 'Service: '+NEXUS_CONFIG.emailjs.serviceId : 'Mode journalisation locale',
+          ][i];
+          return E('div', { key:i, style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'1rem',background:'var(--bg-light)',borderRadius:'12px',marginBottom:'.75rem'} },
+            E('div', null,
+              E('div', {style:{fontWeight:700}}, label),
+              E('div', {style:{fontSize:'.82rem',color:'var(--text-secondary)'}}, sub)
+            ),
+            E('span', { className:`badge badge-${ok?'success':'warning'}` }, ok ? label.split(' ')[0]+' actif' : 'Simulation')
+          );
+        })
+      ),
+      /* SMS Test */
+      E('div', { style:{padding:'1rem',background:'var(--bg-light)',borderRadius:'10px'} },
+        E('div', {style:{fontWeight:700,marginBottom:'.5rem',fontSize:'.9rem'}}, '📱 Tester l\'envoi SMS'),
+        E('div', {style:{display:'flex',gap:'.5rem',flexWrap:'wrap'}},
+          E('input', { type:'tel', className:'form-input', placeholder:'77 123 45 67', value:smsTestPhone,
+            onChange: ev => setSmsTestPhone(ev.target.value), style:{flex:1,minWidth:140} }),
+          E('button', { className:'btn btn-primary btn-sm', onClick:testSms, disabled:smsTesting },
+            smsTesting ? E('i',{className:'fas fa-spinner fa-spin'}) : E('i',{className:'fas fa-paper-plane'}),
+            ' ', smsTesting ? 'Envoi…' : 'Tester SMS'
+          )
+        ),
+        E('p', {style:{fontSize:'.75rem',color:'var(--text-secondary)',marginTop:'.35rem'}},
+          'Envoie un OTP fictif (123456). Confirme que l\'API SMS est bien configurée.')
+      ),
+      /* Buttons */
+      E('div', { className:'flex gap-2', style:{flexWrap:'wrap'} },
+        E('button', { className:'btn btn-secondary flex-1', onClick:() => {
+          try { localStorage.removeItem('nexus_setup_done'); sessionStorage.removeItem('nexus_ss_nexus_setup_done'); } catch(_) {}
+          window.location.reload();
+        } }, E('i',{className:'fas fa-cog'}), ' Reconfigurer les services'),
+        E('a', { href:'https://supabase.com/dashboard', target:'_blank', className:'btn btn-secondary btn-sm' },
+          E('i',{className:'fas fa-database'}), ' Supabase'
+        ),
+        E('button', { className:'btn btn-danger btn-sm', onClick:() => {
+          const modal = document.createElement('div');
+          modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+          modal.innerHTML = `<div style="background:var(--bg-card,#1e1e2e);border:2px solid #ef4444;border-radius:16px;padding:2rem;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)"><h3 style="color:#ef4444;margin:0 0 .75rem;font-size:1.1rem">⚠️ Réinitialisation complète</h3><p style="color:var(--text-secondary,#aaa);margin:0 0 1.25rem;font-size:.9rem">Cette action supprime <strong>toutes</strong> les données locales de manière <strong>irréversible</strong>.<br><br>Tapez <code style="background:#2a2a3e;padding:2px 6px;border-radius:4px;color:#ef4444">RESET</code> pour confirmer :</p><input id="_resetInput" type="text" placeholder="RESET" autocomplete="off" style="width:100%;padding:.6rem .85rem;border-radius:8px;border:1px solid #444;background:#2a2a3e;color:#fff;font-size:1rem;box-sizing:border-box;margin-bottom:1rem"><div style="display:flex;gap:.75rem;justify-content:flex-end"><button id="_resetCancel" style="padding:.5rem 1.2rem;border-radius:8px;border:1px solid #555;background:transparent;color:#aaa;cursor:pointer;font-size:.9rem">Annuler</button><button id="_resetConfirm" style="padding:.5rem 1.2rem;border-radius:8px;border:none;background:#ef4444;color:#fff;cursor:pointer;font-size:.9rem;opacity:.4" disabled>Réinitialiser</button></div></div>`;
+          document.body.appendChild(modal);
+          const inp = modal.querySelector('#_resetInput');
+          const btn = modal.querySelector('#_resetConfirm');
+          inp.addEventListener('input', () => { const ok = inp.value === 'RESET'; btn.disabled = !ok; btn.style.opacity = ok?'1':'.4'; });
+          modal.querySelector('#_resetCancel').addEventListener('click', () => document.body.removeChild(modal));
+          btn.addEventListener('click', () => { document.body.removeChild(modal); _memStore.clear(); ['nexus_ss_guest_cart','nexus_ss_cookie_consent','nexus_ss_onboarding_done','nexus_ss_nexus_setup_done'].forEach(k => { try { sessionStorage.removeItem(k); } catch(e){} }); window.location.reload(); });
+          inp.focus();
+        } }, E('i',{className:'fas fa-trash'}), ' Reset données')
+      )
+    )
+  );
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// BackendSetupPanel — Guide de configuration backend (Admin → Config)
+// ════════════════════════════════════════════════════════════════════════════
+const BackendSetupPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const [openSection, setOpenSection] = React.useState(null);
+  const toggle = (k) => setOpenSection(v => v === k ? null : k);
+
+  const STATUS = {
+    push:    !!(window.NEXUS_CONFIG?.push?.publicKey && window.NEXUS_CONFIG.push.publicKey.length > 10),
+    emailjs: !!(window.IS_EMAILJS_CONFIGURED),
+    stripe:  !!(window.IS_STRIPE_CONFIGURED),
+    paytech: !!(window.NEXUS_CONFIG?.paytech?.apiKey),
+  };
+
+  const sections = [
+    {
+      key:'push', icon:'bell', color:'#7c3aed', title:'Notifications Push VAPID', status:STATUS.push?'ok':'missing',
+      steps:['1. Générer les clés : npx web-push generate-vapid-keys','2. Créer la table Supabase push_subscriptions (SQL ci-dessous)','3. Déployer functions/api/push.js dans Cloudflare Pages','4. Cloudflare → Settings → Variables : VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, SUPABASE_URL, SUPABASE_SERVICE_KEY','5. Copier VAPID_PUBLIC_KEY dans Admin → Config → Clé publique VAPID'],
+      sql:`CREATE TABLE IF NOT EXISTS push_subscriptions (\n  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id     uuid REFERENCES auth.users(id) ON DELETE CASCADE,\n  subscription jsonb NOT NULL,\n  created_at  timestamptz DEFAULT now()\n);\nALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "ps_own" ON push_subscriptions FOR ALL USING (auth.uid() = user_id);`,
+    },
+    {
+      key:'emailjs', icon:'envelope', color:'#d97706', title:'EmailJS — Emails transactionnels', status:STATUS.emailjs?'ok':'missing',
+      steps:['1. Créer un compte gratuit sur emailjs.com (200 emails/mois)','2. Email Services → Add New Service (Gmail/Outlook/SMTP)','3. Email Templates → Create ×3 : order_confirmation, password_reset, vendor_new_order','4. Account → API Keys → copier la Public Key','5. Admin → Config → EmailJS : remplir Public Key, Service ID, 3 Template IDs'],
+      link:'https://www.emailjs.com',
+    },
+    {
+      key:'stripe', icon:'credit-card', color:'#2563eb', title:'Stripe — Paiement carte bancaire', status:STATUS.stripe?'ok':'missing',
+      steps:['1. Créer un compte sur stripe.com','2. Dashboard → Developers → API keys → copier Publishable key et Secret key','3. Admin → Config → Stripe : coller la Publishable key','4. Stripe → Webhooks → Add endpoint : .../api/webhooks/stripe','5. Cloudflare → Variables : STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET'],
+      link:'https://stripe.com',
+    },
+    {
+      key:'paytech', icon:'mobile-alt', color:'#059669', title:'PayTech Mobile Money', status:STATUS.paytech?'ok':'missing',
+      steps:['1. Créer un compte marchand sur dashboard.paytech.sn','2. API → Générer API Key + API Secret','3. Déployer functions/api/payments/paytech.js dans Cloudflare Pages','4. Cloudflare → Variables : PAYTECH_API_KEY, PAYTECH_API_SECRET, PAYTECH_ENV=prod, SITE_URL','5. IPN URL dans PayTech Dashboard : .../api/payments/paytech'],
+      link:'https://dashboard.paytech.sn',
+    },
+    {
+      key:'oauth', icon:'sign-in-alt', color:'#db2777', title:'OAuth Google / GitHub', status:'missing',
+      steps:['Google : console.cloud.google.com → Credentials → OAuth 2.0 → Authorized redirect URI = https://xxx.supabase.co/auth/v1/callback','GitHub : Settings → Developer settings → OAuth Apps → Callback URL = https://xxx.supabase.co/auth/v1/callback','Puis : Supabase Dashboard → Authentication → Providers → activer Google/GitHub → coller Client ID et Secret'],
+      link:'https://supabase.com/dashboard',
+    },
+  ];
+
+  return E('div', { className:'card', style:{marginBottom:'1.5rem'} },
+    E('div', { className:'card-header' }, E('h2', { className:'card-title' }, E('i',{className:'fas fa-tools text-primary'}), ' Configuration Backend')),
+    E('div', { style:{padding:'1rem'} },
+      E('div', { className:'alert alert-warning', style:{marginBottom:'1rem',fontSize:'.82rem'} },
+        E('i',{className:'fas fa-info-circle'}), ' Services externes à configurer. Cliquez pour afficher les instructions.'
+      ),
+      sections.map(s => E('div', { key:s.key, style:{marginBottom:'.5rem',border:'1px solid var(--border)',borderRadius:'10px',overflow:'hidden'} },
+        E('button', { style:{width:'100%',display:'flex',alignItems:'center',gap:'.75rem',padding:'.85rem 1rem',background:openSection===s.key?'var(--bg-light)':'transparent',border:'none',cursor:'pointer',textAlign:'left'}, onClick:()=>toggle(s.key) },
+          E('span',{style:{width:26,height:26,borderRadius:'50%',background:s.color+'22',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}, E('i',{className:`fas fa-${s.icon}`,style:{color:s.color,fontSize:'.78rem'}})),
+          E('span',{style:{flex:1,fontWeight:600,fontSize:'.88rem'}}, s.title),
+          E('span',{className:`badge badge-${s.status==='ok'?'success':'warning'}`,style:{fontSize:'.7rem'}}, s.status==='ok'?'✅ Configuré':'⚠️ À faire'),
+          E('i',{className:`fas fa-chevron-${openSection===s.key?'up':'down'}`,style:{color:'var(--text-secondary)',fontSize:'.75rem',marginLeft:'.5rem'}})
+        ),
+        openSection===s.key && E('div',{style:{padding:'1rem',borderTop:'1px solid var(--border)',background:'var(--bg-light)'}},
+          E('ol',{style:{paddingLeft:'1.2rem',fontSize:'.82rem',lineHeight:2,color:'var(--text-secondary)',margin:'0 0 .75rem'}},
+            s.steps.map((step,i)=>E('li',{key:i},step))
+          ),
+          s.sql && E('div',null,
+            E('pre',{style:{background:'#1e1e2e',color:'#a6e3a1',borderRadius:'8px',padding:'.75rem',fontSize:'.68rem',overflowX:'auto',margin:'0 0 .5rem',whiteSpace:'pre'}},s.sql),
+            E('button',{className:'btn btn-sm btn-secondary',onClick:()=>navigator.clipboard.writeText(s.sql).then(()=>addToast('SQL copié !','success')).catch(()=>{})}, E('i',{className:'fas fa-copy'}), ' Copier SQL')
+          ),
+          s.link && E('a',{href:s.link,target:'_blank',className:'btn btn-primary btn-sm',style:{marginTop:s.sql?'.5rem':'0'}}, E('i',{className:'fas fa-external-link-alt'}), ' Ouvrir ', new URL(s.link).hostname)
+        )
+      ))
+    )
+  );
+};
+
 const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -19597,7 +19757,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
@@ -26648,49 +26808,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       )
     ),
     (() => {
-      const [b2bForm, setB2bForm] = React.useState({ company: '', ninea: '', rc: '', address: '' });
-      const [b2bSaving, setB2bSaving] = React.useState(false);
-      const [b2bDone, setB2bDone] = React.useState(false);
-      const submit = async () => {
-        if (!b2bForm.company.trim()) { addToast("Nom de l'entreprise requis", "warning"); return; }
-        setB2bSaving(true);
-        try {
-          if (DataService._sb) {
-            await DataService._sb.from('b2b_buyers').upsert({ user_id: currentUser2.id, ...b2bForm, created_at: new Date().toISOString() }, { onConflict: 'user_id' });
-          }
-          setB2bDone(true);
-          addToast("✅ Demande Pro B2B envoyée ! Vérification NINEA sous 24h.", "success", 6000);
-        } catch(e) { addToast("Erreur : " + e.message, "error"); }
-        setB2bSaving(false);
-      };
-      if (b2bDone) return /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "2rem" } },
-        /* @__PURE__ */ React.createElement("div", { style: { fontSize: "3rem", marginBottom: ".5rem" } }, "✅"),
-        /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: "var(--primary)" } }, "Demande envoyée !"),
-        /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginTop: ".4rem", fontSize: ".88rem" } }, "Notre équipe vérifie votre NINEA sous 24h. Vous recevrez une notification par email.")
-      );
-      return /* @__PURE__ */ React.createElement(React.Fragment, null,
-        /* @__PURE__ */ React.createElement("div", { className: "form-group" },
-          /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Nom de l'entreprise ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")),
-          /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: b2bForm.company, onChange: e => setB2bForm(f => ({...f, company: e.target.value})), placeholder: "SARL Mon Entreprise" })
-        ),
-        /* @__PURE__ */ React.createElement("div", { className: "form-row" },
-          /* @__PURE__ */ React.createElement("div", { className: "form-group" },
-            /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "NINEA"),
-            /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: b2bForm.ninea, onChange: e => setB2bForm(f => ({...f, ninea: e.target.value})), placeholder: "12345678 2A3" })
-          ),
-          /* @__PURE__ */ React.createElement("div", { className: "form-group" },
-            /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "N° RC"),
-            /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: b2bForm.rc, onChange: e => setB2bForm(f => ({...f, rc: e.target.value})), placeholder: "SN DKR 2024 B12345" })
-          )
-        ),
-        /* @__PURE__ */ React.createElement("div", { className: "form-group" },
-          /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Adresse professionnelle"),
-          /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: b2bForm.address, onChange: e => setB2bForm(f => ({...f, address: e.target.value})), placeholder: "12 Rue du Commerce, Dakar" })
-        ),
-        /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${b2bSaving ? "btn-loading" : ""}`, onClick: submit, disabled: b2bSaving },
-          b2bSaving ? "Envoi en cours…" : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-building" }), " Soumettre ma demande Pro B2B")
-        )
-      );
+      return /* @__PURE__ */ React.createElement(B2BUpgradeForm, { currentUser: currentUser2, addToast });
     })()
   )
 ), (view === "b2b_profile" || view === "b2b_orders" || view === "b2b_statement") && /* @__PURE__ */ React.createElement(B2BProDashboard, { currentUser: currentUser2, addToast, view, setParentView: setView }), view === "b2b_quotes" && /* @__PURE__ */ React.createElement(B2BQuotesPanel, { currentUser: currentUser2, addToast }), view === "push_settings" && /* @__PURE__ */ React.createElement(PushNotificationSettings, { currentUser: currentUser2, addToast }), !isLoading && view === "profile" && /* @__PURE__ */ React.createElement(ProfileEditor, { currentUser: currentUser2, addToast })), cart.length > 0 && view !== "orders" && /* @__PURE__ */ React.createElement("button", { className: "floating-cart", onClick: () => setShowCart(true), "aria-label": `Panier: ${cart.reduce((s, i) => s + i.quantity, 0)} articles` }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("div", { className: "cart-count", "aria-hidden": "true" }, cart.reduce((s, i) => s + i.quantity, 0))), selectedProduct && /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: () => setSelectedProduct(null) }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "prod-detail-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "prod-detail-title" }, selectedProduct.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: () => setSelectedProduct(null), "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "product-detail-grid" }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ImageGallery, { images: (selectedProduct.images && selectedProduct.images.length > 0) ? selectedProduct.images : (selectedProduct.imageUrl ? selectedProduct.imageUrl.split(',').map(function(s){ return s.trim(); }).filter(Boolean) : []), productName: selectedProduct.name, height: 280 }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart", onClick: (e) => {

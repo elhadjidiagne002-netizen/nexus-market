@@ -83,6 +83,24 @@ export async function onRequestPost(context) {
               read: false,
             }).catch(e => console.warn("[PayTech IPN] notification error:", e.message));
 
+            // [PUSH] Envoyer la notification push au buyer
+            context.waitUntil(
+              fetch(new URL("/push-send", request.url).origin + "/push-send", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  userId: order.user_id,
+                  eventType: "payment_confirmed",
+                  payload: {
+                    title: "✅ Paiement confirmé",
+                    body: `Votre paiement de ${Number(item_price).toLocaleString("fr-FR")} FCFA est reçu.`,
+                    icon: "/assets/Gemini_Generated_Image_51w43151w43151w4.png",
+                    data: { url: `/?order=${ref_command}` },
+                  },
+                }),
+              }).catch(e => console.warn("[PayTech IPN] push error:", e.message))
+            );
+
             // [FIX] L'appel HTTP interne à /functions/loyalty passait
             // SUPABASE_SERVICE_KEY comme Bearer token, mais loyalty.js appelle
             // sb.auth.getUser() qui ne reconnaît pas la service key comme JWT

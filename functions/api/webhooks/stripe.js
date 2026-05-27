@@ -70,6 +70,31 @@ export async function onRequestPost(context) {
           paidAmountFcfa:  Math.round((pi.amount_received || pi.amount || 0) / 100 * 655.957),
           paidAt:          new Date().toISOString(),
         });
+        // [PUSH + NOTIF] Notifier l'acheteur du paiement confirmé
+        if (orderId) {
+          context.waitUntil((async () => {
+            try {
+              const hdrs = { "Content-Type":"application/json", apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
+              // Récupérer le user_id de la commande
+              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${orderId}&select=user_id`, { headers: hdrs });
+              const oData = await oRes.json();
+              const userId = oData?.[0]?.user_id;
+              if (!userId) return;
+              const amountFcfa = Math.round((pi.amount_received || pi.amount || 0) / 100 * 655.957);
+              // Notification Supabase
+              await fetch(`${SB_URL}/rest/v1/notifications`, {
+                method: "POST", headers: { ...hdrs, Prefer: "return=minimal" },
+                body: JSON.stringify({ user_id: userId, type: "payment", title: "✅ Paiement Stripe confirmé", message: `Paiement de ${amountFcfa.toLocaleString('fr-FR')} FCFA reçu. Commande en traitement.`, read: false }),
+              });
+              // Push notification
+              const origin = new URL(request.url).origin;
+              await fetch(`${origin}/push-send`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId, eventType: "payment_confirmed", payload: { title: "✅ Paiement confirmé", body: `${amountFcfa.toLocaleString('fr-FR')} FCFA reçu — commande #${orderId.slice(-6)}`, icon: "/assets/Gemini_Generated_Image_51w43151w43151w4.png", data: { url: `/?order=${orderId}` } } }),
+              });
+            } catch(e) { console.warn("[Stripe webhook] push/notif error:", e.message); }
+          })());
+        }
         break;
 
       case "payment_intent.payment_failed":
