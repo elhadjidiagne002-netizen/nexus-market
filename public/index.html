@@ -2094,7 +2094,15 @@ const NEXUS_CONFIG = {
     get msgTemplateId()         { return this.universalTemplateId; },
     get vendorAdminTemplateId() { return this.universalTemplateId; },
   },
-  imgbb: { apiKey: "645afecfe21b5f905beace24eb9f2ed3" },  // Clé imgBB (gratuit — https://api.imgbb.com) pour hébergement images sans Supabase
+  imgbb: { apiKey: "" },  // imgBB désactivé — remplacé par Cloudinary
+  cloudinary: {
+    cloudName:    "dlbil4ef6",       // Cloudinary cloud name
+    uploadPreset: "nexus-market",    // Upload preset (unsigned) configuré sur cloudinary.com
+    // URL de base construite automatiquement
+    get uploadUrl() { return `https://api.cloudinary.com/v1_1/${this.cloudName}/image/upload`; },
+    // Transformations par défaut : max 800px, qualité auto, format WebP
+    get transformUrl() { return `https://res.cloudinary.com/${this.cloudName}/image/upload/w_800,q_auto,f_auto/`; },
+  },
   sms: { enabled: true, defaultCountryCode: '+221', senderId: 'NEXUS', alwaysSmsAboveFcfa: 5000 },
   analytics: {
     ga4Id: "G-2N3MPBQ6Z8"  // Google Analytics 4 Measurement ID — ex: "G-XXXXXXXXXX" (gratuit sur analytics.google.com)
@@ -3183,16 +3191,15 @@ const initSupabase = () => {
           persistSession: true,
           autoRefreshToken: true,
           storageKey: "nexus-auth-token",
-          // [BUG FIX] detectSessionInUrl était à false pour éviter un double getSession(),
-          // mais cela cassait la confirmation d'email Supabase : quand l'utilisateur clique
-          // sur le lien de confirmation, le SDK lit #access_token= dans l'URL et ouvre
-          // automatiquement la session. Sans detectSessionInUrl:true, ce hash est ignoré
-          // et le nouvel utilisateur ne peut jamais se connecter après avoir confirmé son email.
-          // Le "double getSession" est géré par le singleton window.__nexusSupabaseClient.
           detectSessionInUrl: true,
-          // [FIX] Désactive navigator.locks — supprime "lock released/stolen" quand
-          // plusieurs onglets ou une double init tentent de rafraîchir le token.
           lock: undefined
+        },
+        global: {
+          headers: {
+            // ── Gzip compression : réduit la taille des réponses Supabase de 60-70% ──
+            // Supabase/PostgREST supporte gzip nativement — aucune config serveur requise
+            "Accept-Encoding": "gzip, deflate, br",
+          }
         }
       }
     );
@@ -3329,7 +3336,7 @@ const DataService = {
       localStorage.removeItem("nexus_refresh_exp");
     }
   },
-  async getProducts({ page = 1, limit = 50, category = null, search = null } = {}) {
+  async getProducts({ page = 1, limit = 20, category = null, search = null, vendorId = null } = {}) {
     // PERF FIX: Retourner localStorage immédiatement si disponible (zéro latence),
     // puis laisser le composant rafraîchir avec les données API en arrière-plan.
     const localProds = (() => {
@@ -3375,8 +3382,7 @@ const DataService = {
         // [FIX] neq(false) au lieu de eq(true) — inclut les lignes où active est NULL
         let q = this._sb.from("products").select("*", { count: "exact" }).neq("active", false);
         if (category) q = q.eq("category", category);
-        // [FIX #21] Chercher dans le nom ET la description — activer pg_trgm pour ≥ 500 produits :
-        //   CREATE INDEX ON products USING gin(to_tsvector('french', name||' '||coalesce(description,'')));
+        if (vendorId) q = q.eq("vendor_id", vendorId);
         if (search) q = q.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
         q = q.range((page-1)*limit, page*limit-1).order("created_at", { ascending: false });
         const { data, error } = await q;
@@ -3476,10 +3482,13 @@ const DataService = {
     storage.set("products", storage.getArray("products").filter((p) => p.id !== id));
   },
   async getOrders(filters = {}) {
+    // ── Limites par rôle ────────────────────────────────────────────────────
+    // Pagination stricte : max 20 items par requête (96% moins d'egress vs 500)
+    const DEFAULT_LIMIT = filters.role === "admin" ? 50 : 20;
     // [FIX VISIBILITE] Accepter buyer/buyerId, vendor/vendorId, et role="admin".
     // Avant : l admin (sans buyer/vendor) et le vendeur (qui envoie vendorId)
     // tombaient sur le fallback localStorage vide => commandes invisibles.
-    const { page = 1, limit = 20, status, role } = filters;
+    const { page = 1, limit = DEFAULT_LIMIT, status, role } = filters;
     const buyer  = filters.buyer  || filters.buyerId  || null;
     const vendor = filters.vendor || filters.vendorId || null;
     const isAdmin = role === "admin";
@@ -6848,6 +6857,33 @@ const SearchWithAutocomplete = ({ products, value, onChange, onSelect, placehold
     /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.88rem" } }, s.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: "var(--text-secondary)" } }, s.sub))
   ))));
 };
+// ─── Cloudinary Upload Helper ────────────────────────────────────────────────
+// Upload via unsigned preset (côté client — pas de clé secrète nécessaire)
+// Retourne la secure_url ou lève une erreur.
+async function uploadToCloudinary(blob, originalFilename) {
+  const { cloudName, uploadPreset } = NEXUS_CONFIG.cloudinary;
+  if (!cloudName || !uploadPreset) throw new Error("Cloudinary non configuré");
+  const fd = new FormData();
+  fd.append("file", blob, originalFilename || "upload.jpg");
+  fd.append("upload_preset", uploadPreset);
+  fd.append("folder", "nexus-market");
+  // Tags pour organisation dans le Media Library
+  fd.append("tags", "nexus");
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+    method: "POST",
+    body: fd,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Cloudinary HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  // Appliquer la transformation auto (WebP, qualité auto, max 800px)
+  const rawUrl = data.secure_url;
+  // Insérer les transformations dans l'URL Cloudinary
+  return rawUrl.replace("/upload/", "/upload/w_800,q_auto,f_auto/");
+}
+
 const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState(value || "");
@@ -6880,15 +6916,27 @@ const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
     if (file.size > 8 * 1024 * 1024) { (window.__nexusToast || alert)("Image trop lourde (max 8 Mo)", "error"); return; }
     setUploading(true); setUploadProgress(10);
     try {
-      // Compress
+      // Compress first
       const compressed = await compressImage(file);
-      setUploadProgress(40);
+      setUploadProgress(35);
 
-      // Try backend upload first
+      // ── 1. Cloudinary (priorité absolue) ─────────────────────────────────
+      if (NEXUS_CONFIG.cloudinary?.cloudName) {
+        try {
+          setUploadProgress(50);
+          const url = await uploadToCloudinary(compressed, file.name);
+          setUploadProgress(100);
+          onChange(url); setPreview(url); setUploading(false); return;
+        } catch(cloudErr) {
+          console.warn("[ImageUpload] Cloudinary failed, trying fallback:", cloudErr.message);
+        }
+      }
+      setUploadProgress(55);
+
+      // ── 2. Backend API (si configuré) ─────────────────────────────────────
       if (NEXUS_CONFIG.apiUrl) {
         const fd = new FormData();
         fd.append("file", compressed, file.name);
-        // [FIX] Authorization header manquant — /api/upload exige verifyToken
         const _uploadToken = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
         const res = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/upload", {
           method: "POST", body: fd,
@@ -6900,9 +6948,9 @@ const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
           onChange(url); setPreview(url); setUploading(false); return;
         }
       }
-      setUploadProgress(60);
+      setUploadProgress(70);
 
-      // Try Supabase Storage direct
+      // ── 3. Supabase Storage ───────────────────────────────────────────────
       if (isSupabaseConfigured() && supabaseClient) {
         const filename = `products/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g,"_")}`;
         const { error } = await supabaseClient.storage.from("nexus-images").upload(filename, compressed, { upsert: true, contentType: "image/jpeg" });
@@ -6912,13 +6960,9 @@ const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
           onChange(publicUrl); setPreview(publicUrl); setUploading(false); return;
         }
       }
-      setUploadProgress(75);
-
-      // Fallback imgBB désactivé — NEXUS_CONFIG.imgbb.apiKey non configuré (code mort supprimé).
-      // Pour activer : renseigner NEXUS_CONFIG.imgbb.apiKey avec une clé https://api.imgbb.com
       setUploadProgress(90);
 
-      // Dernier recours: base64 dataURL (stocké en localStorage — OK pour petites images)
+      // ── 4. Fallback base64 (dernier recours) ─────────────────────────────
       const reader = new FileReader();
       reader.onload = (ev) => {
         setUploadProgress(100);
@@ -6927,6 +6971,7 @@ const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
       reader.readAsDataURL(compressed);
     } catch(err) {
       console.warn("[ImageUpload]", err);
+      (window.__nexusToast || console.error)("Erreur upload : " + err.message, "error");
       setUploading(false); setUploadProgress(0);
     }
   };
@@ -6956,7 +7001,7 @@ const ImageUploadField = ({ value, onChange, label = "Image du produit" }) => {
       e.stopPropagation();
       setPreview("");
       onChange("");
-    }, style: { position: "absolute", top: "-8px", right: "-8px", background: "var(--danger)", color: "white", border: "none", borderRadius: "50%", width: "24px", height: "24px", cursor: "pointer", fontSize: "0.7rem", display: "flex", alignItems: "center", justifyContent: "center" } }, "\xD7")) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cloud-upload-alt", style: { fontSize: "2rem", color: "var(--primary)", marginBottom: "0.5rem", display: "block" } }), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" } }, "Glissez une image ou cliquez"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, "JPG, PNG, WebP \xB7 max 5 Mo"))
+    }, style: { position: "absolute", top: "-8px", right: "-8px", background: "var(--danger)", color: "white", border: "none", borderRadius: "50%", width: "24px", height: "24px", cursor: "pointer", fontSize: "0.7rem", display: "flex", alignItems: "center", justifyContent: "center" } }, "\xD7")) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cloud-upload-alt", style: { fontSize: "2rem", color: "var(--primary)", marginBottom: "0.5rem", display: "block" } }), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" } }, "Glissez une image ou cliquez"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, "JPG, PNG, WebP \xB7 max 5 Mo"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.7rem", color: "var(--primary)", marginTop: "0.3rem", fontWeight: 600 } }, "\u2601\uFE0F Sauvegard\xE9 sur Cloudinary"))
   ), /* @__PURE__ */ React.createElement("input", { ref: inputRef, type: "file", accept: "image/*", style: { display: "none" }, onChange: (e) => handleFile(e.target.files[0]) }), /* @__PURE__ */ React.createElement("div", { className: "form-group", style: { marginTop: "0.5rem" } }, /* @__PURE__ */ React.createElement("input", { type: "url", className: "form-input", value: typeof value === "string" && value.startsWith("http") ? value : "", onChange: (e) => {
     onChange(e.target.value);
     setPreview(e.target.value);
@@ -15808,7 +15853,7 @@ const AdminB2BPanel = ({ addToast }) => {
     setExporting(true);
     if (!DataService._sb) { setExporting(false); addToast('Supabase non configuré', 'error'); return; }
     try {
-      let q = DataService._sb.from('b2b_buyers').select('*, profiles!user_id(name,email,phone)').order('created_at',{ascending:false}).limit(1000);
+      let q = DataService._sb.from('b2b_buyers').select('*, profiles!user_id(name,email,phone)').order('created_at',{ascending:false}).limit(200);
       if (search)         q = q.or('company.ilike.%' + search + '%');
       if (filterVerified) q = q.eq('ninea_verified', filterVerified === 'true');
       const { data: all, error: exportErr } = await q;
@@ -17236,7 +17281,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         .catch(() => _setLogLoad(false));
     } else if (DataService._sb) {
       // [MIGRATION SUPABASE] Chargement direct des logs admin (table audit_logs).
-      DataService._sb.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(200)
+      DataService._sb.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(50)
         .then(({ data, error }) => {
           if (!error && data) _setLogs(data);
           else if (error) console.warn("[admin/logs] Supabase:", error.message);
@@ -17285,7 +17330,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
     // Charger les commandes depuis Supabase/API en priorité (pas uniquement localStorage)
     let ordersData = storage.getArray("orders");
     setOrders(ordersData); // affichage immédiat depuis cache
-    DataService.getOrders({ role: "admin", limit: 500 })
+    DataService.getOrders({ role: "admin", limit: 50 })
       .then(data => {
         const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null);
         if (fetched && fetched.length > 0) {
@@ -17850,7 +17895,7 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
             ? /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "monospace", fontSize: "0.78rem", color: "var(--primary)", fontWeight: 600 } }, order.invoiceNumber)
             : /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.72rem", color: "var(--text-secondary)" } }, "—")
         ), /* @__PURE__ */ React.createElement("td", { "data-label": "Commande" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, order.id.slice(0,12))), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, order.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, order.vendorName), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(order.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Commission", style: { color: "var(--success)" } }, formatPrice(order.commission || 0)), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${((_a = STATUS_MAP[order.status]) == null ? void 0 : _a.badge) || "warning"}` }, ((_b = STATUS_MAP[order.status]) == null ? void 0 : _b.label) || order.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(order.date).toLocaleDateString("fr-FR")));
-  })))))), view === "vendors" && /* @__PURE__ */ React.createElement(React.Fragment, null,/* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-plug" }),/* @__PURE__ */ React.createElement("span", null,/* @__PURE__ */ React.createElement("strong", null, "Source : "),NEXUS_CONFIG.apiUrl ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--success)" } }, "\u2713 API Render") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--warning)" } }, "\u26A0 Pas d'apiUrl"),DataService._sb ? " + Supabase direct (fallback actif)" : " — Supabase non initialisé"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { marginLeft: "auto" }, onClick: () => { storage.remove("pendingVendors_mem"); loadData(); addToast("Liste rafraîchie", "info"); } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir")),pendingVendors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" },/* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs en Attente"),/* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", "aria-label": `${pendingVendors.length} en attente` }, pendingVendors.length)),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"),/* @__PURE__ */ React.createElement("th", null, "Email"),/* @__PURE__ */ React.createElement("th", null, "Catégorie"),/* @__PURE__ */ React.createElement("th", null, "NINEA / RC"),/* @__PURE__ */ React.createElement("th", null, "Téléphone"),/* @__PURE__ */ React.createElement("th", null, "Date"),/* @__PURE__ */ React.createElement("th", null, "Actions"))),/* @__PURE__ */ React.createElement("tbody", null, pendingVendors.map((vendor) =>/* @__PURE__ */ React.createElement("tr", { key: vendor.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, vendor.name), /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, vendor.ownerName)),/* @__PURE__ */ React.createElement("td", null, vendor.email),/* @__PURE__ */ React.createElement("td", null, vendor.category || "—"),/* @__PURE__ */ React.createElement("td", { style: { fontFamily: "monospace", fontSize: "0.8rem" } }, vendor.ninea ? `${vendor.ninea}${vendor.rc ? " / " + vendor.rc : ""}` : "—"),/* @__PURE__ */ React.createElement("td", null, vendor.phone || "—"),/* @__PURE__ */ React.createElement("td", null, (() => { try { return new Date(vendor.date).toLocaleDateString("fr-FR"); } catch(_) { return vendor.date || "—"; } })()),/* @__PURE__ */ React.createElement("td", null,/* @__PURE__ */ React.createElement("div", { className: "flex gap-1" },/* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => approveVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => rejectVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser"))))))))),pendingVendors.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-success mb-2", style: { fontSize: "0.85rem" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" })," Aucune demande en attente. Si vous attendez une inscription, cliquez Rafraîchir."),/* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs Actifs (", vendors.length, ")"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: async () => { if (NEXUS_CONFIG.apiUrl) { try { const _rv = await DataService.apiFetch("/api/admin/export/vendors"); if (_rv && _rv.ok) { const _tv = await _rv.text(); const _av = document.createElement("a"); _av.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_tv); _av.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _av.click(); return; } } catch(_ev) {} } const _rows = [["ID","Boutique","Email","Note","CA FCFA"].join(",")]; vendors.forEach(v => _rows.push([v.id,`"${v.name||""}"`,v.email||"",v.rating||0,Math.round((v.totalSales||0)*EUR_TO_FCFA)].join(","))); const _aav = document.createElement("a"); _aav.href = "data:text/csv;charset=utf-8,\\uFEFF" + encodeURIComponent(_rows.join("\\n")); _aav.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _aav.click(); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Export CSV")),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"), /* @__PURE__ */ React.createElement("th", null, "Email"), /* @__PURE__ */ React.createElement("th", null, "Ventes"), /* @__PURE__ */ React.createElement("th", null, "Commission"), /* @__PURE__ */ React.createElement("th", null, "Note"), /* @__PURE__ */ React.createElement("th", null, "Statut"))),/* @__PURE__ */ React.createElement("tbody", null, vendors.map((v) =>/* @__PURE__ */ React.createElement("tr", { key: v.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { width: "30px", height: "30px", fontSize: "0.75rem" } }, v.avatar), /* @__PURE__ */ React.createElement("strong", null, v.name))),/* @__PURE__ */ React.createElement("td", null, v.email),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, formatPrice(v.totalSales || 0))),/* @__PURE__ */ React.createElement("td", null, v.commission, "%"),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "stars" }, "★"), " ", v.rating),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, "Actif"))))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Toutes les Commandes (", orders.length, ")"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => { DataService.getOrders({ role: "admin", limit: 500 }).then(data => { const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null); if (fetched) { setOrders(fetched); addToast(`${fetched.length} commandes chargées`, "success"); } else { addToast("Aucune commande trouvée", "warning"); } }).catch(e => addToast("Erreur chargement : " + e.message, "error")); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", title: "Exporter toutes les commandes en CSV", onClick: async () => {
+  })))))), view === "vendors" && /* @__PURE__ */ React.createElement(React.Fragment, null,/* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-plug" }),/* @__PURE__ */ React.createElement("span", null,/* @__PURE__ */ React.createElement("strong", null, "Source : "),NEXUS_CONFIG.apiUrl ? /* @__PURE__ */ React.createElement("span", { style: { color: "var(--success)" } }, "\u2713 API Render") : /* @__PURE__ */ React.createElement("span", { style: { color: "var(--warning)" } }, "\u26A0 Pas d'apiUrl"),DataService._sb ? " + Supabase direct (fallback actif)" : " — Supabase non initialisé"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { marginLeft: "auto" }, onClick: () => { storage.remove("pendingVendors_mem"); loadData(); addToast("Liste rafraîchie", "info"); } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir")),pendingVendors.length > 0 && /* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" },/* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs en Attente"),/* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", "aria-label": `${pendingVendors.length} en attente` }, pendingVendors.length)),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"),/* @__PURE__ */ React.createElement("th", null, "Email"),/* @__PURE__ */ React.createElement("th", null, "Catégorie"),/* @__PURE__ */ React.createElement("th", null, "NINEA / RC"),/* @__PURE__ */ React.createElement("th", null, "Téléphone"),/* @__PURE__ */ React.createElement("th", null, "Date"),/* @__PURE__ */ React.createElement("th", null, "Actions"))),/* @__PURE__ */ React.createElement("tbody", null, pendingVendors.map((vendor) =>/* @__PURE__ */ React.createElement("tr", { key: vendor.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, vendor.name), /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, vendor.ownerName)),/* @__PURE__ */ React.createElement("td", null, vendor.email),/* @__PURE__ */ React.createElement("td", null, vendor.category || "—"),/* @__PURE__ */ React.createElement("td", { style: { fontFamily: "monospace", fontSize: "0.8rem" } }, vendor.ninea ? `${vendor.ninea}${vendor.rc ? " / " + vendor.rc : ""}` : "—"),/* @__PURE__ */ React.createElement("td", null, vendor.phone || "—"),/* @__PURE__ */ React.createElement("td", null, (() => { try { return new Date(vendor.date).toLocaleDateString("fr-FR"); } catch(_) { return vendor.date || "—"; } })()),/* @__PURE__ */ React.createElement("td", null,/* @__PURE__ */ React.createElement("div", { className: "flex gap-1" },/* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => approveVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => rejectVendor(vendor.id) },/* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser"))))))))),pendingVendors.length === 0 && /* @__PURE__ */ React.createElement("div", { className: "alert alert-success mb-2", style: { fontSize: "0.85rem" } },/* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle" })," Aucune demande en attente. Si vous attendez une inscription, cliquez Rafraîchir."),/* @__PURE__ */ React.createElement("div", { className: "card" },/* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Vendeurs Actifs (", vendors.length, ")"),/* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: async () => { if (NEXUS_CONFIG.apiUrl) { try { const _rv = await DataService.apiFetch("/api/admin/export/vendors"); if (_rv && _rv.ok) { const _tv = await _rv.text(); const _av = document.createElement("a"); _av.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_tv); _av.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _av.click(); return; } } catch(_ev) {} } const _rows = [["ID","Boutique","Email","Note","CA FCFA"].join(",")]; vendors.forEach(v => _rows.push([v.id,`"${v.name||""}"`,v.email||"",v.rating||0,Math.round((v.totalSales||0)*EUR_TO_FCFA)].join(","))); const _aav = document.createElement("a"); _aav.href = "data:text/csv;charset=utf-8,\\uFEFF" + encodeURIComponent(_rows.join("\\n")); _aav.download = `nexus_vendeurs_${new Date().toISOString().slice(0,10)}.csv`; _aav.click(); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-csv" }), " Export CSV")),/* @__PURE__ */ React.createElement("div", { className: "table-wrapper" },/* @__PURE__ */ React.createElement("table", { className: "data-table" },/* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null,/* @__PURE__ */ React.createElement("th", null, "Boutique"), /* @__PURE__ */ React.createElement("th", null, "Email"), /* @__PURE__ */ React.createElement("th", null, "Ventes"), /* @__PURE__ */ React.createElement("th", null, "Commission"), /* @__PURE__ */ React.createElement("th", null, "Note"), /* @__PURE__ */ React.createElement("th", null, "Statut"))),/* @__PURE__ */ React.createElement("tbody", null, vendors.map((v) =>/* @__PURE__ */ React.createElement("tr", { key: v.id },/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("div", { className: "user-avatar", style: { width: "30px", height: "30px", fontSize: "0.75rem" } }, v.avatar), /* @__PURE__ */ React.createElement("strong", null, v.name))),/* @__PURE__ */ React.createElement("td", null, v.email),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("strong", null, formatPrice(v.totalSales || 0))),/* @__PURE__ */ React.createElement("td", null, v.commission, "%"),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "stars" }, "★"), " ", v.rating),/* @__PURE__ */ React.createElement("td", null, /* @__PURE__ */ React.createElement("span", { className: "badge badge-success" }, "Actif"))))))))), view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Toutes les Commandes (", orders.length, ")"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => { DataService.getOrders({ role: "admin", limit: 50 }).then(data => { const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null); if (fetched) { setOrders(fetched); addToast(`${fetched.length} commandes chargées`, "success"); } else { addToast("Aucune commande trouvée", "warning"); } }).catch(e => addToast("Erreur chargement : " + e.message, "error")); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-sync-alt" }), " Rafraîchir"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", title: "Exporter toutes les commandes en CSV", onClick: async () => {
   if (NEXUS_CONFIG.apiUrl) { try { const _r = await DataService.apiFetch("/api/admin/export/orders"); if (_r && _r.ok) { const _t = await _r.text(); const _a = document.createElement("a"); _a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(_t); _a.download = `nexus_commandes_${new Date().toISOString().slice(0,10)}.csv`; _a.click(); return; } } catch(_e) {} }
   const BOM = "\uFEFF";
   const rows = [["ID","Date","Acheteur","Email Acheteur","Vendeur","Produits","Total EUR","Total FCFA","Commission FCFA","Statut","Adresse","Tracking"].join(",")];
@@ -20743,7 +20788,7 @@ function useRealtimeMessagesSync(currentUser) {
           .select('id, from_id, from_name, to_id, to_name, text, read, read_at, created_at')
           .or(`from_id.eq.${uid},to_id.eq.${uid}`)
           .order('created_at', { ascending: true })
-          .limit(500);
+          .limit(50);
         if (error) { console.warn('[REALTIME-CHAT] load:', error.message); return; }
         if (mounted && ingestRows(data || [])) setTick(t => t + 1);
       } catch (e) {
@@ -22455,7 +22500,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     });
     // Charger depuis Supabase en arrière-plan
     tryFetch(
-      () => DataService.getOrders({ vendorId: currentUser2.id, limit: 200 }),
+      () => DataService.getOrders({ vendorId: currentUser2.id, limit: 20 }),
       null
     ).then(data => {
       const fetched = Array.isArray(data) ? data : (data && data.orders ? data.orders : null);
@@ -23533,6 +23578,18 @@ const AxModal = ({ onClose, onPublished }) => {
     setUploading(true);
     try {
       const blob = await compress(file);
+
+      // ── 1. Cloudinary (priorité) ──────────────────────────────────────────
+      if (NEXUS_CONFIG.cloudinary?.cloudName) {
+        try {
+          const url = await uploadToCloudinary(blob, file.name);
+          setPhotoUrl(url); setUploading(false); return;
+        } catch(cloudErr) {
+          console.warn('[AxModal] Cloudinary failed:', cloudErr.message);
+        }
+      }
+
+      // ── 2. Supabase Storage (fallback) ────────────────────────────────────
       if (isSupabaseConfigured() && DataService._sb) {
         const fname = 'express/' + Date.now() + '_' + Math.random().toString(36).slice(2) + '.jpg';
         const { data: up, error } = await DataService._sb.storage
@@ -23542,6 +23599,8 @@ const AxModal = ({ onClose, onPublished }) => {
           setPhotoUrl(pub.publicUrl); setUploading(false); return;
         }
       }
+
+      // ── 3. Base64 dernier recours ─────────────────────────────────────────
       const r = new FileReader();
       r.onload = e => { setPhotoUrl(e.target.result); setUploading(false); };
       r.readAsDataURL(blob);
