@@ -3464,6 +3464,46 @@ const normalizeUser = (u) => {
 
 // [FIX] Normalise un produit venant de l'API backend (snake_case) vers le format
 // attendu par les composants React (camelCase). Idempotent : si déjà normalisé, ne change rien.
+// ─── Google Drive PDF Helpers ─────────────────────────────────────────────────
+/**
+ * Extrait l'ID de fichier depuis n'importe quel format d'URL Google Drive :
+ *   https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+ *   https://drive.google.com/open?id=FILE_ID
+ *   https://docs.google.com/document/d/FILE_ID/edit
+ *   FILE_ID seul (déjà extrait)
+ */
+function extractDriveId(url) {
+  if (!url) return null;
+  // Format /file/d/ID/
+  const m1 = url.match(/\/d\/([a-zA-Z0-9_-]{20,})/);
+  if (m1) return m1[1];
+  // Format ?id=ID
+  const m2 = url.match(/[?&]id=([a-zA-Z0-9_-]{20,})/);
+  if (m2) return m2[1];
+  // Si c'est déjà un ID brut (20+ chars alphanumériques)
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(url.trim())) return url.trim();
+  return null;
+}
+
+/** URL de prévisualisation Google Drive (iframe embed) */
+function drivePreviewUrl(fileIdOrUrl) {
+  const id = extractDriveId(fileIdOrUrl) || fileIdOrUrl;
+  return `https://drive.google.com/file/d/${id}/preview`;
+}
+
+/** URL de téléchargement direct Google Drive */
+function driveDownloadUrl(fileIdOrUrl) {
+  const id = extractDriveId(fileIdOrUrl) || fileIdOrUrl;
+  return `https://drive.google.com/uc?export=download&id=${id}`;
+}
+
+/** Ouvre le PDF en prévisualisation dans un nouvel onglet */
+function openDrivePdf(fileIdOrUrl) {
+  const id = extractDriveId(fileIdOrUrl);
+  if (!id) { window.open(fileIdOrUrl, '_blank'); return; }
+  window.open(`https://drive.google.com/file/d/${id}/view`, '_blank');
+}
+
 const normalizeProduct = (p) => {
   if (!p) return p;
   return {
@@ -3482,6 +3522,9 @@ const normalizeProduct = (p) => {
     reviewsCount:  p.reviews_count ?? p.reviewsCount ?? 0,
     active:        p.active      !== false,
     moderated:     p.moderated   === true,
+    // ── Fichier numérique (PDF, eBook, document) ─────────────────────────────
+    fileUrl:       p.file_url    || p.fileUrl     || null,  // URL Google Drive ou directe
+    driveFileId:   p.drive_file_id || p.driveFileId || extractDriveId(p.file_url || p.fileUrl || ''),
   };
 };
 const formatPrice = (priceEur) => {
@@ -15066,7 +15109,8 @@ const ProductEditModal = ({ product, onSave, onDelete, onClose, addToast }) => {
     stock:             product.stock,
     description:       product.description || "",
     imageUrl:          product.imageUrl || product.image_url || "",
-    active:            product.active !== false,  // défaut true si absent
+    fileUrl:           product.fileUrl  || product.file_url  || "",  // PDF / Drive
+    active:            product.active !== false,
   });
   const [errors, setErrors] = useState({});
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -15098,6 +15142,7 @@ const ProductEditModal = ({ product, onSave, onDelete, onClose, addToast }) => {
       stock:         parseInt(form.stock),
       description:   form.description.trim() || null,
       imageUrl:      form.imageUrl || null,
+      file_url:      form.fileUrl  || null,   // persiste en snake_case pour Supabase
       active:        form.active,
     };
     // Appel backend PATCH si configuré
@@ -15228,6 +15273,37 @@ React.createElement("div", { className: "form-group" },
       style: { width: "60px", height: "60px", objectFit: "cover", borderRadius: "6px", border: "1.5px solid var(--border)" },
       onError: (e) => e.target.style.display = "none"
     }))
+  )
+),
+/* Fichier numérique — Google Drive PDF */
+React.createElement("div", { className: "form-group" },
+  React.createElement("label", { className: "form-label" },
+    React.createElement("i", { className: "fab fa-google-drive", style: { color: "#4285f4", marginRight: "0.4rem" } }),
+    "Fichier numérique (PDF / eBook)",
+    React.createElement("span", { style: { fontWeight: 400, fontSize: "0.78rem", color: "var(--text-secondary)", marginLeft: "0.4rem" } }, "— lien Google Drive public (optionnel)")
+  ),
+  React.createElement("input", {
+    type: "url", className: "form-input",
+    value: form.fileUrl || "",
+    onChange: (e) => setForm(__spreadProps(__spreadValues({}, form), { fileUrl: e.target.value })),
+    placeholder: "https://drive.google.com/file/d/FILE_ID/view?usp=sharing"
+  }),
+  React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.3rem", lineHeight: 1.5 } },
+    "Partagez le fichier avec \"Tout le monde peut voir\" dans Google Drive, puis collez le lien ici. ",
+    React.createElement("a", { href: "https://support.google.com/drive/answer/2494822", target: "_blank", style: { color: "var(--primary)" } }, "Guide →")
+  ),
+  form.fileUrl && extractDriveId(form.fileUrl) && React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginTop: "0.5rem", flexWrap: "wrap", alignItems: "center" } },
+    React.createElement("button", { type: "button", className: "btn btn-secondary btn-sm", onClick: () => openDrivePdf(form.fileUrl) },
+      React.createElement("i", { className: "fas fa-eye" }), " Prévisualiser"
+    ),
+    React.createElement("button", { type: "button", className: "btn btn-secondary btn-sm",
+      onClick: () => { navigator.clipboard.writeText(driveDownloadUrl(form.fileUrl)); addToast("Lien de téléchargement copié !", "success"); }
+    },
+      React.createElement("i", { className: "fas fa-link" }), " Copier lien DL"
+    ),
+    React.createElement("span", { style: { fontSize: "0.72rem", color: "#16a34a", display: "flex", alignItems: "center", gap: "0.25rem" } },
+      React.createElement("i", { className: "fas fa-check-circle" }), " ID : ", extractDriveId(form.fileUrl)?.slice(0, 20), "…"
+    )
   )
 ),
 /* Statut actif/brouillon [FIX] */
@@ -25594,7 +25670,13 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                                 style: { background: '#128C7E', color: 'white', border: 'none', flex: 1 },
                                 title: 'Commander via WhatsApp',
                                 onClick: e => { e.stopPropagation(); whatsappOrder(product); }
-                              }, React.createElement('i', { className: 'fab fa-whatsapp' }), ' Commander')
+                              }, React.createElement('i', { className: 'fab fa-whatsapp' }), ' Commander'),
+                              /* Bouton aperçu PDF si produit numérique */
+                              product.fileUrl && React.createElement('button', {
+                                className: 'btn btn-secondary btn-sm',
+                                title: 'Prévisualiser le fichier',
+                                onClick: e => { e.stopPropagation(); openDrivePdf(product.fileUrl); }
+                              }, React.createElement('i', { className: 'fab fa-google-drive', style: { color: '#4285f4' } }), ' Aperçu PDF')
                             )
                           )
                         )
@@ -27195,7 +27277,28 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     })), /* @__PURE__ */ React.createElement("h4", { style: { fontWeight: 700, margin: "1rem 0 0.5rem", fontSize: "0.95rem" } }, "Articles command\xE9s"), order.products.map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "0.5rem" } }, /* @__PURE__ */ React.createElement("img", { src: getProductImage(p), alt: p.name, style: { width: "48px", height: "48px", borderRadius: "8px", objectFit: "cover", flexShrink: 0 }, onError: (e) => e.target.style.display = "none" }), /* @__PURE__ */ React.createElement("span", { style: { flex: 1, fontSize: "0.9rem" } }, p.name, " \xD7", p.quantity), /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(p.price * p.quantity)))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.75rem", fontSize: "0.85rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-map-marker-alt text-primary", "aria-hidden": "true" }), " ", order.buyerAddress), order.trackingNumber && /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.25rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-truck text-info", "aria-hidden": "true" }), " Suivi : ", /* @__PURE__ */ React.createElement("strong", null, order.trackingNumber)), order.stripePaymentId && /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.25rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt text-success", "aria-hidden": "true" }), " Paiement s\xE9curis\xE9 \xB7 ", /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "monospace" } }, order.stripePaymentId))), order.status === "delivered" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm mt-2", onClick: () => {
       setReviewProduct(order.products[0]);
       setShowReviewModal(true);
-    } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star", "aria-hidden": "true" }), " Laisser un avis"), order.status === "delivered" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm mt-2", style: { marginLeft: "0.5rem" }, onClick: (e) => { e.stopPropagation(); (order.products || []).forEach(p => { const full = products.find(x => x.id === p.id) || p; addToCart({ ...full, quantity: p.quantity || 1 }); }); addToast(`🛒 ${(order.products||[]).length} article${(order.products||[]).length > 1 ? 's' : ''} ajouté${(order.products||[]).length > 1 ? 's' : ''} au panier`, "success"); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cart-plus", "aria-hidden": "true" }), " Racheter"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginTop: "1rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => setShowTrackingOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-map-marker-alt" }), " Suivre"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => {
+    } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star", "aria-hidden": "true" }), " Laisser un avis"), order.status === "delivered" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm mt-2", style: { marginLeft: "0.5rem" }, onClick: (e) => { e.stopPropagation(); (order.products || []).forEach(p => { const full = products.find(x => x.id === p.id) || p; addToCart({ ...full, quantity: p.quantity || 1 }); }); addToast(`🛒 ${(order.products||[]).length} article${(order.products||[]).length > 1 ? 's' : ''} ajouté${(order.products||[]).length > 1 ? 's' : ''} au panier`, "success"); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cart-plus", "aria-hidden": "true" }), " Racheter"),
+/* ── Bouton téléchargement fichier numérique (post-achat) ─────────────────── */
+(() => {
+  const digitalFiles = (order.products || []).map(p => {
+    const full = products.find(x => x.id === p.id) || p;
+    return full.fileUrl || full.file_url || null;
+  }).filter(Boolean);
+  if (digitalFiles.length === 0) return null;
+  return /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.75rem", padding: "0.85rem 1rem", background: "linear-gradient(135deg,rgba(2,132,199,.06),rgba(14,165,233,.04))", border: "1.5px solid #0284c755", borderRadius: "10px" } },
+    /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem" } },
+      /* @__PURE__ */ React.createElement("i", { className: "fab fa-google-drive", style: { color: "#4285f4" } }), " Fichier(s) numérique(s)"
+    ),
+    digitalFiles.map((fileUrl, fi) => /* @__PURE__ */ React.createElement("div", { key: fi, style: { display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: fi < digitalFiles.length - 1 ? "0.4rem" : 0 } },
+      /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => { window.open(driveDownloadUrl(fileUrl), '_blank'); } },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-download" }), " Télécharger"
+      ),
+      /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => openDrivePdf(fileUrl) },
+        /* @__PURE__ */ React.createElement("i", { className: "fas fa-eye" }), " Lire en ligne"
+      )
+    ))
+  );
+})(), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginTop: "1rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => setShowTrackingOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-map-marker-alt" }), " Suivre"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => {
       setComposeRecipient({ id: order.vendor, name: order.vendorName });
       setShowComposeMessage(true);
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => generateInvoicePDF(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Facture PDF"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => printOrderSlip(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-print" }), " Imprimer"), order.status === "delivered" && !order.returnStatus && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowReturnOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour"), !order.disputeId && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "#dc2626", color: "#dc2626" }, onClick: () => setShowDisputeOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige"), order.disputeId && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center", fontSize: "0.72rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige ", order.disputeStatus === "open" ? "en cours" : "r\xE9solu"), order.returnStatus && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour ", order.returnStatus === "requested" ? "en cours" : order.returnStatus), ["pending_payment", "processing"].includes(order.status) && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowCancelOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Annuler"))));
