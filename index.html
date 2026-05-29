@@ -510,6 +510,9 @@
             gap: 2rem;
             padding: 2rem;
         }
+        @media (max-width: 768px) {
+            .main-layout { padding: 0.5rem !important; gap: 0 !important; }
+        }
 
         .sidebar {
             width: var(--sidebar-width);
@@ -844,6 +847,16 @@
             color: var(--text-primary);
             background: white;
         }
+        /* ── iOS auto-zoom fix : forcer 16px sur mobile ──────────────────────── */
+        /* iOS zoome automatiquement quand un input a font-size < 16px au focus   */
+        @media (max-width: 768px) {
+            .form-input, .form-select, .form-textarea,
+            .search-input, input[type="text"], input[type="email"],
+            input[type="tel"], input[type="password"], input[type="search"],
+            input[type="number"], input[type="url"], select, textarea {
+                font-size: 16px !important;  /* 16px exact = seuil iOS anti-zoom */
+            }
+        }
         .form-input:focus, .form-select:focus, .form-textarea:focus {
             outline: none;
             border-color: var(--primary);
@@ -1018,8 +1031,37 @@
             backdrop-filter: blur(4px);
             animation: fadeIn 0.2s ease;
             padding: 1rem;
+            /* ── Scroll lock : empêche le fond de défiler sous la modale ──────── */
+            overscroll-behavior: contain;
+            touch-action: none;  /* bloque tout scroll/pinch sur l'overlay */
         }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        /* La modale elle-même peut scroller mais pas "fuir" */
+        .modal {
+            overscroll-behavior: contain;
+            touch-action: pan-y;
+        }
+        /* ── Cookie banner : compact sur mobile, ne cache pas les boutons ──────── */
+        @media (max-width: 768px) {
+            /* Le bandeau cookie passe en colonne et prend moins de hauteur */
+            [style*="position: fixed"][style*="bottom: 0"][style*="zIndex: 9998"],
+            [style*="position:fixed"][style*="bottom:0"][style*="zIndex:9998"] {
+                padding: 0.75rem 1rem !important;
+                flex-direction: column !important;
+                gap: 0.6rem !important;
+            }
+            /* Remonter les boutons flottants au-dessus du bandeau cookie (~130px) */
+            body:has([style*="zIndex: 9998"]) .floating-cart,
+            body:has([style*="zIndex:9998"]) .floating-cart { bottom: 9rem !important; }
+            body:has([style*="zIndex: 9998"]) .floating-wishlist,
+            body:has([style*="zIndex:9998"]) .floating-wishlist { bottom: 13.8rem !important; }
+        }
+        @media (max-width: 480px) {
+            [style*="position: fixed"][style*="bottom: 0"][style*="zIndex: 9998"],
+            [style*="position:fixed"][style*="bottom:0"][style*="zIndex:9998"] {
+                padding: 0.6rem 0.85rem !important;
+                font-size: 0.8rem !important;
+            }
+        }
         .modal {
             background: white;
             border-radius: 20px;
@@ -1046,6 +1088,11 @@
             border-bottom: 2px solid var(--border);
         }
         .modal-title { font-family: 'Montserrat', sans-serif; font-size: 1.6rem; font-weight: 700; color: var(--primary); }
+        @media (max-width: 768px) {
+            .modal-title { font-size: 1.15rem !important; }
+            .modal { padding: 1rem !important; }
+            .modal-header { margin-bottom: 0.85rem !important; padding-bottom: 0.65rem !important; }
+        }
         .close-btn {
             background: none;
             border: none;
@@ -7152,7 +7199,34 @@ const SearchWithAutocomplete = ({ products, value, onChange, onSelect, placehold
     /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.88rem" } }, s.label), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: "var(--text-secondary)" } }, s.sub))
   ))));
 };
-// ─── Cloudinary Upload Helper ────────────────────────────────────────────────
+// ── Body scroll lock universel pour les modales ──────────────────────────────
+// Observe l'ajout/suppression de .modal-overlay dans le DOM et fige le body
+(function() {
+  var _scrollY = 0;
+  function lockBody() {
+    if (document.body.classList.contains('modal-open')) return;
+    _scrollY = window.scrollY;
+    document.documentElement.style.setProperty('--modal-scroll-y', _scrollY + 'px');
+    document.body.classList.add('modal-open');
+  }
+  function unlockBody() {
+    if (!document.body.classList.contains('modal-open')) return;
+    document.body.classList.remove('modal-open');
+    window.scrollTo(0, _scrollY);
+  }
+  // CSS injecté dynamiquement pour éviter la duplication avec le CSS statique
+  var style = document.createElement('style');
+  style.textContent = 'body.modal-open{overflow:hidden!important;position:fixed!important;width:100%!important;top:calc(-1 * var(--modal-scroll-y,0px))!important}';
+  document.head.appendChild(style);
+  // MutationObserver : détecte l'ouverture/fermeture de n'importe quelle modale
+  var obs = new MutationObserver(function() {
+    var hasModal = !!document.querySelector('.modal-overlay');
+    if (hasModal) lockBody(); else unlockBody();
+  });
+  document.addEventListener('DOMContentLoaded', function() {
+    obs.observe(document.body, { childList: true, subtree: true });
+  });
+})();
 // Upload via unsigned preset (côté client — pas de clé secrète nécessaire)
 // Retourne la secure_url ou lève une erreur.
 async function uploadToCloudinary(blob, originalFilename) {
@@ -9139,7 +9213,7 @@ Réponds uniquement aux questions liées à NEXUS Market ou au commerce en ligne
       onMouseEnter: e => e.currentTarget.style.transform = "scale(1.1)",
       onMouseLeave: e => e.currentTarget.style.transform = "scale(1)"
     }, React.createElement("i", { className: `fas fa-${open ? "times" : "comment-dots"}` })),
-    open && React.createElement("div", { style: { position: "fixed", bottom: "9rem", right: "1.5rem", width: "330px", background: "white", borderRadius: "16px", boxShadow: "0 8px 40px rgba(0,0,0,0.18)", border: "1px solid var(--border)", zIndex: 598, display: "flex", flexDirection: "column", maxHeight: "430px" } },
+    open && React.createElement("div", { style: { position: "fixed", bottom: "9rem", right: "1.5rem", width: "min(330px, calc(100vw - 1.5rem))", background: "white", borderRadius: "16px", boxShadow: "0 8px 40px rgba(0,0,0,0.18)", border: "1px solid var(--border)", zIndex: 598, display: "flex", flexDirection: "column", maxHeight: "min(430px, 65vh)" } },
       React.createElement("div", { style: { padding: "0.85rem 1rem", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", borderRadius: "16px 16px 0 0", color: "white", display: "flex", alignItems: "center", gap: "0.6rem" } },
         React.createElement("div", { style: { width: "32px", height: "32px", borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem" } }, "\uD83E\uDD16"),
         React.createElement("div", { style: { flex: 1 } },
@@ -9631,7 +9705,7 @@ const printOrderSlip = (order) => {
 .nexus-shop-header .back-btn{margin-left:auto;padding:6px 14px;border-radius:20px;border:1.5px solid #ddd;background:#fff;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px}
 .nexus-shop-header .back-btn:hover{background:#f5f5f0}
 .nexus-shop-search{padding:14px 20px;background:#fff;border-bottom:1px solid #eee;flex-shrink:0}
-.nexus-shop-search input{width:100%;padding:10px 16px;border-radius:24px;border:1.5px solid #ddd;font-size:14px;outline:none;box-sizing:border-box}
+.nexus-shop-search input{width:100%;padding:10px 16px;border-radius:24px;border:1.5px solid #ddd;font-size:16px;outline:none;box-sizing:border-box}
 .nexus-shop-search input:focus{border-color:#00853E}
 .nexus-shop-body{flex:1;overflow-y:auto;padding:20px}
 .nexus-prod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
