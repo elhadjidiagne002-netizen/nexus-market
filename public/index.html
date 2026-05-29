@@ -524,6 +524,39 @@
             border: 1px solid var(--border);
         }
 
+        /* ── Sidebar mobile : drawer + scroll lock ───────────────────────────── */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed !important;
+                left: -320px !important;
+                top: 0 !important; bottom: 0 !important;
+                width: 280px !important;
+                height: 100% !important;          /* hauteur plein écran */
+                max-height: 100vh !important;
+                border-radius: 0 !important;
+                z-index: 900;
+                transition: left 0.28s cubic-bezier(.4,0,.2,1);
+                overflow-y: auto !important;       /* scroll INTERNE au sidebar */
+                overflow-x: hidden !important;
+                overscroll-behavior: contain !important; /* empêche le scroll de "fuir" */
+                -webkit-overflow-scrolling: touch !important;
+                touch-action: pan-y !important;
+                padding: 1rem !important;
+                box-shadow: 4px 0 32px rgba(0,0,0,0.18) !important;
+            }
+            .sidebar.open {
+                left: 0 !important;
+            }
+            /* Quand le sidebar est ouvert, body ne doit pas scroller */
+            body.sidebar-open {
+                overflow: hidden !important;
+                position: fixed !important;
+                width: 100% !important;
+                /* Conserver la position de scroll avec une variable CSS */
+                top: calc(-1 * var(--scroll-y, 0px));
+            }
+        }
+
         .sidebar-overlay {
             display: none;
             position: fixed;
@@ -1239,12 +1272,7 @@
             .logo-text { font-size: 1.1rem; }
 
             /* ── Sidebar drawer ─────────────────────────────────────────────── */
-            .sidebar {
-                position: fixed; left: -320px; top: 0; bottom: 0;
-                z-index: 900; border-radius: 0; transition: left 0.3s ease;
-                width: 280px; overflow-y: auto;
-            }
-            .sidebar.open { left: 0; }
+            /* ── Sidebar drawer (règles complètes dans le bloc @media dédié ci-dessus) */
             .sidebar-overlay.open { display: block; }
             .main-layout { padding: 0.5rem; gap: 0; }
 
@@ -28262,7 +28290,25 @@ const App = ({ onUserChange }) => {
     setAuthInitialTab("register");
     setShowAuth(true);
   };
-  const toggleSidebar = () => setSidebarOpen((prev) => !prev);
+  const toggleSidebar = () => setSidebarOpen((prev) => {
+    const next = !prev;
+    if (next) {
+      // Mémoriser la position de scroll actuelle et figer le body
+      const scrollY = window.scrollY;
+      document.documentElement.style.setProperty('--scroll-y', scrollY + 'px');
+      document.body.classList.add('sidebar-open');
+    } else {
+      // Restaurer la position de scroll après dégel
+      const scrollY = parseInt(document.documentElement.style.getPropertyValue('--scroll-y') || '0', 10);
+      document.body.classList.remove('sidebar-open');
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, scrollY);
+    }
+    return next;
+  });
   const handleCartClick = () => {
     if (!currentUser2) {
       setCartBroadcast((c) => c + 1);
