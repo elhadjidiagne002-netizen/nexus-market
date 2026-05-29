@@ -1,0 +1,45 @@
+name: Cron Jobs NEXUS Market
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Job à exécuter'
+        required: true
+        default: 'both'
+        type: choice
+        options: [expire, cleanup, both]
+
+jobs:
+  cron-expire:
+    name: Expiration annonces & boosts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /cron/expire
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://nexus-market-asb.pages.dev/cron/expire?token=${{ secrets.NEXUS_CRON_TOKEN }}")
+          echo "HTTP Status: $STATUS"
+          [ "$STATUS" = "200" ] || echo "::warning::expire returned HTTP $STATUS"
+      - name: Résultat
+        if: always()
+        run: |
+          curl -s "https://nexus-market-asb.pages.dev/cron/expire?token=${{ secrets.NEXUS_CRON_TOKEN }}" | python3 -m json.tool || true
+
+  cron-cleanup:
+    name: Nettoyage base de données
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /cron/cleanup
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://nexus-market-asb.pages.dev/cron/cleanup?token=${{ secrets.NEXUS_CRON_TOKEN }}")
+          echo "HTTP Status: $STATUS"
+          [ "$STATUS" = "200" ] || echo "::warning::cleanup returned HTTP $STATUS"
+      - name: Résultat
+        if: always()
+        run: |
+          curl -s "https://nexus-market-asb.pages.dev/cron/cleanup?token=${{ secrets.NEXUS_CRON_TOKEN }}" | python3 -m json.tool || true
