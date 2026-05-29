@@ -17458,7 +17458,36 @@ const ServicesConfigPanel = ({ addToast }) => {
 const BackendSetupPanel = ({ addToast }) => {
   const E = React.createElement;
   const [openSection, setOpenSection] = React.useState(null);
+  const [cleaning, setCleaning] = React.useState(false);
+  const [cleanResult, setCleanResult] = React.useState(null);
+  const [tableSizes, setTableSizes] = React.useState([]);
+  const [loadingSizes, setLoadingSizes] = React.useState(false);
   const toggle = (k) => setOpenSection(v => v === k ? null : k);
+
+  const runCleanup = async () => {
+    if (!DataService._sb) { addToast('Supabase non configuré', 'error'); return; }
+    setCleaning(true);
+    try {
+      const { data, error } = await DataService._sb.rpc('nexus_cleanup_old_data');
+      if (error) throw error;
+      setCleanResult(data);
+      const total = Object.values(data || {}).reduce((s, v) => s + (parseInt(v) || 0), 0);
+      addToast(`✅ Nettoyage terminé — ${total} lignes supprimées`, 'success', 6000);
+    } catch(e) { addToast('Erreur cleanup : ' + e.message, 'error'); }
+    setCleaning(false);
+  };
+
+  const loadTableSizes = async () => {
+    if (!DataService._sb) return;
+    setLoadingSizes(true);
+    try {
+      const { data } = await DataService._sb.from('nexus_table_sizes').select('table_name,total_size,size_bytes').limit(15);
+      if (data) setTableSizes(data);
+    } catch(_) {}
+    setLoadingSizes(false);
+  };
+
+  React.useEffect(() => { loadTableSizes(); }, []);
 
   const STATUS = {
     push:    !!(window.NEXUS_CONFIG?.push?.publicKey && window.NEXUS_CONFIG.push.publicKey.length > 10),
@@ -17518,7 +17547,60 @@ const BackendSetupPanel = ({ addToast }) => {
           ),
           s.link && E('a',{href:s.link,target:'_blank',className:'btn btn-primary btn-sm',style:{marginTop:s.sql?'.5rem':'0'}}, E('i',{className:'fas fa-external-link-alt'}), ' Ouvrir ', new URL(s.link).hostname)
         )
-      ))
+      )),
+      /* ── Nettoyage DB ──────────────────────────────────────────────────── */
+      E('div', { style:{marginTop:'1rem',padding:'1rem',background:'linear-gradient(135deg,rgba(220,38,38,.05),rgba(239,68,68,.03))',border:'1px solid rgba(220,38,38,.2)',borderRadius:'10px'} },
+        E('div', {style:{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:'.5rem',marginBottom:'.5rem'}},
+          E('div', null,
+            E('div', {style:{fontWeight:700,fontSize:'.9rem'}}, '🗑️ Nettoyage base de données'),
+            E('div', {style:{fontSize:'.78rem',color:'var(--text-secondary)'}},
+              'Purge : notifications lues >30j, search_logs >90j, audit_logs >90j, sms_logs >60j'
+            )
+          ),
+          E('button', { className:`btn btn-danger btn-sm${cleaning?' btn-loading':''}`, onClick:runCleanup, disabled:cleaning },
+            cleaning ? '' : E(React.Fragment, null, E('i',{className:'fas fa-broom'}), ' Nettoyer maintenant')
+          )
+        ),
+        cleanResult && E('div', {style:{marginTop:'.5rem',display:'flex',flexWrap:'wrap',gap:'.35rem'}},
+          Object.entries(cleanResult).map(([k,v]) =>
+            E('span', {key:k, style:{fontSize:'.72rem',background:'var(--bg-light)',border:'1px solid var(--border)',borderRadius:'6px',padding:'2px 7px'}},
+              k.replace(/_/g,' '), ' : ', E('strong', null, v)
+            )
+          )
+        ),
+        /* Lien cron manuel */
+        E('div', {style:{marginTop:'.6rem',fontSize:'.75rem',color:'var(--text-secondary)'}},
+          'Cron auto : tous les dimanches à 3h UTC via ',
+          E('code', {style:{background:'var(--bg-light)',padding:'1px 5px',borderRadius:'4px'}}, '/cron/cleanup?token=…')
+        )
+      ),
+      /* ── Tailles des tables ────────────────────────────────────────────── */
+      E('div', { style:{marginTop:'.75rem',padding:'1rem',background:'var(--bg-light)',borderRadius:'10px'} },
+        E('div', {style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.6rem'}},
+          E('div', {style:{fontWeight:700,fontSize:'.9rem'}}, '📊 Taille des tables Supabase'),
+          E('button', {className:'btn btn-secondary btn-sm',onClick:loadTableSizes,disabled:loadingSizes},
+            loadingSizes ? E('i',{className:'fas fa-spinner fa-spin'}) : E('i',{className:'fas fa-sync'}),
+            ' Rafraîchir'
+          )
+        ),
+        tableSizes.length > 0
+          ? E('div', {style:{display:'flex',flexDirection:'column',gap:'.25rem'}},
+              tableSizes.map(t => {
+                const pct = Math.min(100, (t.size_bytes / (1024*1024*50)) * 100); // 50MB = 100%
+                const color = pct > 70 ? '#dc2626' : pct > 40 ? '#d97706' : '#16a34a';
+                return E('div', {key:t.table_name, style:{display:'flex',alignItems:'center',gap:'.6rem'}},
+                  E('div', {style:{width:120,fontSize:'.75rem',flexShrink:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}, t.table_name),
+                  E('div', {style:{flex:1,height:8,background:'var(--border)',borderRadius:4,overflow:'hidden'}},
+                    E('div', {style:{height:'100%',width:`${pct}%`,background:color,borderRadius:4,transition:'width .3s'}})
+                  ),
+                  E('div', {style:{width:55,fontSize:'.72rem',textAlign:'right',color:'var(--text-secondary)',flexShrink:0}}, t.total_size)
+                );
+              })
+            )
+          : E('div', {style:{fontSize:'.82rem',color:'var(--text-secondary)'}},
+              loadingSizes ? 'Chargement…' : 'Vue nexus_table_sizes non trouvée — exécutez le script SQL de rétention.'
+            )
+      )
     )
   );
 };
