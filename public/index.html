@@ -24974,6 +24974,18 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     // Charger les avis
     const allReviews = DataService.getReviews ? await DataService.getReviews({}).catch(() => []) : [];
     setReviews(Array.isArray(allReviews) ? allReviews : []);
+    // [FIX] Deeplink ?product=ID — ouvrir le produit partagé depuis un lien WhatsApp ou copié
+    try {
+      const _dlParams = new URLSearchParams(window.location.search);
+      const _dlId = _dlParams.get('product');
+      if (_dlId) {
+        const _dlProduct = (allProducts || []).find(p => String(p.id) === String(_dlId));
+        if (_dlProduct) {
+          setSelectedProduct(_dlProduct);
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
+    } catch(_) {}
   })(); }, []);
   const addToCart = (product, quantity = 1) => {
     if (!product || product.stock <= 0) {
@@ -27223,6 +27235,18 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       const wishlists = {};  // Chargé depuis Supabase via getWishlist
       const userWish = wishlists[currentUser2.id] || [];
       setProducts(allProducts || []);
+      // [FIX] Deeplink ?product=ID — ouvrir le produit partagé après connexion
+      try {
+        const _dlParams = new URLSearchParams(window.location.search);
+        const _dlId = _dlParams.get('product');
+        if (_dlId && allProducts) {
+          const _dlProduct = allProducts.find(p => String(p.id) === String(_dlId));
+          if (_dlProduct) {
+            setTimeout(() => setSelectedProduct(_dlProduct), 300);
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        }
+      } catch(_) {}
       setOrders(Array.isArray(allOrders) ? allOrders : (allOrders || []).filter((o) => o.buyer === currentUser2.id));
       setCart(finalCart);
       setWishlist(userWish);
