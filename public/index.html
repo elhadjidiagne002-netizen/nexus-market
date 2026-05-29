@@ -10850,14 +10850,44 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
     return () => document.removeEventListener("keydown", handler);
   }, [onCancel]);
   const [customerInfo, setCustomerInfo] = useState({
-    name: (currentUser2 == null ? void 0 : currentUser2.name) || "",
-    email: (currentUser2 == null ? void 0 : currentUser2.email) || "",
-    address: (currentUser2 == null ? void 0 : currentUser2.address) || "",
-    city: (currentUser2 == null ? void 0 : currentUser2.city) || "Dakar",
-    // Par défaut Dakar
-    postalCode: "",
-    phone: (currentUser2 == null ? void 0 : currentUser2.phone) || ""
+    name:       (currentUser2?.name)    || "",
+    email:      (currentUser2?.email)   || "",
+    address:    (currentUser2?.address) || "",
+    city:       (currentUser2?.city)    || "Dakar",
+    postalCode: (currentUser2?.postalCode) || "",
+    phone:      (currentUser2?.phone)   || ""
   });
+  const [profileLoaded, setProfileLoaded] = useState(false);
+
+  // ── Charger le profil complet depuis Supabase pour pré-remplir le checkout ──
+  React.useEffect(() => {
+    if (!currentUser2?.id) return;
+    const load = async () => {
+      // D'abord essayer Supabase
+      if (DataService._sb) {
+        const { data } = await DataService._sb
+          .from('profiles')
+          .select('name, email, phone, address, city, postal_code')
+          .eq('id', currentUser2.id)
+          .maybeSingle();
+        if (data) {
+          setCustomerInfo(prev => ({
+            name:       data.name        || prev.name,
+            email:      data.email       || prev.email,
+            address:    data.address     || prev.address,
+            city:       data.city        || prev.city || "Dakar",
+            postalCode: data.postal_code || prev.postalCode,
+            phone:      data.phone       || prev.phone,
+          }));
+          if (data.city) setShippingCity(data.city);
+          setProfileLoaded(true);
+          return;
+        }
+      }
+      setProfileLoaded(true);
+    };
+    load().catch(() => setProfileLoaded(true));
+  }, [currentUser2?.id]);
   const [shippingCity, setShippingCity] = useState((currentUser2 == null ? void 0 : currentUser2.city) || "Dakar");
   const [paymentMethod, setPaymentMethod] = useState(() => { try { return localStorage.getItem("nexus_pref_payment") || "cod"; } catch(_) { return "cod"; } });
   const [appliedCoupon, setAppliedCoupon] = useState(null);
@@ -11251,6 +11281,22 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           });
         }
         if (currentUser2) DataService.addNotification(currentUser2.id, { type: "order", title: "Commande confirm\xE9e !", message: `Votre commande ${createdOrders[0].id} a \xE9t\xE9 enregistr\xE9e. Suivi : ${createdOrders[0].trackingNumber}` });
+
+        // ── Sauvegarder adresse + téléphone dans le profil (non bloquant) ──
+        if (currentUser2?.id && DataService._sb && (customerInfo.address || customerInfo.phone)) {
+          const updates = {};
+          if (customerInfo.address)    updates.address     = customerInfo.address;
+          if (customerInfo.city)       updates.city        = customerInfo.city;
+          if (customerInfo.postalCode) updates.postal_code = customerInfo.postalCode;
+          if (customerInfo.phone)      updates.phone       = customerInfo.phone;
+          DataService._sb.from('profiles').update(updates).eq('id', currentUser2.id).then(() => {
+            // Mettre à jour le cache localStorage
+            try {
+              const cached = JSON.parse(localStorage.getItem('nexus_current_user') || '{}');
+              localStorage.setItem('nexus_current_user', JSON.stringify({ ...cached, ...updates, city: updates.city || cached.city }));
+            } catch(_) {}
+          }).catch(() => {});
+        }
       }
       submittingRef.current = false; setLoading(false);
       // ── PayTech Mobile Money — initiation côté serveur ───────────────────
@@ -11411,7 +11457,45 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         : /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "monospace", fontSize: "1.4rem", fontWeight: 700, color: "var(--primary)", letterSpacing: "0.1rem" } }, storage.get("orders") ? ((_a = storage.getArray("orders").slice(-1)[0]) == null ? void 0 : _a.trackingNumber) || "SN---" : "SN---"),
       /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-truck" }), " Livraison pr\xE9vue : ", shippingCity, " \u2014 2 \xE0 5 jours ouvr\xE9s")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block btn-lg", onClick: () => onSuccess() }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box", "aria-hidden": "true" }), " Voir mes commandes")));
   }
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onCancel }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "checkout-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "checkout-title" }, step === 1 ? "\u{1F4E6} Livraison" : "\u{1F4B3} Paiement"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onCancel, "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "checkout-steps", "aria-label": "\xC9tapes de commande" }, /* @__PURE__ */ React.createElement("div", { className: `checkout-step ${step >= 1 ? "done" : ""} ${step === 1 ? "active" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "checkout-step-num" }, step > 1 ? /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }) : "1"), "Livraison"), /* @__PURE__ */ React.createElement("div", { className: "checkout-step-line" }), /* @__PURE__ */ React.createElement("div", { className: `checkout-step ${step === 2 ? "active" : ""} ${step > 2 ? "done" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "checkout-step-num" }, "2"), "Paiement")), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 300px", gap: "2rem" } }, /* @__PURE__ */ React.createElement("div", null, step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-name" }, "Nom complet ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("input", { id: "checkout-name", type: "text", className: `form-input ${errors.name ? "error" : ""}`, value: customerInfo.name, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { name: e.target.value })), placeholder: "Fatou Diop", autoComplete: "name" }), errors.name && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.name)), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-email" }, "Email ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("input", { id: "checkout-email", type: "email", className: `form-input ${errors.email ? "error" : ""}`, value: customerInfo.email, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { email: e.target.value })), placeholder: "fatou@email.sn", autoComplete: "email" }), errors.email && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.email))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-address" }, "Adresse ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("input", { id: "checkout-address", type: "text", className: `form-input ${errors.address ? "error" : ""}`, value: customerInfo.address, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { address: e.target.value })), placeholder: "12 Rue de la Paix", autoComplete: "street-address" }), errors.address && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.address)), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-city" }, "Ville ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("select", { id: "checkout-city", className: `form-select ${errors.city ? "error" : ""}`, value: shippingCity, onChange: (e) => setShippingCity(e.target.value) }, SENEGAL_CITIES.map((city) => /* @__PURE__ */ React.createElement("option", { key: city, value: city }, city))), errors.city && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.city)), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-postal" }, "Code postal"), /* @__PURE__ */ React.createElement("input", { id: "checkout-postal", type: "text", className: `form-input ${errors.postalCode ? "error" : ""}`, value: customerInfo.postalCode, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { postalCode: e.target.value })), placeholder: "BP 12345", autoComplete: "postal-code" }), errors.postalCode && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.postalCode))), /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onCancel }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-labelledby": "checkout-title" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title", id: "checkout-title" }, step === 1 ? "\u{1F4E6} Livraison" : "\u{1F4B3} Paiement"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onCancel, "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { className: "checkout-steps", "aria-label": "\xC9tapes de commande" }, /* @__PURE__ */ React.createElement("div", { className: `checkout-step ${step >= 1 ? "done" : ""} ${step === 1 ? "active" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "checkout-step-num" }, step > 1 ? /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }) : "1"), "Livraison"), /* @__PURE__ */ React.createElement("div", { className: "checkout-step-line" }), /* @__PURE__ */ React.createElement("div", { className: `checkout-step ${step === 2 ? "active" : ""} ${step > 2 ? "done" : ""}` }, /* @__PURE__ */ React.createElement("div", { className: "checkout-step-num" }, "2"), "Paiement")), /* @__PURE__ */ React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 300px", gap: "2rem" } }, /* @__PURE__ */ React.createElement("div", null, step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null,
+/* Bannière de pré-remplissage pour les utilisateurs connectés */
+currentUser2 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.6rem", background: "rgba(0,133,62,0.07)", border: "1px solid rgba(0,133,62,0.25)", borderRadius: "10px", padding: "0.65rem 1rem", marginBottom: "1.25rem" } },
+  !profileLoaded
+    ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin text-primary", style: { fontSize: "0.9rem" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.85rem", color: "var(--text-secondary)" } }, "Chargement de votre profil…"))
+    : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle text-primary", style: { fontSize: "0.9rem" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.85rem" } }, /* @__PURE__ */ React.createElement("strong", null, "Infos pré-remplies"), " depuis votre compte. Modifiez si nécessaire."))
+),
+/* Champs livraison */
+/* @__PURE__ */ React.createElement("div", { className: "form-row" },
+  /* @__PURE__ */ React.createElement("div", { className: "form-group" },
+    /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-name" }, "Nom complet ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")),
+    /* @__PURE__ */ React.createElement("input", { id: "checkout-name", type: "text", className: `form-input ${errors.name ? "error" : ""}`, value: customerInfo.name, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { name: e.target.value })), placeholder: "Fatou Diop", autoComplete: "name" }),
+    errors.name && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.name)
+  ),
+  /* @__PURE__ */ React.createElement("div", { className: "form-group" },
+    /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-email" }, "Email ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")),
+    /* @__PURE__ */ React.createElement("input", { id: "checkout-email", type: "email", className: `form-input ${errors.email ? "error" : ""}`, value: customerInfo.email, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { email: e.target.value })), placeholder: "fatou@email.sn", autoComplete: "email" }),
+    errors.email && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.email)
+  )
+),
+/* @__PURE__ */ React.createElement("div", { className: "form-group" },
+  /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-address" }, "Adresse ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")),
+  /* @__PURE__ */ React.createElement("input", { id: "checkout-address", type: "text", className: `form-input ${errors.address ? "error" : ""}`, value: customerInfo.address, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { address: e.target.value })), placeholder: "12 Rue de la Paix", autoComplete: "street-address" }),
+  errors.address && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.address)
+),
+/* @__PURE__ */ React.createElement("div", { className: "form-row" },
+  /* @__PURE__ */ React.createElement("div", { className: "form-group" },
+    /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-city" }, "Ville ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")),
+    /* @__PURE__ */ React.createElement("select", { id: "checkout-city", className: `form-select ${errors.city ? "error" : ""}`, value: shippingCity, onChange: (e) => { setShippingCity(e.target.value); setCustomerInfo(c => ({...c, city: e.target.value})); } },
+      SENEGAL_CITIES.map((city) => /* @__PURE__ */ React.createElement("option", { key: city, value: city }, city))
+    ),
+    errors.city && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.city)
+  ),
+  /* @__PURE__ */ React.createElement("div", { className: "form-group" },
+    /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "checkout-postal" }, "Code postal"),
+    /* @__PURE__ */ React.createElement("input", { id: "checkout-postal", type: "text", className: `form-input ${errors.postalCode ? "error" : ""}`, value: customerInfo.postalCode, onChange: (e) => setCustomerInfo(__spreadProps(__spreadValues({}, customerInfo), { postalCode: e.target.value })), placeholder: "BP 12345", autoComplete: "postal-code" }),
+    errors.postalCode && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), errors.postalCode)
+  )
+), /* @__PURE__ */ React.createElement(
     PhoneInput,
     {
       value: customerInfo.phone,
@@ -28194,6 +28278,22 @@ const App = ({ onUserChange }) => {
     var _a;
     initializeData();
 
+    // ── Restauration immédiate de l'utilisateur (évite le flash "non connecté") ─
+    // Dès le premier rendu, avant tout appel async, on recharge le profil depuis
+    // localStorage pour que l'UI ne clignote pas "non connecté" puis "connecté".
+    // Supabase confirmera (ou infirmera) la session quelques ms plus tard.
+    try {
+      const savedUser = localStorage.getItem('nexus_current_user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && parsed.id && parsed.role) {
+          setCurrentUser(parsed);
+          window.__nexusCurrentUser = parsed;
+          if (onUserChange) onUserChange(parsed);
+        }
+      }
+    } catch(_) {}
+
     // ── GitHub OAuth Callback — lecture des query params au retour du backend ──
     // Le backend redirige vers : /?nexus_github_token=JWT&nexus_github_user=JSON&nexus_github_new=true
     const _handleGithubCallback = () => {
@@ -28336,6 +28436,12 @@ const App = ({ onUserChange }) => {
       if (isSupabaseConfigured() && DataService._sb) {
         const prof = await DataService.restoreSession().catch(() => null);
         if (prof) { handleLogin(prof); return; }
+      }
+      // Si Supabase échoue ou n'est pas configuré → effacer l'utilisateur local
+      // uniquement si aucun JWT valide en localStorage
+      const hasJwt = localStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_refresh_token');
+      if (!hasJwt) {
+        try { localStorage.removeItem('nexus_current_user'); } catch(_) {}
       }
     };
 
@@ -28480,6 +28586,19 @@ const App = ({ onUserChange }) => {
       return; // Attendre le choix de rôle avant de connecter
     }
 
+    // ── Persister l'utilisateur dans localStorage pour survie au refresh ──────
+    // On stocke uniquement les champs publics non-sensibles (jamais le JWT ici)
+    try {
+      localStorage.setItem('nexus_current_user', JSON.stringify({
+        id:     user.id,
+        email:  user.email,
+        name:   user.name,
+        role:   user.role,
+        avatar: user.avatar || null,
+        phone:  user.phone  || null,
+      }));
+    } catch(_) {}
+
     setCurrentUser(user);
     window.__nexusCurrentUser = user;
     document.dispatchEvent(new CustomEvent('nexus-user-logged-in', { detail: { user: user } }));
@@ -28521,6 +28640,8 @@ const App = ({ onUserChange }) => {
     // [FIX] Déconnecter l'UI IMMÉDIATEMENT — sans attendre l'API (cold start Render ~30s)
     setCurrentUser(null);
     window.__nexusCurrentUser = null;
+    // Supprimer l'utilisateur persisté
+    try { localStorage.removeItem('nexus_current_user'); } catch(_) {}
     document.dispatchEvent(new CustomEvent('nexus-user-logged-out'));
     if (onUserChange) onUserChange(null);
     setSidebarOpen(false);
@@ -28533,6 +28654,7 @@ const App = ({ onUserChange }) => {
     const onExpired = () => {
       setCurrentUser(null);
       if (onUserChange) onUserChange(null);
+      try { localStorage.removeItem('nexus_current_user'); } catch(_) {}
       document.dispatchEvent(new CustomEvent('nexus-user-logged-out'));
       addToast("⏰ Session expirée. Veuillez vous reconnecter.", "error");
     };
