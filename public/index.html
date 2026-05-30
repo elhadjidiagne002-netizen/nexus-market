@@ -12453,6 +12453,10 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
             if (DataService._sb) {
               const { error: pendingErr } = await DataService._sb.from("pending_vendors").insert(pendingEntry);
               if (pendingErr) throw new Error(pendingErr.message);
+            } else {
+              // [FIX] Ni API ni Supabase disponibles — lever une erreur explicite
+              // au lieu d'un faux succès silencieux (setDone(true) sans rien sauvegarder)
+              throw new Error("Service d'inscription indisponible. Vérifiez votre connexion et réessayez.");
             }
           } else {
             const _vendorJson = await _vendorRes.json();
@@ -12461,7 +12465,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         }
         // Programme parrainage vendeur — enregistrer si un code parrain est saisi
         if (form.vendor_ref_code && form.vendor_ref_code.trim()) {
-          const _refUser = { id: pendingEntry.id, name: form.shopName || form.name };
+          const _refUser = { id: id, name: form.shopName || form.name }; // [FIX] pendingEntry.id n'existe pas — utilise la constante id
           window._registerVendorReferral(form.vendor_ref_code.trim(), _refUser).then(ok => {
             if (ok) console.info('[Parrainage vendeur] Code', form.vendor_ref_code, 'enregistré');
           }).catch(() => {});
@@ -17994,6 +17998,20 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
       }
     }
     // Fallback Supabase direct si l'API n'a rien retourné (RLS, réseau, cold-start Render)
+    // ─────────────────────────────────────────────────────────────────────────────────────
+    // [FIX RLS] Si les vendeurs n'apparaissent pas ici alors qu'ils existent dans Supabase,
+    // c'est que la policy SELECT est manquante. Exécutez ce SQL dans Supabase → SQL Editor :
+    //
+    //   -- Lecture pour tout utilisateur connecté (admin inclus)
+    //   CREATE POLICY "allow_authenticated_select" ON pending_vendors
+    //     FOR SELECT USING (auth.role() = 'authenticated');
+    //
+    //   -- Ou restreindre aux admins uniquement :
+    //   CREATE POLICY "admin_only_select" ON pending_vendors
+    //     FOR SELECT USING (
+    //       EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'admin')
+    //     );
+    // ─────────────────────────────────────────────────────────────────────────────────────
     if (!_apiPendingOk && DataService._sb) {
       try {
         const { data: sbPending, error: sbErr } = await DataService._sb
@@ -18019,9 +18037,27 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
           storage.set("pendingVendors_mem", normalized);
           if (normalized.length > 0) {
             console.info(`[loadData] pendingVendors: ${normalized.length} trouvé(s) via Supabase direct`);
+          } else {
+            // [FIX RLS] Supabase retourne [] sans erreur quand la policy SELECT est manquante.
+            // Cela explique pourquoi les vendeurs n'apparaissent pas dans le dashboard admin
+            // meme si leurs données existent dans la table pending_vendors.
+            console.warn(
+              "[loadData] pending_vendors retourne 0 résultat.\n" +
+              "Si des inscriptions existent, la policy RLS SELECT est probablement manquante.\n" +
+              "Exécutez dans Supabase SQL Editor :\n" +
+              "  CREATE POLICY \"allow_authenticated_select\" ON pending_vendors\n" +
+              "  FOR SELECT USING (auth.role() = 'authenticated');"
+            );
+            addToast(
+              "⚠️ Aucun vendeur en attente trouvé. Si des inscriptions existent dans Supabase, " +
+              "ajoutez la policy RLS SELECT sur pending_vendors (voir console F12 pour le SQL exact).",
+              "warning"
+            );
           }
         } else if (sbErr) {
           console.warn("[loadData] Supabase direct fallback error:", sbErr.message);
+          // [FIX RLS] Lever un toast admin pour faciliter le diagnostic
+          addToast("Erreur lecture vendeurs en attente : " + sbErr.message, "danger");
         }
       } catch (sbEx) {
         console.warn("[loadData] Supabase fallback exception:", sbEx.message);
