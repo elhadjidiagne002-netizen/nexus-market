@@ -18165,20 +18165,14 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
 
     // ── 2. Supabase RPC SECURITY DEFINER (fallback ou mode direct) ──────
     if (DataService._sb) {
-      // ── 2. Supabase RPC SECURITY DEFINER (contourne le RLS) ──────────────
-      // La clé anon ne peut PAS écrire dans profiles directement (RLS).
-      // La fonction approve_vendor tourne avec les droits du propriétaire DB
-      // et effectue l'UPDATE en toute sécurité.
-      const { error } = await DataService._sb.rpc('approve_vendor', {
+      const { data: rpcData, error } = await DataService._sb.rpc('approve_vendor', {
         vendor_id: vendorId,
         approved:  true,
       });
       if (error) {
         if (error.code === '42883' || (error.message && error.message.includes('does not exist'))) {
-          // La fonction RPC n'a pas encore été créée dans Supabase
           addToast(
-            "⚠️ Fonction RPC manquante. Créez approve_vendor() dans Supabase SQL Editor " +
-            "(copiez le SQL dans le commentaire du code source, ligne approveVendor).",
+            "⚠️ Fonction RPC manquante. Exécutez nexus_full_fix.sql dans Supabase SQL Editor.",
             "danger"
           );
         } else {
@@ -18186,9 +18180,21 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         }
         return;
       }
+      // [FIX] La nouvelle version de approve_vendor retourne {found, email, name}
+      // Si found=false, l'ID vient de localStorage périmé (inscription jamais sauvegardée)
+      if (rpcData && rpcData.found === false) {
+        addToast(
+          "Ce vendeur n'existe plus en base (données locales périmées). Liste rafraîchie.",
+          "warning"
+        );
+        setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
+        storage.set("pendingVendors_mem", (storage.get("pendingVendors_mem") || []).filter(v => v.id !== vendorId));
+        loadData();
+        return;
+      }
     }
 
-    // Mise à jour locale immédiate après succès API
+    // Mise à jour locale immédiate après succès
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
     storage.set("pendingVendors_mem", (storage.get("pendingVendors_mem") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
     if (vendor) {
@@ -18197,8 +18203,29 @@ const AdminDashboard = ({ addToast, sidebarOpen, onToggleSidebar }) => {
         message: "Votre boutique a été validée. Vous pouvez maintenant vendre sur NEXUS Market.",
       });
     }
+
+    // [FIX] Envoyer un magic link au vendeur pour qu'il crée son compte auth
+    // (le trigger SQL handle_approved_vendor_signup s'occupera du reste)
+    let magicLinkSent = false;
+    if (vendor?.email && DataService._sb) {
+      try {
+        const { error: otpErr } = await DataService._sb.auth.signInWithOtp({
+          email: vendor.email,
+          options: { shouldCreateUser: true },
+        });
+        magicLinkSent = !otpErr;
+        if (otpErr) console.warn("[approveVendor] OTP send failed:", otpErr.message);
+      } catch (_) {}
+    }
+
     loadData();
-    addToast(`Vendeur ${vendor?.name || ""} approuvé ! Email de confirmation envoyé.`, "success");
+    addToast(
+      `Vendeur ${vendor?.name || ""} approuvé !` +
+      (magicLinkSent
+        ? " Un lien de connexion a été envoyé à " + (vendor?.email || "")
+        : " Pensez à envoyer manuellement un lien d'invitation au vendeur."),
+      "success"
+    );
   };
   const rejectVendor = async (vendorId) => {
     const vendor = pendingVendors.find((v) => v.id === vendorId);
