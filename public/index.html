@@ -6722,30 +6722,176 @@ const NexusSmsService = {
 window.NexusSmsService = NexusSmsService;
 
 
-// ── Email Template Engine ──────────────────────────────────────────────────
-const getEmailTemplate = (id) => {
-  try { return JSON.parse(localStorage.getItem("nexus_email_templates")||"{}")[id]||null; }
-  catch(_){ return null; }
+// ══════════════════════════════════════════════════════════════════════════
+// NEXUS Email Templates — Thème visuel unifié
+// ──────────────────────────────────────────────────────────────────────────
+// Design system :
+//  · Background enveloppe : #F9F7F0
+//  · Logo : ⬡ NEXUS (serif, FDEF42 sur fond sombre)
+//  · Header rounded-top 16px / Footer rounded-bottom 16px
+//  · Footer dark : #1F2937 / liens : #FDEF42 / texte : #9CA3AF
+//  · CTA : border-radius:50px, padding 14px 40px
+//  · Couleurs accent par template :
+//    green #00853E confirmé/approuvé | dark #1F2937 sécurité
+//    purple #7C3AED offre | orange #F59E0B retour
+//    cyan #06B6D4 message | red #E11B22 rejet/litige
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── Helpers partagés ───────────────────────────────────────────────────────
+const _tplFooter = (email = "support@nexus.sn") =>
+  `<tr><td style="background:#1F2937;border-radius:0 0 16px 16px;padding:24px 40px;text-align:center;"><p style="margin:0 0 8px;font-size:0.8rem;color:#9CA3AF;">Questions ? <a href="mailto:${email}" style="color:#FDEF42;text-decoration:none;">${email}</a></p><p style="margin:0;font-size:0.75rem;color:#6B7280;">© 2025 NEXUS Market Sénégal · Dakar, Sénégal 🇸🇳</p></td></tr>`;
+
+const _tplWrap = (inner) =>
+  `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head><body style="margin:0;padding:0;background:#F9F7F0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;padding:32px 16px;"><tr><td align="center"><table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">${inner}</table></td></tr></table></body></html>`;
+
+// ── Templates par défaut (écrasables via le panneau Admin → Templates email) ──
+const NEXUS_EMAIL_DEFAULTS = {
+
+  // 1. Confirmation de commande ─────────────────────────────────────────────
+  order_confirmation: {
+    subject: "✅ Commande confirmée — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#00853E 0%,#33A85A 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding-bottom:16px;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span></td></tr><tr><td align="center"><div style="display:inline-block;background:rgba(253,239,66,0.15);border:2px solid #FDEF42;border-radius:50px;padding:8px 24px;"><span style="font-size:0.85rem;color:#FDEF42;font-weight:700;letter-spacing:2px;text-transform:uppercase;">✅ Commande confirmée</span></div></td></tr></table></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px 40px 32px;"><p style="margin:0 0 8px;font-size:0.85rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;">Bonjour,</p><h1 style="margin:0 0 8px;font-size:1.6rem;font-weight:800;color:#1F2937;line-height:1.2;">{{buyer_name}} 👋</h1><p style="margin:0 0 28px;font-size:1rem;color:#6B7280;line-height:1.6;">Votre commande a été reçue et est en cours de traitement. Voici le récapitulatif :</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#F9F7F0;border-left:4px solid #00853E;border-radius:0 10px 10px 0;padding:14px 20px;"><span style="font-size:0.78rem;color:#6B7280;display:block;margin-bottom:2px;text-transform:uppercase;letter-spacing:1px;">Numéro de commande</span><span style="font-size:1.25rem;font-weight:800;color:#00853E;font-family:monospace;">{{order_id}}</span></td><td align="right" style="background:#F9F7F0;border-radius:0 10px 10px 0;padding:14px 20px;"><span style="font-size:0.78rem;color:#6B7280;display:block;margin-bottom:2px;text-transform:uppercase;letter-spacing:1px;">Date</span><span style="font-size:0.95rem;font-weight:700;color:#1F2937;">{{order_date}}</span></td></tr></table><p style="margin:0 0 10px;font-size:0.85rem;font-weight:700;color:#1F2937;text-transform:uppercase;letter-spacing:1px;">🛒 Articles commandés</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;margin-bottom:24px;"><tr style="background:#F9F7F0;"><th style="padding:10px 16px;text-align:left;font-size:0.75rem;color:#6B7280;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Produit</th><th style="padding:10px 16px;text-align:center;font-size:0.75rem;color:#6B7280;font-weight:600;text-transform:uppercase;">Qté</th><th style="padding:10px 16px;text-align:right;font-size:0.75rem;color:#6B7280;font-weight:600;text-transform:uppercase;">Prix</th></tr>{{items_rows}}<tr style="background:#00853E;"><td colspan="2" style="padding:14px 16px;font-size:0.9rem;font-weight:700;color:#FDEF42;">TOTAL</td><td style="padding:14px 16px;text-align:right;font-size:1.1rem;font-weight:800;color:#FDEF42;">{{order_total}} FCFA</td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td width="50%" style="padding-right:8px;vertical-align:top;"><div style="background:#F9F7F0;border-radius:10px;padding:16px;"><p style="margin:0 0 6px;font-size:0.75rem;color:#6B7280;text-transform:uppercase;letter-spacing:1px;font-weight:600;">📍 Livraison</p><p style="margin:0;font-size:0.88rem;color:#1F2937;font-weight:500;line-height:1.5;">{{delivery_address}}</p></div></td><td width="50%" style="padding-left:8px;vertical-align:top;"><div style="background:#F9F7F0;border-radius:10px;padding:16px;"><p style="margin:0 0 6px;font-size:0.75rem;color:#6B7280;text-transform:uppercase;letter-spacing:1px;font-weight:600;">💳 Paiement</p><p style="margin:0;font-size:0.88rem;color:#1F2937;font-weight:500;">{{payment_method}}</p><p style="margin:4px 0 0;font-size:0.78rem;color:#33A85A;font-weight:600;">✓ Confirmé</p></div></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td style="background:linear-gradient(135deg,#00853E,#33A85A);border-radius:10px;padding:16px 20px;"><p style="margin:0 0 4px;font-size:0.75rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:1px;">🚚 Numéro de suivi</p><p style="margin:0;font-size:1.1rem;font-weight:800;color:#FDEF42;font-family:monospace;">{{tracking_number}}</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{order_url}}" style="display:inline-block;background:#00853E;color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;letter-spacing:0.5px;">Suivre ma commande →</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 2. Réinitialisation mot de passe ────────────────────────────────────────
+  password_reset: {
+    subject: "🔑 Réinitialisation de votre mot de passe — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#1F2937 0%,#374151 100%);border-radius:16px 16px 0 0;padding:36px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><p style="margin:12px 0 0;font-size:0.82rem;color:#9CA3AF;text-transform:uppercase;letter-spacing:2px;">Sécurité du compte</p></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:48px 40px 40px;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td align="center"><div style="display:inline-block;width:72px;height:72px;background:linear-gradient(135deg,#FDEF42,#F59E0B);border-radius:20px;text-align:center;line-height:72px;font-size:2rem;box-shadow:0 8px 24px rgba(245,158,11,0.3);">🔑</div></td></tr></table><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;text-align:center;line-height:1.2;">Réinitialisation de<br>mot de passe</h1><p style="margin:0 0 36px;font-size:0.95rem;color:#6B7280;text-align:center;line-height:1.6;">Bonjour <strong style="color:#1F2937;">{{user_name}}</strong>, voici votre code de vérification à usage unique.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td align="center"><div style="display:inline-block;background:#F9F7F0;border:3px dashed #FDEF42;border-radius:16px;padding:28px 48px;text-align:center;"><p style="margin:0 0 8px;font-size:0.7rem;color:#6B7280;text-transform:uppercase;letter-spacing:2px;font-weight:700;">Votre code</p><p style="margin:0;font-size:2.8rem;font-weight:900;color:#1F2937;letter-spacing:12px;font-family:'Courier New',monospace;">{{reset_code}}</p></div></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:0 10px 10px 0;padding:14px 18px;"><p style="margin:0;font-size:0.85rem;color:#92400E;font-weight:600;">⏱ Ce code expire dans <strong>10 minutes</strong>.</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td style="background:#FEF2F2;border-left:4px solid #E11B22;border-radius:0 10px 10px 0;padding:14px 18px;"><p style="margin:0;font-size:0.85rem;color:#7F1D1D;line-height:1.5;">🔒 <strong>Vous n'avez pas demandé cette réinitialisation ?</strong><br>Ignorez cet email — votre compte reste sécurisé.</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{reset_url}}" style="display:inline-block;background:linear-gradient(135deg,#1F2937,#374151);color:#FDEF42;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;letter-spacing:0.5px;">Réinitialiser mon mot de passe →</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 3. Boutique approuvée ───────────────────────────────────────────────────
+  vendor_approved: {
+    subject: "🎉 Boutique approuvée — Bienvenue sur NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#00853E 0%,#33A85A 60%,#FDEF42 100%);border-radius:16px 16px 0 0;padding:40px;text-align:center;"><div style="font-size:3rem;margin-bottom:12px;">🎉</div><span style="font-size:2rem;font-weight:900;color:#ffffff;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><p style="margin:10px 0 0;font-size:1rem;color:rgba(255,255,255,0.9);font-weight:600;">Félicitations !</p></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><h1 style="margin:0 0 8px;font-size:1.6rem;font-weight:800;color:#1F2937;line-height:1.3;">Votre boutique est<br><span style="color:#00853E;">officiellement approuvée ✅</span></h1><p style="margin:0 0 28px;font-size:0.95rem;color:#6B7280;line-height:1.6;">Bonjour <strong style="color:#1F2937;">{{vendor_name}}</strong>, votre dossier a été examiné et validé par notre équipe. Vous pouvez dès maintenant vendre sur NEXUS Market !</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:linear-gradient(135deg,#F9F7F0,#EFE9D8);border:2px solid #00853E;border-radius:14px;padding:20px 24px;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td><p style="margin:0 0 4px;font-size:0.7rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;">Votre boutique</p><p style="margin:0;font-size:1.2rem;font-weight:800;color:#1F2937;">{{shop_name}}</p><p style="margin:4px 0 0;font-size:0.85rem;color:#6B7280;">Catégorie : <strong style="color:#00853E;">{{shop_category}}</strong></p></td><td align="right"><div style="background:#00853E;border-radius:50px;padding:6px 14px;display:inline-block;"><span style="font-size:0.75rem;font-weight:700;color:#FDEF42;text-transform:uppercase;letter-spacing:1px;">✓ Active</span></div></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#F9F7F0;border-radius:10px;padding:18px 20px;"><p style="margin:0 0 12px;font-size:0.85rem;font-weight:700;color:#1F2937;">📋 Conditions de votre compte vendeur</p><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:4px 0;font-size:0.85rem;color:#6B7280;">Commission NEXUS</td><td align="right" style="font-size:0.85rem;font-weight:700;color:#E11B22;">{{commission_rate}}%</td></tr><tr><td style="padding:4px 0;font-size:0.85rem;color:#6B7280;">Paiement des gains</td><td align="right" style="font-size:0.85rem;font-weight:700;color:#1F2937;">Sous 48h après livraison</td></tr><tr><td style="padding:4px 0;font-size:0.85rem;color:#6B7280;">Méthodes disponibles</td><td align="right" style="font-size:0.85rem;font-weight:700;color:#1F2937;">Orange Money, Wave, Virement</td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{dashboard_url}}" style="display:inline-block;background:linear-gradient(135deg,#00853E,#33A85A);color:#ffffff;font-weight:700;font-size:1rem;text-decoration:none;padding:16px 48px;border-radius:50px;box-shadow:0 4px 16px rgba(0,133,62,0.3);">Accéder à ma boutique →</a></td></tr></table></td></tr>` +
+      _tplFooter("vendeurs@nexus.sn")
+    )
+  },
+
+  // 4. Boutique refusée (NOUVEAU — même thème, couleur rouge) ───────────────
+  vendor_rejected: {
+    subject: "ℹ️ Dossier vendeur — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#E11B22 0%,#B91C1C 100%);border-radius:16px 16px 0 0;padding:36px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#ffffff;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.35);border-radius:50px;padding:6px 20px;"><span style="font-size:0.82rem;color:#ffffff;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">📋 Dossier vendeur</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;line-height:1.3;">{{vendor_name}},<br>votre dossier a été examiné</h1><p style="margin:0 0 28px;font-size:0.95rem;color:#6B7280;line-height:1.6;">Merci d'avoir postulé pour ouvrir la boutique <strong style="color:#1F2937;">{{shop_name}}</strong> sur NEXUS Market. Après examen de votre dossier, nous ne sommes pas en mesure de valider votre inscription à ce stade.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#FEF2F2;border-left:4px solid #E11B22;border-radius:0 10px 10px 0;padding:18px 20px;"><p style="margin:0 0 8px;font-size:0.82rem;font-weight:700;color:#7F1D1D;text-transform:uppercase;letter-spacing:0.5px;">Motif communiqué</p><p style="margin:0;font-size:0.9rem;color:#1F2937;line-height:1.6;">{{rejection_reason}}</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#F9F7F0;border-radius:10px;padding:18px 20px;"><p style="margin:0 0 10px;font-size:0.85rem;font-weight:700;color:#1F2937;">💡 Que faire maintenant ?</p><table cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Vous pouvez soumettre un nouveau dossier dans <strong style="color:#1F2937;">30 jours</strong></td></tr><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Consultez nos critères d'éligibilité sur le site</td></tr><tr><td style="padding:6px 0;font-size:0.85rem;color:#6B7280;">Contactez notre équipe pour plus d'informations</td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{support_url}}" style="display:inline-block;background:#1F2937;color:#FDEF42;font-weight:700;font-size:0.9rem;text-decoration:none;padding:14px 40px;border-radius:50px;">Contacter le support</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 5. Nouvelle offre d'un acheteur ─────────────────────────────────────────
+  new_offer: {
+    subject: "💬 Nouvelle offre sur {{product_name}} — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#7C3AED 0%,#5B21B6 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(253,239,66,0.15);border:1.5px solid rgba(253,239,66,0.5);border-radius:50px;padding:6px 20px;"><span style="font-size:0.82rem;color:#FDEF42;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">💬 Nouvelle offre reçue</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 20px;font-size:1.5rem;font-weight:800;color:#1F2937;line-height:1.3;">{{vendor_name}},<br>quelqu'un est intéressé par votre produit !</h1><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:18px 20px;border:1px solid #E5E7EB;"><p style="margin:0 0 4px;font-size:0.72rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;">Produit concerné</p><p style="margin:0 0 4px;font-size:1.05rem;font-weight:700;color:#1F2937;">{{product_name}}</p><p style="margin:0;font-size:0.85rem;color:#6B7280;">Prix affiché : <strong style="color:#1F2937;text-decoration:line-through;">{{product_price}} FCFA</strong></p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td align="center" style="background:linear-gradient(135deg,#7C3AED,#5B21B6);border-radius:14px;padding:28px;"><p style="margin:0 0 6px;font-size:0.75rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:2px;font-weight:600;">Offre proposée par {{buyer_name}}</p><p style="margin:0;font-size:3rem;font-weight:900;color:#FDEF42;line-height:1;">{{offer_amount}}</p><p style="margin:4px 0 0;font-size:1rem;color:rgba(255,255,255,0.8);font-weight:600;">FCFA</p><div style="display:inline-block;margin-top:14px;background:rgba(253,239,66,0.15);border:1.5px solid rgba(253,239,66,0.4);border-radius:50px;padding:5px 16px;"><span style="font-size:0.78rem;color:#FDEF42;font-weight:700;">soit {{discount_pct}}% de remise demandée</span></div></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#F9F7F0;border-left:4px solid #7C3AED;border-radius:0 10px 10px 0;padding:14px 18px;"><p style="margin:0 0 8px;font-size:0.75rem;color:#6B7280;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Message de l'acheteur</p><p style="margin:0;font-size:0.9rem;color:#1F2937;font-style:italic;line-height:1.6;">"{{buyer_message}}"</p><p style="margin:8px 0 0;font-size:0.78rem;color:#7C3AED;font-weight:600;">— {{buyer_name}}</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:0 10px 10px 0;padding:12px 16px;"><p style="margin:0;font-size:0.84rem;color:#92400E;font-weight:600;">⏰ Cette offre expire le <strong>{{offer_expiry}}</strong>. Répondez rapidement !</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td width="48%" align="center"><a href="{{accept_url}}" style="display:block;background:#00853E;color:#ffffff;font-weight:700;font-size:0.9rem;text-decoration:none;padding:14px 20px;border-radius:50px;text-align:center;">✅ Accepter l'offre</a></td><td width="4%"></td><td width="48%" align="center"><a href="{{dashboard_url}}" style="display:block;background:#F9F7F0;color:#1F2937;font-weight:700;font-size:0.9rem;text-decoration:none;padding:14px 20px;border-radius:50px;border:2px solid #E5E7EB;text-align:center;">💬 Négocier</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 6. Demande de retour ────────────────────────────────────────────────────
+  return_request: {
+    subject: "📦 Demande de retour reçue — Commande {{order_id}}",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#F59E0B 0%,#D97706 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#ffffff;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(255,255,255,0.2);border:1.5px solid rgba(255,255,255,0.4);border-radius:50px;padding:6px 20px;"><span style="font-size:0.82rem;color:#ffffff;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">📦 Demande de retour</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;">{{buyer_name}} 👋</h1><p style="margin:0 0 28px;font-size:0.95rem;color:#6B7280;line-height:1.6;">Nous avons bien reçu votre demande de retour. Notre équipe va l'examiner dans les plus brefs délais.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:linear-gradient(135deg,#F59E0B,#D97706);border-radius:10px;padding:16px 20px;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td><p style="margin:0 0 4px;font-size:0.7rem;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1.5px;">N° Retour</p><p style="margin:0;font-size:1.15rem;font-weight:800;color:#ffffff;font-family:monospace;">{{return_id}}</p></td><td align="right"><p style="margin:0 0 4px;font-size:0.7rem;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1.5px;">Commande liée</p><p style="margin:0;font-size:0.95rem;font-weight:700;color:#ffffff;font-family:monospace;">{{order_id}}</p></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:20px;border:1px solid #E5E7EB;"><p style="margin:0 0 14px;font-size:0.82rem;font-weight:700;color:#1F2937;text-transform:uppercase;letter-spacing:1px;">Détails du retour</p><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Produit</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;">{{product_name}}</td></tr><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Motif</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;">{{return_reason}}</td></tr><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Montant concerné</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:700;color:#E11B22;">{{order_total}} FCFA</td></tr><tr><td style="padding:6px 0;font-size:0.85rem;color:#6B7280;">Date de demande</td><td align="right" style="padding:6px 0;font-size:0.85rem;font-weight:600;color:#1F2937;">{{return_date}}</td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{orders_url}}" style="display:inline-block;background:#F59E0B;color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;">Suivre mon retour →</a></td></tr></table></td></tr>` +
+      _tplFooter("retours@nexus.sn")
+    )
+  },
+
+  // 7. Nouveau message ──────────────────────────────────────────────────────
+  new_message: {
+    subject: "💬 Message de {{sender_name}} — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#06B6D4 0%,#0284C7 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#ffffff;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(255,255,255,0.2);border:1.5px solid rgba(255,255,255,0.4);border-radius:50px;padding:6px 20px;"><span style="font-size:0.82rem;color:#ffffff;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">💬 Nouveau message</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 10px;font-size:1.45rem;font-weight:800;color:#1F2937;line-height:1.3;">{{recipient_name}},<br>vous avez un nouveau message !</h1><p style="margin:0 0 28px;font-size:0.95rem;color:#6B7280;line-height:1.6;"><strong style="color:#06B6D4;">{{sender_name}}</strong> {{sender_shop_line}}vous a envoyé un message sur NEXUS Market.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px;"><tr><td style="background:#F0FDFA;border-radius:12px;padding:14px 18px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:44px;height:44px;background:linear-gradient(135deg,#06B6D4,#0284C7);border-radius:50%;text-align:center;line-height:44px;font-size:1.1rem;font-weight:800;color:white;vertical-align:middle;">{{sender_initial}}</td><td style="padding-left:14px;vertical-align:middle;"><p style="margin:0;font-size:0.95rem;font-weight:700;color:#1F2937;">{{sender_name}}</p><p style="margin:2px 0 0;font-size:0.78rem;color:#6B7280;">{{sender_role}} · {{message_date}}</p></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#F9F7F0;border-radius:0 14px 14px 14px;padding:20px 22px;border:1px solid #E5E7EB;"><p style="margin:0;font-size:0.95rem;color:#1F2937;line-height:1.7;font-style:italic;">"{{message_content}}"</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#EFF6FF;border-left:4px solid #06B6D4;border-radius:0 10px 10px 0;padding:12px 16px;"><p style="margin:0;font-size:0.82rem;color:#1E40AF;font-weight:600;">📋 En rapport avec : <strong>{{context_label}}</strong></p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#F9F7F0;border-radius:10px;padding:16px 18px;border:2px dashed #D1D5DB;"><p style="margin:0;font-size:0.85rem;color:#6B7280;text-align:center;line-height:1.6;">Répondez directement depuis l'application NEXUS Market.<br><span style="font-size:0.78rem;color:#9CA3AF;">Ne répondez pas à cet email.</span></p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{messages_url}}" style="display:inline-block;background:linear-gradient(135deg,#06B6D4,#0284C7);color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;box-shadow:0 4px 16px rgba(6,182,212,0.3);">Répondre au message →</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 8. Bienvenue (NOUVEAU) ──────────────────────────────────────────────────
+  welcome: {
+    subject: "🎊 Bienvenue sur NEXUS Market, {{user_name}} !",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#00853E 0%,#33A85A 60%,#FDEF42 100%);border-radius:16px 16px 0 0;padding:40px;text-align:center;"><div style="font-size:3rem;margin-bottom:12px;">🎊</div><span style="font-size:2rem;font-weight:900;color:#ffffff;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><p style="margin:10px 0 0;font-size:1rem;color:rgba(255,255,255,0.9);font-weight:600;">Market Sénégal</p></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><h1 style="margin:0 0 8px;font-size:1.7rem;font-weight:800;color:#1F2937;line-height:1.2;">Bienvenue, <span style="color:#00853E;">{{user_name}}</span> !</h1><p style="margin:0 0 28px;font-size:1rem;color:#6B7280;line-height:1.6;">Votre compte a été créé avec succès. Vous avez désormais accès à la marketplace B2B/B2C #1 au Sénégal.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:22px 24px;"><p style="margin:0 0 16px;font-size:0.85rem;font-weight:700;color:#1F2937;text-transform:uppercase;letter-spacing:1px;">🚀 Prochaines étapes</p><table cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="padding:8px 0;border-bottom:1px solid #E5E7EB;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:32px;height:32px;background:#00853E;border-radius:50%;text-align:center;line-height:32px;font-size:0.8rem;font-weight:700;color:white;">1</td><td style="padding-left:12px;font-size:0.88rem;color:#1F2937;">Complétez votre profil pour personnaliser votre expérience</td></tr></table></td></tr><tr><td style="padding:8px 0;border-bottom:1px solid #E5E7EB;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:32px;height:32px;background:#00853E;border-radius:50%;text-align:center;line-height:32px;font-size:0.8rem;font-weight:700;color:white;">2</td><td style="padding-left:12px;font-size:0.88rem;color:#1F2937;">Explorez le catalogue et découvrez nos milliers de produits</td></tr></table></td></tr><tr><td style="padding:8px 0;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:32px;height:32px;background:#00853E;border-radius:50%;text-align:center;line-height:32px;font-size:0.8rem;font-weight:700;color:white;">3</td><td style="padding-left:12px;font-size:0.88rem;color:#1F2937;">Devenez vendeur et développez votre activité sur NEXUS</td></tr></table></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{site_url}}" style="display:inline-block;background:linear-gradient(135deg,#00853E,#33A85A);color:#ffffff;font-weight:700;font-size:1rem;text-decoration:none;padding:16px 48px;border-radius:50px;box-shadow:0 4px 16px rgba(0,133,62,0.3);">Découvrir NEXUS Market →</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 9. Mise à jour litige (NOUVEAU) ─────────────────────────────────────────
+  dispute_update: {
+    subject: "⚖️ Mise à jour de votre litige #{{dispute_id}} — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#E11B22 0%,#B91C1C 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#ffffff;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.35);border-radius:50px;padding:6px 20px;"><span style="font-size:0.82rem;color:#ffffff;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">⚖️ Mise à jour litige</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;">{{user_name}} 👋</h1><p style="margin:0 0 28px;font-size:0.95rem;color:#6B7280;line-height:1.6;">Votre litige a été mis à jour par notre équipe de médiation.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#FEF2F2;border-radius:10px;padding:16px 20px;border:1.5px solid #FCA5A5;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td><p style="margin:0 0 2px;font-size:0.7rem;color:#7F1D1D;text-transform:uppercase;letter-spacing:1px;">N° Litige</p><p style="margin:0;font-size:1.1rem;font-weight:800;color:#E11B22;font-family:monospace;">#{{dispute_id}}</p></td><td align="right"><p style="margin:0 0 2px;font-size:0.7rem;color:#7F1D1D;text-transform:uppercase;letter-spacing:1px;">Commande</p><p style="margin:0;font-size:0.9rem;font-weight:700;color:#1F2937;font-family:monospace;">{{order_id}}</p></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#F9F7F0;border-radius:10px;padding:16px 20px;border:1px solid #E5E7EB;"><p style="margin:0 0 6px;font-size:0.75rem;color:#6B7280;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Produit concerné</p><p style="margin:0;font-size:0.9rem;font-weight:600;color:#1F2937;">{{product_name}}</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td style="background:#F9F7F0;border-left:4px solid #E11B22;border-radius:0 10px 10px 0;padding:16px 18px;"><p style="margin:0 0 6px;font-size:0.78rem;color:#6B7280;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Message de l'équipe NEXUS</p><p style="margin:0;font-size:0.9rem;color:#1F2937;line-height:1.6;">{{update_message}}</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{dispute_url}}" style="display:inline-block;background:#E11B22;color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;">Voir mon litige →</a></td></tr></table></td></tr>` +
+      _tplFooter("litiges@nexus.sn")
+    )
+  },
+
+  // 10. Paiement vendeur traité (NOUVEAU) ────────────────────────────────────
+  payout_processed: {
+    subject: "💰 Virement traité — {{amount_fcfa}} FCFA — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#00853E 0%,#33A85A 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(253,239,66,0.15);border:2px solid #FDEF42;border-radius:50px;padding:8px 24px;"><span style="font-size:0.85rem;color:#FDEF42;font-weight:700;letter-spacing:2px;text-transform:uppercase;">💰 Paiement envoyé</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;">{{vendor_name}} 👋</h1><p style="margin:0 0 28px;font-size:0.95rem;color:#6B7280;line-height:1.6;">Votre virement a été traité avec succès. Les fonds seront disponibles selon les délais de votre opérateur.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td align="center" style="background:linear-gradient(135deg,#00853E,#33A85A);border-radius:14px;padding:28px;"><p style="margin:0 0 6px;font-size:0.75rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:2px;">Montant versé</p><p style="margin:0;font-size:3rem;font-weight:900;color:#FDEF42;line-height:1;">{{amount_fcfa}}</p><p style="margin:4px 0 0;font-size:1rem;color:rgba(255,255,255,0.8);font-weight:600;">FCFA</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:20px;border:1px solid #E5E7EB;"><p style="margin:0 0 14px;font-size:0.82rem;font-weight:700;color:#1F2937;text-transform:uppercase;letter-spacing:1px;">Détails du virement</p><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">N° Transaction</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;font-family:monospace;">{{payout_id}}</td></tr><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Méthode</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;">{{payout_method}}</td></tr><tr><td style="padding:6px 0;font-size:0.85rem;color:#6B7280;">Date de traitement</td><td align="right" style="padding:6px 0;font-size:0.85rem;font-weight:600;color:#1F2937;">{{payout_date}}</td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{dashboard_url}}" style="display:inline-block;background:linear-gradient(135deg,#00853E,#33A85A);color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;box-shadow:0 4px 16px rgba(0,133,62,0.3);">Voir mes paiements →</a></td></tr></table></td></tr>` +
+      _tplFooter("finances@nexus.sn")
+    )
+  },
+
+  // 11. Commande expédiée (NOUVEAU) ──────────────────────────────────────────
+  order_shipped: {
+    subject: "🚚 Votre commande {{order_id}} est en route !",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#1D4ED8 0%,#2563EB 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(253,239,66,0.15);border:2px solid rgba(253,239,66,0.5);border-radius:50px;padding:8px 24px;"><span style="font-size:0.85rem;color:#FDEF42;font-weight:700;letter-spacing:2px;text-transform:uppercase;">🚚 En livraison</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;">{{buyer_name}} 👋</h1><p style="margin:0 0 28px;font-size:1rem;color:#6B7280;line-height:1.6;">Bonne nouvelle ! Votre commande a été expédiée et est en route vers vous.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:linear-gradient(135deg,#1D4ED8,#2563EB);border-radius:10px;padding:18px 20px;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td><p style="margin:0 0 4px;font-size:0.7rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:1px;">Numéro de commande</p><p style="margin:0;font-size:1.05rem;font-weight:800;color:#ffffff;font-family:monospace;">{{order_id}}</p></td><td align="right"><p style="margin:0 0 4px;font-size:0.7rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:1px;">N° de suivi</p><p style="margin:0;font-size:1.05rem;font-weight:800;color:#FDEF42;font-family:monospace;">{{tracking_number}}</p></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:18px 20px;border:1px solid #E5E7EB;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Transporteur</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;">{{carrier}}</td></tr><tr><td style="padding:6px 0;font-size:0.85rem;color:#6B7280;">Livraison estimée</td><td align="right" style="padding:6px 0;font-size:0.85rem;font-weight:700;color:#00853E;">{{estimated_delivery}}</td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{tracking_url}}" style="display:inline-block;background:linear-gradient(135deg,#1D4ED8,#2563EB);color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;box-shadow:0 4px 16px rgba(29,78,216,0.3);">Suivre ma livraison →</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  }
+
 };
-const applyEmailVars = (str, vars) =>
-  Object.entries(vars||{}).reduce((s,[k,v])=>
-    s.replace(new RegExp("\\{\\{"+k+"\\}\\}","g"), v!=null?String(v):""), str||"");
+
+// ── Template Engine ────────────────────────────────────────────────────────
+// Priorité : 1. Custom admin (localStorage) → 2. Défauts NEXUS_EMAIL_DEFAULTS
+const getEmailTemplate = (id) => {
+  try {
+    const custom = JSON.parse(localStorage.getItem("nexus_email_templates")||"{}")[id];
+    if (custom && (custom.html || custom.subject)) return custom;
+  } catch(_){}
+  return NEXUS_EMAIL_DEFAULTS[id] || null;
+};
+
+// applyEmailVars — supporte {{key}} et {{#if key}}...{{/if}} conditionnels
+const applyEmailVars = (str, vars) => {
+  if (!str) return '';
+  // Résoudre les conditionnels {{#if key}}...{{/if}}
+  let result = str.replace(/\{\{#if (\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g, (_, key, content) =>
+    vars[key] ? content : '');
+  // Remplacer les variables {{key}}
+  result = Object.entries(vars||{}).reduce((s, [k, v]) =>
+    s.replace(new RegExp('\\{\\{' + k + '\\}\\}', 'g'), v != null ? String(v) : ''), result);
+  // Supprimer les {{placeholders}} non résolus
+  return result.replace(/\{\{[^}]+\}\}/g, '');
+};
 
 const EmailService = {
   _initialized: false,
-  // BUG FIX: reset() permet de réinitialiser le service après une mise à jour de config
-  reset() {
-    this._initialized = false;
-  },
+  reset() { this._initialized = false; },
   init() {
-    // BUG FIX: utiliser isEmailjsConfigured() (dynamique) au lieu de IS_EMAILJS_CONFIGURED (constante)
     if (isEmailjsConfigured() && window.emailjs) {
-      // Toujours réinitialiser pour prendre en compte une éventuelle nouvelle publicKey
       window.emailjs.init({ publicKey: NEXUS_CONFIG.emailjs.publicKey });
       this._initialized = true;
-      console.log("[EmailJS] Service initialisé (v4)");
     }
   },
+
   async send({ to, subject, templateId, variables, ejsTemplateId }) {
     if (!to) { console.warn("[EmailService] Destinataire manquant"); return false; }
     if (!NEXUS_CONFIG.brevo?.apiKey) {
@@ -6754,333 +6900,228 @@ const EmailService = {
           NEXUS_CONFIG.brevo.apiKey=sc.brevoApiKey; NEXUS_CONFIG.brevo.senderEmail=sc.brevoSenderEmail||"noreply@nexus.sn"; }
       } catch(_){}
     }
-    const htmlBody = variables?.html_body || (() => {
-      const rows = Object.entries(variables||{})
-        .filter(([k])=>!["html_body","site_url","reply_to"].includes(k))
-        .map(([k,v])=>`<tr><td style="padding:6px 12px;color:#6b7280;font-size:13px">${k}</td><td style="padding:6px 12px;font-size:13px">${v||""}</td></tr>`)
-        .join("");
-      return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto"><div style="background:#00853E;padding:20px;text-align:center"><h2 style="color:white;margin:0">NEXUS Market</h2></div><div style="padding:24px;background:#f9f9f9"><p style="font-weight:600;font-size:16px">${subject}</p><table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;margin-top:16px">${rows}</table></div><div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div></div>`;
-    })();
-    // ── 1. BREVO — priorité (300/jour gratuits) ────────────────────────────
+    const htmlBody = variables?.html_body;
+    if (!htmlBody) { console.warn("[EmailService] html_body manquant pour", templateId); return false; }
+
+    // ── 1. BREVO (300/jour gratuits) ──────────────────────────────────────
     if (NEXUS_CONFIG.brevo?.apiKey) {
       try {
         const r = await fetch("https://api.brevo.com/v3/smtp/email", {
-          method:"POST",
-          headers:{"Content-Type":"application/json","api-key":NEXUS_CONFIG.brevo.apiKey},
-          body:JSON.stringify({ sender:{name:NEXUS_CONFIG.brevo.senderName||"NEXUS Market",email:NEXUS_CONFIG.brevo.senderEmail||"noreply@nexus.sn"}, to:[{email:to}], subject, htmlContent:htmlBody })
+          method: "POST",
+          headers: { "Content-Type": "application/json", "api-key": NEXUS_CONFIG.brevo.apiKey },
+          body: JSON.stringify({ sender: { name: NEXUS_CONFIG.brevo.senderName||"NEXUS Market", email: NEXUS_CONFIG.brevo.senderEmail||"noreply@nexus.sn" }, to: [{ email: to }], subject, htmlContent: htmlBody })
         });
-        if (r.ok) { console.log("[Brevo] ✅",to,"—",subject); return true; }
-        const err=await r.json().catch(()=>({}));
-        console.warn("[Brevo] ⚠️",r.status,err.message||JSON.stringify(err));
-      } catch(e){ console.warn("[Brevo] réseau:",e.message); }
+        if (r.ok) { console.log("[Brevo] ✅", to, "—", subject); return true; }
+        const err = await r.json().catch(()=>({}));
+        console.warn("[Brevo] ⚠️", r.status, err.message || JSON.stringify(err));
+      } catch(e) { console.warn("[Brevo] réseau:", e.message); }
     }
-    // ── 2. EMAILJS fallback ────────────────────────────────────────────────
-    const uTpl=NEXUS_CONFIG.emailjs.universalTemplateId;
-    if(!this._initialized&&window.emailjs&&isEmailjsConfigured()){window.emailjs.init({publicKey:NEXUS_CONFIG.emailjs.publicKey});this._initialized=true;}
-    if(isEmailjsConfigured()&&this._initialized&&uTpl){
-      try{ await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId,uTpl,{to_email:to,reply_to:to,subject,html_body:htmlBody,...variables}); console.log("[EmailJS] ✅",to); return true; }
-      catch(e){ console.warn("[EmailJS]",e?.status||e?.message||e); }
+    // ── 2. EmailJS fallback ───────────────────────────────────────────────
+    const uTpl = NEXUS_CONFIG.emailjs.universalTemplateId;
+    if (!this._initialized && window.emailjs && isEmailjsConfigured()) { window.emailjs.init({ publicKey: NEXUS_CONFIG.emailjs.publicKey }); this._initialized = true; }
+    if (isEmailjsConfigured() && this._initialized && uTpl) {
+      try { await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId, uTpl, { to_email: to, reply_to: to, subject, html_body: htmlBody, ...variables }); console.log("[EmailJS] ✅", to); return true; }
+      catch(e) { console.warn("[EmailJS]", e?.status || e?.message || e); }
     }
-    // ── 3. Backend API ─────────────────────────────────────────────────────
-    const _t=DataService?._token||sessionStorage.getItem("nexus_jwt")||localStorage.getItem("nexus_jwt");
-    if(NEXUS_CONFIG.apiUrl&&_t){
-      try{
-        const r=await fetch((NEXUS_CONFIG.apiUrl||"")+"/api/email/send",{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${_t}`},body:JSON.stringify({to,subject,html:htmlBody})});
-        if(r.ok){const j=await r.json();if(j.ok){console.log("[EmailService] ✅ backend",to);return true;}}
-      }catch(e){console.warn("[EmailService] backend:",e.message);}
+    // ── 3. Backend API ────────────────────────────────────────────────────
+    const _t = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
+    if (NEXUS_CONFIG.apiUrl && _t) {
+      try {
+        const r = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/email/send", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_t}` }, body: JSON.stringify({ to, subject, html: htmlBody }) });
+        if (r.ok) { const j = await r.json(); if (j.ok) { console.log("[EmailService] ✅ backend", to); return true; } }
+      } catch(e) { console.warn("[EmailService] backend:", e.message); }
     }
-    console.warn("[EmailService] ⚠️ Simulation — configurez Brevo dans admin → Templates email. Destinataire:",to);
+    console.warn("[EmailService] ⚠️ Simulation — configurez Brevo dans admin → Templates email. Destinataire:", to);
     return false;
   },
 
   sendOrderConfirmation(order, items) {
-    // [FIX] Normalisation défensive camelCase || snake_case (réponse backend)
     const buyerEmail   = order.buyerEmail    || order.buyer_email    || '';
     const buyerName    = order.buyerName     || order.buyer_name     || '—';
     const buyerAddress = order.buyerAddress  || order.buyer_address  || '—';
-    const vendorName   = order.vendorName    || order.vendor_name    || '—';
     const trackingNum  = order.trackingNumber|| order.tracking_number|| '—';
     const shippingCity = order.shippingCity  || order.shipping_city  || '';
+    const payMethod    = order.paymentMethod || order.payment_method || '—';
     const orderDate    = order.date          || order.created_at     || new Date().toISOString();
     const safeItems    = items || order.products || [];
+    const orderDateFr  = (() => { try { return new Date(orderDate).toLocaleDateString('fr-FR'); } catch(_) { return new Date().toLocaleDateString('fr-FR'); } })();
 
-    const itemList = safeItems.map((i) =>
-      `${i.name} ×${i.quantity || 1} — ${formatPrice((i.price || 0) * (i.quantity || 1))}`
-    ).join('<br>');
-
-    const itemRows = safeItems.map((i) =>
-      `<tr style="border-bottom:1px solid #e5e7eb">` +
-        `<td style="padding:8px 4px;font-size:14px">${i.name} <span style="color:#6b7280">×${i.quantity || 1}</span></td>` +
-        `<td style="padding:8px 4px;text-align:right;font-size:14px;font-weight:600;white-space:nowrap">${formatPrice((i.price || 0) * (i.quantity || 1))}</td>` +
+    // Construire les lignes produits en HTML (compatible template)
+    const itemsRows = safeItems.map(i =>
+      `<tr style="border-top:1px solid #E5E7EB;">` +
+      `<td style="padding:12px 16px;font-size:0.9rem;color:#1F2937;font-weight:500;">${i.name || '—'}</td>` +
+      `<td style="padding:12px 16px;text-align:center;font-size:0.9rem;color:#6B7280;">×${i.quantity || 1}</td>` +
+      `<td style="padding:12px 16px;text-align:right;font-size:0.9rem;font-weight:700;color:#1F2937;">${formatPrice((i.price||0)*(i.quantity||1))} FCFA</td>` +
       `</tr>`
     ).join('');
-    const itemListHtml =
-      `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:12px 0">` +
-        `<thead><tr style="background:#f3f4f6">` +
-          `<th style="padding:8px 4px;text-align:left;font-size:13px;color:#374151">Article</th>` +
-          `<th style="padding:8px 4px;text-align:right;font-size:13px;color:#374151">Montant</th>` +
-        `</tr></thead><tbody>${itemRows}</tbody>` +
-        `<tfoot><tr>` +
-          `<td style="padding:10px 4px;font-weight:700;font-size:15px;color:#00853E">Total</td>` +
-          `<td style="padding:10px 4px;text-align:right;font-weight:700;font-size:15px;color:#00853E">${formatPrice(order.total || 0)}</td>` +
-        `</tr></tfoot></table>`;
 
-    const allNames = safeItems.map((i) => `${i.name} ×${i.quantity || 1}`).join(', ');
-    const firstItem = safeItems[0] || {};
-    const firstItemName  = safeItems.length === 1 ? (firstItem.name || '—') : (allNames || '—');
-    const firstItemPrice = safeItems.length === 1 && firstItem.price != null
-      ? formatPrice(firstItem.price * (firstItem.quantity || 1))
-      : formatPrice(order.total || 0);
-    const orderDateFr = (() => { try { return new Date(orderDate).toLocaleDateString('fr-FR'); } catch(_) { return new Date().toLocaleDateString('fr-FR'); } })();
+    const tpl = getEmailTemplate('order_confirmation');
+    const siteUrl = window.location.origin;
+    const vars = {
+      buyer_name:       buyerName,
+      order_id:         order.id || '—',
+      order_date:       orderDateFr,
+      items_rows:       itemsRows,
+      order_total:      formatPrice(order.total || 0),
+      delivery_address: shippingCity ? `${buyerAddress}, ${shippingCity}` : buyerAddress,
+      payment_method:   payMethod,
+      tracking_number:  trackingNum,
+      order_url:        `${siteUrl}/#orders`,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `✅ Commande ${order.id || ''} confirmée — NEXUS Market`;
+    return this.send({ to: buyerEmail, subject: subj, templateId: 'order_confirmation', ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId, variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
 
-    const _tOC=getEmailTemplate('order_confirmation');
-    return this.send({
-      to: buyerEmail,
-      subject: _tOC?.subject ? applyEmailVars(_tOC.subject,{order_id:order.id||'—',buyer_name:buyerName}) : `✅ Confirmation commande ${order.id} — NEXUS Market`,
-      templateId: "order_confirmation",
-      ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
-      variables: {
-        to_name: buyerName, buyer_name: buyerName,
-        order_id: order.id || '—', order_date: orderDateFr,
-        tracking: trackingNum, product_name: firstItemName, product_price: firstItemPrice,
-        item_list: itemList, item_list_html: itemListHtml,
-        item_count: String(safeItems.reduce((s, i) => s + (i.quantity || 1), 0)),
-        total: formatPrice(order.total || 0), currency: 'FCFA',
-        address: buyerAddress, shipping_city: shippingCity,
-        vendor_name: vendorName, site_url: window.location.origin,
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-            <div style="background:#00853E;padding:20px;text-align:center">
-              <h1 style="color:white;margin:0">NEXUS Market Sénégal</h1>
-            </div>
-            <div style="padding:30px;background:#f9f9f9">
-              <h2 style="color:#1F2937">Bonjour ${buyerName},</h2>
-              <p>Votre commande <strong>#${order.id || '—'}</strong> a été confirmée le ${orderDateFr} !</p>
-              ${itemListHtml}
-              <div style="background:#e8f5e9;border-radius:8px;padding:15px;margin:15px 0">
-                <p style="margin:0"><strong>📦 Numéro de suivi :</strong> ${trackingNum}</p>
-                <p style="margin:8px 0 0"><strong>🏠 Livraison :</strong> ${buyerAddress}${shippingCity ? ', ' + shippingCity : ''}</p>
-              </div>
-              <p>Vendeur : <strong>${vendorName}</strong></p>
-              <p style="color:#666;font-size:14px">Pour toute question : <a href="mailto:sav@nexus.sn">sav@nexus.sn</a></p>
-            </div>
-            <div style="background:#333;color:white;padding:15px;text-align:center;font-size:12px">
-              NEXUS Market SARL — Dakar, Sénégal
-            </div>
-          </div>`,
-      }
-    });
+  sendPasswordReset(userEmail, userName, resetCode, resetUrl) {
+    const tpl = getEmailTemplate('password_reset');
+    const vars = { user_name: userName || '—', reset_code: resetCode || '------', reset_url: resetUrl || '#' };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `🔑 Réinitialisation de votre mot de passe — NEXUS Market`;
+    return this.send({ to: userEmail, subject: subj, templateId: 'password_reset', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
   },
-    sendPasswordReset(email, code) {
-    return this.send({
-      to: email,
-      subject: "\u{1F511} R\xE9initialisation mot de passe \u2014 NEXUS Market",
-      templateId: "password_reset",
-      ejsTemplateId: NEXUS_CONFIG.emailjs.resetTemplateId,
-      variables: {
-        reset_code: code, expires_in: "10 minutes",
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
-            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center">
-              <h2 style="color:white;margin:0">NEXUS Market — Sécurité</h2>
-            </div>
-            <div style="background:#f9f9f9;padding:30px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937;margin-top:0">Réinitialisation de mot de passe</h3>
-              <p>Voici votre code (valable <strong>10 minutes</strong>) :</p>
-              <div style="font-size:38px;font-weight:900;letter-spacing:10px;text-align:center;padding:24px;background:white;border:2px dashed #00853E;border-radius:12px;color:#00853E;margin:20px 0">${code}</div>
-              <p style="color:#6b7280;font-size:13px">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>
-            </div>
-            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
-          </div>`
-      }
-    });
+
+  sendVendorApproval(vendorEmail, vendorName, shopName, approved, adminNote) {
+    const noteText    = adminNote || (approved ? 'Votre boutique est désormais active. Vous pouvez publier vos produits.' : 'Votre dossier ne remplit pas encore nos critères.');
+    const tplKey      = approved ? 'vendor_approved' : 'vendor_rejected';
+    const tpl         = getEmailTemplate(tplKey);
+    const siteUrl     = window.location.origin;
+    const vars = approved ? {
+      vendor_name:     vendorName,
+      shop_name:       shopName || vendorName,
+      shop_category:   'Général',
+      commission_rate: '15',
+      dashboard_url:   siteUrl,
+    } : {
+      vendor_name:      vendorName,
+      shop_name:        shopName || vendorName,
+      rejection_reason: noteText,
+      support_url:      `mailto:support@nexus.sn`,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : (approved ? `🎉 Boutique approuvée — NEXUS Market` : `ℹ️ Dossier vendeur — NEXUS Market`);
+    return this.send({ to: vendorEmail, subject: subj, templateId: tplKey, ejsTemplateId: NEXUS_CONFIG.emailjs.vendorAdminTemplateId, variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
   },
-    sendOfferNotification(vendorEmail, offer) {
-    return this.send({
-      to: vendorEmail,
-      subject: `\u{1F4AC} Nouvelle offre sur ${offer.productName} — NEXUS Market`,
-      templateId: "new_offer",
-      ejsTemplateId: NEXUS_CONFIG.emailjs.offerTemplateId,
-      variables: {
-        to_name: offer.vendorName || 'Vendeur', buyer_name: offer.buyerName,
-        product_name: offer.productName,
-        offer_price: formatPrice(offer.offeredPrice),
-        original_price: formatPrice(offer.originalPrice || offer.offeredPrice),
-        message: offer.message || 'Aucun message joint.',
-        offer_id: offer.id || '—', site_url: window.location.origin,
-        order_id: offer.id || '—', total: formatPrice(offer.offeredPrice), vendor_name: offer.vendorName || '—',
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
-            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center">
-              <h2 style="color:white;margin:0">NEXUS Market</h2>
-            </div>
-            <div style="background:#f9f9f9;padding:24px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937">Bonjour ${offer.vendorName || 'Vendeur'},</h3>
-              <p><strong>${offer.buyerName}</strong> a soumis une offre pour <strong>${offer.productName}</strong>.</p>
-              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:16px 0;background:white;border-radius:8px;overflow:hidden">
-                <tr style="background:#f3f4f6">
-                  <td style="padding:10px 14px;font-size:13px;font-weight:600">Produit</td>
-                  <td style="padding:10px 14px;font-size:13px;font-weight:600;text-align:right">Prix</td>
-                </tr>
-                <tr>
-                  <td style="padding:10px 14px;font-size:14px">${offer.productName}</td>
-                  <td style="padding:10px 14px;font-size:14px;text-align:right;text-decoration:line-through;color:#9ca3af">${formatPrice(offer.originalPrice || offer.offeredPrice)}</td>
-                </tr>
-                <tr style="background:#ecfdf5">
-                  <td style="padding:10px 14px;font-size:14px;font-weight:700;color:#00853E">💰 Prix proposé</td>
-                  <td style="padding:10px 14px;font-size:16px;font-weight:700;color:#00853E;text-align:right">${formatPrice(offer.offeredPrice)}</td>
-                </tr>
-              </table>
-              ${offer.message ? `<div style="background:#fffbeb;border-left:4px solid #FDEF42;padding:12px 16px;margin:16px 0;border-radius:4px"><p style="margin:0;font-style:italic">"${offer.message}"</p></div>` : ''}
-              <p style="text-align:center;margin-top:24px">
-                <a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Accepter ou refuser</a>
-              </p>
-            </div>
-            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
-          </div>`
-      }
-    });
-  },
-    sendOfferResponse(buyerEmail, offer, accepted) {
-    return this.send({
-      to: buyerEmail,
-      subject: `${accepted ? '✅ Offre acceptée' : '❌ Offre refusée'} — ${offer.productName}`,
-      templateId: accepted ? "offer_accepted" : "offer_rejected",
-      ejsTemplateId: NEXUS_CONFIG.emailjs.offerTemplateId,
-      variables: {
-        to_name: offer.buyerName || 'Client', buyer_name: offer.buyerName,
-        product_name: offer.productName, offer_price: formatPrice(offer.offeredPrice),
-        status: accepted ? 'acceptée 🎉' : 'refusée',
-        message: accepted ? `Félicitations ! Le vendeur a accepté votre offre de ${formatPrice(offer.offeredPrice)}.`
-                          : `Le vendeur n'a pas pu accepter votre offre. Vous pouvez faire une nouvelle proposition.`,
-        site_url: window.location.origin, order_id: offer.id || '—',
-        total: formatPrice(offer.offeredPrice), vendor_name: offer.vendorName || '—',
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
-            <div style="background:${accepted ? '#00853E' : '#E11B22'};padding:20px;border-radius:8px 8px 0 0;text-align:center">
-              <h2 style="color:white;margin:0">NEXUS Market — Offre ${accepted ? 'acceptée ✅' : 'refusée ❌'}</h2>
-            </div>
-            <div style="background:#f9f9f9;padding:24px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937">Bonjour ${offer.buyerName || 'Client'},</h3>
-              <p>${accepted ? '🎉 Bonne nouvelle ! Le vendeur a <strong style="color:#00853E">accepté</strong> votre offre.' : 'Le vendeur n&#39;a pas pu <strong style="color:#E11B22">accepter</strong> votre offre.'}</p>
-              <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:16px 0;background:white;border-radius:8px;overflow:hidden">
-                <tr style="background:#f3f4f6"><td style="padding:10px 14px;font-size:13px;font-weight:600">Produit</td><td style="padding:10px 14px;font-size:13px;font-weight:600;text-align:right">Votre offre</td></tr>
-                <tr><td style="padding:10px 14px;font-size:14px">${offer.productName}</td>
-                    <td style="padding:10px 14px;font-size:16px;font-weight:700;color:${accepted ? '#00853E' : '#E11B22'};text-align:right">${formatPrice(offer.offeredPrice)}</td></tr>
-              </table>
-              ${accepted ? `<p style="text-align:center;margin-top:24px"><a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Finaliser ma commande</a></p>` : ''}
-              <p style="color:#6b7280;font-size:13px">Vendeur : ${offer.vendorName || '—'}</p>
-            </div>
-            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
-          </div>`
-      }
-    });
-  },
-    sendVendorApproval(vendorEmail, vendorName, shopName, approved, adminNote) {
-    const statusColor = approved ? '#00853E' : '#E11B22';
-    const noteText = adminNote || (approved ? 'Votre boutique est désormais active. Vous pouvez publier vos produits.' : 'Votre dossier est en cours de traitement.');
-    return this.send({
-      to: vendorEmail,
-      subject: (() => { const _t=getEmailTemplate(approved?'vendor_approved':'vendor_rejected'); if(_t?.subject) return applyEmailVars(_t.subject,{vendor_name:vendorName,shop_name:shopName||vendorName}); return approved?`🎉 Boutique approuvée — NEXUS Market`:`ℹ️ Dossier vendeur — NEXUS Market`; })(),
-      templateId: "vendor_approved",
-      ejsTemplateId: NEXUS_CONFIG.emailjs.vendorAdminTemplateId,
-      variables: {
-        to_name: vendorName, vendor_name: vendorName, shop_name: shopName || vendorName,
-        action: approved ? 'approuvée ✅' : 'examinée', admin_message: noteText,
-        site_url: window.location.origin, order_id: '—', total: '—', buyer_name: vendorName,
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
-            <div style="background:${statusColor};padding:20px;border-radius:8px 8px 0 0;text-align:center"><h2 style="color:white;margin:0">NEXUS Market — Votre boutique</h2></div>
-            <div style="background:#f9f9f9;padding:28px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937;margin-top:0">Bonjour ${vendorName},</h3>
-              <p>Votre boutique <strong>${shopName || vendorName}</strong> a été <strong style="color:${statusColor}">${approved ? 'approuvée ✅' : 'examinée'}</strong>.</p>
-              <div style="background:white;border-left:4px solid ${statusColor};padding:14px 18px;border-radius:4px;margin:16px 0"><p style="margin:0">${noteText}</p></div>
-              ${approved ? `<p style="text-align:center;margin-top:24px"><a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Accéder à ma boutique</a></p>` : ''}
-              <p style="color:#6b7280;font-size:13px">Questions ? <a href="mailto:vendor@nexus.sn">vendor@nexus.sn</a></p>
-            </div>
-            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
-          </div>`
-      }
-    });
-  },
+
   sendVendorRejection(vendorEmail, vendorName, reason) {
-    const reasonText = reason || "Votre dossier ne remplit pas encore nos critères.";
-    return this.send({
-      to: vendorEmail,
-      subject: `ℹ️ Dossier vendeur refusé — NEXUS Market`,
-      templateId: "vendor_rejected",
-      ejsTemplateId: NEXUS_CONFIG.emailjs.vendorAdminTemplateId,
-      variables: {
-        to_name: vendorName, vendor_name: vendorName, shop_name: vendorName,
-        action: 'refusée ❌', admin_message: reasonText,
-        site_url: window.location.origin, order_id: '—', total: '—', buyer_name: vendorName,
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
-            <div style="background:#E11B22;padding:20px;border-radius:8px 8px 0 0;text-align:center"><h2 style="color:white;margin:0">NEXUS Market — Dossier vendeur</h2></div>
-            <div style="background:#f9f9f9;padding:28px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937;margin-top:0">Bonjour ${vendorName},</h3>
-              <p>Votre demande a été <strong style="color:#E11B22">refusée</strong>.</p>
-              <div style="background:white;border-left:4px solid #E11B22;padding:14px 18px;border-radius:4px;margin:16px 0"><p style="margin:0">${reasonText}</p></div>
-              <p style="color:#6b7280;font-size:13px">Support : <a href="mailto:support@nexus.sn">support@nexus.sn</a></p>
-            </div>
-            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
-          </div>`
-      }
-    });
+    return this.sendVendorApproval(vendorEmail, vendorName, vendorName, false, reason);
   },
-  sendMessage(recipientEmail, recipientName, senderName, messageText, subject) {
-    const _tMsg=getEmailTemplate('new_message');
-    const subj = subject||(_tMsg?.subject ? applyEmailVars(_tMsg.subject,{sender_name:senderName,recipient_name:recipientName||''}) : `💬 Message de ${senderName} — NEXUS Market`);
-    return this.send({
-      to: recipientEmail, subject: subj, templateId: "new_message",
-      ejsTemplateId: NEXUS_CONFIG.emailjs.msgTemplateId,
-      variables: {
-        to_name: recipientName || 'Utilisateur', from_name: senderName, sender_name: senderName,
-        message_body: messageText, message_text: messageText, site_url: window.location.origin,
-        order_id: '—', total: '—', buyer_name: recipientName || '—', vendor_name: senderName,
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
-            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center"><h2 style="color:white;margin:0">NEXUS Market — Message</h2></div>
-            <div style="background:#f9f9f9;padding:28px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937;margin-top:0">Bonjour ${recipientName || 'Utilisateur'},</h3>
-              <p>Nouveau message de <strong>${senderName}</strong> :</p>
-              <div style="background:white;border-left:4px solid #00853E;padding:16px 18px;border-radius:4px;margin:16px 0;font-style:italic">"${(messageText || '').slice(0, 500)}${(messageText || '').length > 500 ? '…' : ''}"</div>
-              <p style="text-align:center;margin-top:24px"><a href="${window.location.origin}" style="background:#00853E;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Répondre sur NEXUS Market</a></p>
-            </div>
-            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
-          </div>`
-      }
-    });
+
+  sendMessage(recipientEmail, recipientName, senderName, messageText, subject, opts) {
+    const tpl       = getEmailTemplate('new_message');
+    const siteUrl   = window.location.origin;
+    const senderShop = opts?.senderShop || '';
+    const vars = {
+      recipient_name:   recipientName || 'Utilisateur',
+      sender_name:      senderName,
+      sender_initial:   (senderName || 'N').charAt(0).toUpperCase(),
+      sender_role:      opts?.senderRole || 'Membre',
+      sender_shop:      senderShop,
+      sender_shop_line: senderShop ? `de <strong style="color:#1F2937;">${senderShop}</strong> ` : '',
+      message_content:  (messageText || '').slice(0, 500) + ((messageText||'').length > 500 ? '…' : ''),
+      message_date:     new Date().toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' }),
+      context_label:    opts?.contextLabel || 'NEXUS Market',
+      context_id:       opts?.contextId || '',
+      messages_url:     `${siteUrl}/#messages`,
+    };
+    const subj = subject || (tpl?.subject ? applyEmailVars(tpl.subject, vars) : `💬 Message de ${senderName} — NEXUS Market`);
+    return this.send({ to: recipientEmail, subject: subj, templateId: 'new_message', ejsTemplateId: NEXUS_CONFIG.emailjs.msgTemplateId, variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
   },
+
   sendReturnConfirmation(order, reason) {
-    const buyerName = order.buyerName || order.buyer_name || '—';
-    const orderId   = order.id || '—';
-    return this.send({
-      to: order.buyerEmail || order.buyer_email,
-      subject: (() => { const _t=getEmailTemplate('return_request'); return _t?.subject ? applyEmailVars(_t.subject,{order_id:orderId,buyer_name:buyerName}) : `\u{1F4E6} Demande de retour re\xE7ue \u2014 Commande ${orderId}`; })(),
-      templateId: "return_request",
-      ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
-      variables: {
-        order_id: orderId, buyer_name: buyerName, reason,
-        message: "Votre demande de retour a \xE9t\xE9 re\xE7ue et est en cours de traitement sous 48h.",
-        html_body: `
-          <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto">
-            <div style="background:#00853E;padding:20px;border-radius:8px 8px 0 0;text-align:center"><h2 style="color:white;margin:0">NEXUS Market — Retour produit</h2></div>
-            <div style="background:#f9f9f9;padding:28px;border-radius:0 0 8px 8px">
-              <h3 style="color:#1F2937;margin-top:0">Bonjour ${buyerName},</h3>
-              <p>Votre demande de retour pour la commande <strong>#${orderId}</strong> a été reçue.</p>
-              <div style="background:white;border-left:4px solid #00853E;padding:14px 18px;border-radius:4px;margin:16px 0">
-                <p style="margin:0;font-weight:600">Motif : ${reason || 'Non précisé'}</p>
-                <p style="margin:8px 0 0;color:#6b7280;font-size:13px">Traitement sous 48h ouvrées.</p>
-              </div>
-              <p style="color:#6b7280;font-size:13px">Questions ? <a href="mailto:sav@nexus.sn">sav@nexus.sn</a></p>
-            </div>
-            <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div>
-          </div>`
-      }
-    });
+    const buyerName  = order.buyerName  || order.buyer_name  || '—';
+    const orderId    = order.id         || '—';
+    const orderTotal = order.total != null ? formatPrice(order.total) : '—';
+    const tpl        = getEmailTemplate('return_request');
+    const siteUrl    = window.location.origin;
+    const vars = {
+      buyer_name:    buyerName,
+      return_id:     `RET-${orderId.slice(-6).toUpperCase()}`,
+      order_id:      orderId,
+      product_name:  order.productName || order.products?.[0]?.name || '—',
+      return_reason: reason || 'Non précisé',
+      order_total:   orderTotal,
+      return_date:   new Date().toLocaleDateString('fr-FR'),
+      orders_url:    `${siteUrl}/#orders`,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `📦 Demande de retour reçue — Commande ${orderId}`;
+    return this.send({ to: order.buyerEmail || order.buyer_email, subject: subj, templateId: 'return_request', ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId, variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  sendOfferNotification(vendorEmail, vendorName, offer) {
+    const tpl      = getEmailTemplate('new_offer');
+    const siteUrl  = window.location.origin;
+    const origPrice = offer.productPrice || 0;
+    const offerAmt  = offer.amount || 0;
+    const discPct   = origPrice > 0 ? Math.round((1 - offerAmt / origPrice) * 100) : 0;
+    const vars = {
+      vendor_name:     vendorName,
+      product_name:    offer.productName || '—',
+      product_price:   formatPrice(origPrice),
+      buyer_name:      offer.buyerName || 'Un acheteur',
+      offer_amount:    formatPrice(offerAmt),
+      discount_pct:    discPct,
+      buyer_message:   offer.message || 'Offre sans commentaire.',
+      offer_expiry:    offer.expiresAt ? new Date(offer.expiresAt).toLocaleDateString('fr-FR') : '48h',
+      accept_url:      offer.acceptUrl || siteUrl,
+      dashboard_url:   siteUrl,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `💬 Nouvelle offre sur ${offer.productName || 'votre produit'} — NEXUS Market`;
+    return this.send({ to: vendorEmail, subject: subj, templateId: 'new_offer', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  sendDisputeUpdate(userEmail, userName, dispute) {
+    const tpl     = getEmailTemplate('dispute_update');
+    const siteUrl = window.location.origin;
+    const vars = {
+      user_name:      userName,
+      dispute_id:     dispute.id || '—',
+      order_id:       dispute.orderId || '—',
+      product_name:   dispute.productName || '—',
+      update_message: dispute.adminMessage || 'Votre litige est en cours d\'examen.',
+      dispute_url:    `${siteUrl}/#disputes`,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `⚖️ Mise à jour litige #${dispute.id} — NEXUS Market`;
+    return this.send({ to: userEmail, subject: subj, templateId: 'dispute_update', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  sendPayoutProcessed(vendorEmail, vendorName, payout) {
+    const tpl     = getEmailTemplate('payout_processed');
+    const siteUrl = window.location.origin;
+    const vars = {
+      vendor_name:  vendorName,
+      amount_fcfa:  formatPrice(payout.amount || 0),
+      payout_method: payout.method || 'Mobile Money',
+      payout_id:    payout.id || '—',
+      payout_date:  new Date().toLocaleDateString('fr-FR'),
+      dashboard_url: siteUrl,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `💰 Virement traité — ${vars.amount_fcfa} FCFA — NEXUS Market`;
+    return this.send({ to: vendorEmail, subject: subj, templateId: 'payout_processed', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  sendOrderShipped(order) {
+    const buyerEmail  = order.buyerEmail || order.buyer_email || '';
+    const buyerName   = order.buyerName  || order.buyer_name  || '—';
+    const tpl         = getEmailTemplate('order_shipped');
+    const siteUrl     = window.location.origin;
+    const vars = {
+      buyer_name:         buyerName,
+      order_id:           order.id || '—',
+      tracking_number:    order.trackingNumber || order.tracking_number || '—',
+      carrier:            order.carrier || 'Livreur NEXUS',
+      estimated_delivery: order.estimatedDelivery || 'Sous 2-3 jours ouvrés',
+      tracking_url:       `${siteUrl}/#orders`,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `🚚 Votre commande ${order.id} est en route !`;
+    return this.send({ to: buyerEmail, subject: subj, templateId: 'order_shipped', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  sendWelcome(userEmail, userName) {
+    const tpl  = getEmailTemplate('welcome');
+    const vars = { user_name: userName || 'Bienvenue', site_url: window.location.origin };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `🎊 Bienvenue sur NEXUS Market, ${userName} !`;
+    return this.send({ to: userEmail, subject: subj, templateId: 'welcome', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
   }
 };
+
 const CookieBanner = () => {
   const [show, setShow] = useState(() => !storage.get("cookie_consent"));
   if (!show) return null;
