@@ -4537,7 +4537,9 @@ const DataService = {
         password,
         options: {
           emailRedirectTo: redirectTo,
-          data: { name: profile.name, role: profile.role || 'buyer', avatar }
+          // [FIX] Tous les champs profil sont stockés dans user_metadata
+          // pour être récupérés à la 1ère connexion après confirmation email
+          data: { name: profile.name, role: profile.role || 'buyer', avatar, ...profile }
         }
       });
       if (error) throw new Error(error.message);
@@ -4737,7 +4739,15 @@ const DataService = {
     const name  = meta.name   || email.split("@")[0] || "Utilisateur";
     const role  = meta.role   || "buyer";
     const avatar = meta.avatar || name.slice(0, 2).toUpperCase();
-    return { id: authUser.id, email, name, role, avatar, status: "active", created_at: authUser.created_at || new Date().toISOString() };
+    const base = { id: authUser.id, email, name, role, avatar,
+      // Les vendeurs sont auto-approuvés à la confirmation email (plus d'approbation admin)
+      status: role === "vendor" ? "approved" : "active",
+      created_at: authUser.created_at || new Date().toISOString() };
+    // Restaurer tous les champs vendeur stockés dans user_metadata lors de l'inscription
+    ['owner_name','shopName','shopCategory','shop_desc','phone','ninea','rc','address',
+     'structure_type','payment_method','orange_phone','wave_phone','iban','bank_name']
+      .forEach(k => { if (meta[k] != null) base[k] = meta[k]; });
+    return base;
   },
   // ── Connexion GitHub OAuth via Supabase ─────────────────────────────────────
   // Lance le flow GitHub OAuth. Supabase gère le redirect et le callback automatiquement.
@@ -5191,9 +5201,16 @@ async signOut() {
           }
 
           if (!prof) {
-            // Le profil existe probablement mais n'est pas lisible (JWT stale).
-            // Utiliser les métadonnées auth pour ne pas bloquer le login.
+            // Le profil n'existe pas encore : 1ère connexion après confirmation email
+            // (inscription vendeur ou acheteur avec confirmation activée dans Supabase)
             prof = this._buildProfileFromAuthUser(session.user);
+
+            // Insérer le profil en base (tous les champs viennent de user_metadata)
+            try {
+              const { error: insErr } = await this._sb.from('profiles').insert({ ...prof, id: uid });
+              if (insErr && insErr.code !== '23505') console.warn('[onAuthStateChange] profile insert:', insErr.message);
+              else if (!insErr) console.info('[onAuthStateChange] Profil créé après confirmation email', uid);
+            } catch (_) {}
 
             // Marquer comme nouveau si OAuth (pour le modal de choix de rôle)
             const provider = session.user.app_metadata?.provider;
@@ -12374,104 +12391,32 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
       const avatar = form.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0,2);
 
       if (role === "vendor") {
-        // Les vendeurs passent par validation admin — pas de compte auth direct
-        const id = "user_" + Date.now();
-        // Ne plus stocker dans localStorage — Supabase est la source de vérité
-        const pending = [];  // pendingVendors ne se stocke plus localement
-        // FIX: snake_case pour correspondre aux colonnes Supabase
-        const pendingEntry = {
-          email:          form.email,
-          // NB: password intentionally excluded — pending_vendors has no password column.
-          // The password is only sent to /api/auth/register (handled separately above).
-          name:           form.shopName,
+        // [FIX] Inscription vendeur via email de confirmation — plus d'approbation admin
+        const profile = {
+          role:           "vendor",
+          name:           form.shopName || form.name,
           owner_name:     form.name,
-          phone:          form.phone,
-          category:       form.shopCategory,
-          shop_desc:      form.shopDesc,
-          ninea:          form.ninea,
-          rc:             form.rc,
-          structure_type: form.structureType,
-          address:        form.address,
-          payment_method: form.paymentMethod,
-          orange_phone:   form.orangePhone,
-          wave_phone:     form.wavePhone,
-          iban:           form.iban,
-          bank_name:      form.bankName,
+          shopName:       form.shopName,
+          shopCategory:   form.shopCategory || "Général",
+          shop_desc:      form.shopDesc     || null,
+          phone:          form.phone        || null,
+          ninea:          form.ninea        || null,
+          rc:             form.rc           || null,
+          address:        form.address      || null,
+          structure_type: form.structureType|| null,
+          payment_method: form.paymentMethod|| null,
+          orange_phone:   form.orangePhone  || null,
+          wave_phone:     form.wavePhone    || null,
+          iban:           form.iban         || null,
+          bank_name:      form.bankName     || null,
+          status:         "approved",
           avatar,
-          status:         "pending",
         };
-        // localStorage garde le format local — date supprimée (Supabase utilise created_at)
-        pending.push({ id, ...pendingEntry, role: "vendor" });
-        // L'inscription vendor est envoyée à Supabase via l'API backend
-        console.info("[vendor registration] Demande envoyée à Supabase — pas de stockage local");
-        // Appel backend — URL absolue ou relative selon la configuration
-        {
-          const base3 = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
-          const ctrl = new AbortController();
-          const tid  = setTimeout(() => ctrl.abort(), 12000);
-          let _vendorRes = null;
-          const vUrls = base3 ? [`${base3}/api/auth/register`] : []; // [FIX Cloudflare Pages] skip Railway
-          let fetchFailed = false;
-          for (const vUrl of vUrls) {
-            try {
-              _vendorRes = await fetch(vUrl, {
-                method: "POST",
-                mode: vUrl.startsWith("/") ? "same-origin" : "cors",
-                headers: { "Content-Type": "application/json" },
-                signal: ctrl.signal,
-                body: JSON.stringify({
-                  // Champs de base
-                  email:          form.email,
-                  password:       form.password,
-                  name:           form.name,
-                  role:           "vendor",
-                  // Boutique
-                  shopName:       form.shopName,
-                  shopCategory:   form.shopCategory || "Général",
-                  shop_desc:      form.shopDesc     || null,
-                  // Contact
-                  phone:          form.phone        || null,
-                  // Juridique
-                  owner_name:     form.name,
-                  ninea:          form.ninea        || null,
-                  rc:             form.rc           || null,
-                  address:        form.address      || null,
-                  structure_type: form.structureType|| null,
-                  // Paiement
-                  payment_method: form.paymentMethod|| null,
-                  orange_phone:   form.orangePhone  || null,
-                  wave_phone:     form.wavePhone    || null,
-                  iban:           form.iban         || null,
-                  bank_name:      form.bankName     || null,
-                })
-              });
-              if (_vendorRes) break;
-            } catch (fetchErr) {
-              if (fetchErr.name === 'AbortError') break;
-              console.warn("[Register vendeur]", vUrl, "injoignable:", fetchErr.message);
-              _vendorRes = null;
-              fetchFailed = true;
-            }
-          }
-          clearTimeout(tid);
-          if (_vendorRes === null) {
-            // Tous les backends injoignables → fallback Supabase
-            if (DataService._sb) {
-              const { error: pendingErr } = await DataService._sb.from("pending_vendors").insert(pendingEntry);
-              if (pendingErr) throw new Error(pendingErr.message);
-            } else {
-              // [FIX] Ni API ni Supabase disponibles — lever une erreur explicite
-              // au lieu d'un faux succès silencieux (setDone(true) sans rien sauvegarder)
-              throw new Error("Service d'inscription indisponible. Vérifiez votre connexion et réessayez.");
-            }
-          } else {
-            const _vendorJson = await _vendorRes.json();
-            if (!_vendorRes.ok) throw new Error(_vendorJson.error || _vendorJson.message || "Erreur inscription vendeur");
-          }
-        }
+        const newVendor = await DataService.signUp(form.email, form.password, profile);
+        if (newVendor.__emailConfirmPending) { setDone(true); setLoading(false); return; }
         // Programme parrainage vendeur — enregistrer si un code parrain est saisi
         if (form.vendor_ref_code && form.vendor_ref_code.trim()) {
-          const _refUser = { id: id, name: form.shopName || form.name }; // [FIX] pendingEntry.id n'existe pas — utilise la constante id
+          const _refUser = { id: newVendor.id, name: form.shopName || form.name };
           window._registerVendorReferral(form.vendor_ref_code.trim(), _refUser).then(ok => {
             if (ok) console.info('[Parrainage vendeur] Code', form.vendor_ref_code, 'enregistré');
           }).catch(() => {});
@@ -12644,8 +12589,8 @@ if (json.token || json.accessToken) {
 
   // ─── Render: vendor done screen ───────────────────────────
   if (done) {
-    // ── Email confirmation pending ─────────────────────────────────────────
-    if (role !== "vendor" && form.email) {
+    // ── Email confirmation pending (acheteurs ET vendeurs) ───────────────────
+    if (form.email) {
       return React.createElement("div",{style:{textAlign:"center",padding:"1rem 0"}},
         React.createElement("div",{style:{fontSize:"3.5rem",marginBottom:"1rem"}},"📧"),
         React.createElement("h3",{style:{fontWeight:700,marginBottom:"0.75rem"}},"Vérifiez votre email"),
