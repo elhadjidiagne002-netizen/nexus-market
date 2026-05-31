@@ -2420,6 +2420,13 @@ const NEXUS_CONFIG = {
     publishableKey: "pk_test_51TGdXe1H2qyHRVYhwjkbrHKnmKILl5v8OUT8GxFGX5niFKd904ebRj4ee1sCCfo7agsMwwd9LqapTenEerTIfwQg00BrxAzuy3"
     // pk_live_... ou pk_test_...
   },
+  // ── Brevo (ex-Sendinblue) — Emails transactionnels gratuits ──────────────────
+  // Plan gratuit : 300 emails/jour (9 000/mois), aucun template requis.
+  brevo: {
+    apiKey:      "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",
+    senderEmail: "noreply@nexus.sn",
+    senderName:  "NEXUS Market",
+  },
   emailjs: {
     publicKey: "WSBntSTWdh5d9usZC",
     serviceId: "service_84yfkgf",
@@ -3351,6 +3358,7 @@ const isStripeConfigured    = () => !!(NEXUS_CONFIG.stripe.publishableKey && NEX
 const IS_STRIPE_CONFIGURED  = isStripeConfigured();
 // BUG FIX: IS_EMAILJS_CONFIGURED était une constante statique — remplacé par une fonction
 // dynamique pour refléter les mises à jour via le panneau Config ou localStorage
+const isBrevoConfigured      = () => !!NEXUS_CONFIG.brevo?.apiKey;
 const isEmailjsConfigured   = () => !!(NEXUS_CONFIG.emailjs.publicKey && NEXUS_CONFIG.emailjs.serviceId);
 const IS_EMAILJS_CONFIGURED = isEmailjsConfigured(); // valeur initiale (compatibilité)
 
@@ -6686,75 +6694,82 @@ const EmailService = {
     }
   },
   async send({ to, subject, templateId, variables, ejsTemplateId }) {
-    const entry = { id: "email_" + Date.now(), to, subject, templateId, variables, sentAt: (/* @__PURE__ */ new Date()).toISOString() };
-    // [FIX] Les logs emails sont persistés côté serveur dans la table server_logs (Supabase).
-    // Plus de stockage localStorage — utiliser GET /api/email/logs pour lire les journaux.
+    if (!to) { console.warn("[EmailService] Destinataire manquant — email ignoré"); return false; }
 
-    // [FIX] Stratégie template universel — 1 seul template EmailJS suffit.
-    // ejsTemplateId est ignoré : on utilise toujours universalTemplateId.
-    // Le HTML complet est dans html_body (triple accolades dans le template).
+    const htmlBody = variables?.html_body || (() => {
+      const rows = Object.entries(variables || {})
+        .filter(([k]) => !['html_body','site_url','reply_to'].includes(k))
+        .map(([k, v]) => `<tr><td style="padding:6px 12px;color:#6b7280;font-size:13px">${k}</td><td style="padding:6px 12px;font-size:13px">${v}</td></tr>`)
+        .join('');
+      return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+        <div style="background:#00853E;padding:20px;text-align:center"><h2 style="color:white;margin:0">NEXUS Market Sénégal</h2></div>
+        <div style="padding:24px;background:#f9f9f9"><p style="font-weight:600;font-size:16px">${subject}</p>
+        <table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;margin-top:16px">${rows}</table></div>
+        <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div></div>`;
+    })();
+
+    // ── 1. BREVO (priorité) : 300 emails/jour gratuits, aucun template requis ──
+    if (isBrevoConfigured()) {
+      try {
+        const brevoResp = await fetch("https://api.brevo.com/v3/smtp/email", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "api-key": NEXUS_CONFIG.brevo.apiKey,
+          },
+          body: JSON.stringify({
+            sender: {
+              name:  NEXUS_CONFIG.brevo.senderName  || "NEXUS Market",
+              email: NEXUS_CONFIG.brevo.senderEmail || "noreply@nexus.sn",
+            },
+            to: [{ email: to }],
+            subject: subject,
+            htmlContent: htmlBody,
+          }),
+        });
+        if (brevoResp.ok) {
+          console.log("[Brevo] ✅ Email envoyé à", to, "—", subject);
+          return true;
+        }
+        const brevoErr = await brevoResp.json().catch(() => ({}));
+        console.warn("[Brevo] ⚠️ Erreur", brevoResp.status, brevoErr.message || JSON.stringify(brevoErr));
+      } catch (e) {
+        console.warn("[Brevo] Exception réseau:", e.message);
+      }
+    }
+
+    // ── 2. EMAILJS (fallback) : 200 emails/mois gratuits ──────────────────────
     const universalTpl = NEXUS_CONFIG.emailjs.universalTemplateId;
-
-    // [FIX] Init lazy : le SDK emailjs est chargé en `defer`, il peut ne pas être
-    // disponible au premier appel de EmailService.init() au démarrage de l'app.
-    // On tente une ré-initialisation ici si ce n'est pas encore fait.
     if (!this._initialized && window.emailjs && isEmailjsConfigured()) {
       window.emailjs.init({ publicKey: NEXUS_CONFIG.emailjs.publicKey });
       this._initialized = true;
-      console.log("[EmailJS] Service initialisé (lazy)");
     }
-
     if (isEmailjsConfigured() && this._initialized && universalTpl) {
       try {
-        const templateParams = {
-          to_email:  to,
-          reply_to:  to,
-          subject:   subject,
-          html_body: variables?.html_body || (() => {
-            const rows = Object.entries(variables || {})
-              .filter(([k]) => !['html_body','site_url','reply_to'].includes(k))
-              .map(([k, v]) => `<tr><td style="padding:6px 12px;color:#6b7280;font-size:13px">${k}</td><td style="padding:6px 12px;font-size:13px">${v}</td></tr>`)
-              .join('');
-            return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-              <div style="background:#00853E;padding:20px;text-align:center"><h2 style="color:white;margin:0">NEXUS Market Sénégal</h2></div>
-              <div style="padding:24px;background:#f9f9f9"><p style="font-weight:600;font-size:16px">${subject}</p>
-              <table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;margin-top:16px">${rows}</table></div>
-              <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div></div>`;
-          })(),
-          ...variables,
-        };
-        await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId, universalTpl, templateParams);
-        console.log("[EmailJS] \u2705 Email envoyé à", to);
+        await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId, universalTpl,
+          { to_email: to, reply_to: to, subject, html_body: htmlBody, ...variables });
+        console.log("[EmailJS] ✅ Email envoyé (fallback) à", to);
         return true;
       } catch (e) {
-        const status = e && (e.status || (e.text && JSON.parse(e.text || '{}').status));
-        if (status === 422 || (e && e.text && e.text.includes('422'))) {
-          console.error("[EmailJS] Erreur 422 — Vérifiez : (1) Service ID correct, (2) Template ID correct, (3) \"To Email\" = {{to_email}}, (4) Body HTML = {{{html_body}}} (triple accolades), (5) Service email connecté.");
-        } else { console.warn("[EmailJS] Erreur envoi:", e); }
-        // [FIX] Ne pas tomber dans la simulation si EmailJS est configuré mais a échoué —
-        // on tente le fallback backend avant de capituler.
+        console.warn("[EmailJS] Erreur:", e?.status || e?.message || e);
       }
     }
-    console.log("[EmailService] Simulation \u2014 email à", to, ":", subject);
-    // Fallback backend
+
+    // ── 3. BACKEND API (si apiUrl configurée) ──────────────────────────────────
     const _fbToken = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
     if (NEXUS_CONFIG.apiUrl && _fbToken) {
       try {
-        const resp = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/email/send", {
+        const resp = await fetch((NEXUS_CONFIG.apiUrl || "") + "/api/email/send", {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_fbToken}` },
-          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>` })
+          body: JSON.stringify({ to, subject, html: htmlBody }),
         });
-        if (resp.ok) {
-          const r = await resp.json();
-          if (r.ok) { console.log("[EmailService] \u2705 Email envoyé via backend à", to); return true; }
-          else { console.error("[EmailService] \u274C Backend ok=false:", r); }
-        } else {
-          console.error("[EmailService] \u274C Backend HTTP", resp.status, "pour", to);
-        }
-      } catch(e) { console.warn("[EmailService] Fallback backend échoué:", e.message); }
+        if (resp.ok) { const r = await resp.json(); if (r.ok) return true; }
+      } catch (e) { console.warn("[EmailService] Backend échoué:", e.message); }
     }
-    return true;
+
+    console.warn("[EmailService] ⚠️ Simulation — email à", to, ":", subject);
+    return false;
   },
   sendOrderConfirmation(order, items) {
     // [FIX] Normalisation défensive camelCase || snake_case (réponse backend)
