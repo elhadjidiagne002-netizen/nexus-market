@@ -2726,7 +2726,14 @@ const NexusWA = {
 
   // Charger la config depuis Supabase
   async loadConfig() {
-    // Charger d'abord depuis localStorage (instantané, pas de requête réseau)
+    // [FIX] Charger depuis app_config Supabase (via NexusAdminConfig) → localStorage comme cache
+    if (typeof NexusAdminConfig !== 'undefined') {
+      try {
+        const saved = await NexusAdminConfig.get('nexus_wa_cfg');
+        if (saved && saved.instanceId) { this._cfg = { ...this._cfg, ...saved }; return; }
+      } catch(_) {}
+    }
+    // Fallback localStorage (cache ou config legacy)
     try {
       const saved = JSON.parse(localStorage.getItem('nexus_wa_cfg') || '{}');
       if (saved.instanceId) { this._cfg = { ...this._cfg, ...saved }; }
@@ -2749,9 +2756,13 @@ const NexusWA = {
     } catch(_) { /* silencieux — whatsapp_config table optionnelle */ }
   },
 
-  // Enregistrer la config dans Supabase
+  // Enregistrer la config dans Supabase (app_config) + localStorage cache
   async saveConfig(cfg) {
     this._cfg = { ...this._cfg, ...cfg };
+    // [FIX] Écriture via NexusAdminConfig → Supabase app_config
+    if (typeof NexusAdminConfig !== 'undefined') {
+      await NexusAdminConfig.set('nexus_wa_cfg', this._cfg, DataService._user?.id).catch(() => {});
+    }
     try { localStorage.setItem('nexus_wa_cfg', JSON.stringify(this._cfg)); } catch(_) {}
     if (!DataService._sb) return;
     try {
@@ -3247,6 +3258,8 @@ const NEXUS_TRANSLATIONS = {
 
 (function _initI18n() {
   // Détecter la langue : localStorage → navigator.language → 'fr'
+  // [NOTE] nexus_lang reste en localStorage (préférence UI légère, faible impact fonctionnel)
+  // La synchronisation vers profiles.lang se fait au login (cf. handler nexus:user-logged-in)
   const detected = (localStorage.getItem('nexus_lang') ||
     (navigator.language || '').split('-')[0] || 'fr').toLowerCase();
   let _lang = NEXUS_LOCALES[detected] ? detected : 'fr';
@@ -3279,6 +3292,10 @@ const NEXUS_TRANSLATIONS = {
     _lang = lang;
     localStorage.setItem('nexus_lang', lang);
     document.documentElement.lang = lang;
+    // Synchroniser vers Supabase profiles.lang si connecté
+    if (typeof DataService !== 'undefined' && DataService._sb && DataService._user?.id) {
+      DataService._sb.from('profiles').update({ lang }).eq('id', DataService._user.id).catch(() => {});
+    }
     // Signaler aux composants React qu'ils doivent se re-rendre
     window.dispatchEvent(new CustomEvent('nexus:lang-changed', { detail: { lang } }));
   }
@@ -3684,14 +3701,7 @@ function nexusSearch(products, query) {
     clearTimeout(nexusSearch._logTimer);
     nexusSearch._logTimer = setTimeout(() => {
       const rawQ = query.trim();
-      // Mise à jour du cache local des recherches populaires
-      try {
-        const pop = JSON.parse(localStorage.getItem('nexus_popular_searches') || '{}');
-        pop[rawQ] = (pop[rawQ] || 0) + 1;
-        // Garder les 200 top termes
-        const sorted = Object.entries(pop).sort((a,b) => b[1]-a[1]).slice(0, 200);
-        localStorage.setItem('nexus_popular_searches', JSON.stringify(Object.fromEntries(sorted)));
-      } catch(_) {}
+      // [FIX] Supprimer le compteur localStorage nexus_popular_searches — redondant avec search_logs Supabase
       // INSERT Supabase search_logs (non-bloquant)
       if (window.DataService && DataService._sb) {
         DataService._sb.from('search_logs').insert({
@@ -7166,13 +7176,7 @@ const SearchWithAutocomplete = ({ products, value, onChange, onSelect, placehold
   // Charger les recherches populaires depuis Supabase au montage
   useEffect(() => {
     const loadPopular = async () => {
-      // D'abord le cache local
-      try {
-        const cached = JSON.parse(localStorage.getItem('nexus_popular_searches') || '{}');
-        const top = Object.entries(cached).sort((a,b) => b[1]-a[1]).slice(0,8).map(([q]) => ({ type:'popular', label:q, sub:'Recherche populaire', id:'pop:'+q }));
-        if (top.length > 0) setPopularSearches(top);
-      } catch(_) {}
-      // Puis Supabase search_logs
+      // [FIX] Source unique : search_logs Supabase (nexus_popular_searches localStorage supprimé)
       if (DataService._sb) {
         try {
           const { data } = await DataService._sb
@@ -10133,10 +10137,323 @@ const storage = {
   remove(key) { _memStore.delete(key); try { sessionStorage.removeItem('nexus_ss_' + key); } catch(e) {} },
   delete(key) { return this.remove(key); }
 };
-// ── PATCH : storage → SupabaseStorage (écriture Supabase en arrière-plan) ──
-// Le patch est appliqué automatiquement par nexus_storage_supabase.js
-// lors de l'événement 'nexus-user-logged-in' (avec _userId correctement initialisé).
-// Un patch prématuré ici (avant login) n'a aucun effet utile car _userId est null.
+// ═══════════════════════════════════════════════════════════════════════════
+// NexusOfflineStore — Stockage professionnel (IndexedDB + queue offline)
+// Remplace le fallback mémoire volatile pour les données métier critiques.
+//
+// Principes :
+//  • Supabase = source de vérité TOUJOURS tentée en premier.
+//  • Si Supabase indisponible → les données sont persistas dans IndexedDB
+//    (survit aux rechargements, isolée par onglet, JAMAIS localStorage).
+//  • À la reconnexion, la queue IndexedDB est vidée vers Supabase.
+//  • Les données lues en mode offline viennent du cache IndexedDB.
+//
+// SQL SUPABASE REQUIS — à exécuter dans Dashboard → SQL Editor :
+// ─────────────────────────────────────────────────────────────────
+//  -- Table b2b_quotes (remplace nexus_b2b_quotes localStorage)
+//  CREATE TABLE IF NOT EXISTS b2b_quotes (
+//    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//    buyer_id    uuid REFERENCES auth.users(id),
+//    vendor_id   uuid REFERENCES auth.users(id),
+//    products    jsonb NOT NULL DEFAULT '[]',
+//    total       numeric(10,2),
+//    currency    text DEFAULT 'EUR',
+//    status      text DEFAULT 'draft' CHECK (status IN ('draft','sent','accepted','rejected','expired')),
+//    message     text,
+//    expires_at  timestamptz,
+//    created_at  timestamptz DEFAULT now(),
+//    updated_at  timestamptz DEFAULT now()
+//  );
+//  ALTER TABLE b2b_quotes ENABLE ROW LEVEL SECURITY;
+//  CREATE POLICY "buyers own quotes" ON b2b_quotes FOR ALL USING (auth.uid() = buyer_id);
+//  CREATE POLICY "vendors read quotes" ON b2b_quotes FOR SELECT USING (auth.uid() = vendor_id);
+//
+//  -- Table insurance_leads (remplace nexus_ins_leads localStorage)
+//  CREATE TABLE IF NOT EXISTS insurance_leads (
+//    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//    user_id    uuid REFERENCES auth.users(id),
+//    name       text,
+//    phone      text,
+//    email      text,
+//    product    text,
+//    message    text,
+//    status     text DEFAULT 'new' CHECK (status IN ('new','contacted','converted','closed')),
+//    created_at timestamptz DEFAULT now()
+//  );
+//  ALTER TABLE insurance_leads ENABLE ROW LEVEL SECURITY;
+//  CREATE POLICY "admin manage leads" ON insurance_leads FOR ALL USING (
+//    EXISTS(SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+//  );
+//  CREATE POLICY "user insert lead" ON insurance_leads FOR INSERT WITH CHECK (
+//    auth.uid() = user_id OR user_id IS NULL
+//  );
+//
+//  -- Table affiliate_clicks (remplace nexus_aff_clicks localStorage)
+//  CREATE TABLE IF NOT EXISTS affiliate_clicks (
+//    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//    affiliate_id uuid,
+//    ref_code     text,
+//    url          text,
+//    user_agent   text,
+//    ip_hash      text,
+//    converted    boolean DEFAULT false,
+//    created_at   timestamptz DEFAULT now()
+//  );
+//  ALTER TABLE affiliate_clicks ENABLE ROW LEVEL SECURITY;
+//  CREATE POLICY "insert only" ON affiliate_clicks FOR INSERT WITH CHECK (true);
+//  CREATE POLICY "admin read" ON affiliate_clicks FOR SELECT USING (
+//    EXISTS(SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+//  );
+//
+//  -- Table app_config (remplace nexus_saved_config + nexus_wa_cfg localStorage)
+//  CREATE TABLE IF NOT EXISTS app_config (
+//    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//    key        text NOT NULL UNIQUE,
+//    value      jsonb NOT NULL DEFAULT '{}',
+//    updated_by uuid REFERENCES auth.users(id),
+//    updated_at timestamptz DEFAULT now()
+//  );
+//  ALTER TABLE app_config ENABLE ROW LEVEL SECURITY;
+//  CREATE POLICY "admin full" ON app_config FOR ALL USING (
+//    EXISTS(SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+//  );
+//
+//  -- Table email_templates (remplace nexus_email_templates localStorage)
+//  CREATE TABLE IF NOT EXISTS email_templates (
+//    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//    name       text NOT NULL UNIQUE,
+//    subject    text,
+//    html_body  text,
+//    updated_by uuid REFERENCES auth.users(id),
+//    updated_at timestamptz DEFAULT now()
+//  );
+//  ALTER TABLE email_templates ENABLE ROW LEVEL SECURITY;
+//  CREATE POLICY "admin full" ON email_templates FOR ALL USING (
+//    EXISTS(SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+//  );
+//
+//  -- Ajouter lang dans profiles (remplace nexus_lang localStorage)
+//  ALTER TABLE profiles ADD COLUMN IF NOT EXISTS lang text DEFAULT 'fr';
+//
+//  -- Ajouter draft_product dans products (remplace nexus_vendor_product_draft localStorage)
+//  ALTER TABLE products ADD COLUMN IF NOT EXISTS draft_data jsonb;
+// ─────────────────────────────────────────────────────────────────
+const NexusOfflineStore = (function() {
+  const CRITICAL_KEYS = new Set([
+    'orders', 'messages', 'disputes', 'payout_requests', 'return_requests',
+    'ondemand_requests', 'nexus_b2b_quotes', 'nexus_ins_leads', 'nexus_aff_clicks'
+  ]);
+
+  const SUPABASE_TABLE = {
+    'orders':             'orders',
+    'messages':           'messages',
+    'disputes':           'disputes',
+    'payout_requests':    'payout_requests',
+    'return_requests':    'return_requests',
+    'ondemand_requests':  'ondemand_requests',
+    'nexus_b2b_quotes':   'b2b_quotes',
+    'nexus_ins_leads':    'insurance_leads',
+    'nexus_aff_clicks':   'affiliate_clicks',
+  };
+
+  const DB_NAME = 'nexus_professional_db';
+  const DB_VERSION = 1;
+  const STORE_DATA  = 'nexus_data';
+  const STORE_QUEUE = 'nexus_queue';
+  let _db = null, _initP = null;
+
+  function _open() {
+    if (_db)    return Promise.resolve(_db);
+    if (_initP) return _initP;
+    _initP = new Promise((res, rej) => {
+      try {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = e => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(STORE_DATA))  db.createObjectStore(STORE_DATA,  { keyPath: 'key' });
+          if (!db.objectStoreNames.contains(STORE_QUEUE)) db.createObjectStore(STORE_QUEUE, { keyPath: 'id', autoIncrement: true });
+        };
+        req.onsuccess = e => { _db = e.target.result; res(_db); };
+        req.onerror   = e => rej(e.target.error);
+      } catch(e) { rej(e); }
+    });
+    return _initP;
+  }
+
+  async function _idbGet(key) {
+    try {
+      const db = await _open();
+      return new Promise(res => {
+        const req = db.transaction(STORE_DATA, 'readonly').objectStore(STORE_DATA).get(key);
+        req.onsuccess = e => res(e.target.result?.value ?? null);
+        req.onerror   = () => res(null);
+      });
+    } catch(e) { return null; }
+  }
+
+  async function _idbSet(key, value) {
+    try {
+      const db = await _open();
+      return new Promise(res => {
+        const tx = db.transaction(STORE_DATA, 'readwrite');
+        tx.objectStore(STORE_DATA).put({ key, value, ts: Date.now() });
+        tx.oncomplete = () => res(true);
+        tx.onerror    = () => res(false);
+      });
+    } catch(e) { return false; }
+  }
+
+  async function _enqueue(key, data) {
+    try {
+      const db = await _open();
+      return new Promise(res => {
+        const tx = db.transaction(STORE_QUEUE, 'readwrite');
+        tx.objectStore(STORE_QUEUE).add({ key, data, ts: Date.now() });
+        tx.oncomplete = () => res(true);
+        tx.onerror    = () => res(false);
+      });
+    } catch(e) { return false; }
+  }
+
+  async function _drainQueue() {
+    if (typeof DataService === 'undefined' || !DataService._sb) return;
+    try {
+      const db = await _open();
+      const items = await new Promise(res => {
+        const req = db.transaction(STORE_QUEUE, 'readonly').objectStore(STORE_QUEUE).getAll();
+        req.onsuccess = e => res(e.target.result);
+        req.onerror   = () => res([]);
+      });
+      if (!items.length) return;
+      let synced = 0;
+      for (const item of items) {
+        const table = SUPABASE_TABLE[item.key];
+        if (!table) continue;
+        try {
+          const records = Array.isArray(item.data) ? item.data : [item.data];
+          const { error } = await DataService._sb.from(table).upsert(records, { onConflict: 'id', ignoreDuplicates: false });
+          if (!error) {
+            await new Promise(res => {
+              const tx = db.transaction(STORE_QUEUE, 'readwrite');
+              tx.objectStore(STORE_QUEUE).delete(item.id);
+              tx.oncomplete = () => res(true);
+              tx.onerror    = () => res(false);
+            });
+            synced++;
+          }
+        } catch(err) {
+          console.warn('[NexusOfflineStore] sync failed for', item.key, ':', err.message);
+        }
+      }
+      if (synced > 0) {
+        console.info('[NexusOfflineStore] ✅', synced, '/', items.length, 'items synchronisés vers Supabase');
+        window.dispatchEvent(new CustomEvent('nexus:toast', {
+          detail: { message: `✅ ${synced} donnée(s) hors-ligne synchronisée(s) avec Supabase.`, type: 'success', duration: 4000 }
+        }));
+      }
+    } catch(e) { console.warn('[NexusOfflineStore] drainQueue error:', e.message); }
+  }
+
+  // ── Patch storage.set pour les clés critiques ──────────────────────────
+  const _orig = { set: storage.set.bind(storage), get: storage.get.bind(storage), getArray: storage.getArray.bind(storage) };
+
+  storage.set = function(key, value) {
+    const r = _orig.set(key, value);
+    if (CRITICAL_KEYS.has(key)) {
+      _idbSet(key, value).catch(() => {});
+      // Si Supabase absent ou offline → enfile dans la queue
+      if (typeof DataService === 'undefined' || !DataService._sb || !navigator.onLine) {
+        _enqueue(key, value).catch(() => {});
+      }
+    }
+    return r;
+  };
+
+  // ── Initialisation : charger IndexedDB → memStore au démarrage ─────────
+  async function _init() {
+    for (const key of CRITICAL_KEYS) {
+      try {
+        const val = await _idbGet(key);
+        if (val !== null) _orig.set(key, val);
+      } catch(e) {}
+    }
+    await _drainQueue();
+    console.info('[NexusOfflineStore] ✅ initialisé — données critiques restaurées depuis IndexedDB');
+  }
+
+  window.addEventListener('online',                () => { setTimeout(_drainQueue, 2000); });
+  window.addEventListener('nexus:backend-ready',   () => { setTimeout(_drainQueue, 1000); });
+  window.addEventListener('nexus:session-restored',() => { setTimeout(_drainQueue, 1500); });
+
+  _init().catch(e => console.warn('[NexusOfflineStore] init error:', e.message));
+
+  return { drainQueue: _drainQueue, isCritical: k => CRITICAL_KEYS.has(k) };
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NexusAdminConfig — Configuration admin synchronisée avec Supabase
+// Remplace le stockage localStorage de nexus_saved_config, nexus_email_templates,
+// nexus_admin_banners, nexus_admin_categories, nexus_admin_promos, nexus_wa_cfg.
+// Stratégie : Supabase d'abord, localStorage comme cache de secours uniquement.
+// ═══════════════════════════════════════════════════════════════════════════
+const NexusAdminConfig = (function() {
+  const _PREFIX = 'nexus_admcfg_';
+
+  // Lecture : Supabase d'abord, fallback localStorage
+  async function get(configKey) {
+    if (typeof DataService !== 'undefined' && DataService._sb) {
+      try {
+        const { data, error } = await DataService._sb
+          .from('app_config').select('value').eq('key', configKey).maybeSingle();
+        if (!error && data) {
+          // Mettre à jour le cache localStorage
+          try { localStorage.setItem(_PREFIX + configKey, JSON.stringify(data.value)); } catch(_) {}
+          return data.value;
+        }
+      } catch(e) { console.warn('[NexusAdminConfig] get from Supabase failed:', e.message); }
+    }
+    // Fallback localStorage
+    try { const v = localStorage.getItem(_PREFIX + configKey); return v ? JSON.parse(v) : null; } catch(_) { return null; }
+  }
+
+  // Écriture : Supabase d'abord, puis localStorage comme cache
+  async function set(configKey, value, userId) {
+    const row = { key: configKey, value, updated_by: userId || null, updated_at: new Date().toISOString() };
+    if (typeof DataService !== 'undefined' && DataService._sb) {
+      try {
+        const { error } = await DataService._sb
+          .from('app_config').upsert(row, { onConflict: 'key' });
+        if (!error) {
+          try { localStorage.setItem(_PREFIX + configKey, JSON.stringify(value)); } catch(_) {}
+          return true;
+        }
+        console.warn('[NexusAdminConfig] set Supabase error:', error.message);
+      } catch(e) { console.warn('[NexusAdminConfig] set exception:', e.message); }
+    }
+    // Fallback localStorage uniquement
+    try { localStorage.setItem(_PREFIX + configKey, JSON.stringify(value)); } catch(_) {}
+    console.warn('[NexusAdminConfig] ⚠️ Config sauvegardée uniquement en local (Supabase indisponible)');
+    return false;
+  }
+
+  return { get, set };
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Migration nexus_lang → profiles.lang (synchronisation au login)
+// ═══════════════════════════════════════════════════════════════════════════
+window.addEventListener('nexus:user-logged-in', async (e) => {
+  const user = e.detail?.user;
+  if (!user?.id || typeof DataService === 'undefined' || !DataService._sb) return;
+  try {
+    // Synchroniser la langue locale vers Supabase profiles
+    const localLang = localStorage.getItem('nexus_lang');
+    if (localLang && ['fr', 'en', 'wo'].includes(localLang)) {
+      await DataService._sb.from('profiles').update({ lang: localLang }).eq('id', user.id).catch(() => {});
+    }
+  } catch(_) {}
+});
+
 // hashPassword et verifyPassword supprimées — tous les comptes sont dans Supabase/backend.
 // Le hachage est effectué côté serveur (bcrypt dans server.js / Supabase Auth).
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -22524,15 +22841,16 @@ const NexusAffiliateLinks = {
   // Tracker de clics (log + whatsapp admin si configuré)
   async trackClick(platform, searchTerm, url) {
     try {
-      const log = JSON.parse(localStorage.getItem('nexus_aff_clicks') || '[]');
-      log.unshift({ platform, searchTerm, url, ts: Date.now() });
-      localStorage.setItem('nexus_aff_clicks', JSON.stringify(log.slice(0, 200)));
-      // Log Supabase si disponible
+      const clickData = { platform, search_term: searchTerm, url, created_at: new Date().toISOString() };
+      // [FIX] Supabase en priorité — pas de localStorage, queue IndexedDB si offline
       if (DataService._sb) {
-        await DataService._sb.from('affiliate_clicks').insert({
-          platform, search_term: searchTerm, url,
-          created_at: new Date().toISOString()
-        }).catch(() => {}); // silencieux si table absente
+        await DataService._sb.from('affiliate_clicks').insert(clickData)
+          .catch(() => {
+            // Si Supabase échoue, stocker via NexusOfflineStore (IndexedDB)
+            storage.set('nexus_aff_clicks', [...storage.getArray('nexus_aff_clicks'), clickData]);
+          });
+      } else {
+        storage.set('nexus_aff_clicks', [...storage.getArray('nexus_aff_clicks'), clickData]);
       }
     } catch(_) {}
   },
@@ -22915,10 +23233,10 @@ const InsuranceWidget = ({ product, currentUser, addToast }) => {
         const { error } = await DataService._sb.from('insurance_leads').insert(lead);
         if (error) throw new Error(error.message);
       } else {
-        // Fallback localStorage
-        const all = JSON.parse(localStorage.getItem('nexus_ins_leads')||'[]');
-        all.unshift({ ...lead, id: crypto.randomUUID(), created_at: new Date().toISOString() });
-        localStorage.setItem('nexus_ins_leads', JSON.stringify(all));
+        // [FIX] Fallback IndexedDB (via NexusOfflineStore) — plus de localStorage pour les données métier
+        const pendingLead = { ...lead, id: crypto.randomUUID(), created_at: new Date().toISOString() };
+        storage.set('nexus_ins_leads', [...storage.getArray('nexus_ins_leads'), pendingLead]);
+        console.warn('[insurance_leads] Supabase indisponible — lead en queue offline IndexedDB');
       }
       // WhatsApp admin si disponible
       const adminWa = NEXUS_CONFIG?.admin?.whatsapp;
@@ -23267,18 +23585,19 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   const ITEMS_PER_PAGE = 6;
   const [newProduct, setNewProduct] = useState(() => {
     try {
-      const d = localStorage.getItem('nexus_vendor_product_draft');
+      // [FIX] Brouillon produit = préférence UX → sessionStorage (session locale, non partagé)
+      const d = sessionStorage.getItem('nexus_ss_vendor_draft');
       if (d) { const p = JSON.parse(d); if (p && (p.name || p.priceFcfa)) return p; }
     } catch(_) {}
     return { name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true };
   });
   const [formErrors, setFormErrors] = useState({});
-  // [UX] Auto-save brouillon formulaire produit
+  // [UX] Auto-save brouillon formulaire produit (sessionStorage — UX locale, pas de données métier)
   useEffect(() => {
     if (newProduct.name || newProduct.priceFcfa) {
-      try { localStorage.setItem('nexus_vendor_product_draft', JSON.stringify(newProduct)); } catch(_) {}
+      try { sessionStorage.setItem('nexus_ss_vendor_draft', JSON.stringify(newProduct)); } catch(_) {}
     } else {
-      try { localStorage.removeItem('nexus_vendor_product_draft'); } catch(_) {}
+      try { sessionStorage.removeItem('nexus_ss_vendor_draft'); } catch(_) {}
     }
   }, [newProduct]);
   useEffect(() => {
@@ -23437,7 +23756,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
           storage.set("products", all);
           setShowAddProduct(false);
           setNewProduct({ name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true });
-          try { localStorage.removeItem('nexus_vendor_product_draft'); } catch(_) {}
+          try { sessionStorage.removeItem('nexus_ss_vendor_draft'); } catch(_) {}
           loadData();
           addToast(newProduct.active ? "Produit publié et visible immédiatement ! ✅" : "Brouillon sauvegardé !", "success");
           return;
@@ -23461,7 +23780,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     if (DataService._sb) { try { DataService._sb.from("products").insert(localProduct); } catch(_) {} }
     setShowAddProduct(false);
     setNewProduct({ name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true });
-    try { localStorage.removeItem('nexus_vendor_product_draft'); } catch(_) {}
+    try { sessionStorage.removeItem('nexus_ss_vendor_draft'); } catch(_) {}
     loadData();
     addToast("Produit ajout\xE9 (hors-ligne) !", "success");
   };
