@@ -2420,8 +2420,9 @@ const NEXUS_CONFIG = {
     publishableKey: "pk_test_51TGdXe1H2qyHRVYhwjkbrHKnmKILl5v8OUT8GxFGX5niFKd904ebRj4ee1sCCfo7agsMwwd9LqapTenEerTIfwQg00BrxAzuy3"
     // pk_live_... ou pk_test_...
   },
+  // ── Brevo — 300 emails/jour gratuits, aucun template requis ─────────────────
   brevo: {
-    apiKey:      "",  // ← Saisir via Paramètres admin (⚙️ étape Emails) — stocké en localStorage
+    apiKey:      "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",
     senderEmail: "noreply@nexus.sn",
     senderName:  "NEXUS Market",
   },
@@ -2545,8 +2546,8 @@ try {
     if (_sc.supabaseUrl)      NEXUS_CONFIG.supabase.url              = _sc.supabaseUrl;
     if (_sc.supabaseKey)      NEXUS_CONFIG.supabase.anonKey          = _sc.supabaseKey;
     if (_sc.stripeKey)        NEXUS_CONFIG.stripe.publishableKey     = _sc.stripeKey;
-    if (_sc.brevoApiKey)      { if(!NEXUS_CONFIG.brevo) NEXUS_CONFIG.brevo={}; NEXUS_CONFIG.brevo.apiKey=_sc.brevoApiKey; }
-    if (_sc.brevoSenderEmail) { if(!NEXUS_CONFIG.brevo) NEXUS_CONFIG.brevo={}; NEXUS_CONFIG.brevo.senderEmail=_sc.brevoSenderEmail; }
+    if (_sc.brevoApiKey)      { if(!NEXUS_CONFIG.brevo)NEXUS_CONFIG.brevo={}; NEXUS_CONFIG.brevo.apiKey=_sc.brevoApiKey; }
+    if (_sc.brevoSenderEmail) { if(!NEXUS_CONFIG.brevo)NEXUS_CONFIG.brevo={}; NEXUS_CONFIG.brevo.senderEmail=_sc.brevoSenderEmail; }
     if (_sc.emailjsPublicKey) NEXUS_CONFIG.emailjs.publicKey         = _sc.emailjsPublicKey;
     if (_sc.emailjsServiceId) NEXUS_CONFIG.emailjs.serviceId         = _sc.emailjsServiceId;
     if (_sc.emailjsOrderTpl)  NEXUS_CONFIG.emailjs.orderTemplateId   = _sc.emailjsOrderTpl;
@@ -3358,15 +3359,17 @@ const isStripeConfigured    = () => !!(NEXUS_CONFIG.stripe.publishableKey && NEX
 const IS_STRIPE_CONFIGURED  = isStripeConfigured();
 // BUG FIX: IS_EMAILJS_CONFIGURED était une constante statique — remplacé par une fonction
 // dynamique pour refléter les mises à jour via le panneau Config ou localStorage
+const isBrevoConfigured      = () => !!NEXUS_CONFIG.brevo?.apiKey;
 const isEmailjsConfigured   = () => !!(NEXUS_CONFIG.emailjs.publicKey && NEXUS_CONFIG.emailjs.serviceId);
-const IS_EMAILJS_CONFIGURED = isEmailjsConfigured(); // valeur initiale (compatibilité)
-// Charger config Brevo depuis localStorage au démarrage
-(() => { try { const sc=JSON.parse(localStorage.getItem('nexus_saved_config')||'{}');
+const IS_EMAILJS_CONFIGURED = isEmailjsConfigured();
+// Charger config Brevo + templates depuis localStorage au démarrage
+(() => { try {
+  const _sc2 = JSON.parse(localStorage.getItem('nexus_saved_config')||'{}');
   if(!NEXUS_CONFIG.brevo) NEXUS_CONFIG.brevo={};
-  if(sc.brevoApiKey)      NEXUS_CONFIG.brevo.apiKey=sc.brevoApiKey;
-  if(sc.brevoSenderEmail) NEXUS_CONFIG.brevo.senderEmail=sc.brevoSenderEmail;
-  const et=JSON.parse(localStorage.getItem('nexus_email_templates')||'{}');
-  if(Object.keys(et).length) console.info('[EmailTemplates] '+Object.keys(et).length+' template(s) personnalisé(s) chargé(s)');
+  if(_sc2.brevoApiKey)      NEXUS_CONFIG.brevo.apiKey=_sc2.brevoApiKey;
+  if(_sc2.brevoSenderEmail) NEXUS_CONFIG.brevo.senderEmail=_sc2.brevoSenderEmail;
+  const _et=JSON.parse(localStorage.getItem('nexus_email_templates')||'{}');
+  if(Object.keys(_et).length) console.info('[EmailTemplates]',Object.keys(_et).length,'template(s) perso chargé(s)');
 } catch(_){} })();
 
 // ── NEXUS Backend Keep-Alive ────────────────────────────────────────────────
@@ -6686,16 +6689,14 @@ const NexusSmsService = {
 window.NexusSmsService = NexusSmsService;
 
 
-// ═══════════════════════════════════════════════════════════════════════════
-// EMAIL TEMPLATE ENGINE — lit les templates personnalisés depuis localStorage
-// ═══════════════════════════════════════════════════════════════════════════
+// ── Email Template Engine ──────────────────────────────────────────────────
 const getEmailTemplate = (id) => {
-  try { return JSON.parse(localStorage.getItem("nexus_email_templates") || "{}")[id] || null; }
-  catch(_) { return null; }
+  try { return JSON.parse(localStorage.getItem("nexus_email_templates")||"{}")[id]||null; }
+  catch(_){ return null; }
 };
 const applyEmailVars = (str, vars) =>
-  Object.entries(vars || {}).reduce((s,[k,v]) =>
-    s.replace(new RegExp("\\{\\{" + k + "\\}\\}", "g"), v != null ? String(v) : ""), str || "");
+  Object.entries(vars||{}).reduce((s,[k,v])=>
+    s.replace(new RegExp("\\{\\{"+k+"\\}\\}","g"), v!=null?String(v):""), str||"");
 
 const EmailService = {
   _initialized: false,
@@ -6713,76 +6714,52 @@ const EmailService = {
     }
   },
   async send({ to, subject, templateId, variables, ejsTemplateId }) {
-    const entry = { id: "email_" + Date.now(), to, subject, templateId, variables, sentAt: (/* @__PURE__ */ new Date()).toISOString() };
-    // [FIX] Les logs emails sont persistés côté serveur dans la table server_logs (Supabase).
-    // Plus de stockage localStorage — utiliser GET /api/email/logs pour lire les journaux.
-
-    // [FIX] Stratégie template universel — 1 seul template EmailJS suffit.
-    // ejsTemplateId est ignoré : on utilise toujours universalTemplateId.
-    // Le HTML complet est dans html_body (triple accolades dans le template).
-    const universalTpl = NEXUS_CONFIG.emailjs.universalTemplateId;
-
-    // [FIX] Init lazy : le SDK emailjs est chargé en `defer`, il peut ne pas être
-    // disponible au premier appel de EmailService.init() au démarrage de l'app.
-    // On tente une ré-initialisation ici si ce n'est pas encore fait.
-    if (!this._initialized && window.emailjs && isEmailjsConfigured()) {
-      window.emailjs.init({ publicKey: NEXUS_CONFIG.emailjs.publicKey });
-      this._initialized = true;
-      console.log("[EmailJS] Service initialisé (lazy)");
+    if (!to) { console.warn("[EmailService] Destinataire manquant"); return false; }
+    if (!NEXUS_CONFIG.brevo?.apiKey) {
+      try { const sc=JSON.parse(localStorage.getItem("nexus_saved_config")||"{}");
+        if(sc.brevoApiKey){ if(!NEXUS_CONFIG.brevo)NEXUS_CONFIG.brevo={};
+          NEXUS_CONFIG.brevo.apiKey=sc.brevoApiKey; NEXUS_CONFIG.brevo.senderEmail=sc.brevoSenderEmail||"noreply@nexus.sn"; }
+      } catch(_){}
     }
-
-    if (isEmailjsConfigured() && this._initialized && universalTpl) {
+    const htmlBody = variables?.html_body || (() => {
+      const rows = Object.entries(variables||{})
+        .filter(([k])=>!["html_body","site_url","reply_to"].includes(k))
+        .map(([k,v])=>`<tr><td style="padding:6px 12px;color:#6b7280;font-size:13px">${k}</td><td style="padding:6px 12px;font-size:13px">${v||""}</td></tr>`)
+        .join("");
+      return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto"><div style="background:#00853E;padding:20px;text-align:center"><h2 style="color:white;margin:0">NEXUS Market</h2></div><div style="padding:24px;background:#f9f9f9"><p style="font-weight:600;font-size:16px">${subject}</p><table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;margin-top:16px">${rows}</table></div><div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div></div>`;
+    })();
+    // ── 1. BREVO — priorité (300/jour gratuits) ────────────────────────────
+    if (NEXUS_CONFIG.brevo?.apiKey) {
       try {
-        const templateParams = {
-          to_email:  to,
-          reply_to:  to,
-          subject:   subject,
-          html_body: variables?.html_body || (() => {
-            const rows = Object.entries(variables || {})
-              .filter(([k]) => !['html_body','site_url','reply_to'].includes(k))
-              .map(([k, v]) => `<tr><td style="padding:6px 12px;color:#6b7280;font-size:13px">${k}</td><td style="padding:6px 12px;font-size:13px">${v}</td></tr>`)
-              .join('');
-            return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-              <div style="background:#00853E;padding:20px;text-align:center"><h2 style="color:white;margin:0">NEXUS Market Sénégal</h2></div>
-              <div style="padding:24px;background:#f9f9f9"><p style="font-weight:600;font-size:16px">${subject}</p>
-              <table style="width:100%;border-collapse:collapse;background:white;border-radius:8px;margin-top:16px">${rows}</table></div>
-              <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">NEXUS Market SARL — Dakar, Sénégal</div></div>`;
-          })(),
-          ...variables,
-        };
-        await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId, universalTpl, templateParams);
-        console.log("[EmailJS] \u2705 Email envoyé à", to);
-        return true;
-      } catch (e) {
-        const status = e && (e.status || (e.text && JSON.parse(e.text || '{}').status));
-        if (status === 422 || (e && e.text && e.text.includes('422'))) {
-          console.error("[EmailJS] Erreur 422 — Vérifiez : (1) Service ID correct, (2) Template ID correct, (3) \"To Email\" = {{to_email}}, (4) Body HTML = {{{html_body}}} (triple accolades), (5) Service email connecté.");
-        } else { console.warn("[EmailJS] Erreur envoi:", e); }
-        // [FIX] Ne pas tomber dans la simulation si EmailJS est configuré mais a échoué —
-        // on tente le fallback backend avant de capituler.
-      }
-    }
-    console.log("[EmailService] Simulation \u2014 email à", to, ":", subject);
-    // Fallback backend
-    const _fbToken = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
-    if (NEXUS_CONFIG.apiUrl && _fbToken) {
-      try {
-        const resp = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/email/send", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_fbToken}` },
-          body: JSON.stringify({ to, subject, html: variables?.html_body || `<p>${subject}</p>` })
+        const r = await fetch("https://api.brevo.com/v3/smtp/email", {
+          method:"POST",
+          headers:{"Content-Type":"application/json","api-key":NEXUS_CONFIG.brevo.apiKey},
+          body:JSON.stringify({ sender:{name:NEXUS_CONFIG.brevo.senderName||"NEXUS Market",email:NEXUS_CONFIG.brevo.senderEmail||"noreply@nexus.sn"}, to:[{email:to}], subject, htmlContent:htmlBody })
         });
-        if (resp.ok) {
-          const r = await resp.json();
-          if (r.ok) { console.log("[EmailService] \u2705 Email envoyé via backend à", to); return true; }
-          else { console.error("[EmailService] \u274C Backend ok=false:", r); }
-        } else {
-          console.error("[EmailService] \u274C Backend HTTP", resp.status, "pour", to);
-        }
-      } catch(e) { console.warn("[EmailService] Fallback backend échoué:", e.message); }
+        if (r.ok) { console.log("[Brevo] ✅",to,"—",subject); return true; }
+        const err=await r.json().catch(()=>({}));
+        console.warn("[Brevo] ⚠️",r.status,err.message||JSON.stringify(err));
+      } catch(e){ console.warn("[Brevo] réseau:",e.message); }
     }
-    return true;
+    // ── 2. EMAILJS fallback ────────────────────────────────────────────────
+    const uTpl=NEXUS_CONFIG.emailjs.universalTemplateId;
+    if(!this._initialized&&window.emailjs&&isEmailjsConfigured()){window.emailjs.init({publicKey:NEXUS_CONFIG.emailjs.publicKey});this._initialized=true;}
+    if(isEmailjsConfigured()&&this._initialized&&uTpl){
+      try{ await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId,uTpl,{to_email:to,reply_to:to,subject,html_body:htmlBody,...variables}); console.log("[EmailJS] ✅",to); return true; }
+      catch(e){ console.warn("[EmailJS]",e?.status||e?.message||e); }
+    }
+    // ── 3. Backend API ─────────────────────────────────────────────────────
+    const _t=DataService?._token||sessionStorage.getItem("nexus_jwt")||localStorage.getItem("nexus_jwt");
+    if(NEXUS_CONFIG.apiUrl&&_t){
+      try{
+        const r=await fetch((NEXUS_CONFIG.apiUrl||"")+"/api/email/send",{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${_t}`},body:JSON.stringify({to,subject,html:htmlBody})});
+        if(r.ok){const j=await r.json();if(j.ok){console.log("[EmailService] ✅ backend",to);return true;}}
+      }catch(e){console.warn("[EmailService] backend:",e.message);}
+    }
+    console.warn("[EmailService] ⚠️ Simulation — configurez Brevo dans admin → Templates email. Destinataire:",to);
+    return false;
   },
+
   sendOrderConfirmation(order, items) {
     // [FIX] Normalisation défensive camelCase || snake_case (réponse backend)
     const buyerEmail   = order.buyerEmail    || order.buyer_email    || '';
@@ -6823,12 +6800,10 @@ const EmailService = {
       : formatPrice(order.total || 0);
     const orderDateFr = (() => { try { return new Date(orderDate).toLocaleDateString('fr-FR'); } catch(_) { return new Date().toLocaleDateString('fr-FR'); } })();
 
-    const _tplOC = getEmailTemplate("order_confirmation");
+    const _tOC=getEmailTemplate('order_confirmation');
     return this.send({
       to: buyerEmail,
-      subject: _tplOC?.subject
-        ? applyEmailVars(_tplOC.subject, { order_id: order.id||"—", buyer_name: buyerName })
-        : `✅ Confirmation commande ${order.id} — NEXUS Market`,
+      subject: _tOC?.subject ? applyEmailVars(_tOC.subject,{order_id:order.id||'—',buyer_name:buyerName}) : `✅ Confirmation commande ${order.id} — NEXUS Market`,
       templateId: "order_confirmation",
       ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
       variables: {
@@ -6864,10 +6839,9 @@ const EmailService = {
     });
   },
     sendPasswordReset(email, code) {
-    const _tplPR = getEmailTemplate("password_reset");
     return this.send({
       to: email,
-      subject: _tplPR?.subject || "\u{1F511} R\xE9initialisation mot de passe \u2014 NEXUS Market",
+      subject: "\u{1F511} R\xE9initialisation mot de passe \u2014 NEXUS Market",
       templateId: "password_reset",
       ejsTemplateId: NEXUS_CONFIG.emailjs.resetTemplateId,
       variables: {
@@ -6974,11 +6948,7 @@ const EmailService = {
     const noteText = adminNote || (approved ? 'Votre boutique est désormais active. Vous pouvez publier vos produits.' : 'Votre dossier est en cours de traitement.');
     return this.send({
       to: vendorEmail,
-      subject: (() => {
-        const _tpl = getEmailTemplate(approved ? "vendor_approved" : "vendor_rejected");
-        if (_tpl?.subject) return applyEmailVars(_tpl.subject, { vendor_name: vendorName, shop_name: shopName||vendorName });
-        return approved ? `🎉 Boutique approuvée — NEXUS Market` : `ℹ️ Dossier vendeur — NEXUS Market`;
-      })(),
+      subject: (() => { const _t=getEmailTemplate(approved?'vendor_approved':'vendor_rejected'); if(_t?.subject) return applyEmailVars(_t.subject,{vendor_name:vendorName,shop_name:shopName||vendorName}); return approved?`🎉 Boutique approuvée — NEXUS Market`:`ℹ️ Dossier vendeur — NEXUS Market`; })(),
       templateId: "vendor_approved",
       ejsTemplateId: NEXUS_CONFIG.emailjs.vendorAdminTemplateId,
       variables: {
@@ -7026,10 +6996,8 @@ const EmailService = {
     });
   },
   sendMessage(recipientEmail, recipientName, senderName, messageText, subject) {
-    const _tplMsg = getEmailTemplate("new_message");
-    const subj = subject || (_tplMsg?.subject
-      ? applyEmailVars(_tplMsg.subject, { sender_name: senderName, recipient_name: recipientName||"" })
-      : `💬 Message de ${senderName} — NEXUS Market`);
+    const _tMsg=getEmailTemplate('new_message');
+    const subj = subject||(_tMsg?.subject ? applyEmailVars(_tMsg.subject,{sender_name:senderName,recipient_name:recipientName||''}) : `💬 Message de ${senderName} — NEXUS Market`);
     return this.send({
       to: recipientEmail, subject: subj, templateId: "new_message",
       ejsTemplateId: NEXUS_CONFIG.emailjs.msgTemplateId,
@@ -7054,12 +7022,9 @@ const EmailService = {
   sendReturnConfirmation(order, reason) {
     const buyerName = order.buyerName || order.buyer_name || '—';
     const orderId   = order.id || '—';
-    const _tplRet = getEmailTemplate("return_request");
     return this.send({
       to: order.buyerEmail || order.buyer_email,
-      subject: _tplRet?.subject
-        ? applyEmailVars(_tplRet.subject, { order_id: orderId, buyer_name: buyerName })
-        : `\u{1F4E6} Demande de retour re\xE7ue \u2014 Commande ${orderId}`,
+      subject: (() => { const _t=getEmailTemplate('return_request'); return _t?.subject ? applyEmailVars(_t.subject,{order_id:orderId,buyer_name:buyerName}) : `\u{1F4E6} Demande de retour re\xE7ue \u2014 Commande ${orderId}`; })(),
       templateId: "return_request",
       ejsTemplateId: NEXUS_CONFIG.emailjs.orderTemplateId,
       variables: {
@@ -17742,333 +17707,250 @@ const BackendSetupPanel = ({ addToast }) => {
 // EmailTemplatesPanel — Gestion complète des emails Brevo depuis l'admin
 // ═══════════════════════════════════════════════════════════════════════════════
 const EMAIL_TPL_DEFS = [
-  { id:"order_confirmation",  label:"Confirmation commande",      icon:"shopping-cart",      color:"#00853E",
-    trigger:"Envoyé à l'acheteur quand une commande est passée",
+  { id:"order_confirmation", label:"Confirmation commande", icon:"shopping-cart", color:"#00853E",
+    trigger:"Envoyé à l'acheteur dès qu'une commande est passée",
     defaultSubject:"✅ Confirmation commande {{order_id}} — NEXUS Market",
-    vars:[["buyer_name","Prénom acheteur"],["order_id","N° commande"],["order_date","Date commande"],["total","Montant total FCFA"],["tracking","N° suivi"],["address","Adresse livraison"],["vendor_name","Nom vendeur"],["items","Liste articles HTML"]] },
-  { id:"vendor_approved",     label:"Boutique approuvée",         icon:"store",              color:"#16a34a",
+    vars:[["buyer_name","Prénom acheteur"],["order_id","N° commande"],["order_date","Date"],["total","Montant FCFA"],["tracking","N° suivi"],["address","Adresse livraison"],["vendor_name","Vendeur"],["items","Articles HTML"]] },
+  { id:"vendor_approved", label:"Boutique approuvée", icon:"store", color:"#16a34a",
     trigger:"Envoyé au vendeur quand l'admin approuve sa boutique",
     defaultSubject:"🎉 Votre boutique est approuvée — NEXUS Market",
     vars:[["vendor_name","Nom vendeur"],["shop_name","Nom boutique"],["admin_note","Note admin"]] },
-  { id:"vendor_rejected",     label:"Dossier refusé",             icon:"times-circle",       color:"#E11B22",
+  { id:"vendor_rejected", label:"Dossier refusé", icon:"times-circle", color:"#E11B22",
     trigger:"Envoyé au vendeur quand l'admin rejette sa demande",
-    defaultSubject:"ℹ️ Dossier vendeur refusé — NEXUS Market",
+    defaultSubject:"ℹ️ Décision sur votre dossier — NEXUS Market",
     vars:[["vendor_name","Nom vendeur"],["reason","Motif du refus"]] },
-  { id:"password_reset",      label:"Réinitialisation mot de passe", icon:"key",             color:"#F59E0B",
+  { id:"password_reset", label:"Réinitialisation mot de passe", icon:"key", color:"#F59E0B",
     trigger:"Envoyé à l'utilisateur qui demande un nouveau mot de passe",
     defaultSubject:"🔑 Réinitialisation mot de passe — NEXUS Market",
     vars:[["reset_code","Code OTP"]] },
-  { id:"new_message",         label:"Nouveau message reçu",       icon:"envelope",           color:"#06B6D4",
+  { id:"new_message", label:"Nouveau message reçu", icon:"envelope", color:"#06B6D4",
     trigger:"Envoyé quand un utilisateur reçoit un message privé",
     defaultSubject:"💬 Nouveau message de {{sender_name}} — NEXUS Market",
-    vars:[["recipient_name","Nom destinataire"],["sender_name","Nom expéditeur"],["message_text","Texte du message"]] },
-  { id:"new_offer",           label:"Nouvelle offre (vendeur)",   icon:"hand-holding-usd",   color:"#8B5CF6",
-    trigger:"Envoyé au vendeur quand un acheteur lui soumet une offre",
+    vars:[["recipient_name","Destinataire"],["sender_name","Expéditeur"],["message_text","Texte du message"]] },
+  { id:"new_offer", label:"Nouvelle offre (vendeur)", icon:"hand-holding-usd", color:"#8B5CF6",
+    trigger:"Envoyé au vendeur quand un acheteur soumet une offre",
     defaultSubject:"💬 Nouvelle offre pour {{product_name}} — NEXUS Market",
-    vars:[["vendor_name","Nom vendeur"],["buyer_name","Nom acheteur"],["product_name","Produit"],["offer_price","Prix proposé FCFA"],["original_price","Prix original FCFA"]] },
-  { id:"offer_accepted",      label:"Offre acceptée (acheteur)",  icon:"check-circle",       color:"#00853E",
+    vars:[["vendor_name","Vendeur"],["buyer_name","Acheteur"],["product_name","Produit"],["offer_price","Prix proposé FCFA"],["original_price","Prix original FCFA"]] },
+  { id:"offer_accepted", label:"Offre acceptée (acheteur)", icon:"check-circle", color:"#00853E",
     trigger:"Envoyé à l'acheteur quand le vendeur accepte son offre",
     defaultSubject:"✅ Offre acceptée — {{product_name}}",
-    vars:[["buyer_name","Nom acheteur"],["product_name","Produit"],["offer_price","Prix accepté FCFA"]] },
-  { id:"return_request",      label:"Demande de retour",          icon:"undo",               color:"#D97706",
+    vars:[["buyer_name","Acheteur"],["product_name","Produit"],["offer_price","Prix accepté FCFA"]] },
+  { id:"return_request", label:"Demande de retour", icon:"undo", color:"#D97706",
     trigger:"Envoyé à l'acheteur quand il soumet une demande de retour",
     defaultSubject:"📦 Demande de retour reçue — Commande {{order_id}}",
-    vars:[["buyer_name","Nom acheteur"],["order_id","N° commande"],["reason","Motif du retour"]] },
-  { id:"dispute_update",      label:"Mise à jour litige",         icon:"balance-scale",      color:"#7C3AED",
+    vars:[["buyer_name","Acheteur"],["order_id","N° commande"],["reason","Motif"]] },
+  { id:"dispute_update", label:"Mise à jour litige", icon:"balance-scale", color:"#7C3AED",
     trigger:"Envoyé aux deux parties quand l'admin intervient sur un litige",
     defaultSubject:"[NEXUS] Mise à jour litige #{{dispute_id}}",
-    vars:[["recipient_name","Nom destinataire"],["dispute_id","ID litige"],["message","Message admin"]] },
+    vars:[["recipient_name","Destinataire"],["dispute_id","ID litige"],["message","Message admin"]] },
 ];
 
-const DEFAULT_HTML_BODY = (def, siteName) => `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-  <div style="background:#00853E;padding:20px;text-align:center">
-    <h1 style="color:white;margin:0">${siteName || "NEXUS Market"}</h1>
+const _defaultHtmlBody = (def) => {
+  const siteName = NEXUS_CONFIG.legal?.companyName || "NEXUS Market";
+  const varsRows = def.vars.map(([k,d]) =>
+    `<tr><td style="padding:8px 16px;color:#6b7280;font-size:13px;border-bottom:1px solid #f3f4f6">${d}</td>`+
+    `<td style="padding:8px 16px;font-size:13px;font-family:monospace;color:#1d4ed8;border-bottom:1px solid #f3f4f6">{{${k}}}</td></tr>`
+  ).join("\n    ");
+  return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#ffffff">
+  <div style="background:#00853E;padding:24px 20px;text-align:center">
+    <h1 style="color:white;margin:0;font-size:22px">${siteName}</h1>
   </div>
-  <div style="padding:30px;background:#f9f9f9">
-    <h2 style="color:#1F2937;margin-top:0">${def.label}</h2>
-    ${def.vars.map(([k,d]) => `<p><strong>${d} :</strong> {{${k}}}</p>`).join("\n    ")}
-    <p style="margin-top:24px;text-align:center">
-      <a href="{{site_url}}" style="background:#00853E;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block">Accéder à NEXUS Market</a>
-    </p>
+  <div style="padding:32px 24px;background:#f9fafb">
+    <h2 style="color:#111827;margin:0 0 16px;font-size:18px">${def.label}</h2>
+    <table style="width:100%;border-collapse:collapse;background:white;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+    ${varsRows}
+    </table>
+    <div style="margin-top:28px;text-align:center">
+      <a href="{{site_url}}" style="background:#00853E;color:white;padding:13px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;display:inline-block">Accéder à ${siteName}</a>
+    </div>
   </div>
-  <div style="background:#333;color:white;padding:12px;text-align:center;font-size:12px">
-    NEXUS Market SARL — Dakar, Sénégal
+  <div style="background:#1f2937;color:#9ca3af;padding:14px;text-align:center;font-size:12px">
+    ${siteName} — Dakar, Sénégal &nbsp;|&nbsp; <a href="{{site_url}}" style="color:#6ee7b7">nexus.sn</a>
   </div>
 </div>`;
+};
 
-const loadAllTemplates = () => {
-  try { return JSON.parse(localStorage.getItem("nexus_email_templates") || "{}"); }
-  catch(_) { return {}; }
-};
-const saveAllTemplates = (all) => {
-  localStorage.setItem("nexus_email_templates", JSON.stringify(all));
-};
+const _loadAllTemplates = () => { try { return JSON.parse(localStorage.getItem("nexus_email_templates")||"{}"); } catch(_){ return {}; } };
+const _saveAllTemplates = (t) => localStorage.setItem("nexus_email_templates", JSON.stringify(t));
 
 const EmailTemplatesPanel = ({ addToast, currentUser }) => {
   const E = React.createElement;
-  const [selId,  setSelId]  = React.useState("order_confirmation");
-  const [templates, setTemplates] = React.useState(loadAllTemplates);
-  const [showPreview, setShowPreview] = React.useState(false);
-  const [testEmail, setTestEmail]   = React.useState(currentUser?.email || "");
-  const [sending,  setSending]      = React.useState(false);
-  const [saved,    setSaved]        = React.useState(false);
+  const [selId, setSelId]           = React.useState("order_confirmation");
+  const [templates, setTemplates]   = React.useState(_loadAllTemplates);
+  const [preview, setPreview]       = React.useState(false);
+  const [testEmail, setTestEmail]   = React.useState(currentUser?.email||"");
+  const [sending, setSending]       = React.useState(false);
+  const [saved, setSaved]           = React.useState(false);
+  const [cfgSaved, setCfgSaved]     = React.useState(false);
+  const [showKey, setShowKey]       = React.useState(false);
+  const _sc = () => { try { return JSON.parse(localStorage.getItem("nexus_saved_config")||"{}"); } catch(_){ return {}; } };
+  const [brevoKey,   setBrevoKey]   = React.useState(() => NEXUS_CONFIG.brevo?.apiKey   || _sc().brevoApiKey     || "");
+  const [brevoFrom,  setBrevoFrom]  = React.useState(() => NEXUS_CONFIG.brevo?.senderEmail || _sc().brevoSenderEmail || "noreply@nexus.sn");
+  const [brevoName,  setBrevoName]  = React.useState(() => NEXUS_CONFIG.brevo?.senderName  || "NEXUS Market");
 
-  // Brevo config state (from localStorage + NEXUS_CONFIG)
-  const savedCfg = () => { try { return JSON.parse(localStorage.getItem("nexus_saved_config")||"{}"); } catch(_){return{};} };
-  const [brevoKey,     setBrevoKey]     = React.useState(() => NEXUS_CONFIG.brevo?.apiKey || savedCfg().brevoApiKey || "");
-  const [brevoEmail,   setBrevoEmail]   = React.useState(() => NEXUS_CONFIG.brevo?.senderEmail || savedCfg().brevoSenderEmail || "noreply@nexus.sn");
-  const [brevoName,    setBrevoName]    = React.useState(() => NEXUS_CONFIG.brevo?.senderName  || "NEXUS Market");
-  const [showKey,      setShowKey]      = React.useState(false);
-  const [cfgSaved,     setCfgSaved]     = React.useState(false);
-
-  const def = EMAIL_TPL_DEFS.find(d => d.id === selId) || EMAIL_TPL_DEFS[0];
-  const tpl = templates[selId] || {};
+  const def      = EMAIL_TPL_DEFS.find(d=>d.id===selId) || EMAIL_TPL_DEFS[0];
+  const tpl      = templates[selId] || {};
   const subject  = tpl.subject  !== undefined ? tpl.subject  : def.defaultSubject;
-  const htmlBody = tpl.htmlBody !== undefined ? tpl.htmlBody : DEFAULT_HTML_BODY(def, NEXUS_CONFIG.legal?.companyName || "NEXUS Market");
+  const htmlBody = tpl.htmlBody !== undefined ? tpl.htmlBody : _defaultHtmlBody(def);
+  const isModified = !!templates[selId];
+  const isActive = !!brevoKey;
 
-  const setField = (field, val) => {
-    setTemplates(prev => ({ ...prev, [selId]: { ...(prev[selId]||{}), [field]: val } }));
-    setSaved(false);
-  };
+  const setField = (field, val) => { setTemplates(p=>({...p,[selId]:{...(p[selId]||{}),[field]:val}})); setSaved(false); };
 
-  const handleSave = () => {
-    saveAllTemplates(templates);
-    setSaved(true);
-    addToast && addToast("Templates email sauvegardés ✓", "success");
-    setTimeout(() => setSaved(false), 3000);
-  };
-
-  const handleReset = () => {
-    setTemplates(prev => { const n = {...prev}; delete n[selId]; return n; });
-    setSaved(false);
-  };
-
+  const handleSave = () => { _saveAllTemplates(templates); setSaved(true); addToast?.("✅ Templates sauvegardés","success"); setTimeout(()=>setSaved(false),3000); };
+  const handleReset = () => { setTemplates(p=>{ const n={...p}; delete n[selId]; return n; }); setSaved(false); addToast?.("Template remis par défaut","info"); };
   const handleSaveBrevo = () => {
-    NEXUS_CONFIG.brevo = NEXUS_CONFIG.brevo || {};
-    NEXUS_CONFIG.brevo.apiKey      = brevoKey;
-    NEXUS_CONFIG.brevo.senderEmail = brevoEmail;
-    NEXUS_CONFIG.brevo.senderName  = brevoName;
-    const sc = savedCfg();
-    sc.brevoApiKey      = brevoKey;
-    sc.brevoSenderEmail = brevoEmail;
-    localStorage.setItem("nexus_saved_config", JSON.stringify(sc));
-    setCfgSaved(true);
-    addToast && addToast("Configuration Brevo sauvegardée ✓", "success");
-    setTimeout(() => setCfgSaved(false), 3000);
+    if(!NEXUS_CONFIG.brevo) NEXUS_CONFIG.brevo={};
+    NEXUS_CONFIG.brevo.apiKey=brevoKey; NEXUS_CONFIG.brevo.senderEmail=brevoFrom; NEXUS_CONFIG.brevo.senderName=brevoName;
+    const sc=_sc(); sc.brevoApiKey=brevoKey; sc.brevoSenderEmail=brevoFrom;
+    localStorage.setItem("nexus_saved_config",JSON.stringify(sc));
+    setCfgSaved(true); addToast?.("✅ Config Brevo sauvegardée","success"); setTimeout(()=>setCfgSaved(false),3000);
   };
-
+  const handleInsertVar = (k) => setField("htmlBody", htmlBody+` {{${k}}}`);
   const handleTestSend = async () => {
-    if (!testEmail) { addToast && addToast("Saisissez un email de test", "warning"); return; }
-    if (!brevoKey)  { addToast && addToast("Clé Brevo manquante — configurez-la d'abord", "warning"); return; }
+    if(!testEmail){ addToast?.("Saisissez un email de test","warning"); return; }
+    if(!brevoKey){ addToast?.("Clé Brevo manquante","warning"); return; }
     setSending(true);
-    const demoVars = { buyer_name:"Fatou Diop", order_id:"ORD-TEST-001", order_date:"01/06/2026",
-      total:"98 500 FCFA", tracking:"SN123456", address:"12 Rue Félix Faure, Dakar",
-      vendor_name:"NEXUS Market", items:"Smartphone Samsung A13 ×1", sender_name:"Admin",
-      recipient_name:"Fatou Diop", reset_code:"483921", dispute_id:"D-001",
-      message:"Votre dossier est en cours de traitement.", reason:"Produit non conforme",
-      shop_name:"Ma Boutique", admin_note:"Dossier complet — bienvenue !",
-      offer_price:"75 000 FCFA", original_price:"98 500 FCFA", product_name:"Smartphone Samsung",
-      site_url: window.location.origin };
-    const finalSubject  = applyEmailVars(subject,  demoVars);
-    const finalHtmlBody = applyEmailVars(htmlBody, demoVars);
+    const demo={buyer_name:"Fatou Diop",order_id:"ORD-TEST-001",order_date:"01/06/2026",total:"98 500 FCFA",tracking:"SN123456",address:"12 Rue Félix Faure, Dakar",vendor_name:"NEXUS Market",items:"Smartphone Samsung A13 ×1",sender_name:"Admin NEXUS",recipient_name:"Fatou Diop",reset_code:"483921",dispute_id:"D-001",message:"Votre dossier est en cours.",reason:"Produit non conforme",shop_name:"Ma Boutique",admin_note:"Bienvenue !",offer_price:"75 000 FCFA",original_price:"98 500 FCFA",product_name:"Smartphone Samsung",site_url:window.location.origin};
+    const subj  = "[TEST] "+applyEmailVars(subject, demo);
+    const body  = applyEmailVars(htmlBody, demo);
     try {
-      const r = await fetch("https://api.brevo.com/v3/smtp/email", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json", "api-key": brevoKey },
-        body: JSON.stringify({
-          sender: { name: brevoName, email: brevoEmail },
-          to: [{ email: testEmail }],
-          subject: "[TEST] " + finalSubject,
-          htmlContent: finalHtmlBody,
-        }),
-      });
-      if (r.ok) { addToast && addToast("Email de test envoyé à " + testEmail + " ✓", "success"); }
-      else { const e = await r.json().catch(()=>{}); addToast && addToast("Erreur Brevo " + r.status + ": " + (e?.message||""), "danger"); }
-    } catch(e) { addToast && addToast("Erreur réseau : " + e.message, "danger"); }
+      const r=await fetch("https://api.brevo.com/v3/smtp/email",{method:"POST",headers:{"Content-Type":"application/json","api-key":brevoKey},body:JSON.stringify({sender:{name:brevoName,email:brevoFrom},to:[{email:testEmail}],subject:subj,htmlContent:body})});
+      if(r.ok){ addToast?.("✅ Test envoyé à "+testEmail,"success"); }
+      else { const e=await r.json().catch(()=>({})); addToast?.("❌ Brevo "+r.status+": "+(e?.message||""),"danger"); }
+    } catch(e){ addToast?.("❌ Réseau: "+e.message,"danger"); }
     setSending(false);
   };
 
-  const isBrevo = !!brevoKey;
-  const siteName = NEXUS_CONFIG.legal?.companyName || "NEXUS Market";
+  const btn = (label, onClick, variant="secondary", icon, disabled) =>
+    E("button",{className:`btn btn-${variant} btn-sm`,onClick,disabled,style:{display:"flex",alignItems:"center",gap:"0.35rem"}},
+      icon && E("i",{className:`fas fa-${icon}`}), label);
 
-  return E("div", { style:{display:"flex",flexDirection:"column",gap:"1.25rem"} },
+  return E("div",{style:{display:"flex",flexDirection:"column",gap:"1.25rem"}},
 
-    // ── Config Brevo ────────────────────────────────────────────────────────
-    E("div", { className:"card" },
-      E("div", { className:"card-header" },
-        E("h2", { className:"card-title" }, E("i",{className:"fas fa-envelope",style:{color:"#00853E",marginRight:"0.5rem"}}), "Configuration Brevo"),
-        E("span", { className:`badge ${isBrevo?"badge-success":"badge-warning"}` },
-          E("i",{className:`fas fa-${isBrevo?"check-circle":"exclamation-triangle"}`}), " ",
-          isBrevo ? "Actif — 300 emails/jour" : "Non configuré"
+    // ── Bloc config Brevo ──────────────────────────────────────────────────
+    E("div",{className:"card"},
+      E("div",{className:"card-header"},
+        E("div",{style:{display:"flex",alignItems:"center",gap:"0.6rem"}},
+          E("i",{className:"fas fa-paper-plane",style:{color:"#00853E",fontSize:"1.1rem"}}),
+          E("h2",{className:"card-title",style:{margin:0}},"Configuration Brevo")
+        ),
+        E("span",{className:`badge ${isActive?"badge-success":"badge-warning"}`},
+          E("i",{className:`fas fa-${isActive?"check-circle":"exclamation-triangle"}`})," ",
+          isActive?"✅ Actif — 300 emails/jour gratuits":"⚠️ Clé manquante"
         )
       ),
-      E("div", { style:{padding:"1rem",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"1rem"} },
-        E("div", { className:"form-group", style:{margin:0} },
-          E("label", { className:"form-label" }, "Clé API Brevo"),
-          E("div", { style:{display:"flex",gap:"0.4rem"} },
-            E("input", { type: showKey?"text":"password", className:"form-input",
-              value:brevoKey, onChange:e=>setBrevoKey(e.target.value),
-              placeholder:"xkeysib-...", style:{fontFamily:"monospace",fontSize:"0.78rem",flex:1} }),
-            E("button", { className:"btn btn-secondary btn-sm", onClick:()=>setShowKey(v=>!v),
-              title: showKey?"Masquer":"Afficher" },
-              E("i",{className:`fas fa-eye${showKey?"-slash":""}`}))
+      E("div",{style:{padding:"0 1rem 0.5rem",display:"grid",gridTemplateColumns:"2fr 1.5fr 1fr",gap:"1rem"}},
+        E("div",{className:"form-group",style:{margin:0}},
+          E("label",{className:"form-label"},"Clé API Brevo"),
+          E("div",{style:{display:"flex",gap:"0.35rem"}},
+            E("input",{type:showKey?"text":"password",className:"form-input",value:brevoKey,onChange:e=>setBrevoKey(e.target.value),placeholder:"xkeysib-...",style:{fontFamily:"monospace",fontSize:"0.77rem",flex:1}}),
+            btn("",()=>setShowKey(v=>!v),"secondary",showKey?"eye-slash":"eye")
           ),
-          E("small",{style:{fontSize:"0.72rem",color:"var(--text-secondary)"}},
-            "app.brevo.com → SMTP & API → API Keys")
+          E("small",{style:{color:"var(--text-secondary)",fontSize:"0.71rem"}},"app.brevo.com → SMTP & API → API Keys")
         ),
-        E("div", { className:"form-group", style:{margin:0} },
-          E("label", { className:"form-label" }, "Email expéditeur (vérifié Brevo)"),
-          E("input", { type:"email", className:"form-input",
-            value:brevoEmail, onChange:e=>setBrevoEmail(e.target.value),
-            placeholder:"noreply@nexus.sn" }),
-          E("small",{style:{fontSize:"0.72rem",color:"var(--text-secondary)"}},
-            "Doit être vérifié dans Brevo → Senders & IPs")
+        E("div",{className:"form-group",style:{margin:0}},
+          E("label",{className:"form-label"},"Email expéditeur"),
+          E("input",{type:"email",className:"form-input",value:brevoFrom,onChange:e=>setBrevoFrom(e.target.value),placeholder:"noreply@nexus.sn"}),
+          E("small",{style:{color:"var(--text-secondary)",fontSize:"0.71rem"}},"Doit être vérifié dans Brevo → Senders")
         ),
-        E("div", { className:"form-group", style:{margin:0} },
-          E("label", { className:"form-label" }, "Nom expéditeur"),
-          E("input", { type:"text", className:"form-input",
-            value:brevoName, onChange:e=>setBrevoName(e.target.value),
-            placeholder:"NEXUS Market" })
+        E("div",{className:"form-group",style:{margin:0}},
+          E("label",{className:"form-label"},"Nom affiché"),
+          E("input",{type:"text",className:"form-input",value:brevoName,onChange:e=>setBrevoName(e.target.value),placeholder:"NEXUS Market"})
         )
       ),
-      E("div", { style:{padding:"0 1rem 1rem",display:"flex",gap:"0.75rem",alignItems:"center"} },
-        E("button", { className:`btn ${cfgSaved?"btn-success":"btn-primary"}`, onClick:handleSaveBrevo },
-          E("i",{className:`fas fa-${cfgSaved?"check":"save"}`}), " ",
-          cfgSaved ? "Sauvegardé !" : "Sauvegarder la config"
+      E("div",{style:{padding:"0 1rem 1rem",display:"flex",gap:"0.75rem",alignItems:"center",flexWrap:"wrap"}},
+        E("button",{className:`btn btn-sm ${cfgSaved?"btn-success":"btn-primary"}`,onClick:handleSaveBrevo,style:{display:"flex",alignItems:"center",gap:"0.4rem"}},
+          E("i",{className:`fas fa-${cfgSaved?"check":"save"}`}), cfgSaved?"Sauvegardé !":"Sauvegarder la config Brevo"
         ),
-        E("div", { style:{display:"flex",gap:"0.5rem",alignItems:"center",marginLeft:"auto"} },
-          E("input", { type:"email", className:"form-input",
-            value:testEmail, onChange:e=>setTestEmail(e.target.value),
-            placeholder:"email@test.com", style:{width:200,fontSize:"0.85rem"} }),
-          E("button", { className:"btn btn-secondary", onClick:handleTestSend, disabled:sending },
+        E("div",{style:{display:"flex",gap:"0.5rem",alignItems:"center",marginLeft:"auto"}},
+          E("input",{type:"email",className:"form-input",value:testEmail,onChange:e=>setTestEmail(e.target.value),placeholder:"Votre email de test",style:{width:220,fontSize:"0.83rem"}}),
+          E("button",{className:"btn btn-secondary btn-sm",onClick:handleTestSend,disabled:sending,style:{display:"flex",alignItems:"center",gap:"0.4rem",whiteSpace:"nowrap"}},
             sending ? E("i",{className:"fas fa-spinner fa-spin"}) : E("i",{className:"fas fa-paper-plane"}),
-            " Envoyer test"
+            sending?"Envoi...":"Envoyer test"
           )
         )
       )
     ),
 
-    // ── Éditeur templates ────────────────────────────────────────────────────
-    E("div", { style:{display:"grid",gridTemplateColumns:"220px 1fr",gap:"1.25rem",alignItems:"start"} },
+    // ── Éditeur ────────────────────────────────────────────────────────────
+    E("div",{style:{display:"grid",gridTemplateColumns:"210px 1fr",gap:"1.25rem",alignItems:"start"}},
 
-      // Sidebar liste
-      E("div", { className:"card", style:{padding:"0.6rem"} },
-        E("div", { style:{fontWeight:700,fontSize:"0.75rem",color:"var(--text-secondary)",
-          padding:"0.2rem 0.4rem 0.6rem",textTransform:"uppercase",letterSpacing:"0.5px"} },
-          "Templates (", EMAIL_TPL_DEFS.length, ")"
+      // Sidebar
+      E("div",{className:"card",style:{padding:"0.5rem"}},
+        E("div",{style:{fontWeight:700,fontSize:"0.73rem",color:"var(--text-secondary)",padding:"0.3rem 0.4rem 0.6rem",textTransform:"uppercase",letterSpacing:"0.5px"}},
+          "Templates ("+EMAIL_TPL_DEFS.length+")"
         ),
         EMAIL_TPL_DEFS.map(d =>
-          E("button", { key:d.id,
-            onClick:()=>{ setSelId(d.id); setShowPreview(false); },
-            style:{ width:"100%",padding:"0.5rem 0.65rem",
-              background: selId===d.id ? "rgba(0,133,62,0.08)" : "none",
+          E("button",{key:d.id,onClick:()=>{setSelId(d.id);setPreview(false);},
+            style:{width:"100%",padding:"0.5rem 0.6rem",background:selId===d.id?"rgba(0,133,62,0.08)":"none",
               border:`1px solid ${selId===d.id?"var(--primary)":"transparent"}`,
               borderRadius:"7px",cursor:"pointer",display:"flex",alignItems:"center",
-              gap:"0.55rem",marginBottom:"0.2rem",textAlign:"left" }},
-            E("i",{className:`fas fa-${d.icon}`,style:{color:d.color,width:14,fontSize:"0.8rem"}}),
-            E("span",{style:{fontSize:"0.78rem",fontWeight:selId===d.id?700:400,lineHeight:1.3}}, d.label),
-            templates[d.id] && E("span",{style:{marginLeft:"auto",width:6,height:6,
-              borderRadius:"50%",background:"var(--primary)",flexShrink:0}})
+              gap:"0.5rem",marginBottom:"0.25rem",textAlign:"left"}},
+            E("i",{className:`fas fa-${d.icon}`,style:{color:d.color,width:13,fontSize:"0.78rem",flexShrink:0}}),
+            E("span",{style:{fontSize:"0.78rem",fontWeight:selId===d.id?700:400,lineHeight:1.25,flex:1}},d.label),
+            templates[d.id] && E("span",{title:"Personnalisé",style:{width:7,height:7,borderRadius:"50%",background:"var(--primary)",flexShrink:0}})
           )
         )
       ),
 
-      // Éditeur
-      E("div", { className:"card" },
-        // Header
-        E("div", { className:"card-header" },
-          E("div", null,
-            E("h2", { className:"card-title" },
-              E("i",{className:`fas fa-${def.icon}`,style:{color:def.color,marginRight:"0.5rem"}}),
-              def.label
+      // Éditeur principal
+      E("div",{className:"card"},
+        E("div",{className:"card-header"},
+          E("div",null,
+            E("h2",{className:"card-title",style:{margin:"0 0 2px"}},
+              E("i",{className:`fas fa-${def.icon}`,style:{color:def.color,marginRight:"0.45rem"}}), def.label,
+              isModified && E("span",{className:"badge badge-info",style:{marginLeft:"0.5rem",fontSize:"0.65rem"}},"Personnalisé")
             ),
-            E("p", { style:{margin:0,fontSize:"0.78rem",color:"var(--text-secondary)"} },
-              E("i",{className:"fas fa-bolt",style:{fontSize:"0.7rem"}}), " ", def.trigger
+            E("p",{style:{margin:0,fontSize:"0.77rem",color:"var(--text-secondary)"}},
+              E("i",{className:"fas fa-bolt",style:{fontSize:"0.68rem",marginRight:"0.3rem"}}), def.trigger
             )
           ),
-          E("div", { style:{display:"flex",gap:"0.5rem"} },
-            E("button", {
-              className:`btn btn-sm ${showPreview?"btn-primary":"btn-secondary"}`,
-              onClick:()=>setShowPreview(v=>!v) },
-              E("i",{className:`fas fa-${showPreview?"code":"eye"}`}),
-              " ", showPreview ? "Éditeur" : "Aperçu"
-            ),
-            E("button", { className:"btn btn-secondary btn-sm", onClick:handleReset,
-              title:"Remettre le template par défaut" },
-              E("i",{className:"fas fa-undo"}), " Défaut"
-            ),
-            E("button", { className:`btn btn-sm ${saved?"btn-success":"btn-primary"}`, onClick:handleSave },
-              E("i",{className:`fas fa-${saved?"check":"save"}`}), " ", saved?"Sauvegardé !":"Sauvegarder"
+          E("div",{style:{display:"flex",gap:"0.5rem",flexWrap:"wrap"}},
+            btn(preview?"Éditeur":"Aperçu HTML",()=>setPreview(v=>!v),preview?"primary":"secondary",preview?"code":"eye"),
+            btn("Défaut",handleReset,"secondary","undo"),
+            E("button",{className:`btn btn-sm ${saved?"btn-success":"btn-primary"}`,onClick:handleSave,style:{display:"flex",alignItems:"center",gap:"0.4rem"}},
+              E("i",{className:`fas fa-${saved?"check":"save"}`}), saved?"Sauvegardé !":"Sauvegarder tout"
             )
           )
         ),
 
-        E("div", { style:{padding:"1rem"} },
-
+        E("div",{style:{padding:"1rem"}},
           // Sujet
-          E("div", { className:"form-group" },
-            E("label", { className:"form-label" },
-              E("i",{className:"fas fa-heading",style:{marginRight:"0.4rem"}}), "Sujet de l'email"
-            ),
-            E("input", { type:"text", className:"form-input",
-              value:subject, onChange:e=>setField("subject",e.target.value),
-              style:{fontWeight:600} })
+          E("div",{className:"form-group"},
+            E("label",{className:"form-label"},E("i",{className:"fas fa-heading",style:{marginRight:"0.4rem"}}),"Sujet de l'email"),
+            E("input",{type:"text",className:"form-input",value:subject,onChange:e=>setField("subject",e.target.value),style:{fontWeight:600}})
           ),
 
           // Variables
-          E("div", { style:{marginBottom:"0.75rem",padding:"0.6rem 0.75rem",
-            background:"rgba(0,133,62,0.05)",borderRadius:"8px",border:"1px solid rgba(0,133,62,0.15)"} },
-            E("div", { style:{fontSize:"0.72rem",fontWeight:700,color:"var(--primary)",
-              marginBottom:"0.4rem",textTransform:"uppercase",letterSpacing:"0.4px"} },
-              E("i",{className:"fas fa-code",style:{marginRight:"0.3rem"}}),
-              "Variables disponibles — cliquer pour insérer"
+          E("div",{style:{marginBottom:"0.9rem",padding:"0.6rem 0.8rem",background:"rgba(0,133,62,0.05)",borderRadius:"8px",border:"1px solid rgba(0,133,62,0.18)"}},
+            E("div",{style:{fontSize:"0.71rem",fontWeight:700,color:"var(--primary)",marginBottom:"0.45rem",textTransform:"uppercase",letterSpacing:"0.4px"}},
+              E("i",{className:"fas fa-code",style:{marginRight:"0.3rem"}}),"Variables — cliquer pour insérer dans le corps"
             ),
-            E("div", { style:{display:"flex",flexWrap:"wrap",gap:"0.35rem"} },
+            E("div",{style:{display:"flex",flexWrap:"wrap",gap:"0.3rem"}},
               def.vars.map(([k,d]) =>
-                E("button", { key:k,
-                  onClick:()=>{ setField("htmlBody", htmlBody + " {{"+k+"}}"); },
-                  title:d,
-                  style:{padding:"0.2rem 0.55rem",background:"white",border:"1px solid var(--border)",
-                    borderRadius:"12px",fontSize:"0.72rem",cursor:"pointer",
-                    fontFamily:"monospace",color:"#1d4ed8",
-                    transition:"background 0.15s"} },
-                  "{{", k, "}}"
+                E("button",{key:k,onClick:()=>handleInsertVar(k),title:d,
+                  style:{padding:"0.2rem 0.5rem",background:"white",border:"1px solid #d1d5db",
+                    borderRadius:"12px",fontSize:"0.71rem",cursor:"pointer",fontFamily:"monospace",
+                    color:"#1d4ed8"}},
+                  "{{"+k+"}}"
                 )
               )
             )
           ),
 
-          showPreview
-            // APERÇU HTML rendu
-            ? E("div", null,
-                E("div", { style:{fontSize:"0.78rem",color:"var(--text-secondary)",
-                  marginBottom:"0.5rem",padding:"0.4rem 0.6rem",background:"var(--bg-light)",
-                  borderRadius:"6px"} },
+          // Éditeur / Aperçu
+          preview
+            ? E("div",null,
+                E("div",{style:{fontSize:"0.78rem",color:"var(--text-secondary)",marginBottom:"0.5rem",padding:"0.4rem 0.7rem",background:"var(--bg-light)",borderRadius:"6px"}},
                   E("strong",null,"Sujet : "), subject
                 ),
-                E("div", {
-                  style:{border:"1px solid var(--border)",borderRadius:"10px",
-                    overflow:"hidden",background:"white",minHeight:300},
-                  dangerouslySetInnerHTML:{ __html: htmlBody }
-                })
+                E("div",{style:{border:"1px solid var(--border)",borderRadius:"10px",overflow:"hidden",background:"white",minHeight:280},dangerouslySetInnerHTML:{__html:htmlBody}})
               )
-            // ÉDITEUR HTML
-            : E("div", { className:"form-group" },
-                E("label", { className:"form-label" },
-                  E("i",{className:"fas fa-code",style:{marginRight:"0.4rem"}}),
-                  "Corps HTML de l'email"
-                ),
-                E("textarea", {
-                  className:"form-input",
-                  value:htmlBody,
-                  onChange:e=>setField("htmlBody",e.target.value),
-                  rows:18,
-                  spellCheck:false,
-                  style:{fontFamily:"monospace",fontSize:"0.78rem",lineHeight:1.6,
-                    resize:"vertical",whiteSpace:"pre"} }),
-                E("small", { style:{color:"var(--text-secondary)",fontSize:"0.72rem"} },
-                  "HTML complet avec les variables {{...}} — utilisez Aperçu pour vérifier le rendu avant de sauvegarder."
-                )
+            : E("div",{className:"form-group"},
+                E("label",{className:"form-label"},E("i",{className:"fas fa-code",style:{marginRight:"0.4rem"}}),"Corps HTML"),
+                E("textarea",{className:"form-input",value:htmlBody,onChange:e=>setField("htmlBody",e.target.value),rows:20,spellCheck:false,style:{fontFamily:"monospace",fontSize:"0.77rem",lineHeight:1.6,resize:"vertical",whiteSpace:"pre"}}),
+                E("small",{style:{color:"var(--text-secondary)",fontSize:"0.71rem"}},"HTML complet avec variables {{...}} — basculez sur Aperçu pour voir le rendu final")
               )
         )
       )
@@ -21168,7 +21050,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
   view === "emails" && (() => {
     // [FIX #310] États hissés au niveau AdminDashboard (emailLogs, emailLoading, emailTotal)
     const logs = emailLogs;
-    return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Journaux Emails (", emailLoading ? "…" : emailTotal, ")"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, isBrevoConfigured() ? React.createElement("span", { className: "badge badge-success" }, React.createElement("i", { className: "fas fa-check-circle" }), " Brevo actif — 300/jour") : IS_EMAILJS_CONFIGURED ? React.createElement("span", { className: "badge badge-info" }, React.createElement("i", { className: "fas fa-check-circle" }), " EmailJS actif") : React.createElement("span", { className: "badge badge-warning" }, React.createElement("i", { className: "fas fa-exclamation-triangle" }), " Mode simulation"))), !IS_EMAILJS_CONFIGURED && /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Pour activer l\\'envoi r\xE9el, configurez EmailJS dans ", /* @__PURE__ */ React.createElement("code", null, "NEXUS_CONFIG.emailjs"), " en haut du fichier HTML.")), emailLoading ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }), /* @__PURE__ */ React.createElement("p", null, "Chargement\u2026")) : logs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun email enregistr\xE9")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Destinataire"), /* @__PURE__ */ React.createElement("th", null, "Sujet"), /* @__PURE__ */ React.createElement("th", null, "Fournisseur"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Date/Heure"))), /* @__PURE__ */ React.createElement("tbody", null, logs.map((e) => /* @__PURE__ */ React.createElement("tr", { key: e.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Destinataire" }, /* @__PURE__ */ React.createElement("strong", null, e.to)), /* @__PURE__ */ React.createElement("td", { "data-label": "Sujet", style: { fontSize: "0.85rem" } }, e.subject), /* @__PURE__ */ React.createElement("td", { "data-label": "Fournisseur" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, e.provider)), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${e.status === 'sent' ? 'success' : e.status === 'error' ? 'danger' : 'warning'}` }, e.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(e.sentAt).toLocaleString("fr-FR"))))))));
+    return /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Journaux Emails (", emailLoading ? "…" : emailTotal, ")"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, isBrevoConfigured() ? React.createElement("span",{className:"badge badge-success"},React.createElement("i",{className:"fas fa-check-circle"})," Brevo actif — 300/jour") : IS_EMAILJS_CONFIGURED ? React.createElement("span",{className:"badge badge-info"},React.createElement("i",{className:"fas fa-check-circle"})," EmailJS actif") : React.createElement("span",{className:"badge badge-warning"},React.createElement("i",{className:"fas fa-exclamation-triangle"})," Mode simulation"))), !IS_EMAILJS_CONFIGURED && /* @__PURE__ */ React.createElement("div", { className: "alert alert-info mb-2", style: { fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle" }), /* @__PURE__ */ React.createElement("span", null, "Pour activer l\\'envoi r\xE9el, configurez EmailJS dans ", /* @__PURE__ */ React.createElement("code", null, "NEXUS_CONFIG.emailjs"), " en haut du fichier HTML.")), emailLoading ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }), /* @__PURE__ */ React.createElement("p", null, "Chargement\u2026")) : logs.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun email enregistr\xE9")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Destinataire"), /* @__PURE__ */ React.createElement("th", null, "Sujet"), /* @__PURE__ */ React.createElement("th", null, "Fournisseur"), /* @__PURE__ */ React.createElement("th", null, "Statut"), /* @__PURE__ */ React.createElement("th", null, "Date/Heure"))), /* @__PURE__ */ React.createElement("tbody", null, logs.map((e) => /* @__PURE__ */ React.createElement("tr", { key: e.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Destinataire" }, /* @__PURE__ */ React.createElement("strong", null, e.to)), /* @__PURE__ */ React.createElement("td", { "data-label": "Sujet", style: { fontSize: "0.85rem" } }, e.subject), /* @__PURE__ */ React.createElement("td", { "data-label": "Fournisseur" }, /* @__PURE__ */ React.createElement("span", { className: "badge badge-info" }, e.provider)), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${e.status === 'sent' ? 'success' : e.status === 'error' ? 'danger' : 'warning'}` }, e.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(e.sentAt).toLocaleString("fr-FR"))))))));
   })());
 };
 // [FIX #310] DeltaBadge extrait au niveau module
