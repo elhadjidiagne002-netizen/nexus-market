@@ -7166,6 +7166,19 @@ const useRecentlyViewed = () => {
       const filtered = viewed.filter((p) => p.id !== product.id);
       const updated = [{ id: product.id, name: product.name, price: product.price, imageUrl: product.imageUrl, category: product.category, vendorName: product.vendorName, rating: product.rating, stock: product.stock, vendor: product.vendor }, ...filtered].slice(0, 10);
       storage.set("recently_viewed", updated);
+      // [FIX] Sync vers Supabase recently_viewed (table existante)
+      if (DataService?._sb && DataService?._user?.id) {
+        DataService._sb.from('recently_viewed').upsert({
+          user_id: DataService._user.id,
+          product_id: product.id,
+          viewed_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,product_id' }).catch(() => {});
+      }
+      // [FIX] Persister aussi pour le CartModal (nexus_recently_viewed)
+      try {
+        const ids = updated.map(p => p.id);
+        localStorage.setItem('nexus_recently_viewed', JSON.stringify(ids));
+      } catch(_) {}
     } catch (e) {
     }
   }, []);
@@ -16252,9 +16265,8 @@ const AdminInsuranceLeads = ({ addToast }) => {
           });
         }
       } else {
-        const ls = JSON.parse(localStorage.getItem('nexus_ins_leads')||'[]');
-        setLeads(ls);
-        setKpi({ total:ls.length, new:ls.filter(l=>l.status==='new').length, converted:0, commission:0 });
+        // Table insurance_leads accessible — pas de fallback localStorage
+        setLeads([]); setKpi({ total:0, new:0, converted:0, commission:0 });
       }
     } catch(e) { addToast('Erreur chargement : '+e.message,'error'); }
     setLoading(false);
