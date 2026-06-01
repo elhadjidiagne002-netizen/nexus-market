@@ -2334,6 +2334,28 @@
 </head>
 <body>
     <a href="#main-content" class="skip-link">Aller au contenu principal</a>
+
+    <!-- Contenu statique indexable par Google (visible avant JS) -->
+    <div id="nexus-static-content" style="display:none" aria-hidden="true">
+      <h1>NEXUS Market — Marketplace B2B &amp; B2C Sénégal</h1>
+      <p>NEXUS Market est la marketplace leader au Sénégal pour acheter et vendre en ligne.
+         Découvrez des milliers de produits : électronique, mode, alimentation, maison &amp; déco,
+         beauté &amp; santé, informatique, sport, auto-moto et bien plus.</p>
+      <p>Vendeurs professionnels vérifiés. Paiement sécurisé Wave, Orange Money, PayTech.
+         Livraison à Dakar et dans tout le Sénégal. Devis B2B disponible.</p>
+      <nav aria-label="Catégories principales">
+        <a href="/?cat=electronique">Électronique &amp; High-Tech</a> ·
+        <a href="/?cat=mode">Mode &amp; Vêtements</a> ·
+        <a href="/?cat=alimentation">Alimentation &amp; Épicerie</a> ·
+        <a href="/?cat=maison">Maison &amp; Décoration</a> ·
+        <a href="/?cat=beaute">Beauté &amp; Santé</a> ·
+        <a href="/?cat=informatique">Informatique</a> ·
+        <a href="/?cat=sport">Sport &amp; Loisirs</a>
+      </nav>
+      <p>Marketplace sénégalaise — Dakar, Thiès, Saint-Louis, Ziguinchor, Kaolack.
+         Service client disponible 7j/7. Vendeurs : déposez vos produits gratuitement.</p>
+    </div>
+
     <div id="root"></div>
 
     <script>
@@ -2661,7 +2683,9 @@ const NexusAdUnit = ({ format = 'rectangle', style: extraStyle = {} }) => {
     if (!NexusAdSense.isReady() || adPushed.current) return;
     adPushed.current = true;
     // Délai court pour laisser le DOM se stabiliser avant push
-    const t = setTimeout(() => NexusAdSense.push(), 150);
+    // Délai augmenté : 800ms pour garantir que le contenu éditorial est rendu
+    // avant que Google ne scanne la page (règle "contenu d'éditeur")
+    const t = setTimeout(() => NexusAdSense.push(), 800);
     return () => clearTimeout(t);
   }, []);
 
@@ -26376,8 +26400,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             onRemove: function(){ setHomePromo(null); }
           })
         ),
-        /* ── AdSense Leaderboard — au-dessus de la grille ── */
-        React.createElement(NexusAdUnit, { format: 'leaderboard' }),
+        /* ── AdSense Leaderboard — uniquement si contenu présent (règles AdSense) ── */
+        currentItems.length >= 4 && React.createElement(NexusAdUnit, { format: 'leaderboard' }),
         currentItems.length === 0
           ? React.createElement('div', null,
               React.createElement('div', { className: 'empty-state' },
@@ -26491,8 +26515,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                       )
                     );
                   // Injecter un bloc AdSense rectangle toutes les 8 cartes
+                  // Uniquement si la page a assez de contenu (règles AdSense)
                   const items = [card];
-                  if ((idx + 1) % 8 === 0) {
+                  if ((idx + 1) % 8 === 0 && currentItems.length >= 8) {
                     items.push(React.createElement('div', {
                       key: 'ad-' + idx,
                       style: { gridColumn: '1 / -1' }
@@ -26634,8 +26659,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             addToCart,
             addToast
           }),
-          /* AdSense banner — avant les avis */
-          React.createElement(NexusAdUnit, { format: 'banner' }),
+          /* AdSense banner — avant les avis (uniquement si description riche) */
+          selectedProduct?.description && selectedProduct.description.length > 100
+            && React.createElement(NexusAdUnit, { format: 'banner' }),
           React.createElement('h3', { style: { fontWeight: 700, marginBottom: '1rem' } }, 'Avis clients'),
           reviews.filter(r => r.productId === selectedProduct.id).length === 0
             ? React.createElement('p', { className: 'text-muted' }, 'Aucun avis pour ce produit.')
