@@ -18851,7 +18851,8 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
       const delivered = orders.filter(o => o.status === 'delivered');
       const byVendor = {};
       delivered.forEach(o => {
-        const k = o.vendor || o.vendor_id;
+        const k = o.vendor || o.vendor_id || o.vendorId;
+        if (!k || k === 'null' || k === 'undefined') return;
         if (!byVendor[k]) byVendor[k] = {
           vendorId: k, vendorName: o.vendorName || o.vendor_name || k,
           orders: 0, revenue: 0, commission: 0, commRate: o.commissionRate || 15
@@ -18918,7 +18919,10 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
 
   // Changer le taux de commission d'un vendeur
   const saveRate = async (vendorId, rate) => {
-    if (!sb || !rate || isNaN(parseFloat(rate))) return;
+    if (!sb || !vendorId || !rate || isNaN(parseFloat(rate))) return;
+    if (!vendorId || vendorId === 'null' || vendorId === 'undefined') {
+      addToast('ID vendeur manquant — rechargez la page', 'warning'); return;
+    }
     const r = parseFloat(rate);
     if (r < 0 || r > 100) { addToast('Taux entre 0 et 100%', 'warning'); return; }
     await sb.from('profiles').update({ commission_rate: r }).eq('id', vendorId);
@@ -24836,9 +24840,6 @@ const isVehicleProduct = (product) => {
 const InsuranceWidget = ({ product, currentUser, addToast }) => {
   const [open,      setOpen]      = React.useState(false);
   const [step,      setStep]      = React.useState(1);
-  const [showPrioModal, setShowPrioModal] = React.useState(false);
-  const [prioPayMethod, setPrioPayMethod] = React.useState('wave');
-  const B2B_PRIORITY_PRICE = 2000; // FCFA // 1=intro, 2=form, 3=confirmed
   const [submitting,setSubmitting]= React.useState(false);
   const [form, setForm] = React.useState({
     fullName:     currentUser?.name  || '',
@@ -28291,6 +28292,9 @@ const B2BQuotesPanel = ({ currentUser: cu, addToast }) => {
   const [quotes,    setQuotes]    = React.useState([]);
   const [loading,   setLoading]   = React.useState(true);
   const [step,      setStep]      = React.useState(1);        // 1=form 2=generating 3=review 4=sent
+  const [showPrioModal, setShowPrioModal] = React.useState(false);
+  const [prioPayMethod, setPrioPayMethod] = React.useState('wave');
+  const B2B_PRIORITY_PRICE = 2000;
   const [busy,      setBusy]      = React.useState(false);
   const [selected,  setSelected]  = React.useState(null);
 
