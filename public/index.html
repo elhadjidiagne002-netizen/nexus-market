@@ -5246,6 +5246,16 @@ async signOut() {
               else console.info('[onAuthStateChange] Profil créé/confirmé pour', uid);
             } catch (_) {}
 
+            // [FIX] Envoyer l'email de bienvenue à la 1ère connexion (après confirmation)
+            // Délai court pour laisser EmailService.init() se terminer
+            setTimeout(() => {
+              try {
+                if (typeof EmailService !== 'undefined') {
+                  EmailService.sendWelcome(session.user.email, prof.name || prof.shop_name || '');
+                }
+              } catch(_) {}
+            }, 1500);
+
             // Marquer comme nouveau si OAuth (pour le modal de choix de rôle)
             const provider = session.user.app_metadata?.provider;
             if (provider === 'github') prof.isNewGithubUser = true;
@@ -6931,7 +6941,11 @@ const EmailService = {
       } catch(_){}
     }
     const htmlBody = variables?.html_body;
-    if (!htmlBody) { console.warn("[EmailService] html_body manquant pour", templateId); return false; }
+    if (!htmlBody) {
+      console.warn("[EmailService] html_body manquant pour template:", templateId,
+        "— Configurez le template dans Admin → Configuration → Templates email");
+      return false;
+    }
 
     // ── 1. BREVO (300/jour gratuits) ──────────────────────────────────────
     if (NEXUS_CONFIG.brevo?.apiKey) {
@@ -6961,7 +6975,22 @@ const EmailService = {
         if (r.ok) { const j = await r.json(); if (j.ok) { console.log("[EmailService] ✅ backend", to); return true; } }
       } catch(e) { console.warn("[EmailService] backend:", e.message); }
     }
-    console.warn("[EmailService] ⚠️ Simulation — configurez Brevo dans admin → Templates email. Destinataire:", to);
+    // Tentative finale via Cloudflare Function /api/email (si elle existe)
+    const _t2 = DataService?._token || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+    if (_t2) {
+      try {
+        const r = await fetch('/api/email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${_t2}` },
+          body: JSON.stringify({ to, subject, html: htmlBody }),
+        });
+        if (r.ok) { const j = await r.json(); if (j.ok) { console.log('[EmailService] ✅ /api/email', to); return true; } }
+      } catch(_) {}
+    }
+    console.warn(
+      '[EmailService] ⚠️ Aucun provider configuré. Email non envoyé à:', to,
+      '\nPour activer les emails : Admin → Configuration → Emails → renseigner la clé API Brevo'
+    );
     return false;
   },
 
@@ -7145,10 +7174,39 @@ const EmailService = {
   },
 
   sendWelcome(userEmail, userName) {
+    if (!userEmail) return Promise.resolve(false);
     const tpl  = getEmailTemplate('welcome');
-    const vars = { user_name: userName || 'Bienvenue', site_url: window.location.origin };
-    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `🎊 Bienvenue sur NEXUS Market, ${userName} !`;
-    return this.send({ to: userEmail, subject: subj, templateId: 'welcome', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+    const vars = { user_name: userName || 'Cher client', site_url: window.location.origin };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `🎊 Bienvenue sur NEXUS Market${userName ? ', ' + userName : ''} !`;
+
+    // [FIX] HTML de fallback si le template welcome n'est pas encore configuré dans Admin
+    const defaultHtml = `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px">
+  <div style="background:#00853E;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+    <h1 style="color:white;margin:0;font-size:24px">🎊 Bienvenue sur NEXUS Market !</h1>
+  </div>
+  <div style="background:#f9f9f9;padding:24px;border-radius:0 0 12px 12px">
+    <p style="font-size:16px;color:#333">Bonjour <strong>${vars.user_name}</strong>,</p>
+    <p style="color:#555">Votre compte a été créé avec succès. Vous pouvez maintenant :</p>
+    <ul style="color:#555;line-height:1.8">
+      <li>Parcourir des milliers de produits</li>
+      <li>Commander en toute sécurité</li>
+      <li>Suivre vos commandes en temps réel</li>
+    </ul>
+    <div style="text-align:center;margin:24px 0">
+      <a href="${vars.site_url}" style="background:#00853E;color:white;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px">
+        Accéder à la boutique
+      </a>
+    </div>
+    <p style="color:#888;font-size:13px;text-align:center">
+      NEXUS Market — La marketplace du Sénégal<br>
+      <a href="${vars.site_url}" style="color:#00853E">${vars.site_url}</a>
+    </p>
+  </div>
+</div>`;
+
+    const htmlBody = tpl?.html ? applyEmailVars(tpl.html, vars) : defaultHtml;
+    return this.send({ to: userEmail, subject: subj, templateId: 'welcome', variables: { ...vars, html_body: htmlBody } });
   }
 };
 
