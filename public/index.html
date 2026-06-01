@@ -17190,7 +17190,7 @@ const AdminB2BPanel = ({ addToast }) => {
     try {
       let q = DataService._sb
         .from('b2b_buyers')
-        .select('*, profiles!user_id(name,email,phone,avatar)', { count:'exact' })
+        .select('*', { count:'exact' })
         .order('created_at', { ascending: false })
         .range((page-1)*LIMIT, page*LIMIT-1);
       if (search)         q = q.or('company.ilike.%' + search + '%,ninea.ilike.%' + search + '%');
@@ -19326,6 +19326,489 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
 };
 
 
+// ════════════════════════════════════════════════════════════════════════════
+// NEXUS Popup System — SitePopupManager + PopupsAdminPanel
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Cache des popups actifs (rechargé toutes les 10 min) ──────────────────
+let _popupCache = null;
+let _popupCacheTs = 0;
+
+async function _loadPopups() {
+  const now = Date.now();
+  if (_popupCache && now - _popupCacheTs < 10 * 60 * 1000) return _popupCache;
+  if (!DataService._sb) return [];
+  try {
+    const { data } = await DataService._sb
+      .from('site_popups')
+      .select('*')
+      .eq('active', true)
+      .lte('starts_at', new Date().toISOString())
+      .or('ends_at.is.null,ends_at.gte.' + new Date().toISOString())
+      .order('created_at', { ascending: false });
+    _popupCache = data || [];
+    _popupCacheTs = now;
+    return _popupCache;
+  } catch (_) { return []; }
+}
+
+// ── Composant SitePopupManager ─────────────────────────────────────────────
+// Monté dans l'App principale — affiche les popups séquentiellement
+const SitePopupManager = ({ currentUser, currentPage = 'home' }) => {
+  const E = React.createElement;
+  const [queue, setQueue] = React.useState([]);
+  const [current, setCurrent] = React.useState(null);
+  const [visible, setVisible] = React.useState(false);
+
+  const SEEN_KEY = 'nexus_seen_popups';
+  const seenIds = () => {
+    try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); } catch { return new Set(); }
+  };
+  const markSeen = (id) => {
+    try {
+      const seen = seenIds();
+      seen.add(id);
+      localStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
+    } catch (_) {}
+  };
+
+  React.useEffect(() => {
+    let cancelled = false;
+    _loadPopups().then(popups => {
+      if (cancelled) return;
+      const role    = currentUser?.role || 'guest';
+      const isNew   = !currentUser?.id;
+      const seen    = seenIds();
+
+      const filtered = popups.filter(p => {
+        // Filtre page
+        if (p.show_on && p.show_on.length && !p.show_on.includes(currentPage) && !p.show_on.includes('all')) return false;
+        // Filtre target
+        if (p.target === 'guest' && currentUser) return false;
+        if (p.target === 'logged_in' && !currentUser) return false;
+        if (p.target === 'buyer' && role !== 'buyer') return false;
+        if (p.target === 'vendor' && role !== 'vendor') return false;
+        if (p.target === 'new_user' && currentUser) return false;
+        // show_once
+        if (p.show_once && seen.has(p.id)) return false;
+        return true;
+      });
+
+      setQueue(filtered);
+    });
+    return () => { cancelled = true; };
+  }, [currentUser?.id, currentPage]);
+
+  React.useEffect(() => {
+    if (!queue.length || current) return;
+    const next = queue[0];
+    if (!next) return;
+    const t = setTimeout(() => {
+      setCurrent(next);
+      setVisible(true);
+      DataService._sb?.rpc('popup_track', { p_id: next.id, p_type: 'view' }).catch(() => {});
+    }, (next.delay_seconds || 3) * 1000);
+    return () => clearTimeout(t);
+  }, [queue, current]);
+
+  const dismiss = (id) => {
+    setVisible(false);
+    markSeen(id);
+    setTimeout(() => {
+      setCurrent(null);
+      setQueue(q => q.slice(1));
+    }, 300);
+  };
+
+  const handleCTA = (popup) => {
+    DataService._sb?.rpc('popup_track', { p_id: popup.id, p_type: 'click' }).catch(() => {});
+    if (popup.cta_url) {
+      if (popup.cta_url.startsWith('http')) window.open(popup.cta_url, '_blank');
+      else window.dispatchEvent(new CustomEvent('nexus:navigate', { detail: popup.cta_url }));
+    }
+    dismiss(popup.id);
+  };
+
+  if (!current) return null;
+
+  const p = current;
+  const THEMES = {
+    green:  { bg: '#00853E', text: '#fff', btn: 'rgba(255,255,255,.2)', btnText: '#fff' },
+    blue:   { bg: '#0277BD', text: '#fff', btn: 'rgba(255,255,255,.2)', btnText: '#fff' },
+    orange: { bg: '#E65100', text: '#fff', btn: 'rgba(255,255,255,.2)', btnText: '#fff' },
+    purple: { bg: '#6A1B9A', text: '#fff', btn: 'rgba(255,255,255,.2)', btnText: '#fff' },
+    red:    { bg: '#B71C1C', text: '#fff', btn: 'rgba(255,255,255,.2)', btnText: '#fff' },
+    dark:   { bg: '#1a1a2e', text: '#fff', btn: 'rgba(255,255,255,.15)', btnText: '#FDEE42' },
+  };
+  const th = THEMES[p.theme] || THEMES.green;
+
+  const POSITIONS = {
+    'center':        { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9990, background: 'rgba(0,0,0,.45)' },
+    'bottom-right':  { position: 'fixed', bottom: 24, right: 24, zIndex: 9990 },
+    'top-right':     { position: 'fixed', top: 80, right: 24, zIndex: 9990 },
+    'bottom-center': { position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 9990 },
+  };
+  const wrapStyle = POSITIONS[p.position] || POSITIONS.center;
+
+  const isCenter = p.position === 'center';
+  const maxW = isCenter ? 420 : 340;
+
+  const card = E('div', {
+    style: {
+      background: th.bg, color: th.text, borderRadius: 16,
+      padding: isCenter ? '2rem 1.75rem 1.5rem' : '1.25rem 1.25rem 1rem',
+      maxWidth: maxW, width: '100%', position: 'relative',
+      boxShadow: '0 8px 40px rgba(0,0,0,.25)',
+      opacity: visible ? 1 : 0, transform: visible ? 'scale(1)' : 'scale(.92)',
+      transition: 'opacity .25s, transform .25s',
+    }
+  },
+    // Bouton fermer
+    E('button', {
+      onClick: () => dismiss(p.id),
+      style: { position: 'absolute', top: 10, right: 12, background: 'rgba(255,255,255,.2)', border: 'none', color: th.text, width: 28, height: 28, borderRadius: '50%', cursor: 'pointer', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }
+    }, '×'),
+
+    // Icône
+    p.icon && E('div', { style: { fontSize: isCenter ? '3rem' : '2rem', textAlign: 'center', marginBottom: '.75rem', lineHeight: 1 } }, p.icon),
+
+    // Image optionnelle
+    p.image_url && E('img', { src: p.image_url, alt: '', style: { width: '100%', borderRadius: 10, marginBottom: '.75rem', objectFit: 'cover', maxHeight: 140 } }),
+
+    // Titre
+    E('h3', { style: { fontWeight: 800, fontSize: isCenter ? '1.1rem' : '.95rem', margin: '0 0 .5rem', textAlign: isCenter ? 'center' : 'left', lineHeight: 1.3 } }, p.title),
+
+    // Corps
+    E('p', { style: { fontSize: isCenter ? '.88rem' : '.82rem', opacity: .9, margin: '0 0 1.1rem', textAlign: isCenter ? 'center' : 'left', lineHeight: 1.55 } }, p.body),
+
+    // CTA + Ignorer
+    E('div', { style: { display: 'flex', gap: '.6rem', flexDirection: isCenter ? 'row' : 'column' } },
+      E('button', {
+        onClick: () => dismiss(p.id),
+        style: { flex: 1, padding: '.5rem', background: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.3)', color: th.text, borderRadius: 8, cursor: 'pointer', fontSize: '.8rem' }
+      }, 'Ignorer'),
+      p.cta_label && E('button', {
+        onClick: () => handleCTA(p),
+        style: { flex: isCenter ? 2 : 1, padding: '.5rem .85rem', background: th.btn, border: '1.5px solid rgba(255,255,255,.5)', color: th.btnText, borderRadius: 8, cursor: 'pointer', fontSize: '.82rem', fontWeight: 700 }
+      }, p.cta_label)
+    )
+  );
+
+  return E('div', { style: wrapStyle },
+    isCenter ? E('div', { style: { width: '100%', maxWidth: maxW, padding: '0 1rem' }, onClick: e => { if (e.target === e.currentTarget) dismiss(p.id); } }, card)
+    : card
+  );
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PopupsAdminPanel — Gérer les popups depuis l'admin
+// ════════════════════════════════════════════════════════════════════════════
+const POPUP_TYPES    = ['info','promo','boost','feature','warning','welcome'];
+const POPUP_THEMES   = ['green','blue','orange','purple','red','dark'];
+const POPUP_TARGETS  = [
+  { v:'all',       l:'Tout le monde' },
+  { v:'guest',     l:'Visiteurs non connectés' },
+  { v:'logged_in', l:'Utilisateurs connectés' },
+  { v:'buyer',     l:'Acheteurs seulement' },
+  { v:'vendor',    l:'Vendeurs seulement' },
+  { v:'new_user',  l:'Nouveaux utilisateurs' },
+];
+const POPUP_PAGES    = ['home','catalog','product','checkout','profile'];
+const POPUP_POSITIONS = [
+  { v:'center',        l:'Centre (modal)' },
+  { v:'bottom-right',  l:'Bas droite (toast)' },
+  { v:'top-right',     l:'Haut droite' },
+  { v:'bottom-center', l:'Bas centre' },
+];
+
+const DEFAULT_FORM = {
+  title:'', body:'', icon:'📢', cta_label:'En savoir plus', cta_url:'', image_url:'',
+  type:'info', theme:'green', position:'center', target:'all',
+  show_once:true, delay_seconds:3, active:true,
+  show_on:['home'], starts_at:'', ends_at:'',
+};
+
+const PopupsAdminPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const [popups, setPopups]     = React.useState([]);
+  const [loading, setLoading]   = React.useState(true);
+  const [tab, setTab]           = React.useState('list');    // 'list'|'create'|'edit'
+  const [form, setForm]         = React.useState({ ...DEFAULT_FORM });
+  const [editId, setEditId]     = React.useState(null);
+  const [saving, setSaving]     = React.useState(false);
+  const [preview, setPreview]   = React.useState(false);
+
+  React.useEffect(() => { loadPopups(); }, []);
+
+  const loadPopups = async () => {
+    setLoading(true);
+    if (!sb) { setLoading(false); return; }
+    try {
+      const { data } = await sb.from('site_popups').select('*').order('created_at', { ascending: false });
+      setPopups(data || []);
+    } catch(e) { addToast('Erreur chargement : ' + e.message, 'error'); }
+    setLoading(false);
+  };
+
+  const f = (key, val) => setForm(prev => ({ ...prev, [key]: val }));
+  const togglePage = (page) => {
+    const pages = form.show_on || [];
+    f('show_on', pages.includes(page) ? pages.filter(p => p !== page) : [...pages, page]);
+  };
+
+  const save = async () => {
+    if (!form.title || !form.body) { addToast('Titre et message requis', 'warning'); return; }
+    setSaving(true);
+    try {
+      const rec = {
+        ...form,
+        delay_seconds: parseInt(form.delay_seconds) || 3,
+        starts_at: form.starts_at || new Date().toISOString(),
+        ends_at:   form.ends_at   || null,
+      };
+      if (editId) {
+        await sb.from('site_popups').update(rec).eq('id', editId);
+        addToast('✅ Popup mis à jour', 'success');
+      } else {
+        await sb.from('site_popups').insert({ ...rec, created_by: DataService._user?.id });
+        addToast('✅ Popup créé', 'success');
+      }
+      _popupCache = null; // invalider le cache
+      setEditId(null);
+      setForm({ ...DEFAULT_FORM });
+      setTab('list');
+      loadPopups();
+    } catch(e) { addToast('Erreur : ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const toggleActive = async (id, current) => {
+    await sb.from('site_popups').update({ active: !current }).eq('id', id);
+    setPopups(p => p.map(x => x.id === id ? { ...x, active: !current } : x));
+    _popupCache = null;
+  };
+
+  const deletePopup = async (id) => {
+    if (!confirm('Supprimer ce popup ?')) return;
+    await sb.from('site_popups').delete().eq('id', id);
+    setPopups(p => p.filter(x => x.id !== id));
+    addToast('Popup supprimé', 'info');
+  };
+
+  const startEdit = (popup) => {
+    setForm({
+      ...DEFAULT_FORM, ...popup,
+      starts_at: popup.starts_at ? popup.starts_at.slice(0, 16) : '',
+      ends_at:   popup.ends_at   ? popup.ends_at.slice(0,   16) : '',
+    });
+    setEditId(popup.id);
+    setTab('create');
+  };
+
+  const THEME_COLORS = { green:'#00853E', blue:'#0277BD', orange:'#E65100', purple:'#6A1B9A', red:'#B71C1C', dark:'#1a1a2e' };
+  const TYPE_ICONS = { info:'ℹ️', promo:'🏷️', boost:'⚡', feature:'✨', warning:'⚠️', welcome:'🎉' };
+
+  const inp = { className: 'form-input', style: { marginBottom: '0.65rem' } };
+  const lbl = { className: 'form-label', style: { marginBottom: '0.2rem', display: 'block' } };
+
+  // ── Liste des popups ─────────────────────────────────────────────────────
+  const listTab = () => loading
+    ? E('div', { style: { textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' } }, E('i', { className: 'fas fa-spinner fa-spin', style: { fontSize: '2rem' } }))
+    : E('div', null,
+        popups.length === 0
+          ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-comment-alt' }), E('h3', null, 'Aucun popup'), E('p', null, 'Créez votre premier popup pour informer vos utilisateurs.'))
+          : E('div', { className: 'table-wrapper' },
+              E('table', { className: 'data-table' },
+                E('thead', null, E('tr', null,
+                  ['', 'Titre', 'Type', 'Thème', 'Cible', 'Page(s)', 'Vues', 'Clics', 'CTR', 'Statut', 'Actions'].map(h => E('th', { key: h }, h))
+                )),
+                E('tbody', null,
+                  popups.map(p =>
+                    E('tr', { key: p.id },
+                      E('td', null, E('span', { style: { fontSize: '1.3rem' } }, p.icon || '📢')),
+                      E('td', null, E('strong', null, p.title), p.ends_at && E('div', { style: { fontSize: '0.75rem', color: 'var(--text-secondary)' } }, 'Expire : ' + new Date(p.ends_at).toLocaleDateString('fr-FR'))),
+                      E('td', null, E('span', null, TYPE_ICONS[p.type] || '', ' ', p.type)),
+                      E('td', null, E('span', { style: { display: 'inline-block', width: 14, height: 14, borderRadius: 3, background: THEME_COLORS[p.theme] || '#999', verticalAlign: 'middle', marginRight: 5 } }), p.theme),
+                      E('td', null, POPUP_TARGETS.find(t => t.v === p.target)?.l || p.target),
+                      E('td', null, (p.show_on || []).join(', ')),
+                      E('td', null, (p.views  || 0).toLocaleString()),
+                      E('td', null, (p.clicks || 0).toLocaleString()),
+                      E('td', null, p.views > 0 ? ((p.clicks/p.views)*100).toFixed(1) + '%' : '—'),
+                      E('td', null,
+                        E('button', {
+                          className: 'btn btn-sm badge-' + (p.active ? 'success' : 'secondary'),
+                          style: { background: p.active ? 'var(--success)' : 'var(--border)', color: p.active ? 'white' : 'var(--text-secondary)', border: 'none', borderRadius: 6, padding: '0.2rem 0.65rem', cursor: 'pointer', fontSize: '0.78rem' },
+                          onClick: () => toggleActive(p.id, p.active)
+                        }, p.active ? '● Actif' : '○ Inactif')
+                      ),
+                      E('td', null,
+                        E('div', { style: { display: 'flex', gap: '0.4rem' } },
+                          E('button', { className: 'btn btn-secondary btn-sm', onClick: () => startEdit(p) }, E('i', { className: 'fas fa-edit' })),
+                          E('button', { className: 'btn btn-danger btn-sm', onClick: () => deletePopup(p.id) }, E('i', { className: 'fas fa-trash' }))
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+      );
+
+  // ── Formulaire création/édition ──────────────────────────────────────────
+  const createTab = () => E('div', { style: { display: 'grid', gridTemplateColumns: '1fr 320px', gap: '1.5rem' } },
+
+    // Formulaire
+    E('div', null,
+      E('h3', { style: { fontWeight: 700, marginBottom: '1.1rem' } }, editId ? '✏️ Modifier le popup' : '✨ Nouveau popup'),
+
+      E('div', { className: 'form-row' },
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Icône (emoji)'),
+          E('input', { ...inp, value: form.icon, onChange: e => f('icon', e.target.value), style: { ...inp.style, width: 72, fontSize: '1.4rem', textAlign: 'center' } })
+        ),
+        E('div', { className: 'form-group', style: { flex: 1 } },
+          E('label', lbl, 'Titre *'),
+          E('input', { ...inp, value: form.title, onChange: e => f('title', e.target.value), placeholder: 'Ex: Offre de lancement — 20% sur tout !' })
+        )
+      ),
+
+      E('label', lbl, 'Message *'),
+      E('textarea', { className: 'form-input', rows: 3, value: form.body, onChange: e => f('body', e.target.value), placeholder: 'Description de la promo, fonctionnalité ou info...', style: { marginBottom: '0.65rem', resize: 'vertical' } }),
+
+      E('div', { className: 'form-row' },
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Label bouton CTA'),
+          E('input', { ...inp, value: form.cta_label, onChange: e => f('cta_label', e.target.value), placeholder: 'En savoir plus' })
+        ),
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'URL destination'),
+          E('input', { ...inp, type: 'url', value: form.cta_url, onChange: e => f('cta_url', e.target.value), placeholder: '/?view=catalog ou https://...' })
+        )
+      ),
+
+      E('label', lbl, 'Image (URL optionnelle)'),
+      E('input', { ...inp, type: 'url', value: form.image_url, onChange: e => f('image_url', e.target.value), placeholder: 'https://cloudinary.com/... (bannière 400×140)' }),
+
+      E('div', { className: 'form-row' },
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Type'),
+          E('select', { ...inp, value: form.type, onChange: e => f('type', e.target.value) },
+            POPUP_TYPES.map(t => E('option', { key: t, value: t }, TYPE_ICONS[t] + ' ' + t))
+          )
+        ),
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Thème couleur'),
+          E('select', { ...inp, value: form.theme, onChange: e => f('theme', e.target.value) },
+            POPUP_THEMES.map(t => E('option', { key: t, value: t }, t + ' (' + (THEME_COLORS[t]||t) + ')'))
+          )
+        ),
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Position'),
+          E('select', { ...inp, value: form.position, onChange: e => f('position', e.target.value) },
+            POPUP_POSITIONS.map(p => E('option', { key: p.v, value: p.v }, p.l))
+          )
+        )
+      ),
+
+      E('div', { className: 'form-row' },
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Cibler'),
+          E('select', { ...inp, value: form.target, onChange: e => f('target', e.target.value) },
+            POPUP_TARGETS.map(t => E('option', { key: t.v, value: t.v }, t.l))
+          )
+        ),
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Délai (secondes)'),
+          E('input', { ...inp, type: 'number', value: form.delay_seconds, onChange: e => f('delay_seconds', e.target.value), min: 0, max: 30, style: { ...inp.style, width: 80 } })
+        )
+      ),
+
+      E('label', lbl, 'Afficher sur les pages'),
+      E('div', { style: { display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' } },
+        POPUP_PAGES.map(page =>
+          E('label', { key: page, style: { display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer', fontSize: '0.85rem', padding: '0.3rem 0.75rem', borderRadius: 20, border: '1px solid var(--border)', background: (form.show_on||[]).includes(page) ? 'var(--primary)' : 'transparent', color: (form.show_on||[]).includes(page) ? 'white' : 'var(--text-primary)' } },
+            E('input', { type: 'checkbox', checked: (form.show_on||[]).includes(page), onChange: () => togglePage(page), style: { display: 'none' } }),
+            page
+          )
+        )
+      ),
+
+      E('div', { className: 'form-row' },
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Début'),
+          E('input', { ...inp, type: 'datetime-local', value: form.starts_at, onChange: e => f('starts_at', e.target.value) })
+        ),
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Fin (optionnel)'),
+          E('input', { ...inp, type: 'datetime-local', value: form.ends_at, onChange: e => f('ends_at', e.target.value) })
+        )
+      ),
+
+      E('label', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', marginBottom: '1.1rem' } },
+        E('input', { type: 'checkbox', checked: form.show_once, onChange: e => f('show_once', e.target.checked) }),
+        E('span', { style: { fontSize: '0.87rem' } }, 'Afficher une seule fois par utilisateur (recommandé)')
+      ),
+
+      E('div', { style: { display: 'flex', gap: '0.75rem' } },
+        E('button', { className: 'btn btn-secondary', onClick: () => { setTab('list'); setEditId(null); setForm({...DEFAULT_FORM}); } }, 'Annuler'),
+        E('button', { className: 'btn btn-secondary', onClick: () => setPreview(p => !p) }, E('i', { className: 'fas fa-eye' }), ' Prévisualiser'),
+        E('button', { className: 'btn btn-primary', onClick: save, disabled: saving },
+          saving ? E('i', { className: 'fas fa-spinner fa-spin' }) : E('i', { className: 'fas fa-save' }),
+          ' ', editId ? 'Mettre à jour' : 'Créer le popup'
+        )
+      )
+    ),
+
+    // Prévisualisation live
+    E('div', { style: { position: 'sticky', top: 80 } },
+      E('div', { style: { fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem' } }, 'Prévisualisation'),
+      E('div', { style: { background: '#e9ecef', borderRadius: 12, padding: '1.5rem', minHeight: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' } },
+        E('div', { style: { width: '100%', maxWidth: 280 } },
+          (() => {
+            const th = { green:'#00853E', blue:'#0277BD', orange:'#E65100', purple:'#6A1B9A', red:'#B71C1C', dark:'#1a1a2e' }[form.theme] || '#00853E';
+            return E('div', { style: { background: th, color: '#fff', borderRadius: 14, padding: '1.25rem', position: 'relative' } },
+              E('button', { style: { position: 'absolute', top: 8, right: 10, background: 'rgba(255,255,255,.2)', border: 'none', color: '#fff', width: 24, height: 24, borderRadius: '50%', cursor: 'pointer', fontSize: '.85rem' } }, '×'),
+              form.icon && E('div', { style: { fontSize: '2rem', textAlign: 'center', marginBottom: '.5rem' } }, form.icon),
+              E('h4', { style: { fontWeight: 800, fontSize: '.9rem', margin: '0 0 .4rem', textAlign: 'center' } }, form.title || 'Titre du popup'),
+              E('p', { style: { fontSize: '.78rem', opacity: .9, margin: '0 0 .9rem', textAlign: 'center', lineHeight: 1.5 } }, form.body || 'Message affiché aux utilisateurs...'),
+              E('div', { style: { display: 'flex', gap: '.5rem' } },
+                E('button', { style: { flex: 1, padding: '.4rem', background: 'rgba(255,255,255,.15)', border: '1px solid rgba(255,255,255,.3)', color: '#fff', borderRadius: 7, cursor: 'pointer', fontSize: '.75rem' } }, 'Ignorer'),
+                form.cta_label && E('button', { style: { flex: 2, padding: '.4rem', background: 'rgba(255,255,255,.2)', border: '1.5px solid rgba(255,255,255,.5)', color: '#fff', borderRadius: 7, cursor: 'pointer', fontSize: '.75rem', fontWeight: 700 } }, form.cta_label)
+              )
+            );
+          })()
+        ),
+        E('div', { style: { position: 'absolute', bottom: 8, right: 12, fontSize: '0.7rem', color: 'var(--text-secondary)' } }, 'Position : ', form.position)
+      )
+    )
+  );
+
+  return E('div', null,
+    E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '.75rem' } },
+      E('h2', { style: { fontWeight: 800, fontSize: '1.2rem', margin: 0 } }, '💬 Popups & Annonces'),
+      E('div', { style: { display: 'flex', gap: '.5rem' } },
+        E('button', { className: 'btn btn-secondary btn-sm', onClick: loadPopups }, E('i', { className: 'fas fa-sync-alt' }), ' Actualiser'),
+        E('button', { className: 'btn btn-primary btn-sm', onClick: () => { setForm({...DEFAULT_FORM}); setEditId(null); setTab('create'); } },
+          E('i', { className: 'fas fa-plus' }), ' Nouveau popup'
+        )
+      )
+    ),
+
+    // Tabs
+    E('div', { style: { display: 'flex', gap: '.35rem', marginBottom: '1.25rem', borderBottom: '1.5px solid var(--border)', paddingBottom: '.5rem' } },
+      [{ id:'list', label:'📋 Liste (' + popups.length + ')', }, { id:'create', label: editId ? '✏️ Modifier' : '✨ Créer' }].map(t =>
+        E('button', { key: t.id, onClick: () => setTab(t.id), style: { padding: '.4rem 1rem', borderRadius: '8px 8px 0 0', border: 'none', cursor: 'pointer', fontSize: '.85rem', fontWeight: tab === t.id ? 700 : 400, background: tab === t.id ? 'var(--primary)' : 'transparent', color: tab === t.id ? 'white' : 'var(--text-primary)' } }, t.label)
+      )
+    ),
+    tab === 'list'   ? listTab()
+    : tab === 'create' ? createTab()
+    : null
+  );
+};
+
+
 const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -20115,6 +20598,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "ambassadors", icon: "award", label: "Ambassadeurs" },
     { id: "ondemand_admin",   icon: "concierge-bell", label: "Commandes OnDemand" },
     { id: "insurance_leads",  icon: "car",            label: "🚗 Leads Assurance" },
+    { id: "popups", icon: "comment-alt", label: "💬 Popups & Annonces" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
     { id: "logs", icon: "history", label: "Journal activité" },
@@ -21522,6 +22006,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
     );
   })(),
 
+  view === "popups"  && React.createElement(PopupsAdminPanel, { addToast }),
   view === "revenue" && React.createElement(RevenueAdminPanel, { orders, products, addToast }),
   view === "payouts" && (() => {
     const allOrders = storage.getArray("orders");
@@ -26443,7 +26928,6 @@ const AxApp = () => {
   };
 
   return React.createElement(React.Fragment, null,
-    showPrioModal && React.createElement(PriorityModal, null),
     // Bouton flottant
     React.createElement('button', {
       onClick: () => setOpen(true),
@@ -28312,7 +28796,9 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
   };
 
   // ── Rendu principal ────────────────────────────────────────────────────
-  return E('div', null,
+  return E(React.Fragment, null,
+    showPrioModal && E(PriorityModal, null),
+    E('div', null,
     // En-tête
     E('div', { className: 'card', style: { marginBottom: '1.5rem' } },
       E('div', { className: 'card-header' },
@@ -28362,8 +28848,10 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
       )
     ),
     renderModal()
+    )
   );
 };
+
 
 // Rendu à l'intérieur de BuyerDashboard quand view === "b2b_profile" | "b2b_orders" | "b2b_statement"
 // ══════════════════════════════════════════════════════════════════════════
@@ -30592,7 +31080,8 @@ const App = ({ onUserChange }) => {
       onShowCGU: () => setShowCGU(true),
       onShowPrivacy: () => setShowPrivacy(true)
     }
-  ), !currentUser2 && /* @__PURE__ */ React.createElement(GoogleOneTapProvider, { onLogin: handleLogin }), showCGU && /* @__PURE__ */ React.createElement(CGUModal, { onClose: () => setShowCGU(false) }), showPrivacy && /* @__PURE__ */ React.createElement(PrivacyModal, { onClose: () => setShowPrivacy(false) }), showOnboarding && /* @__PURE__ */ React.createElement(
+  ), React.createElement(SitePopupManager, { currentUser: currentUser2, currentPage: 'home' }),
+  !currentUser2 && /* @__PURE__ */ React.createElement(GoogleOneTapProvider, { onLogin: handleLogin }), showCGU && /* @__PURE__ */ React.createElement(CGUModal, { onClose: () => setShowCGU(false) }), showPrivacy && /* @__PURE__ */ React.createElement(PrivacyModal, { onClose: () => setShowPrivacy(false) }), showOnboarding && /* @__PURE__ */ React.createElement(
     OnboardingTour,
     {
       role: onboardingRole,
