@@ -2676,7 +2676,7 @@ const NexusAdSense = {
 // ── Composant React NexusAdUnit ──────────────────────────────────────────
 // Usage :
 //   React.createElement(NexusAdUnit, { format: 'leaderboard' })
-//   React.createElement(NexusAdUnit, { format: 'rectangle' })
+//   React.createElement(NexusDirectAd, { placement: 'rectangle' })
 //   React.createElement(NexusAdUnit, { format: 'banner' })
 const NexusAdUnit = ({ format = 'rectangle', style: extraStyle = {} }) => {
   const ref = React.useRef(null);
@@ -2732,6 +2732,356 @@ const NexusAdUnit = ({ format = 'rectangle', style: extraStyle = {} }) => {
     })
   );
 };
+
+// ── NEXUS Pro API — Formulaire d'abonnement ─────────────────────────────────
+const NexusAPIPlans = [
+  { id: 'monthly', label: 'Mensuel',  price: 15000, period: 30, desc: '1 000 appels/jour · XML + JSON · Renouvellement mensuel' },
+  { id: 'annual',  label: 'Annuel',   price: 150000, period: 365, desc: '1 000 appels/jour · XML + JSON + CSV · Soit 12 500/mois — 2 mois offerts' },
+];
+
+const NexusAPISubscribeForm = ({ onClose }) => {
+  const E = React.createElement;
+  const [plan, setPlan] = React.useState('monthly');
+  const [form, setForm] = React.useState({ contact_name:'', contact_email:'', contact_phone:'', company:'', use_case:'comparateur' });
+  const [step, setStep] = React.useState(1); // 1=form 2=pay 3=done
+  const [busy, setBusy] = React.useState(false);
+  const [apiKey, setApiKey] = React.useState('');
+
+  const selPlan = NexusAPIPlans.find(p => p.id === plan);
+
+  const createSub = async (payMethod) => {
+    if (!form.contact_name || !form.contact_email) return;
+    setBusy(true);
+    try {
+      const ref = 'API-' + Date.now().toString(36).toUpperCase();
+      const ends = new Date(Date.now() + selPlan.period * 86400000).toISOString();
+      let newKey = '';
+      if (DataService._sb) {
+        const { data } = await DataService._sb.from('api_subscriptions').insert({
+          ...form, plan, price_fcfa: selPlan.price,
+          ends_at: ends, payment_ref: ref,
+          status: 'pending', payment_status: 'pending',
+          user_id: DataService._user?.id || null,
+        }).select('api_key').single();
+        newKey = data?.api_key || '';
+      }
+      const waveNum = NEXUS_CONFIG.payments?.wave?.number || '77XXXXXXX';
+      const omNum   = NEXUS_CONFIG.payments?.om?.number   || '77XXXXXXX';
+      if (payMethod === 'wave') window.open('https://pay.wave.com/m/' + waveNum + '/c/SN?amount=' + selPlan.price + '&note=NEXUS-' + ref, '_blank');
+      else alert('Orange Money : envoyez ' + selPlan.price.toLocaleString('fr-FR') + ' FCFA au ' + omNum + '\nRéférence : NEXUS-' + ref + '\nVotre clé API sera activée sous 1h.');
+      setApiKey(newKey);
+      setStep(3);
+    } catch(e) { alert('Erreur : ' + e.message); }
+    setBusy(false);
+  };
+
+  const inp = { className:'form-input', style:{marginBottom:'0.65rem'} };
+  const lbl = { className:'form-label' };
+
+  return E('div', { style:{background:'var(--bg,#fff)',borderRadius:16,padding:'1.5rem',maxWidth:520,width:'100%',maxHeight:'92vh',overflowY:'auto'} },
+    E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1.25rem'}},
+      E('h2',{style:{fontWeight:700,fontSize:'1.1rem',margin:0}},'🔑 NEXUS Pro API'),
+      E('button',{onClick:onClose,style:{background:'none',border:'none',fontSize:'1.5rem',cursor:'pointer'}},'×')
+    ),
+
+    step===1 && E(React.Fragment,null,
+      E('p',{style:{color:'#555',fontSize:'0.87rem',lineHeight:1.6,marginBottom:'1.1rem'}},
+        'Accédez en temps réel au catalogue NEXUS pour vos comparateurs, agrégateurs ou applications e-commerce. Flux XML Google Shopping ou JSON.'
+      ),
+      E('div',{style:{display:'flex',gap:'0.75rem',marginBottom:'1.25rem'}},
+        NexusAPIPlans.map(p =>
+          E('div',{key:p.id,onClick:()=>setPlan(p.id),style:{flex:1,border:plan===p.id?'2px solid var(--primary,#00853E)':'1.5px solid #e5e7eb',borderRadius:10,padding:'0.85rem 1rem',cursor:'pointer',background:plan===p.id?'rgba(0,133,62,.06)':'transparent'}},
+            E('div',{style:{fontWeight:700,fontSize:'0.93rem'}},p.label),
+            E('div',{style:{fontWeight:800,color:'var(--primary,#00853E)',fontSize:'1.05rem'}},p.price.toLocaleString('fr-FR'),' FCFA'),
+            E('div',{style:{fontSize:'0.75rem',color:'#666',marginTop:'0.25rem'}},p.desc)
+          )
+        )
+      ),
+      E('div',{className:'form-row'},
+        E('div',{className:'form-group'},E('label',lbl,'Nom *'),E('input',{...inp,value:form.contact_name,onChange:e=>setForm(f=>({...f,contact_name:e.target.value})),placeholder:'Jean Dupont'})),
+        E('div',{className:'form-group'},E('label',lbl,'Email *'),E('input',{...inp,type:'email',value:form.contact_email,onChange:e=>setForm(f=>({...f,contact_email:e.target.value})),placeholder:'dev@entreprise.sn'}))
+      ),
+      E('div',{className:'form-row'},
+        E('div',{className:'form-group'},E('label',lbl,'Téléphone'),E('input',{...inp,value:form.contact_phone,onChange:e=>setForm(f=>({...f,contact_phone:e.target.value})),placeholder:'77 xxx xx xx'})),
+        E('div',{className:'form-group'},E('label',lbl,'Entreprise'),E('input',{...inp,value:form.company,onChange:e=>setForm(f=>({...f,company:e.target.value})),placeholder:'Mon App'}))
+      ),
+      E('label',lbl,'Usage'),
+      E('select',{...inp,value:form.use_case,onChange:e=>setForm(f=>({...f,use_case:e.target.value}))},
+        E('option',{value:'comparateur'},'Comparateur de prix'),E('option',{value:'aggregateur'},'Agrégateur / catalogue'),
+        E('option',{value:'app'},'Application mobile'),E('option',{value:'ecommerce'},'E-commerce / dropshipping'),
+        E('option',{value:'other'},'Autre')
+      ),
+      E('button',{className:'btn btn-primary',style:{width:'100%',marginTop:'0.5rem'},onClick:()=>setStep(2),disabled:!form.contact_name||!form.contact_email},'Continuer →')
+    ),
+
+    step===2 && E(React.Fragment,null,
+      E('div',{style:{textAlign:'center',marginBottom:'1.25rem'}},
+        E('div',{style:{fontWeight:700,fontSize:'1rem'}},selPlan?.label,' — ',selPlan?.price.toLocaleString('fr-FR'),' FCFA'),
+        E('p',{style:{color:'#555',fontSize:'0.85rem',marginTop:'0.35rem'}},'Choisissez votre mode de paiement')
+      ),
+      E('div',{style:{display:'flex',flexDirection:'column',gap:'0.75rem'}},
+        E('button',{className:'btn',style:{padding:'0.85rem',border:'1.5px solid #4FC3F7',borderRadius:10,background:'#E1F5FE',color:'#0277BD',cursor:'pointer'},onClick:()=>createSub('wave'),disabled:busy},'🌊 Payer avec Wave'),
+        E('button',{className:'btn',style:{padding:'0.85rem',border:'1.5px solid #FF9800',borderRadius:10,background:'#FFF3E0',color:'#E65100',cursor:'pointer'},onClick:()=>createSub('om'),disabled:busy},'🟠 Payer avec Orange Money')
+      ),
+      E('button',{onClick:()=>setStep(1),style:{marginTop:'1rem',background:'none',border:'none',color:'#888',cursor:'pointer',fontSize:'0.85rem'}},'← Retour')
+    ),
+
+    step===3 && E('div',{style:{textAlign:'center',padding:'1.5rem 0'}},
+      E('div',{style:{fontSize:'3rem',marginBottom:'0.75rem'}},'✅'),
+      E('h3',{style:{fontWeight:700,marginBottom:'0.5rem'}},'Demande créée !'),
+      E('p',{style:{color:'#555',fontSize:'0.87rem',lineHeight:1.6,marginBottom:'1rem'}},'Votre clé API sera activée sous 1h après confirmation du paiement.'),
+      apiKey && E('div',{style:{background:'#1a1a2e',color:'#4FC3F7',borderRadius:10,padding:'1rem',fontFamily:'monospace',fontSize:'0.85rem',wordBreak:'break-all',marginBottom:'1rem'}},
+        E('div',{style:{fontSize:'0.72rem',color:'#888',marginBottom:'0.35rem'}},'Votre clé API (gardez-la secrète) :'),
+        apiKey
+      ),
+      E('div',{style:{background:'#f0fdf4',borderRadius:10,padding:'0.85rem 1rem',fontSize:'0.84rem',marginBottom:'1.25rem'}},
+        E('strong',null,'Endpoint : '),
+        E('span',{style:{fontFamily:'monospace',fontSize:'0.8rem'}},'GET https://nexus.sn/api/products-feed?key=VOTRE_CLE&format=xml|json'),
+        E('br',null),E('span',{style:{color:'#555'}},'Documentation complète envoyée par email.')
+      ),
+      E('button',{className:'btn btn-primary',onClick:onClose},'Fermer')
+    )
+  );
+};
+
+// ── PUBLICITÉ DIRECTE — NexusDirectAd ─────────────────────────────────────
+// Remplace NexusAdUnit quand une campagne directe est active sur cet emplacement.
+// Priorité : DirectAd > AdSense > rien.
+
+const NEXUS_AD_PRICING = [
+  { id: 'hero_daily',       placement: 'hero',        format: 'daily',   price: 50000,  label: 'Hero carousel — 1 jour',      desc: 'Slide dédié dans le carousel homepage' },
+  { id: 'hero_weekly',      placement: 'hero',        format: 'weekly',  price: 200000, label: 'Hero carousel — 1 semaine',   desc: 'Slide dédié 7 jours — meilleure visibilité' },
+  { id: 'leader_weekly',    placement: 'leaderboard', format: 'weekly',  price: 75000,  label: 'Bandeau catalogue — 1 semaine', desc: 'Bannière 728×90 en tête du catalogue' },
+  { id: 'rect_weekly',      placement: 'rectangle',   format: 'weekly',  price: 50000,  label: 'Rectangle inline — 1 semaine', desc: 'Rectangle 300×250 toutes les 8 cartes' },
+  { id: 'banner_weekly',    placement: 'banner',      format: 'weekly',  price: 50000,  label: 'Banner fiche produit — 1 sem', desc: 'Bannière en bas de chaque fiche produit' },
+  { id: 'hero_monthly',     placement: 'hero',        format: 'monthly', price: 600000, label: 'Hero carousel — 1 mois',      desc: 'Présence maximale sur la homepage' },
+  { id: 'leader_monthly',   placement: 'leaderboard', format: 'monthly', price: 200000, label: 'Bandeau catalogue — 1 mois',  desc: 'Bandeau catalogue pendant 30 jours' },
+  { id: 'pack_full',        placement: 'hero',        format: 'weekly',  price: 350000, label: '🔥 Pack Visibilité totale',   desc: 'Hero + Leaderboard + Rectangle + Banner — 1 semaine' },
+];
+
+// Cache des campagnes directes actives (chargé une fois au démarrage)
+let _directAdsCache = null;
+let _directAdsCacheTs = 0;
+
+async function _loadDirectAds() {
+  const now = Date.now();
+  if (_directAdsCache && now - _directAdsCacheTs < 5 * 60 * 1000) return _directAdsCache;
+  if (!DataService._sb) return [];
+  try {
+    const { data } = await DataService._sb
+      .from('ad_campaigns')
+      .select('id,placement,title,tagline,cta_text,cta_url,image_url,bg_color,text_color,priority')
+      .eq('status', 'active').eq('payment_status', 'paid')
+      .lte('starts_at', new Date().toISOString())
+      .gte('ends_at', new Date().toISOString())
+      .order('priority');
+    _directAdsCache = data || [];
+    _directAdsCacheTs = now;
+    return _directAdsCache;
+  } catch(_) { return []; }
+}
+
+const NexusDirectAd = ({ placement, fallback = true, style: extraStyle = {} }) => {
+  const [ad, setAd] = React.useState(null);
+  const [loaded, setLoaded] = React.useState(false);
+  const trackedImpression = React.useRef(false);
+
+  React.useEffect(() => {
+    _loadDirectAds().then(ads => {
+      const match = ads.find(a => a.placement === placement);
+      setAd(match || null);
+      setLoaded(true);
+    });
+  }, [placement]);
+
+  React.useEffect(() => {
+    if (ad && !trackedImpression.current) {
+      trackedImpression.current = true;
+      DataService._sb?.rpc('ad_track', { p_id: ad.id, p_type: 'impression' }).catch(() => {});
+    }
+  }, [ad]);
+
+  if (!loaded) return null;
+
+  // Pas de campagne directe → fallback AdSense ou rien
+  if (!ad) {
+    if (!fallback) return null;
+    return React.createElement(NexusAdUnit, { format: placement, style: extraStyle });
+  }
+
+  const handleClick = () => {
+    DataService._sb?.rpc('ad_track', { p_id: ad.id, p_type: 'click' }).catch(() => {});
+    if (ad.cta_url) window.open(ad.cta_url, '_blank', 'noopener');
+  };
+
+  const heightMap = { hero: 120, leaderboard: 90, rectangle: 200, banner: 80, sidebar: 250 };
+  const h = heightMap[placement] || 100;
+
+  return React.createElement('div', {
+    onClick: handleClick,
+    style: {
+      background: ad.bg_color || '#1a237e',
+      color: ad.text_color || '#fff',
+      borderRadius: placement === 'hero' ? 0 : 10,
+      padding: placement === 'leaderboard' || placement === 'banner' ? '0.6rem 1.25rem' : '1rem 1.25rem',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: '0.75rem', cursor: ad.cta_url ? 'pointer' : 'default',
+      minHeight: h, width: '100%', boxSizing: 'border-box',
+      position: 'relative', overflow: 'hidden',
+      ...extraStyle,
+    }
+  },
+    React.createElement('div', { style: { flex: 1, minWidth: 0 } },
+      React.createElement('div', { style: { fontSize: '0.65rem', opacity: 0.7, marginBottom: '0.2rem', letterSpacing: '0.05em', textTransform: 'uppercase' } }, 'Publicité'),
+      React.createElement('div', { style: { fontWeight: 700, fontSize: placement === 'leaderboard' || placement === 'banner' ? '0.9rem' : '1.05rem', lineHeight: 1.25 } }, ad.title),
+      ad.tagline && React.createElement('div', { style: { fontSize: '0.8rem', opacity: 0.88, marginTop: '0.2rem' } }, ad.tagline)
+    ),
+    ad.image_url && React.createElement('img', {
+      src: ad.image_url, alt: ad.title,
+      style: { height: h * 0.8, maxWidth: 120, objectFit: 'contain', borderRadius: 8, flexShrink: 0 }
+    }),
+    ad.cta_url && React.createElement('div', {
+      style: { background: 'rgba(255,255,255,0.2)', color: 'inherit', border: '1.5px solid rgba(255,255,255,0.6)', borderRadius: 8, padding: '0.35rem 0.85rem', fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }
+    }, ad.cta_text || 'Découvrir')
+  );
+};
+
+// ── Formulaire soumission campagne annonceur (page publique) ────────────────
+const AdvertiserContactForm = ({ onClose }) => {
+  const E = React.createElement;
+  const [form, setForm] = React.useState({
+    advertiser_name: '', advertiser_email: '', advertiser_phone: '',
+    company_type: 'other', title: '', tagline: '', cta_url: '',
+    placement: 'hero', format: 'weekly', message: ''
+  });
+  const [step, setStep] = React.useState(1); // 1=formulaire 2=confirmation
+  const [submitting, setSubmitting] = React.useState(false);
+
+  const selPlan = NEXUS_AD_PRICING.find(p => p.placement === form.placement && p.format === form.format)
+    || NEXUS_AD_PRICING.find(p => p.placement === form.placement);
+
+  const submit = async () => {
+    if (!form.advertiser_name || !form.advertiser_email || !form.title) return;
+    setSubmitting(true);
+    try {
+      const days = form.format === 'daily' ? 1 : form.format === 'weekly' ? 7 : 30;
+      const ends = new Date(Date.now() + days * 86400000).toISOString();
+      const ref = 'PUB-' + Date.now().toString(36).toUpperCase();
+      if (DataService._sb) {
+        await DataService._sb.from('ad_campaigns').insert({
+          ...form,
+          price_fcfa: selPlan?.price || 0,
+          ends_at: ends,
+          payment_ref: ref,
+          status: 'pending',
+          payment_status: 'pending',
+        });
+      }
+      // Email admin
+      if (typeof EmailService !== 'undefined') {
+        EmailService.send({
+          to: NEXUS_CONFIG.brevo?.senderEmail || 'admin@nexus.sn',
+          subject: '📢 Nouvelle demande publicité — ' + form.advertiser_name,
+          templateId: 'ad_request',
+          variables: { advertiser: form.advertiser_name, email: form.advertiser_email, plan: selPlan?.label, price: (selPlan?.price||0).toLocaleString('fr-FR') + ' FCFA', ref },
+        }).catch(() => {});
+      }
+      setStep(2);
+    } catch(e) {
+      alert('Erreur : ' + e.message);
+    }
+    setSubmitting(false);
+  };
+
+  const inp = { className: 'form-input', style: { marginBottom: '0.75rem' } };
+  const lbl = { className: 'form-label' };
+
+  return E('div', { style: { background: 'var(--bg,#fff)', borderRadius: 16, padding: '1.5rem', maxWidth: 560, width: '100%', maxHeight: '92vh', overflowY: 'auto' } },
+    E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' } },
+      E('h2', { style: { fontWeight: 700, fontSize: '1.1rem', margin: 0 } }, '📢 Faire de la publicité sur NEXUS'),
+      E('button', { onClick: onClose, style: { background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer' } }, '×')
+    ),
+
+    step === 1 && E(React.Fragment, null,
+      E('div', { style: { background: 'rgba(0,133,62,.08)', borderRadius: 10, padding: '0.75rem 1rem', marginBottom: '1.25rem', fontSize: '0.84rem' } },
+        '🎯 NEXUS Market touche +50 000 acheteurs au Sénégal. Vos annonces s\'affichent sur la homepage et le catalogue selon le forfait choisi.'
+      ),
+      E('div', { className: 'form-row' },
+        E('div', { className: 'form-group' }, E('label', lbl, 'Votre nom / entreprise *'), E('input', { ...inp, value: form.advertiser_name, onChange: e => setForm(f => ({...f, advertiser_name: e.target.value})), placeholder: 'Ex: Orange Sénégal' })),
+        E('div', { className: 'form-group' }, E('label', lbl, 'Email *'), E('input', { ...inp, type: 'email', value: form.advertiser_email, onChange: e => setForm(f => ({...f, advertiser_email: e.target.value})), placeholder: 'marketing@entreprise.sn' }))
+      ),
+      E('div', { className: 'form-row' },
+        E('div', { className: 'form-group' }, E('label', lbl, 'Téléphone'), E('input', { ...inp, value: form.advertiser_phone, onChange: e => setForm(f => ({...f, advertiser_phone: e.target.value})), placeholder: '77 xxx xx xx' })),
+        E('div', { className: 'form-group' }, E('label', lbl, 'Secteur'), E('select', { ...inp, value: form.company_type, onChange: e => setForm(f => ({...f, company_type: e.target.value})) },
+          E('option', { value: 'telecom' }, 'Télécom'), E('option', { value: 'bank' }, 'Banque / Finance'),
+          E('option', { value: 'fmcg' }, 'FMCG / Grande conso'), E('option', { value: 'tech' }, 'Tech / Startups'),
+          E('option', { value: 'retail' }, 'Commerce / Distribution'), E('option', { value: 'other' }, 'Autre')
+        ))
+      ),
+      E('label', lbl, 'Titre de votre annonce *'),
+      E('input', { ...inp, value: form.title, onChange: e => setForm(f => ({...f, title: e.target.value})), placeholder: 'Ex: Profitez de l\'offre Ramadan Orange' }),
+      E('label', lbl, 'Sous-titre / accroche'),
+      E('input', { ...inp, value: form.tagline, onChange: e => setForm(f => ({...f, tagline: e.target.value})), placeholder: 'Ex: -30% sur les forfaits data jusqu\'au 31/01' }),
+      E('label', lbl, 'URL de destination (clic)'),
+      E('input', { ...inp, type: 'url', value: form.cta_url, onChange: e => setForm(f => ({...f, cta_url: e.target.value})), placeholder: 'https://votre-site.sn/offre' }),
+
+      E('div', { className: 'form-row' },
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Emplacement'),
+          E('select', { ...inp, value: form.placement, onChange: e => setForm(f => ({...f, placement: e.target.value})) },
+            E('option', { value: 'hero' }, '🏠 Homepage carousel (max visibilité)'),
+            E('option', { value: 'leaderboard' }, '📋 Bandeau haut catalogue'),
+            E('option', { value: 'rectangle' }, '🔲 Rectangle inline catalogue'),
+            E('option', { value: 'banner' }, '📄 Bannière fiches produit')
+          )
+        ),
+        E('div', { className: 'form-group' },
+          E('label', lbl, 'Durée'),
+          E('select', { ...inp, value: form.format, onChange: e => setForm(f => ({...f, format: e.target.value})) },
+            E('option', { value: 'daily' }, '1 jour'),
+            E('option', { value: 'weekly' }, '1 semaine'),
+            E('option', { value: 'monthly' }, '1 mois')
+          )
+        )
+      ),
+
+      selPlan && E('div', { style: { background: '#f0fdf4', border: '1.5px solid #00853E', borderRadius: 10, padding: '0.85rem 1.1rem', marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+        E('div', null,
+          E('div', { style: { fontWeight: 700, fontSize: '0.93rem' } }, selPlan.label),
+          E('div', { style: { fontSize: '0.78rem', color: '#555' } }, selPlan.desc)
+        ),
+        E('div', { style: { fontWeight: 800, fontSize: '1.1rem', color: '#00853E', whiteSpace: 'nowrap' } }, selPlan.price.toLocaleString('fr-FR') + ' FCFA')
+      ),
+
+      E('div', { style: { display: 'flex', gap: '0.75rem', marginTop: '0.5rem' } },
+        E('button', { className: 'btn btn-secondary', style: { flex: 1 }, onClick: onClose }, 'Annuler'),
+        E('button', {
+          className: 'btn btn-primary', style: { flex: 2 },
+          onClick: submit,
+          disabled: submitting || !form.advertiser_name || !form.advertiser_email || !form.title
+        }, submitting ? 'Envoi...' : 'Soumettre ma demande →')
+      )
+    ),
+
+    step === 2 && E('div', { style: { textAlign: 'center', padding: '2rem 0' } },
+      E('div', { style: { fontSize: '3.5rem', marginBottom: '0.75rem' } }, '✅'),
+      E('h3', { style: { fontWeight: 700, marginBottom: '0.5rem' } }, 'Demande envoyée !'),
+      E('p', { style: { color: '#555', lineHeight: 1.6, marginBottom: '1.5rem' } },
+        'Notre équipe commerciale vous contactera sous 24h pour finaliser votre campagne et valider le paiement.'
+      ),
+      E('div', { style: { background: '#f0fdf4', borderRadius: 10, padding: '1rem', marginBottom: '1.25rem', fontSize: '0.87rem' } },
+        E('strong', null, 'Forfait sélectionné : '), selPlan?.label, ' — ',
+        E('strong', null, selPlan ? selPlan.price.toLocaleString('fr-FR') + ' FCFA' : ''),
+        E('br', null),
+        E('span', { style: { color: '#555' } }, 'Paiement Wave, Orange Money ou virement bancaire acceptés.')
+      ),
+      E('button', { className: 'btn btn-primary', onClick: onClose }, 'Fermer')
+    )
+  );
+};
+
+// ── Bouton "Faire de la pub" discret dans le footer ─────────────────────────
+// Injecté dans le footer ou via un composant dédié
 
 // Initialiser AdSense après le chargement de la page
 if (typeof window !== 'undefined') {
@@ -7272,6 +7622,14 @@ const useRecentlyViewed = () => {
   const getViewed = useCallback(() => storage.getArray("recently_viewed"), []);
   return { addViewed, getViewed };
 };
+// ── Tarifs ventes flash sponsorisées ─────────────────────────────────────
+const FLASH_SPONSORED_PLANS = [
+  { id: 'flash_12h',  label: '⚡ Express 12h',   price: 1500,  hours: 12,  desc: 'Bandeau rouge + position 1 pendant 12h' },
+  { id: 'flash_24h',  label: '🔥 Flash 24h',     price: 3000,  hours: 24,  desc: 'Position 1 toute la journée — le plus populaire' },
+  { id: 'flash_48h',  label: '🚀 Mega 48h',      price: 5000,  hours: 48,  desc: 'Position 1 + notification push aux abonnés' },
+  { id: 'flash_week', label: '🏆 Semaine 7j',    price: 15000, hours: 168, desc: 'Bandeau homepage + catalogue toute la semaine' },
+];
+
 const FlashSaleBanner = ({ products, onAddToCart, onLoginClick }) => {
   const [sales, setSales] = useState(() =>
     storage.getArray("flash_sales").filter(s => new Date(s.endsAt) > new Date())
@@ -8006,6 +8364,17 @@ const PayoutHistoryView = ({ currentUser: u, addToast, onRequestPayout }) => {
   const w      = data?.wallet  || {};
   const rows   = data?.payouts || [];
   const fmt    = v => (v || 0).toLocaleString("fr-FR") + " FCFA";
+
+  // Modal formulaire annonceur
+  if (showAPIModal) return React.createElement('div', {
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' },
+    onClick: e => { if (e.target === e.currentTarget) setShowAPIModal(false); }
+  }, React.createElement(NexusAPISubscribeForm, { onClose: () => setShowAPIModal(false) }));
+
+  if (showAdvertiserModal) return React.createElement('div', {
+    style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' },
+    onClick: e => { if (e.target === e.currentTarget) setShowAdvertiserModal(false); }
+  }, React.createElement(AdvertiserContactForm, { onClose: () => setShowAdvertiserModal(false) }));
 
   return React.createElement(React.Fragment, null,
     /* Carte solde */
@@ -18451,6 +18820,459 @@ const EmailTemplatesPanel = ({ addToast, currentUser }) => {
   );
 };
 
+// ── RevenueAdminPanel ─────────────────────────────────────────────────────────
+// Vue unifiée : commissions, publicités, API, boosts, flash, revenus vendeurs
+// Injectée dans AdminDashboard via view === "revenue"
+
+const RevenueAdminPanel = ({ orders, products, addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const [tab, setTab]   = React.useState('overview');
+  const [data, setData] = React.useState({
+    commissions:  [],
+    adCampaigns:  [],
+    apiSubs:      [],
+    flashPaid:    [],
+    boostPaid:    [],
+    annonces:     [],
+    rates:        {},
+  });
+  const [loading, setLoading] = React.useState(true);
+  const [editRate, setEditRate] = React.useState(null); // { vendorId, current }
+  const [newRate, setNewRate]   = React.useState('');
+  const [period, setPeriod]     = React.useState('all'); // 'all'|'month'|'week'
+
+  React.useEffect(() => { loadAll(); }, []);
+
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      // Commissions depuis orders livrées
+      const delivered = orders.filter(o => o.status === 'delivered');
+      const byVendor = {};
+      delivered.forEach(o => {
+        const k = o.vendor || o.vendor_id;
+        if (!byVendor[k]) byVendor[k] = {
+          vendorId: k, vendorName: o.vendorName || o.vendor_name || k,
+          orders: 0, revenue: 0, commission: 0, commRate: o.commissionRate || 15
+        };
+        byVendor[k].orders++;
+        byVendor[k].revenue += o.total || 0;
+        byVendor[k].commission += o.commission || (o.total || 0) * 0.15;
+      });
+      const comms = Object.values(byVendor).sort((a,b) => b.commission - a.commission);
+
+      // Profils vendeurs pour les taux de commission
+      let rates = {};
+      if (sb) {
+        const { data: profiles } = await sb.from('profiles').select('id,name,commission_rate').eq('role','vendor');
+        (profiles || []).forEach(p => { rates[p.id] = p.commission_rate || 15; });
+      }
+
+      // Campagnes pub directes
+      let ads = [];
+      if (sb) {
+        const { data: adsData } = await sb.from('ad_campaigns').select('*').order('created_at', { ascending: false }).limit(100);
+        ads = adsData || [];
+      }
+
+      // Abonnements API
+      let apis = [];
+      if (sb) {
+        const { data: apiData } = await sb.from('api_subscriptions').select('*').order('created_at', { ascending: false }).limit(100);
+        apis = apiData || [];
+      }
+
+      // Flash sponsorisées
+      let flash = [];
+      if (sb) {
+        const { data: flashData } = await sb.from('flash_sales').select('*').eq('is_sponsored', true).order('created_at', { ascending: false }).limit(100);
+        flash = flashData || [];
+      }
+
+      // Boosts payants
+      let boosts = [];
+      if (sb) {
+        const { data: boostData } = await sb.from('product_boosts').select('*').order('started_at', { ascending: false }).limit(100);
+        boosts = boostData || [];
+      }
+
+      setData({ commissions: comms, adCampaigns: ads, apiSubs: apis, flashPaid: flash, boostPaid: boosts, rates });
+    } catch(e) { console.warn('[RevenuePanel]', e.message); }
+    setLoading(false);
+  };
+
+  // Filtrer par période
+  const filterByPeriod = (arr, dateField = 'created_at') => {
+    if (period === 'all') return arr;
+    const cutoff = new Date(Date.now() - (period === 'week' ? 7 : 30) * 86400000);
+    return arr.filter(r => new Date(r[dateField] || 0) >= cutoff);
+  };
+
+  // Changer le taux de commission d'un vendeur
+  const saveRate = async (vendorId, rate) => {
+    if (!sb || !rate || isNaN(parseFloat(rate))) return;
+    const r = parseFloat(rate);
+    if (r < 0 || r > 100) { addToast('Taux entre 0 et 100%', 'warning'); return; }
+    await sb.from('profiles').update({ commission_rate: r }).eq('id', vendorId);
+    setData(d => ({ ...d, rates: { ...d.rates, [vendorId]: r } }));
+    addToast(`Taux mis à jour : ${r}%`, 'success');
+    setEditRate(null);
+  };
+
+  // Valider un paiement (pub/API/flash/boost)
+  const validatePayment = async (table, id) => {
+    if (!sb) return;
+    await sb.from(table).update({ status: 'active', payment_status: 'paid' }).eq('id', id);
+    addToast('Paiement validé — campagne activée', 'success');
+    loadAll();
+  };
+
+  const FCFA = n => Math.round(n).toLocaleString('fr-FR') + ' F';
+  const pct  = (a, b) => b > 0 ? ((a/b)*100).toFixed(1) + '%' : '—';
+
+  if (loading) return E('div', { style: { textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' } },
+    E('i', { className: 'fas fa-spinner fa-spin', style: { fontSize: '2rem' } })
+  );
+
+  // ── Calculs récapitulatifs ─────────────────────────────────────────────────
+  const totalCommissions = filterByPeriod(data.commissions, 'id').reduce((s,v) => s + v.commission, 0);
+  const totalRevenue     = filterByPeriod(data.commissions, 'id').reduce((s,v) => s + v.revenue,    0);
+  const adRevPaid        = filterByPeriod(data.adCampaigns).filter(a => a.payment_status === 'paid').reduce((s,a) => s + (a.price_fcfa||0), 0);
+  const adRevPending     = filterByPeriod(data.adCampaigns).filter(a => a.payment_status === 'pending').reduce((s,a) => s + (a.price_fcfa||0), 0);
+  const apiRevPaid       = filterByPeriod(data.apiSubs).filter(a => a.payment_status === 'paid').reduce((s,a) => s + (a.price_fcfa||0), 0);
+  const flashRevPaid     = filterByPeriod(data.flashPaid).filter(f => f.payment_status === 'paid').reduce((s,f) => s + (f.price_fcfa||0), 0);
+  const boostRevPaid     = filterByPeriod(data.boostPaid).filter(b => b.payment_status === 'paid').reduce((s,b) => s + (b.price_fcfa||0), 0);
+  const totalAdminRev    = totalCommissions * EUR_TO_FCFA + adRevPaid + apiRevPaid + flashRevPaid + boostRevPaid;
+
+  const TABS = [
+    { id: 'overview',    label: 'Vue d\'ensemble', icon: 'chart-pie' },
+    { id: 'commissions', label: 'Commissions',      icon: 'percent' },
+    { id: 'ads',         label: 'Publicités',        icon: 'ad' },
+    { id: 'api',         label: 'Pro API',           icon: 'code' },
+    { id: 'boosts',      label: 'Boosts / Flash',    icon: 'bolt' },
+  ];
+
+  // ── Onglet Vue d'ensemble ─────────────────────────────────────────────────
+  const overviewTab = () => E(React.Fragment, null,
+    // Sélecteur période
+    E('div', { style: { display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' } },
+      ['all','month','week'].map(p =>
+        E('button', { key: p, onClick: () => setPeriod(p), style: {
+          padding: '0.35rem 0.9rem', borderRadius: 8, border: '1px solid var(--border)',
+          background: period === p ? 'var(--primary)' : 'transparent',
+          color: period === p ? 'white' : 'var(--text-primary)', cursor: 'pointer', fontSize: '0.83rem'
+        }}, p === 'all' ? 'Tout' : p === 'month' ? '30 jours' : '7 jours')
+      )
+    ),
+
+    // Cartes résumé
+    E('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: '0.75rem', marginBottom: '1.5rem' } },
+      [
+        { label: 'Revenu total admin',  val: FCFA(totalAdminRev),       icon: 'crown',          color: '#00853E' },
+        { label: 'Commissions ventes',  val: FCFA(totalCommissions * EUR_TO_FCFA), icon: 'percent', color: '#0277BD' },
+        { label: 'Publicités directes', val: FCFA(adRevPaid),           icon: 'ad',             color: '#7B1FA2' },
+        { label: 'Boosts vendeurs',     val: FCFA(boostRevPaid + flashRevPaid), icon: 'bolt',   color: '#E65100' },
+        { label: 'API Pro',             val: FCFA(apiRevPaid),           icon: 'code',           color: '#1565C0' },
+        { label: 'CA vendeurs total',   val: FCFA(totalRevenue * EUR_TO_FCFA), icon: 'store',   color: '#2E7D32' },
+      ].map((c, i) =>
+        E('div', { key: i, style: { background: 'var(--bg-light,#f9f9f9)', borderRadius: 10, padding: '0.85rem 1rem', borderLeft: '3px solid ' + c.color } },
+          E('div', { style: { fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' } }, c.label),
+          E('div', { style: { fontWeight: 700, fontSize: '1.05rem', marginTop: '0.2rem' } }, c.val)
+        )
+      )
+    ),
+
+    // En attente de validation
+    (() => {
+      const pendingAds   = data.adCampaigns.filter(a => a.payment_status === 'pending');
+      const pendingApi   = data.apiSubs.filter(a => a.payment_status === 'pending');
+      const pendingFlash = data.flashPaid.filter(f => f.payment_status === 'pending');
+      const pendingBoost = data.boostPaid.filter(b => b.payment_status === 'pending');
+      const total = pendingAds.length + pendingApi.length + pendingFlash.length + pendingBoost.length;
+      if (!total) return null;
+      return E('div', { style: { background: '#FFF8E1', border: '1.5px solid #FFB300', borderRadius: 10, padding: '1rem 1.25rem', marginBottom: '1.25rem' } },
+        E('div', { style: { fontWeight: 700, marginBottom: '0.5rem' } },
+          '⏳ ', total, ' paiement(s) en attente de validation — ',
+          FCFA(adRevPending + pendingApi.reduce((s,a)=>s+(a.price_fcfa||0),0) +
+               pendingFlash.reduce((s,f)=>s+(f.price_fcfa||0),0) + pendingBoost.reduce((s,b)=>s+(b.price_fcfa||0),0))
+        ),
+        [
+          { list: pendingAds,   label: 'Pubs directes', tab: 'ads' },
+          { list: pendingApi,   label: 'API Pro',        tab: 'api' },
+          { list: pendingFlash, label: 'Flash',          tab: 'boosts' },
+          { list: pendingBoost, label: 'Boosts',         tab: 'boosts' },
+        ].filter(g => g.list.length > 0).map(g =>
+          E('div', { key: g.tab, style: { fontSize: '0.84rem' } },
+            E('button', {
+              onClick: () => setTab(g.tab),
+              style: { background: 'none', border: 'none', cursor: 'pointer', color: '#0277BD', textDecoration: 'underline', padding: 0, fontSize: '0.84rem' }
+            }, g.list.length + ' ' + g.label)
+          )
+        )
+      );
+    })()
+  );
+
+  // ── Onglet Commissions vendeurs ────────────────────────────────────────────
+  const commissionsTab = () => E('div', null,
+    E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' } },
+      E('h3', { style: { fontWeight: 700 } }, 'Commissions par vendeur'),
+      E('button', {
+        className: 'btn btn-secondary btn-sm',
+        onClick: () => {
+          const csv = 'Vendeur,Commandes,CA (FCFA),Taux,Commission (FCFA),À reverser (FCFA)\n' +
+            data.commissions.map(v => [
+              v.vendorName, v.orders,
+              Math.round(v.revenue * EUR_TO_FCFA),
+              (data.rates[v.vendorId] || v.commRate || 15) + '%',
+              Math.round(v.commission * EUR_TO_FCFA),
+              Math.round((v.revenue - v.commission) * EUR_TO_FCFA),
+            ].join(',')).join('\n');
+          const a = document.createElement('a');
+          a.href = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csv);
+          a.download = 'nexus_commissions_' + new Date().toISOString().slice(0,10) + '.csv';
+          a.click();
+        }
+      }, E('i', { className: 'fas fa-download' }), ' CSV')
+    ),
+    E('div', { className: 'table-wrapper' },
+      E('table', { className: 'data-table' },
+        E('thead', null, E('tr', null,
+          ['Vendeur', 'Commandes', 'CA vendeur', 'Taux commission', 'Commission NEXUS', 'À reverser', 'Modifier taux'].map(h =>
+            E('th', { key: h }, h)
+          )
+        )),
+        E('tbody', null,
+          data.commissions.map(v =>
+            E('tr', { key: v.vendorId },
+              E('td', null, E('strong', null, v.vendorName)),
+              E('td', null, v.orders),
+              E('td', null, FCFA(v.revenue * EUR_TO_FCFA)),
+              E('td', null,
+                editRate?.vendorId === v.vendorId
+                  ? E('div', { style: { display: 'flex', gap: '0.4rem', alignItems: 'center' } },
+                      E('input', { type: 'number', value: newRate, onChange: e => setNewRate(e.target.value),
+                        style: { width: 64, padding: '0.2rem 0.4rem', borderRadius: 6, border: '1px solid var(--border)' },
+                        min: 0, max: 100, step: 0.5
+                      }),
+                      E('span', null, '%'),
+                      E('button', { className: 'btn btn-primary btn-sm', onClick: () => saveRate(v.vendorId, newRate) }, '✓'),
+                      E('button', { className: 'btn btn-secondary btn-sm', onClick: () => setEditRate(null) }, '✕')
+                    )
+                  : E('span', { style: { fontWeight: 600, color: 'var(--primary)' } },
+                      (data.rates[v.vendorId] || v.commRate || 15) + '%'
+                    )
+              ),
+              E('td', { style: { color: 'var(--primary)', fontWeight: 600 } }, FCFA(v.commission * EUR_TO_FCFA)),
+              E('td', { style: { fontWeight: 700 } }, FCFA((v.revenue - v.commission) * EUR_TO_FCFA)),
+              E('td', null,
+                editRate?.vendorId !== v.vendorId &&
+                E('button', {
+                  className: 'btn btn-secondary btn-sm',
+                  onClick: () => { setEditRate({ vendorId: v.vendorId }); setNewRate(String(data.rates[v.vendorId] || v.commRate || 15)); }
+                }, E('i', { className: 'fas fa-edit' }), ' Modifier')
+              )
+            )
+          )
+        ),
+        E('tfoot', null,
+          E('tr', { style: { fontWeight: 700, background: 'rgba(0,133,62,.06)' } },
+            E('td', null, 'TOTAL'),
+            E('td', null, data.commissions.reduce((s,v) => s + v.orders, 0)),
+            E('td', null, FCFA(totalRevenue * EUR_TO_FCFA)),
+            E('td', null, pct(totalCommissions, totalRevenue) + ' moy.'),
+            E('td', { style: { color: 'var(--primary)' } }, FCFA(totalCommissions * EUR_TO_FCFA)),
+            E('td', null, FCFA((totalRevenue - totalCommissions) * EUR_TO_FCFA)),
+            E('td', null)
+          )
+        )
+      )
+    )
+  );
+
+  // ── Onglet Publicités directes ─────────────────────────────────────────────
+  const adsTab = () => E('div', null,
+    E('h3', { style: { fontWeight: 700, marginBottom: '1rem' } },
+      'Campagnes publicitaires directes — ', FCFA(adRevPaid), ' encaissés'
+    ),
+    E('div', { className: 'table-wrapper' },
+      E('table', { className: 'data-table' },
+        E('thead', null, E('tr', null,
+          ['Annonceur', 'Titre', 'Emplacement', 'Format', 'Prix', 'Paiement', 'Statut', 'Impr.', 'Clics', 'Action'].map(h => E('th', { key: h }, h))
+        )),
+        E('tbody', null,
+          data.adCampaigns.map(a =>
+            E('tr', { key: a.id },
+              E('td', null, E('strong', null, a.advertiser_name), E('div', { style: { fontSize: '0.78rem', color: 'var(--text-secondary)' } }, a.advertiser_email)),
+              E('td', null, a.title),
+              E('td', null, a.placement),
+              E('td', null, a.format),
+              E('td', { style: { fontWeight: 600 } }, FCFA(a.price_fcfa || 0)),
+              E('td', null,
+                E('span', { className: 'badge badge-' + (a.payment_status === 'paid' ? 'success' : a.payment_status === 'failed' ? 'danger' : 'warning') },
+                  a.payment_status
+                )
+              ),
+              E('td', null,
+                E('span', { className: 'badge badge-' + (a.status === 'active' ? 'success' : a.status === 'pending' ? 'warning' : 'danger') },
+                  a.status
+                )
+              ),
+              E('td', null, (a.impressions||0).toLocaleString()),
+              E('td', null, (a.clicks||0).toLocaleString()),
+              E('td', null,
+                a.payment_status === 'pending' && a.status === 'pending' &&
+                E('button', { className: 'btn btn-primary btn-sm', onClick: () => validatePayment('ad_campaigns', a.id) },
+                  '✓ Valider paiement'
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+
+  // ── Onglet API Pro ──────────────────────────────────────────────────────────
+  const apiTab = () => E('div', null,
+    E('h3', { style: { fontWeight: 700, marginBottom: '1rem' } },
+      'Abonnements API Pro — ', FCFA(apiRevPaid), ' encaissés · ', data.apiSubs.filter(a => a.status === 'active').length, ' actifs'
+    ),
+    E('div', { className: 'table-wrapper' },
+      E('table', { className: 'data-table' },
+        E('thead', null, E('tr', null,
+          ['Abonné', 'Entreprise', 'Plan', 'Prix', 'Clé API', 'Calls', 'Paiement', 'Statut', 'Expiration', 'Action'].map(h => E('th', { key: h }, h))
+        )),
+        E('tbody', null,
+          data.apiSubs.map(s =>
+            E('tr', { key: s.id },
+              E('td', null, E('strong', null, s.contact_name), E('div', { style: { fontSize: '0.78rem', color: 'var(--text-secondary)' } }, s.contact_email)),
+              E('td', null, s.company || '—'),
+              E('td', null, s.plan === 'annual' ? 'Annuel' : 'Mensuel'),
+              E('td', { style: { fontWeight: 600 } }, FCFA(s.price_fcfa || 0)),
+              E('td', { style: { fontFamily: 'monospace', fontSize: '0.78rem' } }, s.api_key_preview || '—'),
+              E('td', null, (s.calls_total||0).toLocaleString()),
+              E('td', null,
+                E('span', { className: 'badge badge-' + (s.payment_status === 'paid' ? 'success' : 'warning') }, s.payment_status)
+              ),
+              E('td', null,
+                E('span', { className: 'badge badge-' + (s.status === 'active' ? 'success' : 'warning') }, s.status)
+              ),
+              E('td', { style: { fontSize: '0.82rem' } }, s.ends_at ? new Date(s.ends_at).toLocaleDateString('fr-FR') : '—'),
+              E('td', null,
+                s.payment_status === 'pending' &&
+                E('button', { className: 'btn btn-primary btn-sm', onClick: () => validatePayment('api_subscriptions', s.id) },
+                  '✓ Activer'
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+
+  // ── Onglet Boosts & Flash ──────────────────────────────────────────────────
+  const boostsTab = () => E('div', null,
+    E('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.5rem' } },
+      E('div', { style: { background: 'var(--bg-light)', borderRadius: 10, padding: '0.85rem 1rem', borderLeft: '3px solid #E65100' } },
+        E('div', { style: { fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase' } }, 'Boosts produits payés'),
+        E('div', { style: { fontWeight: 700, fontSize: '1.1rem', marginTop: '0.2rem' } }, FCFA(boostRevPaid))
+      ),
+      E('div', { style: { background: 'var(--bg-light)', borderRadius: 10, padding: '0.85rem 1rem', borderLeft: '3px solid #c62828' } },
+        E('div', { style: { fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase' } }, 'Flash sponsorisées payées'),
+        E('div', { style: { fontWeight: 700, fontSize: '1.1rem', marginTop: '0.2rem' } }, FCFA(flashRevPaid))
+      )
+    ),
+    E('h4', { style: { fontWeight: 700, marginBottom: '0.75rem' } }, 'Ventes flash sponsorisées'),
+    E('div', { className: 'table-wrapper', style: { marginBottom: '1.5rem' } },
+      E('table', { className: 'data-table' },
+        E('thead', null, E('tr', null, ['Vendeur', 'Produit', 'Remise', 'Forfait', 'Prix', 'Réf paiement', 'État', 'Action'].map(h => E('th', { key: h }, h)))),
+        E('tbody', null,
+          data.flashPaid.map(f => {
+            const prod = products.find(p => p.id === f.product_id);
+            return E('tr', { key: f.id },
+              E('td', null, f.vendor_id || '—'),
+              E('td', null, prod?.name || f.product_id),
+              E('td', null, E('span', { className: 'badge badge-danger' }, '-', f.discount, '%')),
+              E('td', null, f.price_fcfa ? FCFA(f.price_fcfa) : '—'),
+              E('td', { style: { fontWeight: 600 } }, FCFA(f.price_fcfa || 0)),
+              E('td', { style: { fontFamily: 'monospace', fontSize: '0.78rem' } }, f.payment_ref || '—'),
+              E('td', null, E('span', { className: 'badge badge-' + (f.active ? 'success' : f.payment_status === 'pending' ? 'warning' : 'secondary') },
+                f.active ? 'Active' : f.payment_status === 'pending' ? 'En attente' : 'Inactive'
+              )),
+              E('td', null,
+                !f.active && f.payment_status === 'pending' &&
+                E('button', {
+                  className: 'btn btn-primary btn-sm',
+                  onClick: async () => {
+                    if (!sb) return;
+                    await sb.from('flash_sales').update({ active: true, payment_status: 'paid' }).eq('id', f.id);
+                    addToast('Flash activée !', 'success');
+                    loadAll();
+                  }
+                }, '✓ Activer')
+              )
+            );
+          })
+        )
+      )
+    ),
+    E('h4', { style: { fontWeight: 700, marginBottom: '0.75rem' } }, 'Boosts visibilité produits'),
+    E('div', { className: 'table-wrapper' },
+      E('table', { className: 'data-table' },
+        E('thead', null, E('tr', null, ['Vendeur', 'Produit', 'Type', 'Prix', 'Début', 'Fin', 'Paiement', 'État'].map(h => E('th', { key: h }, h)))),
+        E('tbody', null,
+          data.boostPaid.map(b => {
+            const prod = products.find(p => p.id === b.product_id);
+            return E('tr', { key: b.id },
+              E('td', null, b.vendor_id || '—'),
+              E('td', null, prod?.name || b.product_id),
+              E('td', null, b.boost_type),
+              E('td', { style: { fontWeight: 600 } }, FCFA(b.price_fcfa || 0)),
+              E('td', { style: { fontSize: '0.82rem' } }, b.started_at ? new Date(b.started_at).toLocaleDateString('fr-FR') : '—'),
+              E('td', { style: { fontSize: '0.82rem' } }, b.ends_at ? new Date(b.ends_at).toLocaleDateString('fr-FR') : '—'),
+              E('td', null, E('span', { className: 'badge badge-' + (b.payment_status === 'paid' ? 'success' : 'warning') }, b.payment_status)),
+              E('td', null, E('span', { className: 'badge badge-' + (b.active ? 'success' : 'secondary') }, b.active ? 'Actif' : 'Inactif'))
+            );
+          })
+        )
+      )
+    )
+  );
+
+  const tabContent = { overview: overviewTab, commissions: commissionsTab, ads: adsTab, api: apiTab, boosts: boostsTab };
+
+  return E('div', null,
+    // En-tête
+    E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' } },
+      E('h2', { style: { fontWeight: 800, fontSize: '1.25rem', margin: 0 } }, '💰 Revenus & Commissions admin'),
+      E('button', { className: 'btn btn-secondary btn-sm', onClick: loadAll }, E('i', { className: 'fas fa-sync-alt' }), ' Actualiser')
+    ),
+
+    // Onglets
+    E('div', { style: { display: 'flex', gap: '0.35rem', marginBottom: '1.25rem', flexWrap: 'wrap', borderBottom: '1.5px solid var(--border)', paddingBottom: '0.5rem' } },
+      TABS.map(t =>
+        E('button', { key: t.id, onClick: () => setTab(t.id), style: {
+          padding: '0.45rem 1rem', borderRadius: '8px 8px 0 0',
+          border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: tab === t.id ? 700 : 400,
+          background: tab === t.id ? 'var(--primary)' : 'transparent',
+          color: tab === t.id ? 'white' : 'var(--text-primary)',
+          borderBottom: tab === t.id ? '2px solid var(--primary)' : 'none',
+        }},
+          E('i', { className: 'fas fa-' + t.icon, style: { marginRight: '0.4rem' } }),
+          t.label
+        )
+      )
+    ),
+
+    // Contenu de l'onglet actif
+    (tabContent[tab] || tabContent.overview)()
+  );
+};
+
+
 const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -19232,6 +20054,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "email_templates", icon: "file-alt", label: "Templates email" },
     { id: "sms",    icon: "sms",      label: "SMS" },
     { id: "emails", icon: "envelope", label: "Emails envoy\xE9s" },
+    { id: "revenue", icon: "crown", label: "💰 Revenus & Commissions" },
     { id: "payouts", icon: "money-bill-wave", label: "Paiements vendeurs" },
     { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: stats.pendingPayouts ?? _payoutReqs.filter((r) => r.status === "pending").length },
     { id: "users", icon: "users-cog", label: "Utilisateurs" },
@@ -19409,21 +20232,48 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     }}, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Relevé mensuel PDF")
   ), /* @__PURE__ */ React.createElement("div", { className: "chart-container" }, salesData.length > 0 && /* @__PURE__ */ React.createElement(SafeLineChart, { data: salesData, dataKey: "ventes", label: "Ventes", color: "#00853E", type: "line" }))), view === "flash_sales_vendor" && (() => {
     // [FIX #310] États hissés au niveau AdminDashboard (vFlashSales, vFlashForm)
-    const createVFlash = async () => {
+        const [flashPayModal, setFlashPayModal] = React.useState(false);
+    const [flashSelPlan,  setFlashSelPlan]  = React.useState(FLASH_SPONSORED_PLANS[1]);
+    const [flashPayStep,  setFlashPayStep]  = React.useState('choose');
+
+    const _doSaveFlash = async (plan) => {
       if (!vFlashForm.productId || !vFlashForm.discount) return;
-      const endsAt = new Date(Date.now() + parseFloat(vFlashForm.hours) * 3600000).toISOString();
-      const sale = { productId: vFlashForm.productId, discount: parseInt(vFlashForm.discount), endsAt, active: true };
-      await DataService.saveFlashSale({ ...sale, _new: true }).catch(() => {});
-      DataService.getFlashSales().then(d => { if (d) setVFlashSales(d.filter(s => { const p = products.find(x => x.id === s.productId); return p && p.vendor === currentUser2.id; })); }).catch(() => {});
-      addToast("Vente flash cr\xE9\xE9e !", "success");
-      // NexusWA : notifier le vendeur que sa vente flash est active
-      try {
-        if (typeof NexusWA !== 'undefined' && currentUser2?.phone) {
-          const _fsProduct = products.find(p => p.id === vFlashForm.productId);
-          if (_fsProduct) NexusWA.flashSaleAlert(currentUser2.phone, currentUser2.name, _fsProduct.name, parseInt(vFlashForm.discount), endsAt).catch(() => {});
-        }
-      } catch(_) {}
+      const endsAt = new Date(Date.now() + plan.hours * 3600000).toISOString();
+      const ref = 'FS-' + Date.now().toString(36).toUpperCase();
+      if (DataService._sb) {
+        await DataService._sb.from('flash_sales').insert({
+          product_id: vFlashForm.productId, vendor_id: currentUser2.id,
+          discount: parseInt(vFlashForm.discount), ends_at: endsAt, active: false,
+          is_sponsored: true, price_fcfa: plan.price,
+          payment_ref: 'NEXUS-' + ref, payment_status: 'pending', created_by: currentUser2.id,
+        }).catch(() => {});
+        const _prod = products.find(p => p.id === vFlashForm.productId);
+        DataService._sb.from('notifications').insert({
+          id: crypto.randomUUID(), user_id: currentUser2.id,
+          type: 'flash_payment',
+          title: '💰 Paiement vente flash à valider',
+          message: (currentUser2.name||currentUser2.email) + ' — ' + plan.label + ' — NEXUS-' + ref + ' — ' + plan.price.toLocaleString('fr-FR') + ' FCFA',
+          link: '/?admin=flash_sales', read: false, created_at: new Date().toISOString(),
+        }).catch(() => {});
+      }
+      setFlashPayModal(false); setFlashPayStep('choose');
       setVFlashForm({ productId: "", discount: "20", hours: "24" });
+      addToast('✅ Demande enregistrée (réf: NEXUS-' + ref + '). Activation dans < 1h après vérification.', "success", 8000);
+    };
+
+    const _payFlash = (plan, method) => {
+      const ref = 'FS-' + Date.now().toString(36).toUpperCase();
+      const waveNum = NEXUS_CONFIG.payments?.wave?.number || '77XXXXXXX';
+      const omNum   = NEXUS_CONFIG.payments?.om?.number   || '77XXXXXXX';
+      if (method === 'wave') window.open('https://pay.wave.com/m/' + waveNum + '/c/SN?amount=' + plan.price + '&note=NEXUS-' + ref, '_blank');
+      else alert('Orange Money : envoyez ' + plan.price.toLocaleString('fr-FR') + ' FCFA au ' + omNum + '\nRéférence : NEXUS-' + ref + '\n\nVotre vente flash sera activée dans l\'heure.');
+      setFlashPayStep('pending');
+      setTimeout(() => _doSaveFlash(plan), 800);
+    };
+
+    const createVFlash = () => {
+      if (!vFlashForm.productId || !vFlashForm.discount) { addToast('Choisissez un produit et une remise', 'warning'); return; }
+      setFlashSelPlan(FLASH_SPONSORED_PLANS[1]); setFlashPayStep('choose'); setFlashPayModal(true);
     };
     const removeVFlash = async (id) => { await DataService.deleteFlashSale(id).catch(() => {}); setVFlashSales(prev => prev.filter(s => s.id !== id)); addToast("Vente flash supprim\xE9e", "info"); };
     const myProds = products.filter(p => p.vendor === currentUser2.id && p.active);
@@ -19436,7 +20286,102 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Remise (%)"), /* @__PURE__ */ React.createElement("input", { type: "number", className: "form-input", value: vFlashForm.discount, onChange: e => setVFlashForm(f => ({ ...f, discount: e.target.value })), min: "5", max: "80" })),
           /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Dur\xE9e (heures)"), /* @__PURE__ */ React.createElement("input", { type: "number", className: "form-input", value: vFlashForm.hours, onChange: e => setVFlashForm(f => ({ ...f, hours: e.target.value })), min: "1", max: "168" }))
         ),
-        /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: createVFlash }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-bolt" }), " Lancer")
+        /* @__PURE__ */ React.createElement("button", {
+              className: "btn btn-primary",
+              onClick: createVFlash,
+              disabled: !vFlashForm.productId || !vFlashForm.discount,
+            },
+            /* @__PURE__ */ React.createElement("i", { className: "fas fa-bolt" }),
+            " Lancer une vente flash sponsorisée"
+          ),
+
+          /* ── Modal paiement flash sponsorisée ── */
+          flashPayModal && /* @__PURE__ */ React.createElement("div", {
+            style: { position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" },
+            onClick: e => { if (e.target === e.currentTarget) setFlashPayModal(false); }
+          },
+            /* @__PURE__ */ React.createElement("div", {
+              style: { background: "var(--bg, #fff)", borderRadius: "16px", padding: "1.5rem", maxWidth: "520px", width: "100%", maxHeight: "90vh", overflowY: "auto" }
+            },
+              /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" } },
+                /* @__PURE__ */ React.createElement("h2", { style: { fontWeight: 700, fontSize: "1.1rem", margin: 0 } }, "⚡ Sponsoriser votre vente flash"),
+                /* @__PURE__ */ React.createElement("button", { onClick: () => setFlashPayModal(false), style: { background: "none", border: "none", fontSize: "1.5rem", cursor: "pointer", color: "var(--text-secondary)" } }, "×")
+              ),
+
+              /* Étape 1 — Choisir le forfait */
+              flashPayStep === 'choose' && /* @__PURE__ */ React.createElement(React.Fragment, null,
+                /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", fontSize: "0.87rem", marginBottom: "1rem" } },
+                  "Votre vente flash apparaîtra en position 1 du catalogue. Choisissez la durée :"
+                ),
+                FLASH_SPONSORED_PLANS.map(plan =>
+                  /* @__PURE__ */ React.createElement("div", {
+                    key: plan.id,
+                    onClick: () => setFlashSelPlan(plan),
+                    style: {
+                      border: flashSelPlan?.id === plan.id ? "2px solid var(--primary, #00853E)" : "1.5px solid var(--border, #e5e7eb)",
+                      borderRadius: "10px", padding: "0.85rem 1rem", marginBottom: "0.65rem", cursor: "pointer",
+                      background: flashSelPlan?.id === plan.id ? "rgba(0,133,62,.06)" : "transparent",
+                      display: "flex", justifyContent: "space-between", alignItems: "center"
+                    }
+                  },
+                    /* @__PURE__ */ React.createElement("div", null,
+                      /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: "0.93rem" } }, plan.label),
+                      /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, plan.desc)
+                    ),
+                    /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1rem", color: "var(--primary, #00853E)", whiteSpace: "nowrap" } },
+                      plan.price.toLocaleString("fr-FR"), " FCFA"
+                    )
+                  )
+                ),
+                /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.75rem", marginTop: "1.25rem" } },
+                  /* @__PURE__ */ React.createElement("button", {
+                    className: "btn btn-secondary", style: { flex: 1 },
+                    onClick: () => { setFlashPayModal(false); }
+                  }, "Annuler"),
+                  /* @__PURE__ */ React.createElement("button", {
+                    className: "btn btn-primary", style: { flex: 2 },
+                    onClick: () => setFlashPayStep("pay"),
+                    disabled: !flashSelPlan
+                  },
+                    /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-right" }),
+                    " Payer ", flashSelPlan ? flashSelPlan.price.toLocaleString("fr-FR") : "", " FCFA"
+                  )
+                )
+              ),
+
+              /* Étape 2 — Choisir le mode de paiement */
+              flashPayStep === 'pay' && /* @__PURE__ */ React.createElement(React.Fragment, null,
+                /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginBottom: "1.25rem" } },
+                  /* @__PURE__ */ React.createElement("div", { style: { fontSize: "2rem", marginBottom: "0.25rem" } }, "💳"),
+                  /* @__PURE__ */ React.createElement("p", { style: { fontWeight: 600 } }, flashSelPlan?.label, " — ", flashSelPlan?.price.toLocaleString("fr-FR"), " FCFA"),
+                  /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "Choisissez votre mode de paiement :")
+                ),
+                /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.75rem" } },
+                  /* @__PURE__ */ React.createElement("button", {
+                    className: "btn", style: { padding: "0.85rem", fontSize: "1rem", border: "1.5px solid #4FC3F7", borderRadius: "10px", display: "flex", alignItems: "center", gap: "0.75rem", justifyContent: "center", background: "#E1F5FE", color: "#0277BD" },
+                    onClick: () => _payFlash(flashSelPlan, "wave")
+                  }, "🌊 Payer avec Wave"),
+                  /* @__PURE__ */ React.createElement("button", {
+                    className: "btn", style: { padding: "0.85rem", fontSize: "1rem", border: "1.5px solid #FF9800", borderRadius: "10px", display: "flex", alignItems: "center", gap: "0.75rem", justifyContent: "center", background: "#FFF3E0", color: "#E65100" },
+                    onClick: () => _payFlash(flashSelPlan, "om")
+                  }, "🟠 Payer avec Orange Money")
+                ),
+                /* @__PURE__ */ React.createElement("button", { onClick: () => setFlashPayStep("choose"), style: { marginTop: "1rem", background: "none", border: "none", color: "var(--text-secondary)", fontSize: "0.85rem", cursor: "pointer" } },
+                  "← Changer de forfait"
+                )
+              ),
+
+              /* Étape 3 — Confirmation en attente */
+              flashPayStep === 'pending' && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "1.5rem 0" } },
+                /* @__PURE__ */ React.createElement("div", { style: { fontSize: "3rem", marginBottom: "0.75rem" } }, "⏳"),
+                /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "0.5rem" } }, "Paiement en vérification"),
+                /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", fontSize: "0.87rem", lineHeight: 1.6 } },
+                  "Votre demande de vente flash a été enregistrée. Dès confirmation du paiement (< 1h), votre vente flash sera activée et apparaîtra en tête du catalogue."
+                ),
+                /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", style: { marginTop: "1.25rem" }, onClick: () => setFlashPayModal(false) }, "Fermer")
+              )
+            )
+          )
       ),
       /* @__PURE__ */ React.createElement("div", { className: "card" },
         /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes ventes flash actives (", vFlashSales.filter(s => new Date(s.endsAt) > new Date()).length, ")")),
@@ -20524,6 +21469,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
     );
   })(),
 
+  view === "revenue" && React.createElement(RevenueAdminPanel, { orders, products, addToast }),
   view === "payouts" && (() => {
     const allOrders = storage.getArray("orders");
     const delivered = allOrders.filter((o) => o.status === "delivered");
@@ -26477,7 +27423,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           })
         ),
         /* ── AdSense Leaderboard — uniquement si contenu présent (règles AdSense) ── */
-        currentItems.length >= 4 && React.createElement(NexusAdUnit, { format: 'leaderboard' }),
+        currentItems.length >= 4 && React.createElement(NexusDirectAd, { placement: 'leaderboard' }),
         currentItems.length === 0
           ? React.createElement('div', null,
               React.createElement('div', { className: 'empty-state' },
@@ -26737,7 +27683,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           }),
           /* AdSense banner — avant les avis (uniquement si description riche) */
           selectedProduct?.description && selectedProduct.description.length > 100
-            && React.createElement(NexusAdUnit, { format: 'banner' }),
+            && React.createElement(NexusDirectAd, { placement: 'banner' }),
           React.createElement('h3', { style: { fontWeight: 700, marginBottom: '1rem' } }, 'Avis clients'),
           reviews.filter(r => r.productId === selectedProduct.id).length === 0
             ? React.createElement('p', { className: 'text-muted' }, 'Aucun avis pour ce produit.')
@@ -29000,6 +29946,18 @@ const SetupWizard = ({ onComplete }) => {
 const App = ({ onUserChange }) => {
   const { addToast } = useToast();
   const [currentUser2, setCurrentUser] = useState(null);
+  const [showAdvertiserModal, setShowAdvertiserModal] = React.useState(false);
+  const [showAPIModal, setShowAPIModal] = React.useState(false);
+  React.useEffect(() => {
+    const _hapi = () => setShowAPIModal(true);
+    window.addEventListener('nexus:open-api-form', _hapi);
+    return () => window.removeEventListener('nexus:open-api-form', _hapi);
+  }, []);
+  React.useEffect(() => {
+    const _h = () => setShowAdvertiserModal(true);
+    window.addEventListener('nexus:open-advertiser-form', _h);
+    return () => window.removeEventListener('nexus:open-advertiser-form', _h);
+  }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [showAuth, setShowAuth] = useState(false);
   const [authInitialTab, setAuthInitialTab] = useState("login");
