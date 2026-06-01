@@ -6572,14 +6572,16 @@ const NexusSmsService = {
 
   // ── Envoi via backend (prioritaire) ─────────────────────────────────────
   async _sendBackend(to, message) {
-    if (!NEXUS_CONFIG.apiUrl) return false;
+    // [FIX] Plus de dépendance à apiUrl — /api/sms est une Cloudflare Function
     const token = DataService?._token
       || sessionStorage.getItem('nexus_jwt')
       || localStorage.getItem('nexus_jwt');
     try {
       const ctrl = new AbortController();
       const tid  = setTimeout(() => ctrl.abort(), 12000);
-      const res  = await fetch(`${NEXUS_CONFIG.apiUrl}/api/sms/send`, {
+      // [FIX] URL directe Cloudflare Function (ne dépend pas de apiUrl)
+      const smsUrl = '/api/sms';
+      const res  = await fetch(smsUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -11345,6 +11347,15 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   const pointsDiscountEur = (pointsUsed / POINTS_REDEEM) / EUR_TO_FCFA * POINTS_REDEEM; // 100pts = 1 FCFA equiv
   const pointsDiscountFcfa = pointsUsed / POINTS_REDEEM; // 100 pts = 1 FCFA
   const pointsDiscountEurReal = pointsUsed / (POINTS_REDEEM * EUR_TO_FCFA);
+  // ── Cashback [FIX] — solde utilisable à la caisse ────────
+  const [cashbackBalance, setCashbackBalance] = React.useState(0);
+  const [cashbackUsed, setCashbackUsed]       = React.useState(0);
+  React.useEffect(() => {
+    if (!currentUser2?.id) return;
+    DataService.getCashbackBalance(currentUser2.id).then(bal => setCashbackBalance(bal || 0)).catch(() => {});
+  }, [currentUser2?.id]);
+  const cashbackDiscountEur = Math.min(cashbackUsed, cashbackBalance) / EUR_TO_FCFA;
+  // ─────────────────────────────────────────────────────────
   // ──────────────────────────────────────────────────────────────
   const cartTotalEur = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const discountEur = appliedCoupon ? cartTotalEur * (appliedCoupon.discount / 100) : 0;
@@ -11356,7 +11367,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   // [AMBASSADOR] Remise 5% pour filleul sur 1ère commande détectée via sessionStorage
   const _isReferredBuyer = !!(sessionStorage.getItem("nexus_referred_by_amb") || sessionStorage.getItem("nexus_ref_code"));
   const referralDiscountEur = _isReferredBuyer ? Math.round(cartTotalEur * 0.05 * 100) / 100 : 0;
-  const grandTotalEur = Math.max(0, cartTotalEur - discountEur - b2bDiscountEur - referralDiscountEur - pointsDiscountEurReal + shippingEur);
+  const grandTotalEur = Math.max(0, cartTotalEur - discountEur - b2bDiscountEur - referralDiscountEur - pointsDiscountEurReal - cashbackDiscountEur + shippingEur);
   const [cardData, setCardData] = useState({ number: "", expiry: "", cvc: "", name: "" });
   const [cardErrors, setCardErrors] = useState({});
   const [errors, setErrors] = useState({});
@@ -11609,6 +11620,10 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         // [LOYALTY v3] Déduire les points via Supabase (route /loyalty Netlify n'existe pas)
         await DataService.addLoyaltyPoints(currentUser2.id, -(loyaltyToRedeem || pointsUsed), { reason: "redeem", orderId: createdOrders[0]?.id }).catch(() => {});
       } // end if pointsUsed > 0
+      // Déduire le cashback utilisé
+      if (currentUser2 && cashbackUsed > 0) {
+        DataService.addCashback(currentUser2.id, createdOrders[0]?.id, -cashbackUsed, 'redeem', 'Cashback utilisé à la caisse').catch(() => {});
+      }
 
       // ── [AMBASSADOR v2] Commissions + remise filleul — 100% Supabase sans backend ────
       if (currentUser2 && DataService._sb) {

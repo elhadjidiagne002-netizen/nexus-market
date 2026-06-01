@@ -1,69 +1,39 @@
-/**
- * GET /api/payments/paytech/verify/:orderId
- * Vérifie le statut d'un paiement PayTech (sécurisé côté serveur, sans exposer les clés).
- *
- * Le paramètre dynamique [orderId] vient du nom de fichier [orderId].js (convention Pages Functions).
- *
- * Variables d'environnement :
- *   PAYTECH_API_KEY, PAYTECH_API_SECRET, SUPABASE_URL, SUPABASE_SERVICE_KEY
- */
-export async function onRequestGet(context) {
-  const { request, env, params } = context;
-  const orderId = params.orderId;
+// ============================================================
+// functions/api/payments/paytech/verify/[orderId].js
+// GET /api/payments/paytech/verify/:orderId
+// Vérifie si une commande a été payée (après IPN reçu)
+// ============================================================
 
-  if (!env.PAYTECH_API_KEY || !env.PAYTECH_API_SECRET) {
-    return json({ error: 'PayTech non configuré' }, 503);
-  }
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+const jsonR = (d, s = 200) =>
+  new Response(JSON.stringify(d), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
-  const auth = request.headers.get('Authorization');
-  if (!auth || !auth.startsWith('Bearer ')) {
-    return json({ error: 'Non authentifié' }, 401);
-  }
+export async function onRequest({ request, env, params }) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  if (request.method !== 'GET') return jsonR({ error: 'GET uniquement' }, 405);
 
-  if (!orderId) {
-    return json({ error: 'orderId manquant' }, 400);
-  }
+  const orderId = params?.orderId || new URL(request.url).pathname.split('/').pop();
+  if (!orderId) return jsonR({ error: 'orderId manquant' }, 400);
 
-  // ── Récupération du statut depuis Supabase ───────────────────────────────
-  // L'IPN PayTech doit mettre à jour la table `orders` avec payment_status.
-  // On lit depuis Supabase plutôt que d'interroger PayTech (qui n'a pas
-  // forcément d'endpoint "get-status" public et stable).
-  if (env.SUPABASE_URL && env.SUPABASE_SERVICE_KEY) {
-    try {
-      const sbRes = await fetch(
-        `${env.SUPABASE_URL}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=id,payment_status,payment_ref,total,currency`,
-        {
-          headers: {
-            'apikey': env.SUPABASE_SERVICE_KEY,
-            'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`
-          }
-        }
-      );
-      const rows = await sbRes.json();
-      const order = Array.isArray(rows) ? rows[0] : null;
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/orders?id=eq.${orderId}&select=status,payment_status,total`, {
+    headers: {
+      apikey: env.SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+    },
+  });
 
-      if (!order) {
-        return json({ error: 'Commande introuvable' }, 404);
-      }
+  const orders = await r.json().catch(() => []);
+  const order = orders?.[0];
+  if (!order) return jsonR({ error: 'Commande introuvable' }, 404);
 
-      return json({
-        order_id: order.id,
-        status: order.payment_status || 'pending',
-        payment_ref: order.payment_ref || null,
-        amount: order.total,
-        currency: order.currency
-      });
-    } catch (e) {
-      return json({ error: 'Erreur Supabase', detail: e.message }, 502);
-    }
-  }
-
-  return json({ error: 'Supabase non configuré côté serveur' }, 503);
-}
-
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
+  return jsonR({
+    paid:   order.payment_status === 'paid',
+    failed: order.payment_status === 'failed',
+    status: order.status,
+    amount: order.total,
   });
 }

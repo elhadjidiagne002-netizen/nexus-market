@@ -1,37 +1,84 @@
-import { adminClient, requireAuth } from "../../_lib/supabase.js";
-import { handle, ok, err } from "../../_lib/response.js";
+// ============================================================
+// functions/api/payments/stripe/create-intent.js
+// Cloudflare Pages Function
+//
+// Variables Cloudflare Pages :
+//   STRIPE_SECRET_KEY   sk_live_... ou sk_test_...
+//   SUPABASE_URL / SUPABASE_SERVICE_KEY
+// ============================================================
 
-export const onRequest = handle(async ({ request, env }) => {
-  if (request.method !== "POST") return err("Méthode non autorisée", 405);
-  const { user } = await requireAuth(env, request);
-  const { amount, orderId, currency = "xof" } = await request.json();
-  if (!amount || !orderId) return err("amount et orderId requis");
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+const jsonR = (d, s = 200) =>
+  new Response(JSON.stringify(d), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
-  const STRIPE_SECRET = env.STRIPE_SECRET_KEY;
-  if (!STRIPE_SECRET) return err("Stripe non configuré", 503);
+function extractUid(authHeader) {
+  try {
+    const token = authHeader?.replace('Bearer ', '');
+    if (!token) return null;
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return payload.sub || null;
+  } catch { return null; }
+}
 
-  const body = new URLSearchParams({
-    amount: String(Math.round(amount)),
-    currency,
-    "metadata[orderId]": orderId,
-    "metadata[userId]": user.id,
-    automatic_payment_methods_enabled: "true"
-  });
+export async function onRequest({ request, env }) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  if (request.method !== 'POST') return jsonR({ error: 'POST uniquement' }, 405);
 
-  const res = await fetch("https://api.stripe.com/v1/payment_intents", {
-    method: "POST",
-    headers: {
-      "Authorization": "Bearer " + STRIPE_SECRET,
-      "Content-Type":  "application/x-www-form-urlencoded"
-    },
-    body
-  });
+  if (!env.STRIPE_SECRET_KEY) return jsonR({ error: 'STRIPE_SECRET_KEY non configurée' }, 503);
 
-  const pi = await res.json();
-  if (!res.ok) return err(pi.error?.message || "Erreur Stripe", 502);
+  const uid = extractUid(request.headers.get('Authorization'));
+  if (!uid) return jsonR({ error: 'Non authentifié' }, 401);
 
-  const sb = adminClient(env);
-  await sb.from("orders").update({ stripe_payment_intent: pi.id }).eq("id", orderId);
+  let body;
+  try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
 
-  return ok({ clientSecret: pi.client_secret, paymentIntentId: pi.id });
-});
+  const { amount, currency = 'eur', paymentMethodId } = body;
+  if (!amount || !paymentMethodId) return jsonR({ error: 'amount et paymentMethodId requis' }, 400);
+  if (amount < 50) return jsonR({ error: 'Montant minimum : 50 centimes' }, 400);
+
+  try {
+    // 1. Créer un PaymentIntent Stripe
+    const params = new URLSearchParams({
+      amount: String(Math.round(amount)),
+      currency,
+      payment_method: paymentMethodId,
+      confirm: 'true',
+      'automatic_payment_methods[enabled]': 'true',
+      'automatic_payment_methods[allow_redirects]': 'never',
+      description: 'Commande NEXUS Market',
+      metadata: JSON.stringify({ user_id: uid }),
+    });
+
+    const res = await fetch('https://api.stripe.com/v1/payment_intents', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    });
+
+    const intent = await res.json();
+
+    if (!res.ok) {
+      console.error('[Stripe] API error:', intent.error?.message);
+      return jsonR({ error: intent.error?.message || 'Erreur Stripe' }, 400);
+    }
+
+    // 2. Retourner au client
+    return jsonR({
+      ok:              true,
+      paymentIntentId: intent.id,
+      clientSecret:    intent.client_secret,
+      status:          intent.status,   // 'succeeded' | 'requires_action' | ...
+    });
+
+  } catch (err) {
+    console.error('[Stripe] Exception:', err.message);
+    return jsonR({ error: err.message }, 500);
+  }
+}
