@@ -10374,7 +10374,10 @@ const NexusOfflineStore = (function() {
   }
 
   async function _drainQueue() {
+    // Vérifier : client Supabase présent ET utilisateur authentifié
+    // (évite les 401 si la queue se vide avant la connexion)
     if (typeof DataService === 'undefined' || !DataService._sb) return;
+    if (!DataService._user?.id && !DataService._token) return;
     try {
       const db = await _open();
       const items = await new Promise(res => {
@@ -10435,13 +10438,15 @@ const NexusOfflineStore = (function() {
         if (val !== null) _orig.set(key, val);
       } catch(e) {}
     }
-    await _drainQueue();
+    // [FIX] Ne pas drainer au démarrage — l'utilisateur n'est pas encore connecté.
+    // Le drain se déclenche sur nexus:session-restored / nexus:user-logged-in / online.
     console.info('[NexusOfflineStore] ✅ initialisé — données critiques restaurées depuis IndexedDB');
   }
 
   window.addEventListener('online',                () => { setTimeout(_drainQueue, 2000); });
   window.addEventListener('nexus:backend-ready',   () => { setTimeout(_drainQueue, 1000); });
   window.addEventListener('nexus:session-restored',() => { setTimeout(_drainQueue, 1500); });
+  window.addEventListener('nexus:user-logged-in',  () => { setTimeout(_drainQueue, 2000); });
 
   _init().catch(e => console.warn('[NexusOfflineStore] init error:', e.message));
 
@@ -30288,6 +30293,22 @@ if ("serviceWorker" in navigator) {
             return perm;
           };
         }
+
+        // Forcer l'activation du nouveau SW s'il est en attente (waiting)
+        // Règle le "message channel closed" dû à l'ancien SW encore actif
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+        reg.addEventListener("updatefound", () => {
+          const newSW = reg.installing;
+          if (!newSW) return;
+          newSW.addEventListener("statechange", () => {
+            if (newSW.state === "installed" && navigator.serviceWorker.controller) {
+              // Nouveau SW installé — activer immédiatement
+              newSW.postMessage({ type: "SKIP_WAITING" });
+            }
+          });
+        });
 
         // Écouter les messages du SW
         navigator.serviceWorker.addEventListener("message", evt => {
