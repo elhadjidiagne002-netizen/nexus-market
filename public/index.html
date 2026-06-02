@@ -20282,6 +20282,489 @@ const MonetizationConfigPanel = ({ addToast }) => {
   );
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// NEXUS Livraison — 3 composants
+// 1. CourierApp         — interface coursier (mobile-first)
+// 2. AdminLivraisonPanel — tableau de bord admin
+// 3. NexusLivraisonWidget — widget checkout pour créer une demande
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Tarifs par zone ──────────────────────────────────────────────────────────
+const LIVRAISON_TARIFS = {
+  'Dakar':       { fee: 1000,  nexus: 100,  net: 900,  label:'Dakar centre' },
+  'Pikine':      { fee: 1500,  nexus: 150,  net: 1350, label:'Pikine / Guédiawaye' },
+  'Guédiawaye':  { fee: 1500,  nexus: 150,  net: 1350, label:'Pikine / Guédiawaye' },
+  'Rufisque':    { fee: 2000,  nexus: 200,  net: 1800, label:'Rufisque / Bargny' },
+  'Bargny':      { fee: 2000,  nexus: 200,  net: 1800, label:'Rufisque / Bargny' },
+  'Diamniadio':  { fee: 2500,  nexus: 250,  net: 2250, label:'Diamniadio / Sébikotane' },
+  'Thiès':       { fee: 4000,  nexus: 400,  net: 3600, label:'Thiès' },
+  'Mbour':       { fee: 4500,  nexus: 450,  net: 4050, label:'Mbour / Saly' },
+  'Saly':        { fee: 4500,  nexus: 450,  net: 4050, label:'Mbour / Saly' },
+  'DEFAULT':     { fee: 6000,  nexus: 600,  net: 5400, label:'Autres villes' },
+};
+
+function getLivraisonTarif(city) {
+  return LIVRAISON_TARIFS[city] || LIVRAISON_TARIFS['DEFAULT'];
+}
+
+// ── Status labels et couleurs ─────────────────────────────────────────────
+const DR_STATUS = {
+  pending:    { label:'En attente', color:'#d97706', bg:'#FFF8E1', icon:'clock' },
+  accepted:   { label:'Acceptée',   color:'#2563eb', bg:'#EFF6FF', icon:'user-check' },
+  picked_up:  { label:'Récupéré',   color:'#7c3aed', bg:'#F5F3FF', icon:'package' },
+  in_transit: { label:'En route',   color:'#0891b2', bg:'#F0F9FF', icon:'truck' },
+  delivered:  { label:'Livré',      color:'#059669', bg:'#F0FDF4', icon:'check-circle' },
+  failed:     { label:'Échec',      color:'#dc2626', bg:'#FEF2F2', icon:'x-circle' },
+  cancelled:  { label:'Annulé',     color:'#6b7280', bg:'#F9FAFB', icon:'ban' },
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// 1. INTERFACE COURSIER (mobile-first)
+// ════════════════════════════════════════════════════════════════════════════
+const CourierApp = ({ currentUser, addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const [courier, setCourier]   = React.useState(null);
+  const [tab, setTab]           = React.useState('available');
+  const [jobs, setJobs]         = React.useState([]);
+  const [myJobs, setMyJobs]     = React.useState([]);
+  const [earnings, setEarnings] = React.useState([]);
+  const [loading, setLoading]   = React.useState(true);
+  const [available, setAvailable] = React.useState(false);
+  const [regForm, setRegForm]   = React.useState({ name:'', phone:'', vehicle_type:'moto', zones:['Dakar'] });
+  const [regStep, setRegStep]   = React.useState('check'); // check|register|pending|active
+
+  const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
+
+  // Charger le profil coursier
+  React.useEffect(() => {
+    if (!sb || !currentUser?.id) return;
+    sb.from('couriers').select('*').eq('user_id', currentUser.id).maybeSingle()
+      .then(({ data }) => {
+        if (data) { setCourier(data); setAvailable(data.is_available); setRegStep(data.status === 'pending' ? 'pending' : 'active'); }
+        else setRegStep('register');
+        setLoading(false);
+      }).catch(() => { setRegStep('register'); setLoading(false); });
+  }, [currentUser?.id]);
+
+  // Charger les missions selon l'onglet
+  React.useEffect(() => {
+    if (!sb || !courier?.id) return;
+    if (tab === 'available') {
+      sb.from('delivery_requests').select('*').eq('status','pending')
+        .in('delivery_city', courier.zones || ['Dakar'])
+        .order('created_at', { ascending: false }).limit(20)
+        .then(({ data }) => { setJobs(data||[]); });
+    } else if (tab === 'my') {
+      sb.from('delivery_requests').select('*').eq('courier_id', courier.id)
+        .not('status', 'in', '("delivered","cancelled","failed")')
+        .order('created_at', { ascending: false })
+        .then(({ data }) => { setMyJobs(data||[]); });
+    } else if (tab === 'earnings') {
+      sb.from('courier_earnings').select('*').eq('courier_id', courier.id)
+        .order('created_at', { ascending: false }).limit(50)
+        .then(({ data }) => { setEarnings(data||[]); });
+    }
+  }, [tab, courier?.id]);
+
+  // Inscription coursier
+  const register = async () => {
+    if (!regForm.name || !regForm.phone) { addToast('Nom et téléphone requis', 'warning'); return; }
+    const { data, error } = await sb.from('couriers').insert({
+      user_id: currentUser.id, ...regForm, status: 'pending',
+    }).select().single();
+    if (error) { addToast('Erreur : ' + error.message, 'error'); return; }
+    setCourier(data); setRegStep('pending');
+    addToast('✅ Candidature envoyée ! Vous serez notifié sous 24h.', 'success');
+  };
+
+  // Toggle disponibilité
+  const toggleAvail = async () => {
+    const newVal = !available;
+    await sb.from('couriers').update({ is_available: newVal }).eq('id', courier.id);
+    setAvailable(newVal);
+    addToast(newVal ? '🟢 Vous êtes disponible' : '🔴 Vous êtes hors ligne', 'info');
+  };
+
+  // Accepter une mission
+  const acceptJob = async (job) => {
+    const eta = new Date(Date.now() + 30 * 60000).toISOString();
+    const { error } = await sb.from('delivery_requests').update({
+      courier_id: courier.id, status: 'accepted', accepted_at: new Date().toISOString(), estimated_at: eta
+    }).eq('id', job.id).eq('status', 'pending');
+    if (error) { addToast('Mission déjà prise !', 'warning'); return; }
+    addToast('✅ Mission acceptée !', 'success');
+    setTab('my'); setJobs(j => j.filter(x => x.id !== job.id));
+  };
+
+  // Changer le statut d'une livraison
+  const updateStatus = async (job, newStatus, extra = {}) => {
+    const updates = { status: newStatus, ...extra };
+    if (newStatus === 'picked_up')  updates.picked_up_at = new Date().toISOString();
+    if (newStatus === 'in_transit') updates.picked_up_at = updates.picked_up_at || new Date().toISOString();
+    if (newStatus === 'delivered')  updates.delivered_at = new Date().toISOString();
+    const { error } = await sb.from('delivery_requests').update(updates).eq('id', job.id);
+    if (error) { addToast('Erreur : ' + error.message, 'error'); return; }
+    const labels = { picked_up:'Colis récupéré !', in_transit:'En route !', delivered:'Livraison confirmée ! 🎉', failed:'Échec signalé' };
+    addToast(labels[newStatus] || 'Mis à jour', 'success');
+    setMyJobs(j => j.map(x => x.id === job.id ? { ...x, ...updates } : x));
+  };
+
+  if (loading) return E('div', { style:{ textAlign:'center', padding:'3rem' } }, E('i', { className:'fas fa-spinner fa-spin', style:{ fontSize:'2rem', color:'var(--primary)' } }));
+
+  // ── Inscription ─────────────────────────────────────────────────────────
+  if (regStep === 'register') return E('div', { style:{ maxWidth:480, margin:'0 auto', padding:'1rem' } },
+    E('div', { style:{ textAlign:'center', marginBottom:'2rem' } },
+      E('div', { style:{ fontSize:'3rem', marginBottom:'.5rem' } }, '🛵'),
+      E('h2', { style:{ fontWeight:800 } }, 'Devenir livreur NEXUS'),
+      E('p', { style:{ color:'var(--text-secondary)', fontSize:'.88rem' } }, 'Livrez à Dakar et gagnez jusqu\'à 25 000 FCFA/jour. Payé par Wave ou OM.')
+    ),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Nom complet *'),
+      E('input', { className:'form-input', value:regForm.name, onChange:e=>setRegForm(f=>({...f,name:e.target.value})), placeholder:'Moussa Diallo' })),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Téléphone *'),
+      E('input', { className:'form-input', value:regForm.phone, onChange:e=>setRegForm(f=>({...f,phone:e.target.value})), placeholder:'77 xxx xx xx' })),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Véhicule'),
+      E('select', { className:'form-input', value:regForm.vehicle_type, onChange:e=>setRegForm(f=>({...f,vehicle_type:e.target.value})) },
+        ['moto','vélo','voiture','pied'].map(v => E('option',{key:v,value:v}, v.charAt(0).toUpperCase()+v.slice(1))))),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Zones de livraison'),
+      E('div', { style:{ display:'flex', flexWrap:'wrap', gap:'.4rem' } },
+        Object.keys(LIVRAISON_TARIFS).filter(k=>k!=='DEFAULT').map(z =>
+          E('label', { key:z, style:{ display:'flex', alignItems:'center', gap:'.3rem', cursor:'pointer', padding:'.3rem .7rem', borderRadius:99, border:'1px solid var(--border)', background:regForm.zones.includes(z)?'var(--primary)':'transparent', color:regForm.zones.includes(z)?'#fff':'var(--text-primary)', fontSize:'.8rem' } },
+            E('input', { type:'checkbox', checked:regForm.zones.includes(z), style:{display:'none'}, onChange:()=>setRegForm(f=>({...f, zones: f.zones.includes(z)?f.zones.filter(x=>x!==z):[...f.zones,z]})) }), z)))),
+    E('div', { style:{ background:'rgba(0,133,62,.06)', borderRadius:10, padding:'.85rem 1rem', margin:'1rem 0', fontSize:'.83rem' } },
+      '💡 Votre candidature sera validée sous 24h. Vous gagnerez 90% du tarif de livraison (NEXUS garde 10%).'
+    ),
+    E('button', { className:'btn btn-primary btn-block', onClick:register }, '🚀 Postuler comme livreur')
+  );
+
+  // ── En attente de validation ────────────────────────────────────────────
+  if (regStep === 'pending') return E('div', { style:{ textAlign:'center', padding:'3rem 1rem' } },
+    E('div', { style:{ fontSize:'3rem', marginBottom:'1rem' } }, '⏳'),
+    E('h3', { style:{ fontWeight:700, marginBottom:'.5rem' } }, 'Candidature en cours'),
+    E('p', { style:{ color:'var(--text-secondary)' } }, 'Notre équipe valide votre profil sous 24h. Vous recevrez une notification WhatsApp.')
+  );
+
+  // ── Interface coursier actif ────────────────────────────────────────────
+  const totalEarned = earnings.reduce((s,e)=>s+(e.amount||0),0);
+  const pendingPay  = earnings.filter(e=>e.status==='pending').reduce((s,e)=>s+(e.amount||0),0);
+
+  return E('div', null,
+    // Header avec statut disponibilité
+    E('div', { style:{ background:'var(--primary)', color:'#fff', padding:'1rem 1.25rem', borderRadius:12, marginBottom:'1rem', display:'flex', justifyContent:'space-between', alignItems:'center' } },
+      E('div', null,
+        E('div', { style:{ fontWeight:700, fontSize:'1rem' } }, '👋 ', courier.name),
+        E('div', { style:{ fontSize:'.82rem', opacity:.85 } }, { moto:'🛵 Moto', vélo:'🚲 Vélo', voiture:'🚗 Voiture', pied:'🚶 À pied' }[courier.vehicle_type] || courier.vehicle_type),
+        pendingPay > 0 && E('div', { style:{ fontSize:'.8rem', marginTop:'.2rem', background:'rgba(255,255,255,.2)', borderRadius:6, padding:'2px 8px', display:'inline-block' } }, '💰 ', FCFA(pendingPay), ' à recevoir')
+      ),
+      E('label', { style:{ display:'flex', alignItems:'center', gap:'.5rem', cursor:'pointer' } },
+        E('input', { type:'checkbox', checked:available, onChange:toggleAvail, style:{ display:'none' } }),
+        E('div', { style:{ width:48, height:26, borderRadius:99, background:available?'#25D366':'rgba(255,255,255,.3)', position:'relative', transition:'background .2s' } },
+          E('div', { style:{ width:22, height:22, borderRadius:'50%', background:'#fff', position:'absolute', top:2, left:available?24:2, transition:'left .2s' } })
+        ),
+        E('span', { style:{ fontSize:'.82rem', fontWeight:600 } }, available?'Disponible':'Hors ligne')
+      )
+    ),
+
+    // Onglets
+    E('div', { style:{ display:'flex', gap:'.35rem', marginBottom:'1rem', overflowX:'auto' } },
+      [
+        { id:'available', label:'📋 Missions dispo', count:jobs.length },
+        { id:'my',        label:'🚛 Mes livraisons',  count:myJobs.length },
+        { id:'earnings',  label:'💰 Gains' },
+      ].map(t => E('button', { key:t.id, onClick:()=>setTab(t.id), style:{
+        padding:'.4rem .85rem', borderRadius:8, border:'none', cursor:'pointer',
+        fontWeight:tab===t.id?700:400, fontSize:'.82rem', whiteSpace:'nowrap',
+        background:tab===t.id?'var(--primary)':'var(--bg-light)',
+        color:tab===t.id?'#fff':'var(--text-secondary)'
+      }}, t.label, t.count>0&&E('span',{style:{marginLeft:'.3rem',background:'rgba(255,255,255,.25)',borderRadius:99,padding:'0 5px',fontSize:'.7rem'}},t.count)))
+    ),
+
+    // ── Missions disponibles ──────────────────────────────────────────────
+    tab==='available' && (jobs.length===0
+      ? E('div',{className:'empty-state'},E('i',{className:'fas fa-search'}),E('p',null,'Aucune mission disponible dans votre zone'))
+      : E('div',{style:{display:'flex',flexDirection:'column',gap:'.75rem'}},
+          jobs.map(job => E('div',{key:job.id,style:{border:'0.5px solid var(--border)',borderRadius:12,padding:'1rem'}},
+            E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'.6rem'}},
+              E('div',null,
+                E('div',{style:{fontWeight:700,fontSize:'.9rem'}},'📦 Commande #'+job.order_id?.slice(0,8).toUpperCase()),
+                E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)',marginTop:'.15rem'}},'📍 Retrait: ',job.pickup_address)
+              ),
+              E('div',{style:{textAlign:'right'}},
+                E('div',{style:{fontWeight:800,fontSize:'1.05rem',color:'var(--primary)'}}),
+                FCFA(job.courier_net),
+                E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)'}},'gain net')
+              )
+            ),
+            E('div',{style:{fontSize:'.8rem',color:'var(--text-secondary)',marginBottom:'.75rem'}},
+              '🏠 Livraison: ',job.delivery_address,' (',job.delivery_city,')'
+            ),
+            E('button',{className:'btn btn-primary btn-block',onClick:()=>acceptJob(job)},'✅ Accepter cette mission')
+          ))
+        )
+    ),
+
+    // ── Mes livraisons en cours ───────────────────────────────────────────
+    tab==='my' && (myJobs.length===0
+      ? E('div',{className:'empty-state'},E('i',{className:'fas fa-truck'}),E('p',null,'Aucune livraison en cours'))
+      : E('div',{style:{display:'flex',flexDirection:'column',gap:'.75rem'}},
+          myJobs.map(job => {
+            const st = DR_STATUS[job.status]||DR_STATUS.pending;
+            return E('div',{key:job.id,style:{border:'2px solid '+st.color,borderRadius:12,padding:'1rem',background:st.bg}},
+              E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.5rem'}},
+                E('span',{style:{fontWeight:700,fontSize:'.88rem'}},'#'+job.order_id?.slice(0,8).toUpperCase()),
+                E('span',{style:{fontSize:'.75rem',fontWeight:700,color:st.color,background:'white',borderRadius:99,padding:'2px 10px'}},st.label)
+              ),
+              E('div',{style:{fontSize:'.82rem',marginBottom:'.3rem'}},'📍 Retrait: ',job.pickup_address),
+              E('div',{style:{fontSize:'.82rem',marginBottom:'.3rem'}},'🏠 Livraison: ',job.delivery_address),
+              job.buyer_phone && E('a',{href:'tel:'+job.buyer_phone,style:{fontSize:'.82rem',color:'var(--primary)',display:'block',marginBottom:'.75rem'}},'📞 Appeler client: ',job.buyer_phone),
+              // Boutons d'action selon statut
+              E('div',{style:{display:'flex',gap:'.5rem',flexWrap:'wrap'}},
+                job.status==='accepted' && E('button',{className:'btn btn-primary',style:{flex:1},onClick:()=>updateStatus(job,'picked_up')},'📦 Colis récupéré'),
+                job.status==='picked_up' && E('button',{className:'btn btn-primary',style:{flex:1},onClick:()=>updateStatus(job,'in_transit')},'🚛 En route'),
+                job.status==='in_transit' && E('button',{className:'btn btn-primary',style:{flex:1},onClick:()=>updateStatus(job,'delivered')},'✅ Livré'),
+                (job.status==='accepted'||job.status==='picked_up') && E('button',{className:'btn btn-secondary',onClick:()=>updateStatus(job,'failed',{failure_reason:'Impossible de livrer'})},'❌ Problème')
+              )
+            );
+          })
+        )
+    ),
+
+    // ── Gains ─────────────────────────────────────────────────────────────
+    tab==='earnings' && E('div',null,
+      E('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'.65rem',marginBottom:'1.25rem'}},
+        E('div',{style:{background:'var(--bg-light)',borderRadius:10,padding:'.85rem 1rem',borderLeft:'3px solid var(--primary)'}},
+          E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)',textTransform:'uppercase'}},'Total gagné'),
+          E('div',{style:{fontWeight:700,fontSize:'1.05rem',marginTop:'.2rem'}},FCFA(courier.total_earned||0))
+        ),
+        E('div',{style:{background:'var(--bg-light)',borderRadius:10,padding:'.85rem 1rem',borderLeft:'3px solid #f59e0b'}},
+          E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)',textTransform:'uppercase'}},'En attente'),
+          E('div',{style:{fontWeight:700,fontSize:'1.05rem',marginTop:'.2rem'}},FCFA(pendingPay))
+        )
+      ),
+      pendingPay > 0 && E('div',{style:{background:'#E1F5FE',border:'1.5px solid #4FC3F7',borderRadius:10,padding:'.85rem 1rem',marginBottom:'1rem',fontSize:'.83rem'}},
+        '💡 ',FCFA(pendingPay),' en attente de versement. L\'admin vous paiera par Wave ou OM.'
+      ),
+      earnings.length===0 ? E('div',{className:'empty-state'},E('p',null,'Aucun gain enregistré'))
+      : E('div',{style:{display:'flex',flexDirection:'column',gap:'.5rem'}},
+          earnings.map(e => E('div',{key:e.id,style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'.6rem 0',borderBottom:'0.5px solid var(--border)'}},
+            E('div',null,
+              E('div',{style:{fontSize:'.85rem',fontWeight:500}},e.type==='delivery'?'🚛 Livraison':'💰 '+e.type),
+              E('div',{style:{fontSize:'.75rem',color:'var(--text-secondary)'}},new Date(e.created_at).toLocaleDateString('fr-FR'))
+            ),
+            E('div',{style:{textAlign:'right'}},
+              E('div',{style:{fontWeight:700,color:'var(--primary)'}}),FCFA(e.amount),
+              E('span',{style:{fontSize:'.72rem',marginLeft:'.4rem',color:e.status==='paid'?'#059669':'#d97706'}},e.status==='paid'?'✅ Payé':'⏳ En attente')
+            )
+          ))
+        )
+    )
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// 2. TABLEAU DE BORD ADMIN LIVRAISON
+// ════════════════════════════════════════════════════════════════════════════
+const AdminLivraisonPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const [tab, setTab]         = React.useState('overview');
+  const [couriers, setCouriers] = React.useState([]);
+  const [deliveries, setDeliveries] = React.useState([]);
+  const [stats, setStats]     = React.useState({ total:0, delivered:0, pending:0, revenue:0, couriersActive:0 });
+  const [loading, setLoading] = React.useState(true);
+  const [payingId, setPayingId] = React.useState(null);
+  const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
+  const waveNum = NEXUS_CONFIG?.payments?.wave?.number || '77XXXXXXX';
+  const omNum   = NEXUS_CONFIG?.payments?.om?.number   || '77XXXXXXX';
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [{ data:dr }, { data:co }] = await Promise.all([
+        sb.from('delivery_requests').select('*').order('created_at',{ascending:false}).limit(200),
+        sb.from('couriers').select('*').order('total_earned',{ascending:false}),
+      ]);
+      setDeliveries(dr||[]);
+      setCouriers(co||[]);
+      const delivered = (dr||[]).filter(d=>d.status==='delivered');
+      setStats({
+        total: (dr||[]).length,
+        delivered: delivered.length,
+        pending: (dr||[]).filter(d=>d.status==='pending').length,
+        revenue: delivered.reduce((s,d)=>s+(d.nexus_cut||0),0),
+        couriersActive: (co||[]).filter(c=>c.is_available).length,
+      });
+    } catch(e) { addToast('Erreur : '+e.message,'error'); }
+    finally { setLoading(false); }
+  };
+
+  React.useEffect(()=>{ load(); },[]);
+
+  const approveCourier = async (id) => {
+    await sb.from('couriers').update({ status:'active', approved_at:new Date().toISOString() }).eq('id',id);
+    addToast('✅ Coursier approuvé','success'); load();
+  };
+  const suspendCourier = async (id) => {
+    await sb.from('couriers').update({ status:'suspended' }).eq('id',id);
+    addToast('Coursier suspendu','warning'); load();
+  };
+
+  const payCourier = async (courierId, method) => {
+    const co = couriers.find(c=>c.id===courierId);
+    const { data:earnings } = await sb.from('courier_earnings').select('*').eq('courier_id',courierId).eq('status','pending');
+    const total = (earnings||[]).reduce((s,e)=>s+(e.amount||0),0);
+    if (total===0) { addToast('Aucun gain à payer','info'); return; }
+    const ref = 'LIV-'+Date.now().toString(36).toUpperCase();
+    const phone = (co?.phone||'').replace(/\D/g,'');
+    if (method==='wave') window.open('https://pay.wave.com/m/'+waveNum+'/c/SN?amount='+total+'&note=NEXUS-'+ref,'_blank');
+    else alert('Orange Money : '+FCFA(total)+' au '+phone+'\nRéf : NEXUS-'+ref);
+    setPayingId(courierId);
+    await sb.from('courier_earnings').update({ status:'paid', paid_at:new Date().toISOString(), payment_ref:ref }).eq('courier_id',courierId).eq('status','pending');
+    addToast('✅ Paiement lancé : '+FCFA(total),'success');
+    setPayingId(null); load();
+  };
+
+  const assignCourier = async (deliveryId, courierId) => {
+    const co = couriers.find(c=>c.id===courierId);
+    if (!co) return;
+    await sb.from('delivery_requests').update({ courier_id:courierId, status:'accepted', accepted_at:new Date().toISOString() }).eq('id',deliveryId);
+    addToast('Coursier assigné : '+co.name,'success'); load();
+  };
+
+  const TABS = [
+    { id:'overview',   label:'📊 Vue d\'ensemble' },
+    { id:'deliveries', label:'📦 Livraisons' },
+    { id:'couriers',   label:'🛵 Coursiers' },
+    { id:'pay',        label:'💰 Payer coursiers' },
+  ];
+
+  if (loading) return E('div',{style:{textAlign:'center',padding:'3rem'}},E('i',{className:'fas fa-spinner fa-spin',style:{fontSize:'2rem'}}));
+
+  return E('div',null,
+    E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1.25rem',flexWrap:'wrap',gap:'.75rem'}},
+      E('h2',{style:{fontWeight:700,fontSize:'1.15rem',margin:0}},'🚛 NEXUS Livraison'),
+      E('button',{className:'btn btn-secondary btn-sm',onClick:load},E('i',{className:'fas fa-sync-alt'}),' Actualiser')
+    ),
+
+    E('div',{style:{display:'flex',gap:'.35rem',marginBottom:'1.25rem',borderBottom:'1.5px solid var(--border)',paddingBottom:'.5rem',flexWrap:'wrap'}},
+      TABS.map(t=>E('button',{key:t.id,onClick:()=>setTab(t.id),style:{padding:'.4rem .9rem',borderRadius:'8px 8px 0 0',border:'none',cursor:'pointer',fontSize:'.83rem',fontWeight:tab===t.id?700:400,background:tab===t.id?'var(--primary)':'transparent',color:tab===t.id?'white':'var(--text-primary)'}},t.label))
+    ),
+
+    // ── Vue d'ensemble ────────────────────────────────────────────────────
+    tab==='overview' && E('div',null,
+      E('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'.65rem',marginBottom:'1.5rem'}},
+        [
+          {l:'Livraisons total',v:stats.total,c:'#0277BD'},
+          {l:'Livrées',v:stats.delivered,c:'#059669'},
+          {l:'En attente',v:stats.pending,c:'#d97706'},
+          {l:'Revenu NEXUS',v:FCFA(stats.revenue),c:'#00853E'},
+          {l:'Coursiers actifs',v:stats.couriersActive,c:'#7c3aed'},
+        ].map((s,i)=>E('div',{key:i,style:{background:'var(--bg-light)',borderRadius:10,padding:'.85rem 1rem',borderLeft:'3px solid '+s.c}},
+          E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)',textTransform:'uppercase'}}),s.l,
+          E('div',{style:{fontWeight:700,fontSize:'1.05rem',marginTop:'.2rem'}}),s.v
+        ))
+      ),
+      E('h4',{style:{fontWeight:600,marginBottom:'.75rem'}},'Livraisons récentes'),
+      E('div',{className:'table-wrapper'},
+        E('table',{className:'data-table'},
+          E('thead',null,E('tr',null,['Commande','Client','Adresse','Coursier','Statut','Gain NEXUS'].map(h=>E('th',{key:h},h)))),
+          E('tbody',null,
+            deliveries.slice(0,15).map(d=>{
+              const st = DR_STATUS[d.status]||DR_STATUS.pending;
+              const co = couriers.find(c=>c.id===d.courier_id);
+              return E('tr',{key:d.id},
+                E('td',null,E('code',null,'#'+(d.order_id||'').slice(0,8).toUpperCase())),
+                E('td',null,d.buyer_name||'—'),
+                E('td',null,d.delivery_address?.slice(0,30)+'…'),
+                E('td',null,co?.name||E('span',{style:{color:'#d97706',fontSize:'.78rem'}},'Non assigné')),
+                E('td',null,E('span',{style:{color:st.color,fontWeight:600,fontSize:'.78rem'}},st.label)),
+                E('td',{style:{fontWeight:600,color:'var(--primary)'}},FCFA(d.nexus_cut||0))
+              );
+            })
+          )
+        )
+      )
+    ),
+
+    // ── Livraisons ────────────────────────────────────────────────────────
+    tab==='deliveries' && E('div',{className:'table-wrapper'},
+      E('table',{className:'data-table'},
+        E('thead',null,E('tr',null,['Commande','Retrait','Livraison','Coursier','Statut','Tarif','NEXUS','Action'].map(h=>E('th',{key:h},h)))),
+        E('tbody',null,
+          deliveries.map(d=>{
+            const st = DR_STATUS[d.status]||DR_STATUS.pending;
+            const co = couriers.find(c=>c.id===d.courier_id);
+            const avail = couriers.filter(c=>c.status==='active'&&(c.zones||[]).includes(d.delivery_city));
+            return E('tr',{key:d.id},
+              E('td',null,E('code',{style:{fontSize:'.75rem'}},'#'+(d.order_id||'').slice(0,8).toUpperCase())),
+              E('td',{style:{fontSize:'.78rem'}},d.pickup_city),
+              E('td',{style:{fontSize:'.78rem'}},d.delivery_city),
+              E('td',null,co?.name||'—'),
+              E('td',null,E('span',{style:{color:st.color,fontWeight:600,fontSize:'.78rem'}},st.label)),
+              E('td',{style:{fontWeight:600}},FCFA(d.fee_fcfa||0)),
+              E('td',{style:{fontWeight:600,color:'var(--primary)'}},FCFA(d.nexus_cut||0)),
+              E('td',null,
+                d.status==='pending'&&avail.length>0&&E('select',{
+                  style:{fontSize:'.75rem',padding:'.2rem .4rem',borderRadius:6,border:'1px solid var(--border)'},
+                  onChange:e=>e.target.value&&assignCourier(d.id,e.target.value),defaultValue:''
+                },
+                  E('option',{value:''},'Assigner…'),
+                  avail.map(c=>E('option',{key:c.id,value:c.id},c.name))
+                )
+              )
+            );
+          })
+        )
+      )
+    ),
+
+    // ── Coursiers ─────────────────────────────────────────────────────────
+    tab==='couriers' && E('div',{style:{display:'flex',flexDirection:'column',gap:'.65rem'}},
+      couriers.length===0&&E('div',{className:'empty-state'},E('i',{className:'fas fa-motorcycle'}),E('p',null,'Aucun coursier inscrit')),
+      couriers.map(co=>{
+        const pendingGains = co.total_earned||0;
+        const statusColor={pending:'#d97706',active:'#059669',suspended:'#6b7280',offline:'#6b7280'}[co.status]||'#6b7280';
+        return E('div',{key:co.id,style:{border:'0.5px solid var(--border)',borderRadius:12,padding:'1rem',display:'flex',alignItems:'center',gap:'1rem',flexWrap:'wrap'}},
+          E('div',{style:{width:40,height:40,borderRadius:'50%',background:'var(--primary)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,flexShrink:0}},(co.name||'?')[0].toUpperCase()),
+          E('div',{style:{flex:1,minWidth:0}},
+            E('div',{style:{fontWeight:700}}),co.name,
+            E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)'}}),co.phone,' · ',({moto:'🛵 Moto',vélo:'🚲 Vélo',voiture:'🚗 Voiture',pied:'🚶 Pied'}[co.vehicle_type]||co.vehicle_type),
+            E('div',{style:{fontSize:'.78rem',marginTop:'.2rem',display:'flex',gap:'.75rem',flexWrap:'wrap'}},
+              E('span',null,'📦 ',co.deliveries_done,' livraisons'),
+              E('span',null,'💰 Total : ',FCFA(co.total_earned||0)),
+              E('span',{style:{color:statusColor,fontWeight:600}},{pending:'⏳ En attente',active:'✅ Actif',suspended:'⏸ Suspendu'}[co.status]||co.status),
+              co.is_available&&E('span',{style:{color:'#25D366',fontWeight:600}},'🟢 Disponible')
+            )
+          ),
+          E('div',{style:{display:'flex',gap:'.4rem',flexWrap:'wrap'}},
+            co.status==='pending'&&E('button',{className:'btn btn-primary btn-sm',onClick:()=>approveCourier(co.id)},'✅ Approuver'),
+            co.status==='active'&&E('button',{className:'btn btn-secondary btn-sm',onClick:()=>suspendCourier(co.id)},'⏸ Suspendre')
+          )
+        );
+      })
+    ),
+
+    // ── Payer les coursiers ────────────────────────────────────────────────
+    tab==='pay' && E('div',null,
+      E('p',{style:{color:'var(--text-secondary)',fontSize:'.87rem',marginBottom:'1.25rem'}},'Paiements des gains en attente. Cliquer Wave ou OM ouvre le lien de paiement direct.'),
+      couriers.filter(co=>co.total_earned>0).length===0&&E('div',{className:'empty-state'},E('i',{className:'fas fa-check-circle',style:{color:'var(--success)'}}),E('p',null,'Tous les coursiers sont à jour !')),
+      couriers.filter(co=>co.status==='active').map(co=>{
+        return E('div',{key:co.id,style:{border:'0.5px solid var(--border)',borderRadius:12,padding:'1rem',marginBottom:'.75rem',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'.75rem'}},
+          E('div',null,
+            E('div',{style:{fontWeight:700}}),co.name,
+            E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)'}}),co.phone,' · ',co.deliveries_done,' livraisons',
+            E('div',{style:{fontWeight:700,color:'var(--primary)',marginTop:'.2rem'}}),FCFA(co.total_earned||0),' total'
+          ),
+          E('div',{style:{display:'flex',gap:'.5rem'}},
+            E('button',{onClick:()=>payCourier(co.id,'wave'),disabled:payingId===co.id,style:{padding:'.45rem .9rem',border:'1.5px solid #4FC3F7',borderRadius:8,background:'#E1F5FE',color:'#0277BD',cursor:'pointer',fontWeight:700,fontSize:'.82rem'}},'🌊 Wave'),
+            E('button',{onClick:()=>payCourier(co.id,'om'),disabled:payingId===co.id,style:{padding:'.45rem .9rem',border:'1.5px solid #FF9800',borderRadius:8,background:'#FFF3E0',color:'#E65100',cursor:'pointer',fontWeight:700,fontSize:'.82rem'}},'🟠 OM')
+          )
+        );
+      })
+    )
+  );
+};
+
 const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -21083,6 +21566,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "ondemand_admin",   icon: "concierge-bell", label: "Commandes OnDemand" },
     { id: "insurance_leads",  icon: "car",            label: "🚗 Leads Assurance" },
     { id: "monetization", icon: "coins", label: "💰 Monétisation" },
+    { id: "livraison_admin", icon: "truck", label: "🚛 NEXUS Livraison" },
     { id: "popups", icon: "comment-alt", label: "💬 Popups & Annonces" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
@@ -22491,6 +22975,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
     );
   })(),
 
+  view === "livraison_admin" && React.createElement(AdminLivraisonPanel, { addToast }),
   view === "monetization" && React.createElement(MonetizationConfigPanel, { addToast }),
   view === "popups"  && React.createElement(PopupsAdminPanel, { addToast }),
   view === "revenue" && React.createElement(RevenueAdminPanel, { orders, products, addToast }),
@@ -30370,7 +30855,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setComposeRecipient({ id: order.vendor, name: order.vendorName });
       setShowComposeMessage(true);
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => generateInvoicePDF(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Facture PDF"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => printOrderSlip(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-print" }), " Imprimer"), order.status === "delivered" && !order.returnStatus && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowReturnOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour"), !order.disputeId && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "#dc2626", color: "#dc2626" }, onClick: () => setShowDisputeOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige"), order.disputeId && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center", fontSize: "0.72rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige ", order.disputeStatus === "open" ? "en cours" : "r\xE9solu"), order.returnStatus && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour ", order.returnStatus === "requested" ? "en cours" : order.returnStatus), ["pending_payment", "processing"].includes(order.status) && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowCancelOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Annuler"))));
-  }))})()),  !isLoading && view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), !isLoading && view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
+  }))})()),  !isLoading && view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), !isLoading && view === "courier_app" && React.createElement(CourierApp, { currentUser: currentUser2, addToast }), !isLoading && view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
     // [FIX #310] LoyaltyHist supprimé — états hissés dans BuyerDashboard (_loyaltyData)
     const ld = _loyaltyData;
       const pts2 = ld?.points ?? 0;
