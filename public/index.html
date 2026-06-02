@@ -19748,9 +19748,14 @@ const SitePopupManager = ({ currentUser, currentPage = 'home' }) => {
 
       const filtered = popups.filter(p => {
         // Filtre page
-        if (p.show_on && p.show_on.length && !p.show_on.includes(currentPage) && !p.show_on.includes('all')) return false;
+        // 'all' dans show_on = toujours afficher
+        if (p.show_on && p.show_on.length) {
+          const pages = p.show_on;
+          if (!pages.includes('all') && !pages.includes(currentPage)) return false;
+        }
         // Filtre target
-        if (p.target === 'guest' && currentUser) return false;
+        // 'guest' = visiteur non connecté
+        if (p.target === 'guest'     && currentUser)   return false;
         if (p.target === 'logged_in' && !currentUser) return false;
         if (p.target === 'buyer' && role !== 'buyer') return false;
         if (p.target === 'vendor' && role !== 'vendor') return false;
@@ -32342,7 +32347,14 @@ const App = ({ onUserChange }) => {
       onShowCGU: () => setShowCGU(true),
       onShowPrivacy: () => setShowPrivacy(true)
     }
-  ), React.createElement(SitePopupManager, { currentUser: currentUser2, currentPage: 'home' }),
+  ), React.createElement(SitePopupManager, {
+    currentUser: currentUser2,
+    currentPage: (() => {
+      if (typeof selectedProduct !== 'undefined' && selectedProduct) return 'product';
+      if (typeof showCart !== 'undefined' && showCart) return 'checkout';
+      return 'home';
+    })(),
+  }),
   !currentUser2 && /* @__PURE__ */ React.createElement(GoogleOneTapProvider, { onLogin: handleLogin }), showCGU && /* @__PURE__ */ React.createElement(CGUModal, { onClose: () => setShowCGU(false) }), showPrivacy && /* @__PURE__ */ React.createElement(PrivacyModal, { onClose: () => setShowPrivacy(false) }), showOnboarding && /* @__PURE__ */ React.createElement(
     OnboardingTour,
     {
