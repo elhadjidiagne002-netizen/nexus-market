@@ -3703,6 +3703,13 @@ const NEXUS_TRANSLATIONS = {
         // Purge la valeur obsolete pour qu elle ne revienne pas au prochain chargement.
         delete _sc.apiUrl;
         try { localStorage.setItem('nexus_saved_config', JSON.stringify(_sc)); NexusAdminConfig.set('nexus_main_config', _sc, DataService?._user?.id).catch(() => {}); } catch(_) {}
+        // Charger config monétisation et l'appliquer en live
+        NexusAdminConfig.get('nexus_monetization_cfg').then(function(mcfg) {
+          if (!mcfg || typeof NEXUS_CONFIG === 'undefined') return;
+          if (mcfg.wa_tracking_price   !== undefined) NEXUS_CONFIG.wa_tracking_price   = mcfg.wa_tracking_price;
+          if (mcfg.wa_tracking_enabled !== undefined) NEXUS_CONFIG.wa_tracking_enabled = mcfg.wa_tracking_enabled;
+          if (mcfg.commission_default  !== undefined) NEXUS_CONFIG.commission_default  = mcfg.commission_default;
+        }).catch(function(){});
       }
     }
   } catch(_) {}
@@ -11784,7 +11791,8 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   }, [currentUser2?.id]);
   const cashbackDiscountEur = Math.min(cashbackUsed, cashbackBalance) / EUR_TO_FCFA;
   // ── Suivi Premium WhatsApp ────────────────────────────────
-  const WA_TRACKING_FCFA = 200; // FCFA
+  // [FIX] Prix WA configurable via Admin → Monétisation
+  const WA_TRACKING_FCFA = (typeof NEXUS_CONFIG !== 'undefined' && NEXUS_CONFIG.wa_tracking_price) ? NEXUS_CONFIG.wa_tracking_price : 200;
   const [waTracking, setWaTracking] = React.useState(false);
   const waTrackingEur = waTracking ? WA_TRACKING_FCFA / EUR_TO_FCFA : 0;
   // ─────────────────────────────────────────────────────────
@@ -12535,7 +12543,7 @@ currentUser2 && /* @__PURE__ */ React.createElement("div", { style: { display: "
 ), pointsUsed > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "#B8860B", fontWeight: 600 } },
   /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star", style: { color: "#FFD700" } }), " Points fidélité (", pointsUsed, " pts)"),
   /* @__PURE__ */ React.createElement("span", null, "-", formatPrice(pointsDiscountEurReal))
-), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("span", null, "dont frais de service (18\u00a0%)"  /* [LEGAL] TVA quand seuil DGI atteint */), /* @__PURE__ */ React.createElement("span", null, formatPrice(tvaEur))), referralDiscountEur > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "var(--primary)", fontWeight: 600 } }, /* @__PURE__ */ React.createElement("span", null, "\uD83C\uDF81 Remise filleul (-5%)"), /* @__PURE__ */ React.createElement("span", null, "- ", formatPrice(referralDiscountEur))), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2", style: { fontSize: "0.88rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("span", null, "Livraison"), /* @__PURE__ */ React.createElement("span", null, formatPrice(shippingEur))), /* @__PURE__ */ React.createElement("div", { className: "flex-between", style: { fontWeight: 700, fontSize: "1.1rem" } }, /* @__PURE__ */ React.createElement(/* @__PURE__ */ React.createElement("div", { className: "flex-between", style: { cursor: "pointer", padding: "0.5rem 0", borderTop: "0.5px solid var(--border)", margin: "0.2rem 0" }, onClick: () => setWaTracking(w => !w) }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", flex: 1 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: waTracking, onChange: e => { e.stopPropagation(); setWaTracking(e.target.checked); }, style: { accentColor: "#25D366", width: 15, height: 15 } }), /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", fontWeight: 600 } }, "📱 Suivi WhatsApp Premium"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: "var(--text-secondary)" } }, "Alertes commande instantanées"))), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700, color: waTracking ? "#25D366" : "var(--text-secondary)", fontSize: "0.85rem" } }, waTracking ? "+200 F" : "200 F")), "span", null, "Total"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt", style: { color: "var(--success)" } }), "Achat prot\xE9g\xE9 \xB7 Satisfait ou rembours\xE9 30j"))))));
+), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("span", null, "dont frais de service (18\u00a0%)"  /* [LEGAL] TVA quand seuil DGI atteint */), /* @__PURE__ */ React.createElement("span", null, formatPrice(tvaEur))), referralDiscountEur > 0 && /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-1", style: { fontSize: "0.88rem", color: "var(--primary)", fontWeight: 600 } }, /* @__PURE__ */ React.createElement("span", null, "\uD83C\uDF81 Remise filleul (-5%)"), /* @__PURE__ */ React.createElement("span", null, "- ", formatPrice(referralDiscountEur))), /* @__PURE__ */ React.createElement("div", { className: "flex-between mb-2", style: { fontSize: "0.88rem", color: "var(--text-secondary)" } }, /* @__PURE__ */ React.createElement("span", null, "Livraison"), /* @__PURE__ */ React.createElement("span", null, formatPrice(shippingEur))), /* @__PURE__ */ React.createElement("div", { className: "flex-between", style: { fontWeight: 700, fontSize: "1.1rem" } }, /* @__PURE__ */ React.createElement(/* @__PURE__ */ React.createElement("div", { className: "flex-between", style: { cursor: "pointer", padding: "0.5rem 0", borderTop: "0.5px solid var(--border)", margin: "0.2rem 0" }, onClick: () => setWaTracking(w => !w) }, /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", flex: 1 } }, /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: waTracking, onChange: e => { e.stopPropagation(); setWaTracking(e.target.checked); }, style: { accentColor: "#25D366", width: 15, height: 15 } }), (typeof NEXUS_CONFIG === "undefined" || NEXUS_CONFIG.wa_tracking_enabled !== false) && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", fontWeight: 600 } }, "📱 Suivi WhatsApp Premium"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: "var(--text-secondary)" } }, "Alertes commande instantanées"))), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 700, color: waTracking ? "#25D366" : "var(--text-secondary)", fontSize: "0.85rem" } }, waTracking ? "+200 F" : "200 F")), "span", null, "Total"), /* @__PURE__ */ React.createElement("span", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", fontSize: "0.75rem", color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt", style: { color: "var(--success)" } }), "Achat prot\xE9g\xE9 \xB7 Satisfait ou rembours\xE9 30j"))))));
 };
 const AuthModal = ({ onLogin, onCancel, targetRole, onShowCGU, onShowPrivacy, initialTab = "login" }) => {
   const [tab, setTab] = useState(initialTab);
@@ -19812,6 +19820,282 @@ const PopupsAdminPanel = ({ addToast }) => {
 };
 
 
+// ════════════════════════════════════════════════════════════════════════════
+// MonetizationConfigPanel — Tous les paramètres de monétisation en un seul endroit
+// Accessible via Admin → Config → 💰 Monétisation
+// Sauvegarde dans Supabase app_config via NexusAdminConfig
+// ════════════════════════════════════════════════════════════════════════════
+
+const MonetizationConfigPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const [cfg, setCfg]     = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+  const [tab, setTab]     = React.useState('commissions');
+
+  // Valeurs par défaut
+  const DEFAULTS = {
+    // Commissions
+    commission_default:     15,    // % commission standard
+    commission_vendor_new:  8,     // % commission vendeur parrain (3 mois)
+    commission_b2b:         10,    // % commission B2B
+    escrow_fee:             18,    // % frais de service inclus
+
+    // Boosts produits
+    boost_top3j_price:      500,
+    boost_semaine_price:    1200,
+    boost_mensuel_price:    8000,
+    boost_cat_price:        2000,  // tête de gondole catégorie / 7j
+
+    // Flash sponsorisées
+    flash_12h_price:        1500,
+    flash_24h_price:        3000,
+    flash_48h_price:        5000,
+    flash_7j_price:         15000,
+
+    // B2B prioritaire
+    b2b_priority_price:     2000,
+
+    // WhatsApp Premium
+    wa_tracking_enabled:    true,
+    wa_tracking_price:      200,   // FCFA par commande
+
+    // API Pro
+    api_monthly_price:      15000,
+    api_annual_price:       150000,
+    api_daily_limit:        1000,
+
+    // Publicités directes
+    ad_hero_daily:          50000,
+    ad_hero_weekly:         200000,
+    ad_hero_monthly:        600000,
+    ad_leader_weekly:       75000,
+    ad_leader_monthly:      200000,
+    ad_rect_weekly:         50000,
+    ad_pack_full:           350000,
+
+    // Cashback
+    cashback_rate:          2,     // % cashback automatique sur commande livrée
+    cashback_min_order:     5000,  // montant min FCFA pour déclencher le cashback
+
+    // Points de fidélité
+    loyalty_earn_rate:      5,     // points par 100 FCFA
+    loyalty_redeem_rate:    100,   // points pour 1 FCFA
+    loyalty_min_redeem:     500,   // points minimum pour utiliser
+  };
+
+  React.useEffect(() => {
+    NexusAdminConfig.get('nexus_monetization_cfg').then(saved => {
+      setCfg({ ...DEFAULTS, ...(saved || {}) });
+    }).catch(() => setCfg({ ...DEFAULTS }));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await NexusAdminConfig.set('nexus_monetization_cfg', cfg, DataService._user?.id);
+      // Synchroniser les valeurs critiques dans NEXUS_CONFIG pour effet immédiat
+      if (typeof NEXUS_CONFIG !== 'undefined') {
+        NEXUS_CONFIG.wa_tracking_price   = cfg.wa_tracking_price;
+        NEXUS_CONFIG.wa_tracking_enabled = cfg.wa_tracking_enabled;
+        NEXUS_CONFIG.commission_default  = cfg.commission_default;
+      }
+      addToast('✅ Paramètres de monétisation sauvegardés', 'success');
+    } catch(e) {
+      addToast('Erreur : ' + e.message, 'error');
+    }
+    setSaving(false);
+  };
+
+  if (!cfg) return E('div', { style: { textAlign: 'center', padding: '2rem' } },
+    E('i', { className: 'fas fa-spinner fa-spin', style: { fontSize: '2rem', color: 'var(--primary)' } })
+  );
+
+  const f = (k) => (e) => setCfg(c => ({ ...c, [k]: e.target.type === 'checkbox' ? e.target.checked : (e.target.type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value) }));
+
+  const FCFA = n => Number(n).toLocaleString('fr-FR') + ' F';
+
+  // Composants de saisie réutilisables
+  const Field = ({ label, k, type = 'number', suffix = '', hint = '', min = 0 }) =>
+    E('div', { className: 'form-group' },
+      E('label', { className: 'form-label' }, label),
+      E('div', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem' } },
+        E('input', {
+          type, className: 'form-input', value: cfg[k], onChange: f(k), min,
+          style: { flex: 1, ...(type === 'number' ? { textAlign: 'right' } : {}) }
+        }),
+        suffix && E('span', { style: { fontSize: '0.82rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' } }, suffix)
+      ),
+      hint && E('div', { style: { fontSize: '0.74rem', color: 'var(--text-secondary)', marginTop: '0.2rem' } }, hint)
+    );
+
+  const Toggle = ({ label, k, hint = '' }) =>
+    E('label', { style: { display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', padding: '0.5rem 0' } },
+      E('input', { type: 'checkbox', checked: !!cfg[k], onChange: f(k), style: { width: 18, height: 18, accentColor: 'var(--primary)' } }),
+      E('div', null,
+        E('span', { style: { fontWeight: 500 } }, label),
+        hint && E('div', { style: { fontSize: '0.74rem', color: 'var(--text-secondary)' } }, hint)
+      )
+    );
+
+  const Section = ({ title, icon, children }) =>
+    E('div', { style: { background: 'var(--color-background-primary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 'var(--border-radius-lg)', padding: '1rem 1.25rem', marginBottom: '0.75rem' } },
+      E('div', { style: { display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.85rem', borderBottom: '0.5px solid var(--color-border-tertiary)', paddingBottom: '0.6rem' } },
+        E('i', { className: 'fas fa-' + icon, style: { color: 'var(--color-text-tertiary)', fontSize: '0.9rem' } }),
+        E('span', { style: { fontWeight: 500, fontSize: '0.9rem' } }, title)
+      ),
+      children
+    );
+
+  const Row = ({ children }) => E('div', { className: 'form-row' }, children);
+
+  const TABS = [
+    { id: 'commissions', label: 'Commissions',  icon: 'percent' },
+    { id: 'boosts',      label: 'Boosts',        icon: 'bolt' },
+    { id: 'flash',       label: 'Flash & B2B',   icon: 'fire' },
+    { id: 'whatsapp',    label: 'WhatsApp',       icon: 'comment' },
+    { id: 'ads',         label: 'Publicités',     icon: 'ad' },
+    { id: 'api',         label: 'API Pro',        icon: 'code' },
+    { id: 'loyalty',     label: 'Fidélité',       icon: 'star' },
+  ];
+
+  const content = {
+    commissions: () => E(React.Fragment, null,
+      Section({ title: 'Taux de commission', icon: 'percent', children: E(React.Fragment, null,
+        Row({ children: [
+          Field({ label: 'Commission standard vendeur', k: 'commission_default', suffix: '%', hint: 'Appliqué sur chaque commande livrée' }),
+          Field({ label: 'Commission vendeur parrainé', k: 'commission_vendor_new', suffix: '% (3 mois)', hint: 'Réduit pour les filleuls vendeurs' }),
+        ]}),
+        Row({ children: [
+          Field({ label: 'Commission commandes B2B', k: 'commission_b2b', suffix: '%', hint: 'Devis et commandes professionnelles' }),
+          Field({ label: 'Frais de service (escrow)', k: 'escrow_fee', suffix: '% inclus TTC', hint: 'Affiché "dont frais de service" dans le récap' }),
+        ]}),
+        E('div', { style: { background: 'var(--color-background-secondary)', borderRadius: 8, padding: '0.75rem', fontSize: '0.82rem', color: 'var(--color-text-secondary)', marginTop: '0.5rem' } },
+          '💡 Ces taux s\'appliquent au moment du calcul des versements vendeurs. Modifiez le taux individuel d\'un vendeur dans Revenus → Commissions → Modifier taux.'
+        )
+      )}),
+      Section({ title: 'Cashback acheteurs', icon: 'coins', children:
+        Row({ children: [
+          Field({ label: 'Taux cashback automatique', k: 'cashback_rate', suffix: '% sur commande livrée' }),
+          Field({ label: 'Commande minimum', k: 'cashback_min_order', suffix: 'FCFA', hint: 'Montant min pour déclencher le cashback' }),
+        ]})
+      })
+    ),
+
+    boosts: () => Section({ title: 'Tarifs boosts visibilité produits', icon: 'rocket', children: E(React.Fragment, null,
+      Row({ children: [
+        Field({ label: '⚡ TOP Express (3 jours)', k: 'boost_top3j_price', suffix: 'FCFA' }),
+        Field({ label: '🥈 Boost Semaine (7 jours)', k: 'boost_semaine_price', suffix: 'FCFA' }),
+      ]}),
+      Row({ children: [
+        Field({ label: '⭐ Boost Mensuel (30 jours)', k: 'boost_mensuel_price', suffix: 'FCFA' }),
+        Field({ label: '🏆 Tête de gondole catégorie', k: 'boost_cat_price', suffix: 'FCFA / 7j', hint: 'Positions 1-3 dans la catégorie ciblée' }),
+      ]}),
+      E('div', { style: { background: 'var(--color-background-secondary)', borderRadius: 8, padding: '0.75rem', fontSize: '0.82rem', color: 'var(--color-text-secondary)' } },
+        '⚠️ Les prix modifiés ici s\'appliquent aux nouvelles souscriptions. Les boosts en cours ne sont pas affectés.'
+      )
+    )}),
+
+    flash: () => E(React.Fragment, null,
+      Section({ title: 'Ventes flash sponsorisées', icon: 'bolt', children: E(React.Fragment, null,
+        Row({ children: [
+          Field({ label: '⚡ Express 12h', k: 'flash_12h_price', suffix: 'FCFA' }),
+          Field({ label: '🔥 Flash 24h', k: 'flash_24h_price', suffix: 'FCFA' }),
+        ]}),
+        Row({ children: [
+          Field({ label: '🚀 Mega 48h', k: 'flash_48h_price', suffix: 'FCFA' }),
+          Field({ label: '🏆 Semaine 7j', k: 'flash_7j_price', suffix: 'FCFA' }),
+        ]})
+      )}),
+      Section({ title: 'Devis B2B prioritaire', icon: 'building', children:
+        Field({ label: 'Prix réponse garantie 24h', k: 'b2b_priority_price', suffix: 'FCFA', hint: 'Payé par l\'acheteur avant envoi du devis' })
+      })
+    ),
+
+    whatsapp: () => Section({ title: 'Suivi Premium WhatsApp', icon: 'comment', children: E(React.Fragment, null,
+      Toggle({ label: 'Activer le suivi Premium WhatsApp au checkout', k: 'wa_tracking_enabled', hint: 'Si désactivé, la checkbox n\'apparaît pas dans le récapitulatif commande' }),
+      E('div', { style: { padding: '0.75rem 0' } },
+        Field({ label: 'Prix du suivi WhatsApp', k: 'wa_tracking_price', suffix: 'FCFA', hint: 'Ajouté au total si l\'acheteur coche l\'option. Revenu net (Green API = gratuit).' })
+      ),
+      E('div', { style: { background: 'var(--color-background-info)', borderRadius: 8, padding: '0.85rem 1rem', fontSize: '0.83rem' } },
+        E('strong', null, '📊 Estimation revenus WhatsApp : '),
+        `Si ${cfg.wa_tracking_enabled ? '30%' : '—'} des acheteurs optent → ${cfg.wa_tracking_enabled ? FCFA(cfg.wa_tracking_price * 0.3 * 100) + '/mois sur 100 commandes' : 'désactivé'}`,
+        E('br', null),
+        E('span', { style: { color: 'var(--color-text-secondary)' } }, 'Coût Green API free tier : 0 FCFA jusqu\'à 1 000 messages/mois')
+      )
+    )}),
+
+    ads: () => Section({ title: 'Tarifs espaces publicitaires directs', icon: 'ad', children: E(React.Fragment, null,
+      E('div', { style: { fontWeight: 500, marginBottom: '0.75rem', fontSize: '0.88rem' } }, '🏠 Homepage — Carousel hero'),
+      Row({ children: [
+        Field({ label: '1 jour', k: 'ad_hero_daily', suffix: 'FCFA' }),
+        Field({ label: '1 semaine', k: 'ad_hero_weekly', suffix: 'FCFA' }),
+        Field({ label: '1 mois', k: 'ad_hero_monthly', suffix: 'FCFA' }),
+      ]}),
+      E('div', { style: { fontWeight: 500, margin: '0.85rem 0 0.75rem', fontSize: '0.88rem' } }, '📋 Bandeau catalogue (leaderboard)'),
+      Row({ children: [
+        Field({ label: '1 semaine', k: 'ad_leader_weekly', suffix: 'FCFA' }),
+        Field({ label: '1 mois', k: 'ad_leader_monthly', suffix: 'FCFA' }),
+      ]}),
+      Row({ children: [
+        Field({ label: '🔲 Rectangle inline — 1 sem.', k: 'ad_rect_weekly', suffix: 'FCFA' }),
+        Field({ label: '🔥 Pack Visibilité totale — 1 sem.', k: 'ad_pack_full', suffix: 'FCFA' }),
+      ]})
+    )}),
+
+    api: () => Section({ title: 'NEXUS Pro API — Abonnements', icon: 'code', children: E(React.Fragment, null,
+      Row({ children: [
+        Field({ label: 'Abonnement mensuel', k: 'api_monthly_price', suffix: 'FCFA / mois' }),
+        Field({ label: 'Abonnement annuel', k: 'api_annual_price', suffix: 'FCFA / an', hint: '2 mois offerts vs mensuel' }),
+      ]}),
+      Field({ label: 'Quota appels journalier', k: 'api_daily_limit', suffix: 'appels / jour', hint: 'Réinitialisé chaque nuit via pg_cron' })
+    )}),
+
+    loyalty: () => Section({ title: 'Programme de fidélité', icon: 'star', children: E(React.Fragment, null,
+      Row({ children: [
+        Field({ label: 'Points gagnés', k: 'loyalty_earn_rate', suffix: 'pts / 100 FCFA dépensés' }),
+        Field({ label: 'Valeur des points', k: 'loyalty_redeem_rate', suffix: 'pts = 1 FCFA' }),
+      ]}),
+      Field({ label: 'Minimum pour utilisation', k: 'loyalty_min_redeem', suffix: 'points', hint: 'Solde minimum requis pour utiliser les points au checkout' })
+    )}),
+  };
+
+  return E('div', { style: { marginBottom: '2rem' } },
+    E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' } },
+      E('h2', { style: { fontWeight: 700, fontSize: '1.15rem', margin: 0 } }, '💰 Paramètres de monétisation'),
+      E('button', { className: 'btn btn-primary', onClick: save, disabled: saving },
+        saving ? E('i', { className: 'fas fa-spinner fa-spin' }) : E('i', { className: 'fas fa-save' }),
+        ' ', saving ? 'Sauvegarde...' : 'Sauvegarder tout'
+      )
+    ),
+
+    // Onglets
+    E('div', { style: { display: 'flex', gap: '0.3rem', marginBottom: '1.25rem', flexWrap: 'wrap', borderBottom: '1.5px solid var(--color-border-tertiary)', paddingBottom: '0.5rem' } },
+      TABS.map(t =>
+        E('button', { key: t.id, onClick: () => setTab(t.id), style: {
+          padding: '0.4rem 0.9rem', borderRadius: '8px 8px 0 0', border: 'none', cursor: 'pointer',
+          fontSize: '0.82rem', fontWeight: tab === t.id ? 600 : 400,
+          background: tab === t.id ? 'var(--primary)' : 'transparent',
+          color: tab === t.id ? 'white' : 'var(--color-text-primary)',
+        }},
+          E('i', { className: 'fas fa-' + t.icon, style: { marginRight: '0.35rem', fontSize: '0.75rem' } }),
+          t.label
+        )
+      )
+    ),
+
+    // Contenu
+    (content[tab] || content.commissions)(),
+
+    // Bouton save en bas
+    E('div', { style: { display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' } },
+      E('button', { className: 'btn btn-primary', onClick: save, disabled: saving },
+        saving ? E('i', { className: 'fas fa-spinner fa-spin' }) : E('i', { className: 'fas fa-save' }),
+        ' ', saving ? 'Sauvegarde...' : 'Sauvegarder tout'
+      )
+    )
+  );
+};
+
 const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -20612,6 +20896,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "ambassadors", icon: "award", label: "Ambassadeurs" },
     { id: "ondemand_admin",   icon: "concierge-bell", label: "Commandes OnDemand" },
     { id: "insurance_leads",  icon: "car",            label: "🚗 Leads Assurance" },
+    { id: "monetization", icon: "coins", label: "💰 Monétisation" },
     { id: "popups", icon: "comment-alt", label: "💬 Popups & Annonces" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
@@ -22020,6 +22305,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
     );
   })(),
 
+  view === "monetization" && React.createElement(MonetizationConfigPanel, { addToast }),
   view === "popups"  && React.createElement(PopupsAdminPanel, { addToast }),
   view === "revenue" && React.createElement(RevenueAdminPanel, { orders, products, addToast }),
   view === "payouts" && (() => {
