@@ -12600,8 +12600,18 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       }
       // Supabase — mettre à jour le rôle dans profiles
       if (DataService._sb) {
-        const updatedUser = { ...user, role, status: role === 'vendor' ? 'pending' : 'active' };
-        try { await DataService._sb.from('profiles').update({ role, status: updatedUser.status }).eq('id', updatedUser.id); } catch(_) {}
+        const isCourier = role === 'courier';
+      const updatedUser = { ...user, role: isCourier ? 'buyer' : role, status: role === 'vendor' ? 'pending' : 'active' };
+      try {
+        await DataService._sb.from('profiles').update({ role: updatedUser.role, status: updatedUser.status }).eq('id', updatedUser.id);
+        if (isCourier) {
+          // Créer l'entrée coursier (inscription partielle — sera complétée dans CourierApp)
+          await DataService._sb.from('couriers').upsert({
+            user_id: updatedUser.id, name: updatedUser.name || updatedUser.email,
+            phone: '', status: 'pending', zones: ['Dakar'], vehicle_type: 'moto',
+          }, { onConflict: 'user_id' }).catch(() => {});
+        }
+      } catch(_) {}
         if (token) DataService.saveSession(token, expiresIn);
         onDone(updatedUser);
         return;
@@ -12630,6 +12640,13 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       title: 'Vendeur',
       desc: 'Je veux vendre mes produits (validation admin requise).',
       color: '#7C3AED',
+    },
+    {
+      value: 'courier',
+      icon: 'motorcycle',
+      title: '🛵 Livreur',
+      desc: 'Je veux livrer des commandes à Dakar et gagner de l\'argent.',
+      color: '#D97706',
     },
   ];
 
@@ -12672,6 +12689,10 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
         React.createElement('i', { className: 'fas fa-info-circle' }),
         React.createElement('span', null, ' Votre compte sera en attente de validation par l\'admin NEXUS. Vous recevrez un email dès approbation (48h max).')
       ),
+      role === 'courier' && React.createElement('div', { className: 'alert alert-warning', style: { fontSize: '0.82rem', textAlign: 'left', marginBottom: '1rem' } },
+        React.createElement('i', { className: 'fas fa-motorcycle', style: { marginRight: '0.4rem' } }),
+        React.createElement('span', null, 'Votre candidature sera validée sous 24h. Vous gagnerez 90% du tarif de livraison (NEXUS garde 10%). Paiement Wave ou Orange Money.')
+      ),
       React.createElement('button', {
         className: `btn btn-primary btn-block btn-lg${loading ? ' btn-loading' : ''}`,
         onClick: handleChoose,
@@ -12679,7 +12700,7 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       },
         loading ? 'Enregistrement...' : React.createElement(React.Fragment, null,
           React.createElement('i', { className: 'fas fa-check-circle' }),
-          ' Continuer comme ', role === 'buyer' ? 'Acheteur' : 'Vendeur'
+          ' Continuer comme ', role === 'buyer' ? 'Acheteur' : role === 'vendor' ? 'Vendeur' : role === 'courier' ? '🛵 Livreur' : 'Acheteur Pro'
         )
       ),
       React.createElement('p', { style: { fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.75rem' } },
@@ -13085,7 +13106,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
 };
 // [FIX #310] RoleHeader extrait au niveau module — défini dans RegisterForm causait un remontage à chaque render
 const RoleHeader = ({ role, onBack }) => {
-  const labels = {buyer:"\ud83d\uded2 Acheteur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",vendor:"\ud83c\udfea Vendeur"};
+  const labels = {buyer:"\ud83d\uded2 Acheteur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",vendor:"\ud83c\udfea Vendeur",courier:"\ud83d\udef5 Livreur indépendant"};
   return React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--border)"}},
     React.createElement("button",{onClick:onBack,style:{background:"none",border:"none",cursor:"pointer",color:"var(--text-secondary)",fontSize:"0.9rem",padding:"0.3rem"}},
       React.createElement("i",{className:"fas fa-arrow-left"})
@@ -13177,7 +13198,7 @@ const ResendConfirmButton = ({ email, name }) => {
 };
 const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, preselectedRole = null }) => {
   const { addToast } = useToast();
-  const [role, setRole] = React.useState(preselectedRole || ""); // "buyer" | "buyer_pro" | "vendor"
+  const [role, setRole] = React.useState(preselectedRole || ""); // "buyer" | "buyer_pro" | "vendor" | "courier"
   const [step, setStep] = React.useState(1);
   const [loading, setLoading] = React.useState(false);
   const [errors, setErrors] = React.useState({});
@@ -13226,6 +13247,14 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         if (form.password !== form.confirmPassword) e.confirmPassword = "Ne correspondent pas";
         if (!form.acceptTerms) e.acceptTerms = "Veuillez accepter les CGU";
       }
+    }
+    if (role === "courier") {
+      if (!form.name.trim()) e.name = "Nom requis";
+      if (!form.phone.trim()) e.phone = "Téléphone requis";
+      if (!validateEmail(form.email)) e.email = "Email invalide";
+      if (!validatePassword(form.password)) e.password = "Min 6 caractères";
+      if (form.password !== form.confirmPassword) e.confirmPassword = "Ne correspondent pas";
+      if (!form.acceptTerms) e.acceptTerms = "Veuillez accepter les CGU";
     }
     if (role === "vendor") {
       if (step === 1) {
@@ -13293,6 +13322,17 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           status:         "pending",
           avatar,
         };
+        if (role === "courier") {
+          const cpro = { name: form.name, phone: form.phone, role: "buyer", status: "active" };
+          const cUser = await DataService.signUp(form.email, form.password, cpro);
+          if (cUser?.id && DataService._sb) {
+            await DataService._sb.from("couriers").upsert({
+              user_id: cUser.id, name: form.name, phone: form.phone,
+              vehicle_type: "moto", zones: ["Dakar"], status: "pending"
+            }, { onConflict: "user_id" }).catch(() => {});
+          }
+          setDone(true); return;
+        }
         const newVendor = await DataService.signUp(form.email, form.password, profile);
         if (newVendor.__emailConfirmPending) { setDone(true); setLoading(false); return; }
         // Programme parrainage vendeur — enregistrer si un code parrain est saisi
@@ -29106,6 +29146,20 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
         ),
         /* ── AdSense Leaderboard — uniquement si contenu présent (règles AdSense) ── */
         /* Indicateur sponsorisé — visible uniquement si catBoosts actifs */
+        /* CTA Devenir Livreur — bandeau public */
+        React.createElement('div', { style: { background: 'linear-gradient(90deg,#D97706,#F59E0B)', color: '#fff', borderRadius: 12, padding: '0.85rem 1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', margin: '0 0 0.75rem', flexWrap: 'wrap' } },
+          React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '0.65rem' } },
+            React.createElement('span', { style: { fontSize: '1.4rem' } }, '🛵'),
+            React.createElement('div', null,
+              React.createElement('div', { style: { fontWeight: 700, fontSize: '0.93rem' } }, 'Devenez livreur NEXUS — Gagnez jusqu\'à 25 000 FCFA/jour'),
+              React.createElement('div', { style: { fontSize: '0.78rem', opacity: 0.9 } }, 'Livraisons à Dakar · Paiement Wave & OM · Inscription gratuite')
+            )
+          ),
+          React.createElement('button', {
+            style: { background: '#fff', color: '#D97706', fontWeight: 700, border: 'none', borderRadius: 8, padding: '0.45rem 1.1rem', cursor: 'pointer', fontSize: '0.85rem', flexShrink: 0 },
+            onClick: () => window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'register', preselectedRole: 'courier' } }))
+          }, 'S\'inscrire →')
+        ),
         currentItems.length > 0 && currentItems[0]?._isSponsored && React.createElement('div', {
           style: { width: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem',
                    fontSize: '0.78rem', color: 'var(--text-secondary)', padding: '0.25rem 0.5rem',
@@ -30849,6 +30903,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       } catch(e) { return 0; }
     })() },
           { id: "referral",    icon: "users",        label: "Parrainage" },
+          { id: "courier_app",  icon: "motorcycle",   label: "🛵 Espace Livreur" },
           { id: "b2b_upgrade", icon: "building",     label: "🏢 Devenir Pro B2B", highlight: true },
         ]
     ),
