@@ -18928,21 +18928,30 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
   };
 
   // Changer le taux de commission d'un vendeur
-  const saveRate = async (vendorId, rate) => {
-    if (!sb || !rate || isNaN(parseFloat(rate))) return;
+    const saveRate = async (vendorId, rate) => {
+    if (!sb)                             { addToast('Supabase non connecté', 'error'); return; }
+    if (!vendorId || vendorId === 'null'){ addToast('ID vendeur manquant', 'warning'); return; }
     const r = parseFloat(rate);
-    if (r < 0 || r > 100) { addToast('Taux entre 0 et 100%', 'warning'); return; }
-    await sb.from('profiles').update({ commission_rate: r }).eq('id', vendorId);
+    if (!rate || isNaN(r) || r < 0 || r > 100) { addToast('Taux invalide (0-100)', 'warning'); return; }
+    const { error } = await sb.from('profiles').update({ commission_rate: r }).eq('id', vendorId);
+    if (error) { addToast('❌ ' + error.message, 'error'); console.error('[saveRate]', error); return; }
     setData(d => ({ ...d, rates: { ...d.rates, [vendorId]: r } }));
-    addToast(`Taux mis à jour : ${r}%`, 'success');
+    addToast('✅ Commission mise à jour : ' + r + '%', 'success');
     setEditRate(null);
   };
 
   // Valider un paiement (pub/API/flash/boost)
-  const validatePayment = async (table, id) => {
+  const validatePayment = async (table, id, extraFields = {}) => {
     if (!sb) return;
-    await sb.from(table).update({ status: 'active', payment_status: 'paid' }).eq('id', id);
-    addToast('Paiement validé — campagne activée', 'success');
+    const { error } = await sb.from(table)
+      .update({ status: 'active', payment_status: 'paid', ...extraFields })
+      .eq('id', id);
+    if (error) {
+      addToast('❌ ' + error.message, 'error');
+      console.error('[validatePayment]', table, error);
+      return;
+    }
+    addToast('✅ Paiement validé', 'success');
     loadAll();
   };
 
@@ -19889,19 +19898,33 @@ const MonetizationConfigPanel = ({ addToast }) => {
     }).catch(() => setCfg({ ...DEFAULTS }));
   }, []);
 
+  const [saveError, setSaveError] = React.useState('');
   const save = async () => {
     setSaving(true);
+    setSaveError('');
     try {
-      await NexusAdminConfig.set('nexus_monetization_cfg', cfg, DataService._user?.id);
-      // Synchroniser les valeurs critiques dans NEXUS_CONFIG pour effet immédiat
+      // Vérifier que l'admin est bien connecté
+      if (!DataService._sb || !DataService._user?.id) {
+        setSaveError('Non connecté ou session expirée — rechargez la page');
+        addToast('❌ Session expirée — reconnectez-vous', 'error');
+        setSaving(false);
+        return;
+      }
+      const ok = await NexusAdminConfig.set('nexus_monetization_cfg', cfg, DataService._user.id);
       if (typeof NEXUS_CONFIG !== 'undefined') {
         NEXUS_CONFIG.wa_tracking_price   = cfg.wa_tracking_price;
         NEXUS_CONFIG.wa_tracking_enabled = cfg.wa_tracking_enabled;
         NEXUS_CONFIG.commission_default  = cfg.commission_default;
       }
-      addToast('✅ Paramètres de monétisation sauvegardés', 'success');
+      if (ok) {
+        addToast('✅ Paramètres sauvegardés dans Supabase', 'success');
+      } else {
+        addToast('⚠️ Sauvegardé localement — vérifiez la connexion Supabase', 'warning');
+        setSaveError('Supabase indisponible : config sauvegardée dans le navigateur uniquement');
+      }
     } catch(e) {
-      addToast('Erreur : ' + e.message, 'error');
+      setSaveError('Erreur : ' + e.message);
+      addToast('❌ ' + e.message, 'error');
     }
     setSaving(false);
   };
@@ -20060,6 +20083,10 @@ const MonetizationConfigPanel = ({ addToast }) => {
   };
 
   return E('div', { style: { marginBottom: '2rem' } },
+    saveError && E('div', { style: { background: 'var(--color-background-danger)', color: 'var(--color-text-danger)', borderRadius: 8, padding: '0.65rem 1rem', marginBottom: '0.85rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' } },
+      E('i', { className: 'fas fa-exclamation-triangle' }), ' ', saveError,
+      E('button', { onClick: () => setSaveError(''), style: { marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' } }, '×')
+    ),
     E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' } },
       E('h2', { style: { fontWeight: 700, fontSize: '1.15rem', margin: 0 } }, '💰 Paramètres de monétisation'),
       E('button', { className: 'btn btn-primary', onClick: save, disabled: saving },
