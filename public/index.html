@@ -13333,17 +13333,6 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           status:         "pending",
           avatar,
         };
-        if (role === "courier") {
-          const cpro = { name: form.name, phone: form.phone, role: "buyer", status: "active" };
-          const cUser = await DataService.signUp(form.email, form.password, cpro);
-          if (cUser?.id && DataService._sb) {
-            await DataService._sb.from("couriers").upsert({
-              user_id: cUser.id, name: form.name, phone: form.phone,
-              vehicle_type: "moto", zones: ["Dakar"], status: "pending"
-            }, { onConflict: "user_id" }).catch(() => {});
-          }
-          setDone(true); return;
-        }
         const newVendor = await DataService.signUp(form.email, form.password, profile);
         if (newVendor.__emailConfirmPending) {
           // Email de bienvenue pour le vendeur (via Cloudflare Function /api/email)
@@ -13369,6 +13358,31 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           }).catch(() => {});
         }
         setDone(true);
+      } else if (role === "courier") {
+        // \u2500\u2500\u2500 Inscription livreur / coursier \u2500\u2500\u2500
+        const courierProfile = {
+          role:   "courier",
+          name:   form.name,
+          phone:  form.phone,
+          status: "active",
+          avatar,
+        };
+        const cUser = await DataService.signUp(form.email, form.password, courierProfile);
+        if (cUser?.__emailConfirmPending) {
+          setDone(true); setLoading(false); return;
+        }
+        if (cUser?.id && DataService._sb) {
+          await DataService._sb.from("couriers").upsert({
+            user_id:      cUser.id,
+            name:         form.name,
+            phone:        form.phone,
+            vehicle_type: form.vehicle_type || "moto",
+            zones:        ["Dakar"],
+            status:       "pending",
+          }, { onConflict: "user_id" }).catch(() => {});
+        }
+        try { if (window.nexusAnalytics) window.nexusAnalytics.trackSignUp("courier"); } catch(_) {}
+        setDone(true); setLoading(false); return;
       } else if (role === "buyer_pro") {
         // [FIX] Route dédiée B2B avec validation NINEA côté serveur
         let newUser;
