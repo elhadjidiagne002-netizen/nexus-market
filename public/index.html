@@ -20756,6 +20756,165 @@ const CourierApp = ({ currentUser, addToast }) => {
 // ════════════════════════════════════════════════════════════════════════════
 // 2. TABLEAU DE BORD ADMIN LIVRAISON
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════
+// AdminValidationPanel — Double validation email OU admin
+// ════════════════════════════════════════════════════════════════════════
+const AdminValidationPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const [list, setList]       = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [tab, setTab]         = React.useState('pending');
+  const [cfg, setCfg]         = React.useState({ buyer_mode:'email_or_admin', vendor_mode:'email_or_admin', courier_mode:'email_or_admin' });
+  const [saving, setSaving]   = React.useState(false);
+  const MODE_LABELS = {
+    'email_or_admin':  '⚡ L\'une ou l\'autre suffit',
+    'email_only':      '📧 Email uniquement',
+    'admin_only':      '✅ Admin uniquement',
+    'email_and_admin': '🔒 Les deux obligatoires',
+  };
+  const ROLE_ICONS = { buyer:'🛒', vendor:'🏪', courier:'🛵', buyer_pro:'🏢' };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      // Charger la config
+      const { data: cfgRow } = await sb.from('app_config').select('value').eq('key','nexus_validation_config').maybeSingle();
+      if (cfgRow?.value) setCfg(prev => ({ ...prev, ...cfgRow.value }));
+
+      // Charger les comptes selon l'onglet
+      let q = sb.from('profiles').select('id,name,email,phone,role,status,email_confirmed,admin_approved,shop_name,shop_category,ninea,created_at,email_confirmed_at,approved_at_dt');
+      if (tab === 'pending')  q = q.in('status', ['pending','en_attente','submitted']);
+      else if (tab === 'rejected') q = q.eq('status','rejected');
+      else if (tab === 'active')   q = q.in('status',['active','approved']).order('created_at',{ascending:false}).limit(50);
+
+      const { data, error } = await q.order('created_at', { ascending: false }).limit(100);
+      if (error) throw error;
+      setList(data || []);
+    } catch(e) { addToast('Erreur : ' + e.message, 'error'); }
+    finally { setLoading(false); }
+  };
+
+  React.useEffect(() => { if (sb) load(); }, [tab]);
+
+  const approve = async (user) => {
+    const { data, error } = await sb.rpc('admin_approve_user', { p_user_id: user.id, p_approved: true });
+    if (error) {
+      // Fallback direct si RPC manque
+      await sb.from('profiles').update({ status: user.role==='vendor'?'approved':'active', admin_approved: true, updated_at: new Date().toISOString() }).eq('id', user.id);
+    }
+    fetch('/api/email', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ to: user.email,
+        subject: '\u2705 Votre compte NEXUS Market est activ\u00e9 !',
+        html: '<p>Bonjour <strong>' + (user.name||user.email) + '</strong>,</p>'
+          + '<p>Votre compte a \u00e9t\u00e9 valid\u00e9 par l\u2019\u00e9quipe NEXUS. <a href="https://nexus.sn">Se connecter</a></p>'
+      })
+    }).catch(()=>{});
+    addToast('\u2705 ' + (user.name||user.email) + ' approuv\u00e9', 'success');
+    load();
+  };
+
+  const reject = async (user) => {
+    const note = window.prompt('Motif du refus (optionnel) :') || '';
+    const { error } = await sb.rpc('admin_approve_user', { p_user_id: user.id, p_approved: false, p_note: note||null });
+    if (error) await sb.from('profiles').update({ status:'rejected', updated_at:new Date().toISOString() }).eq('id', user.id);
+    addToast('Refus\u00e9 : ' + (user.name||user.email), 'info');
+    load();
+  };
+
+  const saveCfg = async () => {
+    setSaving(true);
+    const { error } = await sb.from('app_config')
+      .upsert({ key:'nexus_validation_config', value: cfg, updated_at: new Date().toISOString() }, { onConflict:'key' });
+    if (error) addToast('\u274C ' + error.message, 'error');
+    else addToast('\u2705 Config sauvegard\u00e9e', 'success');
+    setSaving(false);
+  };
+
+  const TABS = [
+    { id:'pending',  label:'⏳ En attente' },
+    { id:'active',   label:'✅ Actifs (50 derniers)' },
+    { id:'rejected', label:'❌ Refusés' },
+    { id:'config',   label:'⚙️ Modes' },
+  ];
+
+  const statusBadge = (u) => {
+    if (u.email_confirmed && u.admin_approved) return E('span',{style:{fontSize:'.7rem',background:'#059669',color:'#fff',padding:'1px 6px',borderRadius:99}},'✅ Complet');
+    if (u.email_confirmed) return E('span',{style:{fontSize:'.7rem',background:'#0277BD',color:'#fff',padding:'1px 6px',borderRadius:99}},'📧 Email ✓');
+    if (u.admin_approved)  return E('span',{style:{fontSize:'.7rem',background:'#7c3aed',color:'#fff',padding:'1px 6px',borderRadius:99}},'👤 Admin ✓');
+    return E('span',{style:{fontSize:'.7rem',background:'#d97706',color:'#fff',padding:'1px 6px',borderRadius:99}},'⏳ Aucun');
+  };
+
+  return E('div', null,
+    E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1.25rem',flexWrap:'wrap',gap:'.75rem'}},
+      E('h2',{style:{fontWeight:700,fontSize:'1.1rem',margin:0}},'✅ Validations & Approbations'),
+      E('button',{className:'btn btn-secondary btn-sm',onClick:load},E('i',{className:'fas fa-sync-alt'}),' Actualiser')
+    ),
+
+    // Bloc explicatif
+    E('div',{style:{background:'linear-gradient(135deg,#EFF6FF,#F0FDF4)',border:'1px solid #e2e8f0',borderRadius:10,padding:'.85rem 1rem',marginBottom:'1.25rem',fontSize:'.83rem',color:'#334155'}},
+      E('strong',null,'Principe : '),
+      'Un compte s\u2019active d\u00e8s qu\u2019',
+      E('strong',null,'une des deux conditions'),
+      ' est remplie — confirmation email ',
+      E('strong',null,'OU'),
+      ' approbation admin. Vous pouvez changer le mode par r\u00f4le dans l\u2019onglet \u2699\uFE0F Modes.'
+    ),
+
+    E('div',{style:{display:'flex',gap:'.35rem',marginBottom:'1.25rem',borderBottom:'1.5px solid var(--border)',paddingBottom:'.5rem',flexWrap:'wrap'}},
+      TABS.map(t=>E('button',{key:t.id,onClick:()=>setTab(t.id),style:{padding:'.4rem .9rem',borderRadius:'8px 8px 0 0',border:'none',cursor:'pointer',fontSize:'.82rem',fontWeight:tab===t.id?700:400,background:tab===t.id?'var(--primary)':'transparent',color:tab===t.id?'#fff':'var(--text-primary)'}},t.label))
+    ),
+
+    // ── Onglet config ─────────────────────────────────────────────────────
+    tab==='config' && E('div',{style:{maxWidth:500}},
+      E('p',{style:{color:'var(--text-secondary)',fontSize:'.85rem',marginBottom:'1rem'}},'Choisissez le mode de validation pour chaque type de compte. Le changement s\u2019applique aux futures inscriptions.'),
+      ['buyer','vendor','courier'].map(role => E('div',{key:role,style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'.75rem 1rem',border:'0.5px solid var(--border)',borderRadius:10,marginBottom:'.6rem',background:'var(--bg-light)'}},
+        E('div',null,
+          E('div',{style:{fontWeight:600,fontSize:'.9rem'}}),(ROLE_ICONS[role]||'👤')+' '+(role==='buyer'?'Acheteur':role==='vendor'?'Vendeur':'Livreur'),
+          E('div',{style:{fontSize:'.75rem',color:'var(--text-secondary)',marginTop:'.15rem'}}),MODE_LABELS[cfg[role+'_mode']]||cfg[role+'_mode']
+        ),
+        E('select',{
+          style:{fontSize:'.82rem',padding:'.35rem .6rem',borderRadius:7,border:'1px solid var(--border)',background:'white'},
+          value:cfg[role+'_mode']||'email_or_admin',
+          onChange:e=>setCfg(p=>({...p,[role+'_mode']:e.target.value}))
+        },
+          Object.entries(MODE_LABELS).map(([v,l])=>E('option',{key:v,value:v},l))
+        )
+      )),
+      E('button',{className:'btn btn-primary',onClick:saveCfg,disabled:saving},saving?'Sauvegarde...':'\u{1F4BE} Sauvegarder la config')
+    ),
+
+    // ── Listes comptes ────────────────────────────────────────────────────
+    tab!=='config' && (loading
+      ? E('div',{className:'empty-state'},E('i',{className:'fas fa-spinner fa-spin'}))
+      : list.length===0
+        ? E('div',{className:'empty-state'},E('i',{className:'fas fa-check-circle',style:{color:'#059669'}}),E('p',null,tab==='pending'?'Aucun compte en attente':'Aucun compte'))
+        : E('div',{style:{display:'flex',flexDirection:'column',gap:'.6rem'}},
+            list.map(u => E('div',{key:u.id,style:{border:'0.5px solid var(--border)',borderRadius:12,padding:'.9rem 1rem',display:'flex',alignItems:'flex-start',gap:'1rem',flexWrap:'wrap'}},
+              E('div',{style:{width:38,height:38,borderRadius:'50%',background:'var(--primary)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,flexShrink:0}},(u.name||'?')[0].toUpperCase()),
+              E('div',{style:{flex:1,minWidth:0}},
+                E('div',{style:{display:'flex',alignItems:'center',gap:'.5rem',flexWrap:'wrap',marginBottom:'.2rem'}},
+                  E('span',{style:{fontWeight:700,fontSize:'.9rem'}}),u.name||'—',
+                  E('span',{style:{fontSize:'.72rem',background:'var(--bg-light)',borderRadius:99,padding:'1px 7px',color:'var(--text-secondary)'}}),(ROLE_ICONS[u.role]||'👤')+' '+u.role,
+                  statusBadge(u)
+                ),
+                E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)',marginBottom:'.25rem'}}),u.email,u.phone?' · '+u.phone:'',
+                u.shop_name && E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)'}}),'\uD83C\uDFEA ',u.shop_name,u.shop_category?' ('+u.shop_category+')':'',
+                E('div',{style:{fontSize:'.72rem',color:'var(--text-tertiary)',marginTop:'.2rem'}}),
+                  'Inscription : '+new Date(u.created_at).toLocaleDateString('fr-FR'),
+                  u.email_confirmed_at ? ' · Email : '+new Date(u.email_confirmed_at).toLocaleDateString('fr-FR') : '',
+                  u.approved_at_dt ? ' · Admin : '+new Date(u.approved_at_dt).toLocaleDateString('fr-FR') : ''
+              ),
+              tab==='pending' && E('div',{style:{display:'flex',gap:'.4rem',flexShrink:0}},
+                E('button',{className:'btn btn-primary btn-sm',onClick:()=>approve(u)},'\u2705 Approuver'),
+                E('button',{style:{padding:'.35rem .8rem',borderRadius:8,border:'1.5px solid #dc2626',background:'transparent',color:'#dc2626',cursor:'pointer',fontSize:'.8rem',fontWeight:600},onClick:()=>reject(u)},'\u274C Refuser')
+              )
+            ))
+          )
+    )
+  );
+};
+
 const AdminLivraisonPanel = ({ addToast }) => {
   const E = React.createElement;
   const sb = DataService._sb;
@@ -21367,167 +21526,60 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       ventes: ordersData.filter((o) => (o.date || o.created_at || "").startsWith(date)).reduce((sum, o) => sum + (o.total || 0), 0).toFixed(0)
     })));
   };
-  const approveVendor = async (vendorId) => {
-    const vendor = pendingVendors.find((v) => v.id === vendorId);
-
-    // ── Stratégie d'approbation (3 niveaux) ─────────────────────────────────
-    // 1. Backend API  → PATCH /api/admin/vendors/:id/approve  (service_role, idéal)
-    // 2. Supabase RPC → approve_vendor(vendor_id, approved)   (SECURITY DEFINER,
-    //    contourne le RLS qui bloque la clé anon sur la table profiles)
-    // 3. Aucune option → message d'erreur avec SQL à exécuter
-    //
-    // SQL à exécuter UNE FOIS dans Supabase Dashboard → SQL Editor :
-    // → Voir nexus_full_fix.sql (section 3. FUNCTION approve_vendor)
-    //
-    // Signature :
-    //   CREATE OR REPLACE FUNCTION public.approve_vendor(vendor_id uuid, approved boolean)
-    //   RETURNS json   -- retourne {found, email, name}
-    //   LANGUAGE plpgsql SECURITY DEFINER
-    //   SET search_path = public
-    //
-    //   Vérifie is_admin(), met à jour profiles.status ('active' ou 'rejected'),
-    //   retourne json_build_object('found', found, 'email', email, 'name', name).
-    //
-    //   GRANT EXECUTE ON FUNCTION public.approve_vendor(uuid, boolean) TO authenticated;
-    // ─────────────────────────────────────────────────────────────────────────
-
-    if (!NEXUS_CONFIG.apiUrl && !DataService._sb) {
-      addToast("Ni API ni Supabase disponibles.", "danger");
-      return;
-    }
-
-    if (NEXUS_CONFIG.apiUrl) {
-      // ── 1. Backend API ────────────────────────────────────────────────────
-      try {
-        const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
-          method: "PATCH", body: JSON.stringify({ approved: true }),
-        });
-        if (resp && resp.ok) {
-          // API a répondu avec succès, on continue
-        } else if (resp && !resp.ok) {
-          const err = await resp?.json().catch(() => ({}));
-          if (resp?.status === 404) { addToast("Vendeur introuvable. Rafraîchissez.", "warning"); loadData(); return; }
-          addToast(err?.error || "Erreur approbation.", "danger"); return;
-        }
-        // resp === null → route inexistante, on tombe dans le fallback Supabase ci-dessous
-      } catch (e) { /* fallback Supabase */ }
-    }
-
-    // ── 2. Supabase RPC SECURITY DEFINER (fallback ou mode direct) ──────
-    if (DataService._sb) {
-      const { data: rpcData, error } = await DataService._sb.rpc('approve_vendor', {
-        vendor_id: vendorId,
-        approved:  true,
-      });
-      if (error) {
-        if (error.code === '42883' || (error.message && error.message.includes('does not exist'))) {
-          addToast(
-            "⚠️ Fonction RPC manquante. Exécutez nexus_full_fix.sql dans Supabase SQL Editor.",
-            "danger"
-          );
-        } else {
-          addToast("Supabase : " + error.message, "danger");
-        }
-        return;
+  // ── Approbation via la nouvelle RPC admin_approve_user ─────────────────
+  const callApproveRpc = async (userId, approved, note = '') => {
+    if (!DataService._sb) { addToast('Supabase non connecté', 'error'); return false; }
+    const { data, error } = await DataService._sb.rpc('admin_approve_user', {
+      p_user_id: userId, p_approved: approved, p_note: note || null,
+    });
+    if (error) {
+      // Fallback si la RPC n'existe pas encore : UPDATE direct
+      if (error.code === '42883' || error.message?.includes('does not exist')) {
+        const newStatus = approved
+          ? (data?.role === 'vendor' ? 'approved' : 'active')
+          : 'rejected';
+        const { error: upErr } = await DataService._sb.from('profiles')
+          .update({ status: newStatus, admin_approved: approved, updated_at: new Date().toISOString() })
+          .eq('id', userId);
+        if (upErr) { addToast('Erreur : ' + upErr.message, 'error'); return false; }
+        return true;
       }
-      // [FIX] La nouvelle version de approve_vendor retourne {found, email, name}
-      // Si found=false, l'ID vient de localStorage périmé (inscription jamais sauvegardée)
-      if (rpcData && rpcData.found === false) {
-        addToast(
-          "Ce vendeur n'existe plus en base (données locales périmées). Liste rafraîchie.",
-          "warning"
-        );
-        setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
-        storage.set("pendingVendors_mem", (storage.get("pendingVendors_mem") || []).filter(v => v.id !== vendorId));
-        loadData();
-        return;
-      }
+      addToast('Erreur RPC : ' + error.message, 'error');
+      return false;
     }
-
-    // Mise à jour locale immédiate après succès
-    setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
-    storage.set("pendingVendors_mem", (storage.get("pendingVendors_mem") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
-    if (vendor) {
-      DataService.addNotification(vendorId, {
-        type: "vendor", title: "🎉 Boutique approuvée !",
-        message: "Votre boutique a été validée. Vous pouvez maintenant vendre sur NEXUS Market.",
-      });
-    }
-
-    // [FIX] Envoyer un magic link au vendeur pour qu'il crée son compte auth
-    // (le trigger SQL handle_approved_vendor_signup s'occupera du reste)
-    let magicLinkSent = false;
-    if (vendor?.email && DataService._sb) {
-      try {
-        const { error: otpErr } = await DataService._sb.auth.signInWithOtp({
-          email: vendor.email,
-          options: { shouldCreateUser: true },
-        });
-        magicLinkSent = !otpErr;
-        if (otpErr) console.warn("[approveVendor] OTP send failed:", otpErr.message);
-      } catch (_) {}
-    }
-
-    loadData();
-    addToast(
-      `Vendeur ${vendor?.name || ""} approuvé !` +
-      (magicLinkSent
-        ? " Un lien de connexion a été envoyé à " + (vendor?.email || "")
-        : " Pensez à envoyer manuellement un lien d'invitation au vendeur."),
-      "success"
-    );
+    return data?.ok !== false;
   };
-  const rejectVendor = async (vendorId) => {
-    const vendor = pendingVendors.find((v) => v.id === vendorId);
 
-    // Même stratégie 3 niveaux que approveVendor (voir commentaire SQL ci-dessus).
-
-    if (!NEXUS_CONFIG.apiUrl && !DataService._sb) {
-      addToast("Ni API ni Supabase disponibles.", "danger");
-      return;
-    }
-
-    if (NEXUS_CONFIG.apiUrl) {
-      // ── 1. Backend API ────────────────────────────────────────────────────
-      try {
-        const resp = await DataService.apiFetch(`/api/admin/vendors/${vendorId}/approve`, {
-          method: "PATCH", body: JSON.stringify({ approved: false }),
-        });
-        if (resp && resp.ok) {
-          // OK
-        } else if (resp && !resp.ok) {
-          if (resp?.status === 404) { setPendingVendors(prev => prev.filter(v => v.id !== vendorId)); loadData(); addToast("Demande déjà traitée.", "info"); return; }
-          const err = await resp?.json().catch(() => ({}));
-          addToast(err?.error || "Erreur refus.", "danger"); return;
-        }
-      } catch (e) { console.warn("[rejectVendor]", e); }
-    }
-
-    // ── 2. Supabase RPC SECURITY DEFINER (fallback ou mode direct) ──────
-    if (DataService._sb) {
-      // ── 2. Supabase RPC SECURITY DEFINER (contourne le RLS) ──────────────
-      const { error } = await DataService._sb.rpc('approve_vendor', {
-        vendor_id: vendorId,
-        approved:  false,
-      });
-      if (error) {
-        if (error.code === '42883' || (error.message && error.message.includes('does not exist'))) {
-          addToast(
-            "⚠️ Fonction RPC manquante. Créez approve_vendor() dans Supabase SQL Editor " +
-            "(copiez le SQL dans le commentaire du code source, ligne approveVendor).",
-            "danger"
-          );
-        } else {
-          addToast("Supabase : " + error.message, "danger");
-        }
-        return;
-      }
-    }
-
+  const approveVendor = async (vendorId) => {
+    const vendor = pendingVendors.find(v => v.id === vendorId);
+    const ok = await callApproveRpc(vendorId, true);
+    if (!ok) return;
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
-    storage.set("pendingVendors_mem", (storage.get("pendingVendors_mem") || []).filter(v => v.id !== vendorId && v.email !== (vendor?.email || "")));
+    storage.set('pendingVendors_mem', (storage.get('pendingVendors_mem') || []).filter(v => v.id !== vendorId));
+    // Email de notification via /api/email
+    if (vendor?.email) {
+      fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: vendor.email,
+          subject: '\u2705 Votre compte NEXUS Market est activ\u00e9 !',
+          html: '<p>Bonjour <strong>' + (vendor.name||vendor.email) + '</strong>,</p>'
+            + '<p>Votre compte a \u00e9t\u00e9 valid\u00e9 par l\u2019\u00e9quipe NEXUS. Vous pouvez maintenant vous connecter.</p>'
+            + '<p><a href="https://nexus.sn">Acc\u00e9der \u00e0 NEXUS Market</a></p>'
+        })
+      }).catch(() => {});
+    }
     loadData();
-    addToast(`Demande de ${vendor?.name || "ce vendeur"} refusée.`, "info");
+    addToast('\u2705 ' + (vendor?.name || 'Utilisateur') + ' approuv\u00e9 — compte activ\u00e9', 'success');
+  };
+
+  const rejectVendor = async (vendorId) => {
+    const vendor = pendingVendors.find(v => v.id === vendorId);
+    const note   = window.prompt('Motif du refus (optionnel) :') || '';
+    const ok = await callApproveRpc(vendorId, false, note);
+    if (!ok) return;
+    setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
+    storage.set('pendingVendors_mem', (storage.get('pendingVendors_mem') || []).filter(v => v.id !== vendorId));
+    loadData();
+    addToast('Demande de ' + (vendor?.name || 'cet utilisateur') + ' refus\u00e9e', 'info');
   };
   const updateOrderStatus = async (orderId, newStatus) => {
     // Verrou anti-revert + update optimiste immédiat
@@ -21758,6 +21810,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "ondemand_admin",   icon: "concierge-bell", label: "Commandes OnDemand" },
     { id: "insurance_leads",  icon: "car",            label: "🚗 Leads Assurance" },
     { id: "monetization", icon: "coins", label: "💰 Monétisation" },
+    { id: "validations",    icon: "user-check", label: "✅ Validations" },
     { id: "livraison_admin", icon: "truck", label: "🚛 NEXUS Livraison" },
     { id: "popups", icon: "comment-alt", label: "💬 Popups & Annonces" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
@@ -23167,6 +23220,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
     );
   })(),
 
+  view === "validations" && React.createElement(AdminValidationPanel, { addToast }),
   view === "livraison_admin" && React.createElement(AdminLivraisonPanel, { addToast }),
   view === "monetization" && React.createElement(MonetizationConfigPanel, { addToast }),
   view === "popups"  && React.createElement(PopupsAdminPanel, { addToast }),
