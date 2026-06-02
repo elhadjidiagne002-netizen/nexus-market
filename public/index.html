@@ -19102,6 +19102,14 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
   // Valider un paiement (pub/API/flash/boost)
   const validatePayment = async (table, id, extraFields = {}) => {
     if (!sb) return;
+
+    // Récupérer les infos avant mise à jour (pour l'email)
+    let row = null;
+    try {
+      const { data: rowData } = await sb.from(table).select('*').eq('id', id).maybeSingle();
+      row = rowData;
+    } catch(_) {}
+
     const { error } = await sb.from(table)
       .update({ status: 'active', payment_status: 'paid', ...extraFields })
       .eq('id', id);
@@ -19111,6 +19119,92 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
       return;
     }
     addToast('✅ Paiement validé', 'success');
+
+    // ── Notification email à l'annonceur (ad_campaigns) ───────────────────
+    if (table === 'ad_campaigns' && row?.advertiser_email) {
+      const PLACEMENT_LABELS = {
+        hero: 'Homepage carousel', leaderboard: 'Bandeau catalogue',
+        rectangle: 'Rectangle inline', banner: 'Bannière fiche produit',
+      };
+      const placement = PLACEMENT_LABELS[row.placement] || row.placement;
+      const starts = row.starts_at ? new Date(row.starts_at).toLocaleDateString('fr-FR') : '—';
+      const ends   = row.ends_at   ? new Date(row.ends_at).toLocaleDateString('fr-FR')   : '—';
+      const html = [
+        '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px">',
+        '<div style="background:#00853E;padding:20px;border-radius:12px 12px 0 0;text-align:center">',
+        '<h1 style="color:white;margin:0;font-size:22px">✅ Campagne activée !</h1>',
+        '</div>',
+        '<div style="background:#f9f9f9;padding:24px;border-radius:0 0 12px 12px">',
+        '<p style="font-size:15px;color:#333">Bonjour <strong>' + (row.advertiser_name||'') + '</strong>,</p>',
+        '<p style="color:#555">Votre paiement a été reçu et votre campagne publicitaire est maintenant <strong style="color:#00853E">active</strong> sur NEXUS Market.</p>',
+        '<div style="background:white;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:16px 0">',
+        '<table style="width:100%;font-size:14px;border-collapse:collapse">',
+        '<tr><td style="padding:6px 0;color:#666">Annonce</td><td style="padding:6px 0;font-weight:600">' + (row.title||'—') + '</td></tr>',
+        '<tr><td style="padding:6px 0;color:#666">Emplacement</td><td style="padding:6px 0">' + placement + '</td></tr>',
+        '<tr><td style="padding:6px 0;color:#666">Période</td><td style="padding:6px 0">' + starts + ' → ' + ends + '</td></tr>',
+        '<tr><td style="padding:6px 0;color:#666">Montant réglé</td><td style="padding:6px 0;font-weight:700;color:#00853E">' + (row.price_fcfa||0).toLocaleString('fr-FR') + ' FCFA</td></tr>',
+        '</table></div>',
+        '<p style="color:#555;font-size:14px">Votre annonce est désormais visible par des milliers d\'acheteurs sur nexus.sn.</p>',
+        '<p style="color:#888;font-size:13px;text-align:center;margin-top:24px">NEXUS Market · nexus.sn</p>',
+        '</div></div>',
+      ].join('');
+
+      // Tentative 1 : Cloudflare Function /api/email
+      fetch('/api/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: row.advertiser_email,
+          subject: '✅ Votre campagne NEXUS Market est maintenant active !',
+          html,
+        }),
+      }).then(r => r.json()).then(j => {
+        if (j.ok) addToast('📧 Email envoyé à ' + row.advertiser_email, 'info');
+      }).catch(() => {
+        // Tentative 2 : EmailService (Brevo côté client)
+        if (typeof EmailService !== 'undefined') {
+          EmailService.send({ to: row.advertiser_email, subject: 'Votre campagne NEXUS Market est active !', templateId: 'ad_validated', variables: { html_body: html } }).catch(() => {});
+        }
+      });
+
+      // Notification in-app si l'annonceur a un compte
+      if (row.user_id) {
+        sb.from('notifications').insert({
+          id: crypto.randomUUID(), user_id: row.user_id,
+          type: 'ad_validated', title: '🎉 Campagne publicitaire activée !',
+          message: 'Votre annonce "' + (row.title||'') + '" est maintenant en ligne sur NEXUS Market.',
+          link: '/', read: false, created_at: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    }
+
+    // ── Notification email abonné API ──────────────────────────────────────
+    if (table === 'api_subscriptions' && row?.contact_email) {
+      const html = [
+        '<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px">',
+        '<div style="background:#0277BD;padding:20px;border-radius:12px 12px 0 0;text-align:center">',
+        '<h1 style="color:white;margin:0;font-size:22px">🔑 Votre clé API NEXUS Pro est active !</h1>',
+        '</div>',
+        '<div style="background:#f9f9f9;padding:24px;border-radius:0 0 12px 12px">',
+        '<p style="font-size:15px;color:#333">Bonjour <strong>' + (row.contact_name||'') + '</strong>,</p>',
+        '<p style="color:#555">Votre abonnement NEXUS Pro API est activé. Voici votre clé d\'accès :</p>',
+        '<div style="background:#1a1a2e;color:#4FC3F7;border-radius:8px;padding:16px;font-family:monospace;font-size:14px;word-break:break-all;margin:16px 0">' + (row.api_key||'—') + '</div>',
+        '<div style="background:white;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:16px 0;font-size:14px">',
+        '<strong>Endpoint :</strong><br><code>GET https://nexus.sn/api/products-feed?key=VOTRE_CLE&format=xml|json</code><br><br>',
+        '<strong>Quota :</strong> ' + (row.daily_limit||1000) + ' appels/jour<br>',
+        '<strong>Expiration :</strong> ' + (row.ends_at ? new Date(row.ends_at).toLocaleDateString('fr-FR') : '—'),
+        '</div>',
+        '<p style="color:#888;font-size:13px;text-align:center;margin-top:24px">NEXUS Market · nexus.sn</p>',
+        '</div></div>',
+      ].join('');
+
+      fetch('/api/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: row.contact_email, subject: '🔑 Votre clé API NEXUS Pro est prête !', html }),
+      }).catch(() => {});
+    }
+
     loadAll();
   };
 
