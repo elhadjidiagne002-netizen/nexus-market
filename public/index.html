@@ -18851,8 +18851,7 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
       const delivered = orders.filter(o => o.status === 'delivered');
       const byVendor = {};
       delivered.forEach(o => {
-        const k = o.vendor || o.vendor_id || o.vendorId;
-        if (!k || k === 'null' || k === 'undefined') return;
+        const k = o.vendor || o.vendor_id;
         if (!byVendor[k]) byVendor[k] = {
           vendorId: k, vendorName: o.vendorName || o.vendor_name || k,
           orders: 0, revenue: 0, commission: 0, commRate: o.commissionRate || 15
@@ -18919,10 +18918,7 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
 
   // Changer le taux de commission d'un vendeur
   const saveRate = async (vendorId, rate) => {
-    if (!sb || !vendorId || !rate || isNaN(parseFloat(rate))) return;
-    if (!vendorId || vendorId === 'null' || vendorId === 'undefined') {
-      addToast('ID vendeur manquant — rechargez la page', 'warning'); return;
-    }
+    if (!sb || !rate || isNaN(parseFloat(rate))) return;
     const r = parseFloat(rate);
     if (r < 0 || r > 100) { addToast('Taux entre 0 et 100%', 'warning'); return; }
     await sb.from('profiles').update({ commission_rate: r }).eq('id', vendorId);
@@ -24167,6 +24163,18 @@ const VendorInvoicesView = ({ currentUser: currentUser2, orders, addToast, downl
 // ══════════════════════════════════════════════════════════════════════════════
 const BOOST_PLANS = [
   {
+    type:     'category_top',
+    label:    'Tête de gondole',
+    emoji:    '🏆',
+    price:    2000,
+    days:     7,
+    desc:     'Positions 1–3 dans votre catégorie pendant 7 jours',
+    features: ['Positions 1-2-3 garanties dans la catégorie', 'Badge "Sponsorisé" visible', '10× plus de vues en moyenne', 'Ciblage acheteurs intéressés par la catégorie'],
+    color:    '#00853E',
+    best:     true,
+    needsCat: true,   // ← requiert la sélection d'une catégorie
+  },
+  {
     type:     'top_3j',
     label:    'TOP Express',
     emoji:    '🥉',
@@ -24204,11 +24212,22 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
   const [step,         setStep]         = React.useState(1); // 1=choix, 2=paiement, 3=confirmé
   const [paying,       setPaying]       = React.useState(false);
   const [payMethod,    setPayMethod]    = React.useState('paytech');
+  const [targetCat,    setTargetCat]    = React.useState(product?.category || '');
+  // Catégories disponibles pour le sponsoring (depuis les produits en cache)
+  const allCats = React.useMemo(() => {
+    const cats = [...new Set((storage.getArray('products')||[]).map(p=>p.category).filter(Boolean))].sort();
+    return cats.length ? cats : ['Électronique','Mode','Alimentation','Maison','Beauté','Sport','Informatique','Auto'];
+  }, []);
 
   const existingBoost = activBoosts.find(b => b.product_id === product.id && b.active);
 
   const handleActivate = async () => {
     if (!selectedPlan) return;
+    const plan = BOOST_PLANS.find(p => p.type === selectedPlan);
+    if (plan?.needsCat && !targetCat) {
+      addToast('Veuillez sélectionner une catégorie cible pour ce forfait', 'warning');
+      return;
+    }
     setPaying(true);
     try {
       const now     = new Date();
@@ -24216,7 +24235,8 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
       const boostId = crypto.randomUUID();
       const boostRow = {
         id: boostId, product_id: product.id, vendor_id: currentUser2.id,
-        boost_type: selectedPlan.type, price_fcfa: selectedPlan.price,
+        boost_type:      selectedPlan.type, price_fcfa: selectedPlan.price,
+        target_category: selectedPlan.needsCat ? (targetCat || product.category || null) : null,
         started_at: now.toISOString(), ends_at: endsAt.toISOString(),
         active: payMethod !== 'paytech', payment_method: payMethod, payment_status: 'pending',
       };
@@ -24319,6 +24339,24 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
           ),
 
           E('div', { style: { display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' } },
+            /* Sélecteur catégorie pour category_top */
+            selectedPlan === 'category_top' && E('div', { style: { marginBottom: '1rem' } },
+              E('label', { style: { fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.35rem' } },
+                '🗂️ Catégorie ciblée *'
+              ),
+              E('select', {
+                className: 'form-input',
+                value: targetCat,
+                onChange: e => setTargetCat(e.target.value),
+                style: { marginBottom: 0 }
+              },
+                E('option', { value: '' }, '— Choisir une catégorie —'),
+                allCats.map(cat => E('option', { key: cat, value: cat }, cat))
+              ),
+              E('p', { style: { fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.35rem' } },
+                'Votre produit apparaîtra en position 1–3 uniquement dans cette catégorie.'
+              )
+            ),
             BOOST_PLANS.map(p => E('div', {
               key: p.type,
               onClick: () => setSelectedPlan(p.type),
@@ -24840,6 +24878,9 @@ const isVehicleProduct = (product) => {
 const InsuranceWidget = ({ product, currentUser, addToast }) => {
   const [open,      setOpen]      = React.useState(false);
   const [step,      setStep]      = React.useState(1);
+  const [showPrioModal, setShowPrioModal] = React.useState(false);
+  const [prioPayMethod, setPrioPayMethod] = React.useState('wave');
+  const B2B_PRIORITY_PRICE = 2000; // FCFA // 1=intro, 2=form, 3=confirmed
   const [submitting,setSubmitting]= React.useState(false);
   const [form, setForm] = React.useState({
     fullName:     currentUser?.name  || '',
@@ -27012,6 +27053,7 @@ window.__axOpenModal = () => window.__axOpen && window.__axOpen();
 const BOOST_SCORES = {
   pro_annuel:    45,
   pro_mensuel:   40,
+  category_top:  35,   // tête de gondole catégorie — score élevé (au-dessus du boost_semaine)
   boost_mensuel: 30,
   boost_semaine: 25,
   top_3j:        20,
@@ -27134,10 +27176,19 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   // [UX #9] Skeleton : état de chargement initial des produits
   const [productsLoading, setProductsLoading] = useState(true);
   const [catalogBoostsPub, setCatalogBoostsPub] = React.useState([]);
+  const [catBoosts, setCatBoosts] = React.useState([]); // { product_id, target_category }
   React.useEffect(() => {
     if (!isSupabaseConfigured() || !DataService._sb) return;
-    DataService._sb.from('product_boosts').select('product_id').eq('active', true).gte('ends_at', new Date().toISOString())
-      .then(({ data }) => { if (data) setCatalogBoostsPub(data.map(b => b.product_id)); }).catch(() => {});
+    DataService._sb.from('product_boosts')
+      .select('product_id, target_category, boost_type')
+      .eq('active', true).eq('payment_status', 'paid')
+      .gte('ends_at', new Date().toISOString())
+      .then(({ data }) => {
+        if (data) {
+          setCatalogBoostsPub(data.map(b => b.product_id));
+          setCatBoosts(data.filter(b => b.boost_type === 'category_top'));
+        }
+      }).catch(() => {});
   }, []);
   const [compareList, setCompareList] = useState([]);
   const [showCompare, setShowCompare] = useState(false);
@@ -27384,7 +27435,6 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     // Recherche textuelle
     if (searchTerm.trim()) {
       r = nexusSearch(r.filter(i => !i._isExpress), searchTerm);
-      // Pour les Express, filtre simple sur description + catégorie
       const axFiltered = allItems.filter(i => i._isExpress && (
         (i.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (i.category    || '').toLowerCase().includes(searchTerm.toLowerCase())
@@ -27396,13 +27446,38 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     // Filtre prix
     r = r.filter(i => i.price >= priceRange[0] && i.price <= priceRange[1]);
     // Tri
-    if (sortBy === 'price-asc')  return [...r].sort((a,b) => a.price - b.price);
-    if (sortBy === 'price-desc') return [...r].sort((a,b) => b.price - a.price);
-    if (sortBy === 'rating')     return [...r].sort((a,b) => (b.rating||0) - (a.rating||0));
-    if (sortBy === 'popular')    return [...r].sort((a,b) => (b.reviewsCount||0) - (a.reviewsCount||0));
-    // Tri par défaut : score NEXUS (boost > fraîcheur > qualité)
-    return [...r].sort((a,b) => nexusRankScore(b) - nexusRankScore(a));
-  }, [allItems, searchTerm, filterCategory, sortBy, priceRange]);
+    let sorted;
+    if (sortBy === 'price-asc')  sorted = [...r].sort((a,b) => a.price - b.price);
+    else if (sortBy === 'price-desc') sorted = [...r].sort((a,b) => b.price - a.price);
+    else if (sortBy === 'rating')     sorted = [...r].sort((a,b) => (b.rating||0) - (a.rating||0));
+    else if (sortBy === 'popular')    sorted = [...r].sort((a,b) => (b.reviewsCount||0) - (a.reviewsCount||0));
+    else sorted = [...r].sort((a,b) => nexusRankScore(b) - nexusRankScore(a));
+
+    // ── Sponsoring tête de gondole : injecter en positions 1-3 ──────────────
+    // Uniquement sur la première page et si on est sur la page de la catégorie ciblée
+    // ou sur "tous les produits" (la catégorie correspond à celle du boost)
+    if (catBoosts.length > 0 && sortBy === 'default' && !searchTerm.trim()) {
+      // Trouver les boosts qui correspondent à la catégorie affichée
+      const relevantBoosts = catBoosts.filter(b =>
+        filterCategory === 'all'
+          ? true                                 // sur "tous" → on injecte les sponsorisés
+          : b.target_category === filterCategory // sur une catégorie → seulement ceux de cette cat
+      );
+      if (relevantBoosts.length > 0) {
+        const sponsoredIds = new Set(relevantBoosts.map(b => b.product_id));
+        // Extraire les produits sponsorisés qui sont dans la liste filtrée
+        const sponsoredItems = sorted
+          .filter(p => sponsoredIds.has(p.id))
+          .slice(0, 3) // max 3 en tête de gondole
+          .map(p => ({ ...p, _isSponsored: true, _sponsoredCat: relevantBoosts.find(b=>b.product_id===p.id)?.target_category }));
+        // Retirer les sponsorisés de leur position originale pour éviter les doublons
+        const remaining = sorted.filter(p => !sponsoredIds.has(p.id));
+        // Réinjecter en tête
+        return [...sponsoredItems, ...remaining];
+      }
+    }
+    return sorted;
+  }, [allItems, searchTerm, filterCategory, sortBy, priceRange, catBoosts]);
 
   const totalPages = Math.ceil(filteredHome.length / ITEMS_PER_PAGE);
   const currentItems = filteredHome.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
@@ -27965,6 +28040,16 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           })
         ),
         /* ── AdSense Leaderboard — uniquement si contenu présent (règles AdSense) ── */
+        /* Indicateur sponsorisé — visible uniquement si catBoosts actifs */
+        currentItems.length > 0 && currentItems[0]?._isSponsored && React.createElement('div', {
+          style: { width: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem',
+                   fontSize: '0.78rem', color: 'var(--text-secondary)', padding: '0.25rem 0.5rem',
+                   marginBottom: '0.25rem' }
+        },
+          React.createElement('i', { className: 'fas fa-star', style: { color: '#00853E', fontSize: '0.7rem' } }),
+          React.createElement('span', null, 'Annonces sponsorisées'),
+          React.createElement('span', { style: { flex: 1, height: '1px', background: 'var(--border)' } })
+        ),
         currentItems.length >= 4 && React.createElement(NexusDirectAd, { placement: 'leaderboard' }),
         currentItems.length === 0
           ? React.createElement('div', null,
@@ -27983,13 +28068,15 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                   const isBoosted = product.is_boosted || catalogBoostsPub.includes(product.id);
                   const card = React.createElement('article', {
                     key: product.id,
-                    className: 'product-card' + (isExpress ? ' product-card-express' : '') + (isBoosted ? ' product-card-boosted' : ''),
+                    className: 'product-card' + (isExpress ? ' product-card-express' : '') + (isBoosted ? ' product-card-boosted' : '') + (product._isSponsored ? ' product-card-sponsored' : ''),
                     role: 'listitem',
                     style: isExpress
                       ? { borderColor:'#3b82f6', borderStyle:'dashed' }
-                      : isBoosted
-                        ? { borderColor:'#f59e0b', boxShadow:'0 0 0 1px #f59e0b33' }
-                        : {},
+                      : product._isSponsored
+                        ? { borderColor:'#00853E', boxShadow:'0 0 0 1px rgba(0,133,62,.25)' }
+                        : isBoosted
+                          ? { borderColor:'#f59e0b', boxShadow:'0 0 0 1px #f59e0b33' }
+                          : {},
                   onClick: () => { if(!isExpress){ setSelectedProduct(product); addViewedPub(product); } },
                   tabIndex: 0,
                   onKeyDown: e => e.key === 'Enter' && !isExpress && (setSelectedProduct(product), addViewedPub(product))
@@ -27997,7 +28084,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                   React.createElement('div', { style: { position: 'relative' } },
                     React.createElement(ProductImg, { product }),
                     React.createElement(WishlistHeart, { product, currentUser: null, addToast }),
-                    isBoosted && !product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: 'linear-gradient(135deg,#FDEE42,#f5c800)', color: '#1a1a1a', fontSize: '0.65rem', fontWeight: 800, padding: '0.18rem 0.5rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '⚡ Sponsorisé'),
+                    product._isSponsored && !product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#00853E', color: '#fff', fontSize: '0.65rem', fontWeight: 800, padding: '0.18rem 0.5rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '🏆 Sponsorisé'),
+                    isBoosted && !product._isSponsored && !product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: 'linear-gradient(135deg,#FDEE42,#f5c800)', color: '#1a1a1a', fontSize: '0.65rem', fontWeight: 800, padding: '0.18rem 0.5rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '⚡ Boosté'),
                     product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#e74c3c', color: 'white', fontSize: '0.68rem', fontWeight: 800, padding: '0.18rem 0.42rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, `-${product.flashDiscount}%`),
                     !product.flashDiscount && !isBoosted && product.createdAt && (Date.now() - new Date(product.createdAt).getTime()) < 14 * 86400000 && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#16a34a', color: 'white', fontSize: '0.68rem', fontWeight: 800, padding: '0.18rem 0.42rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.04em' } }, 'NEW')
                   ),
@@ -28292,9 +28380,6 @@ const B2BQuotesPanel = ({ currentUser: cu, addToast }) => {
   const [quotes,    setQuotes]    = React.useState([]);
   const [loading,   setLoading]   = React.useState(true);
   const [step,      setStep]      = React.useState(1);        // 1=form 2=generating 3=review 4=sent
-  const [showPrioModal, setShowPrioModal] = React.useState(false);
-  const [prioPayMethod, setPrioPayMethod] = React.useState('wave');
-  const B2B_PRIORITY_PRICE = 2000;
   const [busy,      setBusy]      = React.useState(false);
   const [selected,  setSelected]  = React.useState(null);
 
