@@ -16585,26 +16585,49 @@ const TrackingModal = ({ order, onClose }) => {
 // ══════════════════════════════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AdminAmbassadorsPanel — Validation des candidatures ambassadeurs
+// AdminAmbassadorsPanel — Ambassadeurs + Commissions + Paiements
 // ══════════════════════════════════════════════════════════════════════════════
 const AdminAmbassadorsPanel = ({ addToast }) => {
   const [list, setList]       = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [tab, setTab]         = React.useState('pending'); // pending | active | all
 
+  const [commissions, setCommissions] = React.useState([]);
+  const [paying, setPaying]           = React.useState(null); // id en cours de paiement
+
   const load = async () => {
     setLoading(true);
     try {
       if (!DataService._sb) throw new Error('Supabase non configuré');
+      // Charger ambassadeurs
       let q = DataService._sb.from('ambassadors')
-        .select('*, profiles!user_id(name,email,phone,avatar)')
-        .order('joined_at', { ascending: false, nullsFirst: false });
-      // N'appliquer le filtre status que si la colonne existe (évite 400)
-      if (tab !== 'all') q = q.eq('is_active', tab === 'active' || tab === 'pending');
-      const { data, error } = await q;
+        .select('id,code,referral_code,status,level,commission_rate,total_referrals,total_earned,total_sales,user_id,joined_at,approved_at')
+        .order('total_earned', { ascending: false });
+      if (tab === 'pending') q = q.eq('status', 'pending');
+      else if (tab === 'active') q = q.eq('status', 'active');
+      const { data: ambData, error } = await q;
       if (error) throw error;
-      setList(data || []);
-    } catch(e) { addToast('Erreur chargement : ' + e.message, 'error'); }
+
+      // Joindre les profils manuellement
+      const ids = (ambData || []).map(a => a.user_id).filter(Boolean);
+      let profiles = {};
+      if (ids.length > 0) {
+        const { data: profs } = await DataService._sb.from('profiles')
+          .select('id,name,email,phone,avatar').in('id', ids);
+        (profs || []).forEach(p => { profiles[p.id] = p; });
+      }
+      setList((ambData || []).map(a => ({ ...a, profiles: profiles[a.user_id] || {} })));
+
+      // Charger commissions en attente
+      if (tab === 'commissions' || tab === 'all') {
+        const { data: comData } = await DataService._sb.from('ambassador_referrals')
+          .select('*')
+          .eq('status', 'pending')
+          .not('commission', 'is', null)
+          .order('created_at', { ascending: false });
+        setCommissions(comData || []);
+      }
+    } catch(e) { addToast('Erreur : ' + e.message, 'error'); }
     finally { setLoading(false); }
   };
 
@@ -16643,62 +16666,198 @@ const AdminAmbassadorsPanel = ({ addToast }) => {
   };
 
   const E = React.createElement;
+  const waveNum = NEXUS_CONFIG?.payments?.wave?.number || NEXUS_CONFIG?.payments?.waveNumber || '77XXXXXXX';
+  const omNum   = NEXUS_CONFIG?.payments?.om?.number   || NEXUS_CONFIG?.payments?.orangeMoneyNumber || '77XXXXXXX';
+  const FCFA = n => Math.round(n).toLocaleString('fr-FR') + ' F';
+
   const TABS = [
-    { id:'pending', label:'⏳ En attente', badge: list.filter(a=>a.status==='pending').length },
-    { id:'active',  label:'✅ Actifs' },
-    { id:'all',     label:'📋 Tous' },
+    { id:'pending',     label:'⏳ Candidatures' },
+    { id:'active',      label:'✅ Actifs' },
+    { id:'commissions', label:'💰 Payer commissions' },
+    { id:'all',         label:'📋 Tous' },
   ];
 
-  const pending = list.filter(a => a.status === 'pending').length;
+  const pendingCount     = list.filter(a=>a.status==='pending').length;
+  const pendingCommTotal = commissions.reduce((s,c) => s + (c.commission||0), 0);
+
+  // Payer une commission via Wave ou OM
+  const payCommission = async (comm, method) => {
+    const amb = list.find(a => a.id === comm.ambassador_id);
+    const phone = amb?.profiles?.phone || '';
+    const ref = 'AMB-' + (comm.id||'').slice(0,8).toUpperCase();
+    const amount = Math.round(comm.commission || 0);
+
+    if (method === 'wave') {
+      window.open('https://pay.wave.com/m/' + waveNum + '/c/SN?amount=' + amount + '&note=NEXUS-' + ref, '_blank');
+    } else {
+      const phoneNum = phone.replace(/\D/g,'');
+      if (phoneNum && phoneNum !== '77XXXXXXX') {
+        window.open('https://transfert.orange.sn/?amount=' + amount + '&to=' + phoneNum, '_blank');
+      } else {
+        alert('Orange Money : envoyez ' + amount.toLocaleString('fr-FR') + ' FCFA\nRéférence : NEXUS-' + ref + '\nTél ambassadeur : ' + (phone||'non renseigné'));
+      }
+    }
+
+    // Marquer comme payé
+    setPaying(comm.id);
+    try {
+      const { error } = await DataService._sb.from('ambassador_referrals')
+        .update({ status: 'paid', paid_at: new Date().toISOString(), payment_ref: ref })
+        .eq('id', comm.id);
+      if (error) throw error;
+      addToast('✅ Commission marquée payée — Réf: ' + ref, 'success');
+      load();
+    } catch(e) { addToast('❌ ' + e.message, 'error'); }
+    finally { setPaying(null); }
+  };
+
+  // Payer TOUTES les commissions d'un ambassadeur en une fois
+  const payAllForAmb = async (ambId, method) => {
+    const ambComms = commissions.filter(c => c.ambassador_id === ambId);
+    const total = ambComms.reduce((s,c) => s + (c.commission||0), 0);
+    const amb = list.find(a => a.id === ambId);
+    const ref = 'AMB-BULK-' + Date.now().toString(36).toUpperCase();
+
+    if (method === 'wave') window.open('https://pay.wave.com/m/' + waveNum + '/c/SN?amount=' + Math.round(total) + '&note=NEXUS-' + ref, '_blank');
+    else alert('Orange Money : envoyez ' + Math.round(total).toLocaleString('fr-FR') + ' FCFA\nRéf : NEXUS-' + ref + '\nTél : ' + (amb?.profiles?.phone||'?'));
+
+    // Marquer toutes payées
+    const ids = ambComms.map(c => c.id);
+    await DataService._sb.from('ambassador_referrals')
+      .update({ status: 'paid', paid_at: new Date().toISOString(), payment_ref: ref })
+      .in('id', ids);
+    addToast('✅ ' + ids.length + ' commissions payées — ' + FCFA(total), 'success');
+    load();
+  };
 
   return E('div', { className:'card' },
     E('div', { className:'card-header' },
       E('h2', { className:'card-title' }, '🏆 Ambassadeurs'),
-      pending > 0 && E('span', { className:'badge badge-warning', style:{ marginLeft:'.5rem' } }, pending, ' en attente')
+      pendingCount > 0 && E('span', { className:'badge badge-warning', style:{ marginLeft:'.5rem' } }, pendingCount, ' en attente'),
+      commissions.length > 0 && E('span', { className:'badge badge-success', style:{ marginLeft:'.5rem' } }, FCFA(pendingCommTotal), ' à verser')
     ),
 
-    // Tabs
-    E('div', { style:{ display:'flex', gap:'.5rem', marginBottom:'1.25rem', borderBottom:'2px solid var(--border)', paddingBottom:'.75rem' } },
+    E('div', { style:{ display:'flex', gap:'.5rem', marginBottom:'1.25rem', borderBottom:'2px solid var(--border)', paddingBottom:'.75rem', flexWrap:'wrap' } },
       TABS.map(t => E('button', { key:t.id,
         onClick: () => setTab(t.id),
         style:{ padding:'.4rem .85rem', borderRadius:8, border:'none', cursor:'pointer', fontWeight:600, fontSize:'.82rem',
                 background: tab===t.id ? 'var(--primary)' : 'var(--bg-light)', color: tab===t.id ? '#fff' : 'var(--text-secondary)' }
-      }, t.label, t.badge > 0 && E('span', { style:{ marginLeft:'.35rem', background:'rgba(255,255,255,.3)', borderRadius:99, padding:'0 5px', fontSize:'.7rem' } }, t.badge))
-    )),
+      }, t.label))
+    ),
 
     loading ? E('div', { className:'empty-state' }, E('i', { className:'fas fa-spinner fa-spin' })) :
+
+    // ── Onglet COMMISSIONS À PAYER ─────────────────────────────────────────────
+    tab === 'commissions' ? E('div', null,
+      commissions.length === 0
+        ? E('div', { className:'empty-state' }, E('i', { className:'fas fa-check-circle', style:{color:'var(--success)'} }), E('p', null, 'Aucune commission en attente — tout est à jour !'))
+        : E(React.Fragment, null,
+            // Récap global
+            E('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:'.65rem', marginBottom:'1.25rem' } },
+              E('div', { style:{ background:'var(--bg-light)', borderRadius:10, padding:'.85rem 1rem', borderLeft:'3px solid var(--primary)' } },
+                E('div', { style:{ fontSize:'.72rem', color:'var(--text-secondary)', textTransform:'uppercase' } }, 'Total à verser'),
+                E('div', { style:{ fontWeight:700, fontSize:'1.05rem', marginTop:'.2rem' } }, FCFA(pendingCommTotal))
+              ),
+              E('div', { style:{ background:'var(--bg-light)', borderRadius:10, padding:'.85rem 1rem', borderLeft:'3px solid #f59e0b' } },
+                E('div', { style:{ fontSize:'.72rem', color:'var(--text-secondary)', textTransform:'uppercase' } }, 'Commissions'),
+                E('div', { style:{ fontWeight:700, fontSize:'1.05rem', marginTop:'.2rem' } }, commissions.length + ' paiements')
+              )
+            ),
+
+            // Grouper par ambassadeur
+            (() => {
+              const byAmb = {};
+              commissions.forEach(co => {
+                if (!byAmb[co.ambassador_id]) byAmb[co.ambassador_id] = [];
+                byAmb[co.ambassador_id].push(co);
+              });
+              return Object.entries(byAmb).map(([ambId, comms]) => {
+                const amb = list.find(a => a.id === ambId) || {};
+                const p = amb.profiles || {};
+                const total = comms.reduce((s,co) => s + (co.commission||0), 0);
+                return E('div', { key:ambId, style:{ border:'0.5px solid var(--border)', borderRadius:12, padding:'1rem', marginBottom:'.75rem' } },
+                  // Header ambassadeur
+                  E('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'.75rem', flexWrap:'wrap', gap:'.5rem' } },
+                    E('div', { style:{ display:'flex', alignItems:'center', gap:'.75rem' } },
+                      E('div', { style:{ width:38, height:38, borderRadius:'50%', background:'var(--primary)', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, flexShrink:0 } },
+                        (p.name||'?')[0].toUpperCase()
+                      ),
+                      E('div', null,
+                        E('div', { style:{ fontWeight:700 } }, p.name || 'Ambassadeur'),
+                        E('div', { style:{ fontSize:'.78rem', color:'var(--text-secondary)' } }, p.phone || '—', ' · ', comms.length, ' commissions')
+                      )
+                    ),
+                    E('div', { style:{ display:'flex', gap:'.5rem', alignItems:'center', flexWrap:'wrap' } },
+                      E('span', { style:{ fontWeight:800, fontSize:'1rem', color:'var(--primary)' } }, FCFA(total)),
+                      E('button', { onClick:()=>payAllForAmb(ambId,'wave'), style:{ padding:'.4rem .85rem', border:'1.5px solid #4FC3F7', borderRadius:8, background:'#E1F5FE', color:'#0277BD', cursor:'pointer', fontWeight:700, fontSize:'.8rem' } },
+                        '🌊 Wave tout'
+                      ),
+                      E('button', { onClick:()=>payAllForAmb(ambId,'om'), style:{ padding:'.4rem .85rem', border:'1.5px solid #FF9800', borderRadius:8, background:'#FFF3E0', color:'#E65100', cursor:'pointer', fontWeight:700, fontSize:'.8rem' } },
+                        '🟠 OM tout'
+                      )
+                    )
+                  ),
+                  // Liste des commissions
+                  E('table', { className:'data-table', style:{ width:'100%', fontSize:'.82rem' } },
+                    E('thead', null, E('tr', null,
+                      ['Date', 'Commande', 'CA', 'Commission', 'Payer'].map(h => E('th', { key:h, style:{ padding:'.3rem .5rem', textAlign:'left', fontWeight:600, color:'var(--text-secondary)', fontSize:'.75rem' } }, h))
+                    )),
+                    E('tbody', null,
+                      comms.map(co => E('tr', { key:co.id, style:{ borderTop:'0.5px solid var(--border)' } },
+                        E('td', { style:{ padding:'.4rem .5rem' } }, co.created_at ? new Date(co.created_at).toLocaleDateString('fr-FR') : '—'),
+                        E('td', { style:{ padding:'.4rem .5rem', fontFamily:'monospace', fontSize:'.75rem' } }, (co.order_id||'').slice(0,8).toUpperCase() || '—'),
+                        E('td', { style:{ padding:'.4rem .5rem' } }, co.order_amount ? FCFA(co.order_amount) : '—'),
+                        E('td', { style:{ padding:'.4rem .5rem', fontWeight:700, color:'var(--primary)' } }, FCFA(co.commission||0)),
+                        E('td', { style:{ padding:'.4rem .5rem' } },
+                          E('div', { style:{ display:'flex', gap:'.35rem' } },
+                            E('button', { onClick:()=>payCommission(co,'wave'), disabled:paying===co.id, style:{ padding:'.25rem .6rem', border:'1.5px solid #4FC3F7', borderRadius:6, background:'#E1F5FE', color:'#0277BD', cursor:'pointer', fontSize:'.75rem', fontWeight:600 } }, paying===co.id ? '...' : '🌊 Wave'),
+                            E('button', { onClick:()=>payCommission(co,'om'), disabled:paying===co.id, style:{ padding:'.25rem .6rem', border:'1.5px solid #FF9800', borderRadius:6, background:'#FFF3E0', color:'#E65100', cursor:'pointer', fontSize:'.75rem', fontWeight:600 } }, paying===co.id ? '...' : '🟠 OM')
+                          )
+                        )
+                      ))
+                    )
+                  )
+                );
+              });
+            })()
+          )
+    ) :
+
+    // ── Onglets liste ambassadeurs ──────────────────────────────────────────────
     list.length === 0 ? E('div', { className:'empty-state' },
       E('i', { className:'fas fa-award' }), E('p', null, tab === 'pending' ? 'Aucune candidature en attente' : 'Aucun ambassadeur')
     ) :
     E('div', { style:{ display:'flex', flexDirection:'column', gap:'.75rem' } },
       list.map(amb => {
         const p = amb.profiles || {};
-        const statusColor = { pending:'#d97706', active:'#059669', rejected:'#dc2626' }[amb.status] || '#64748b';
-        const total_fcfa = Math.round((amb.total_earned || 0) * EUR_TO_FCFA);
-        return E('div', { key:amb.id, style:{ border:'1px solid var(--border)', borderRadius:12, padding:'1rem', display:'flex', alignItems:'center', gap:'1rem', flexWrap:'wrap' } },
-          // Avatar
-          E('div', { style:{ width:44, height:44, borderRadius:'50%', background:'linear-gradient(135deg,var(--primary),var(--primary-light))', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:'1.1rem', flexShrink:0 } },
+        const statusColor = { pending:'#d97706', active:'#059669', rejected:'#dc2626', suspended:'#6b7280' }[amb.status] || '#64748b';
+        const levelColors = { bronze:'#CD7F32', silver:'#C0C0C0', gold:'#FFD700', platinum:'#E5E4E2' };
+        const ambComms = commissions.filter(co => co.ambassador_id === amb.id);
+        const pendingPay = ambComms.reduce((s,co) => s + (co.commission||0), 0);
+        return E('div', { key:amb.id, style:{ border:'0.5px solid var(--border)', borderRadius:12, padding:'1rem', display:'flex', alignItems:'flex-start', gap:'1rem', flexWrap:'wrap' } },
+          E('div', { style:{ width:44, height:44, borderRadius:'50%', background:'var(--primary)', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:'1.1rem', flexShrink:0 } },
             (p.name||'?')[0].toUpperCase()
           ),
-          // Info
           E('div', { style:{ flex:1, minWidth:0 } },
-            E('div', { style:{ fontWeight:700, fontSize:'.95rem' } }, p.name || '—'),
-            E('div', { style:{ fontSize:'.78rem', color:'var(--text-secondary)' } }, p.email || '—', ' · ', p.phone || '—'),
-            E('div', { style:{ display:'flex', gap:'.75rem', marginTop:'.3rem', flexWrap:'wrap', fontSize:'.78rem' } },
-              E('span', null, '🏷️ Code : ', E('code', { style:{ fontWeight:700, color:'var(--primary)' } }, amb.code || amb.referral_code || '—')),
-              E('span', null, '👥 ', amb.total_referrals || 0, ' filleul(s)'),
-              E('span', null, '💰 ', total_fcfa.toLocaleString('fr-FR'), ' FCFA'),
-              E('span', { style:{ color:statusColor, fontWeight:600 } },
-                { pending:'⏳ En attente', active:'✅ Actif', rejected:'❌ Refusé' }[amb.status] || amb.status
-              )
+            E('div', { style:{ display:'flex', alignItems:'center', gap:'.5rem', flexWrap:'wrap', marginBottom:'.2rem' } },
+              E('span', { style:{ fontWeight:700, fontSize:'.95rem' } }, p.name || '—'),
+              amb.level && E('span', { style:{ fontSize:'.7rem', fontWeight:700, padding:'1px 7px', borderRadius:99, background:levelColors[amb.level]||'#ccc', color:'#333' } }, amb.level.toUpperCase())
+            ),
+            E('div', { style:{ fontSize:'.78rem', color:'var(--text-secondary)', marginBottom:'.3rem' } }, p.email || '—', ' · ', p.phone || '—'),
+            E('div', { style:{ display:'flex', gap:'.75rem', flexWrap:'wrap', fontSize:'.78rem' } },
+              E('span', null, '🏷️ ', E('code', { style:{ fontWeight:700, color:'var(--primary)' } }, amb.code || amb.referral_code || '—')),
+              E('span', null, '👥 ', amb.total_referrals || 0, ' filleuls'),
+              E('span', null, '💰 Total gagné : ', FCFA(amb.total_earned || 0)),
+              pendingPay > 0 && E('span', { style:{ color:'#d97706', fontWeight:600 } }, '⏳ ', FCFA(pendingPay), ' à verser'),
+              E('span', { style:{ color:statusColor, fontWeight:600 } }, { pending:'⏳ En attente', active:'✅ Actif', rejected:'❌ Refusé', suspended:'⏸ Suspendu' }[amb.status] || amb.status)
             )
           ),
-          // Actions
           E('div', { style:{ display:'flex', gap:'.5rem', flexShrink:0, flexWrap:'wrap' } },
             amb.status === 'pending' && E(React.Fragment, null,
               E('button', { onClick:()=>approve(amb), style:{ padding:'.4rem .9rem', borderRadius:8, border:'none', background:'#059669', color:'#fff', cursor:'pointer', fontWeight:700, fontSize:'.82rem' } }, '✅ Approuver'),
               E('button', { onClick:()=>reject(amb),  style:{ padding:'.4rem .9rem', borderRadius:8, border:'none', background:'#dc2626', color:'#fff', cursor:'pointer', fontWeight:700, fontSize:'.82rem' } }, '❌ Refuser')
             ),
+            amb.status === 'active' && pendingPay > 0 && E('button', { onClick:()=>setTab('commissions'), style:{ padding:'.4rem .9rem', borderRadius:8, border:'1.5px solid var(--primary)', background:'transparent', color:'var(--primary)', cursor:'pointer', fontWeight:600, fontSize:'.82rem' } }, '💰 ' + FCFA(pendingPay)),
             amb.status === 'active' && E('button', { onClick:()=>revoke(amb), style:{ padding:'.4rem .9rem', borderRadius:8, border:'1.5px solid #dc2626', background:'transparent', color:'#dc2626', cursor:'pointer', fontWeight:600, fontSize:'.82rem' } }, 'Révoquer')
           )
         );
