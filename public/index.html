@@ -12235,6 +12235,18 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         }
         if (currentUser2) DataService.addNotification(currentUser2.id, { type: "order", title: "Commande confirm\xE9e !", message: `Votre commande ${createdOrders[0].id} a \xE9t\xE9 enregistr\xE9e. Suivi : ${createdOrders[0].trackingNumber}` });
 
+        // ── [COURSIER] Proposer la livraison à la demande après la commande ──
+        try {
+          window.dispatchEvent(new CustomEvent('nexus:order-created', {
+            detail: {
+              id: createdOrders[0].id,
+              shippingCity: shippingCity,
+              buyerAddress: (customerInfo && customerInfo.address) || null,
+              total: createdOrders.reduce((s, o) => s + (o.total || 0), 0)
+            }
+          }));
+        } catch (_) {}
+
         // ── Sauvegarder adresse + téléphone dans le profil (non bloquant) ──
         if (currentUser2?.id && DataService._sb && (customerInfo.address || customerInfo.phone)) {
           const updates = {};
@@ -32023,6 +32035,10 @@ const SetupWizard = ({ onComplete }) => {
 const App = ({ onUserChange }) => {
   const { addToast } = useToast();
   const [currentUser2, setCurrentUser] = useState(null);
+  // ── [COURSIER] Transmettre l'utilisateur courant au module coursier ──
+  React.useEffect(() => {
+    try { window.dispatchEvent(new CustomEvent('nexus:set-user', { detail: currentUser2 || null })); } catch (_) {}
+  }, [currentUser2]);
   const [showAdvertiserModal, setShowAdvertiserModal] = React.useState(false);
   const [showAPIModal, setShowAPIModal] = React.useState(false);
   React.useEffect(() => {
@@ -36057,6 +36073,587 @@ window.addEventListener('unhandledrejection', function(event) {
   });
 })();
 </script>
+
+<!-- NEXUS COURSIER module injecte -->
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS MARKET — Module Coursier à la demande (front-end)
+     À COLLER dans index.html juste AVANT la balise </body> de fermeture,
+     APRÈS que DataService, NexusWA, NEXUS_CONFIG et React soient définis.
+     Aucune modification du code existant n'est requise : ce module
+     s'auto-greffe sur DataService via Object.assign.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  if (typeof DataService === 'undefined' || typeof React === 'undefined') {
+    console.warn('[Coursier] DataService/React absent — module non chargé'); return;
+  }
+  var E = React.createElement;
+
+  // ── Grille tarifaire (FCFA) — alignée sur NEXUS_CONFIG si présent ─────────
+  var TARIF = (NEXUS_CONFIG && NEXUS_CONFIG.courier) || {
+    base: 500, perKm: 150, min: 1000, commissionPct: 15, nightSurchargePct: 20
+  };
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  1. COUCHE DONNÉES — méthodes greffées sur DataService
+  // ════════════════════════════════════════════════════════════════════════
+  Object.assign(DataService, {
+    _zonesCache: null,
+
+    // Charger les zones (centroïdes) — Supabase puis fallback statique
+    async getDeliveryZones() {
+      if (this._zonesCache) return this._zonesCache;
+      if (this._sb) {
+        try {
+          var r = await this._sb.from('delivery_zones').select('*').order('name');
+          if (!r.error && r.data && r.data.length) { this._zonesCache = r.data; return r.data; }
+        } catch (e) { console.warn('[Coursier] getDeliveryZones:', e.message); }
+      }
+      // Fallback minimal hors-ligne
+      this._zonesCache = [
+        { name: 'Dakar-Plateau', lat: 14.67, lng: -17.438, city: 'Dakar' },
+        { name: 'Pikine', lat: 14.755, lng: -17.39, city: 'Pikine' },
+        { name: 'Guédiawaye', lat: 14.77, lng: -17.406, city: 'Guédiawaye' },
+        { name: 'Rufisque', lat: 14.715, lng: -17.273, city: 'Rufisque' },
+        { name: 'Mbour', lat: 14.42, lng: -16.966, city: 'Mbour' },
+        { name: 'Thiès', lat: 14.791, lng: -16.926, city: 'Thiès' }
+      ];
+      return this._zonesCache;
+    },
+
+    // Distance Haversine (km) entre deux zones/points
+    _haversineKm(aLat, aLng, bLat, bLng) {
+      var R = 6371, toRad = function (d) { return d * Math.PI / 180; };
+      var dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+      var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      return Math.round(R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s)) * 100) / 100;
+    },
+
+    // Devis : { distanceKm, fee, payout, commission, isNight }
+    quoteDelivery(pickupZone, dropoffZone) {
+      var z = this._zonesCache || [];
+      var p = z.find(function (x) { return x.name === pickupZone; });
+      var d = z.find(function (x) { return x.name === dropoffZone; });
+      var km = (p && d) ? this._haversineKm(p.lat, p.lng, d.lat, d.lng) : 5;
+      var h = new Date().getHours();
+      var isNight = (h >= 22 || h < 6);
+      var fee = TARIF.base + Math.round(km * TARIF.perKm);
+      if (isNight) fee = Math.round(fee * (1 + TARIF.nightSurchargePct / 100));
+      fee = Math.max(fee, TARIF.min);
+      var commission = Math.round(fee * TARIF.commissionPct / 100);
+      return { distanceKm: km, fee: fee, commission: commission, payout: fee - commission, isNight: isNight };
+    },
+
+    // Créer une course (RPC create_delivery) — fallback insert direct
+    async createDelivery(payload) {
+      if (this._sb) {
+        try {
+          var r = await this._sb.rpc('create_delivery', { payload: payload });
+          if (!r.error && r.data) return r.data;
+          if (r.error) console.warn('[Coursier] create_delivery RPC:', r.error.message);
+        } catch (e) { console.warn('[Coursier] createDelivery:', e.message); }
+      }
+      // Fallback localStorage (mode démo hors-ligne)
+      var id = 'DLV-' + Date.now();
+      var all = storage.getArray('deliveries');
+      var rec = Object.assign({ id: id, status: 'searching', created_at: new Date().toISOString() }, payload);
+      all.push(rec); storage.set('deliveries', all);
+      return { id: id, status: 'searching' };
+    },
+
+    // Lire l'état d'une course (pas de temps réel : appelé au refresh / sur action)
+    async getDelivery(id) {
+      if (this._sb) {
+        try {
+          var r = await this._sb.from('deliveries').select('*').eq('id', id).maybeSingle();
+          if (!r.error && r.data) return r.data;
+        } catch (e) { console.warn('[Coursier] getDelivery:', e.message); }
+      }
+      return (storage.getArray('deliveries').find(function (d) { return d.id === id; })) || null;
+    },
+
+    async getMyDeliveries(buyerId) {
+      if (this._sb) {
+        try {
+          var r = await this._sb.from('deliveries').select('*')
+            .eq('buyer_id', buyerId).order('created_at', { ascending: false });
+          if (!r.error && r.data) return r.data;
+        } catch (e) { console.warn('[Coursier] getMyDeliveries:', e.message); }
+      }
+      return storage.getArray('deliveries').filter(function (d) { return d.buyer_id === buyerId; });
+    },
+
+    // ── Côté coursier ────────────────────────────────────────────────────
+    async setCourierStatus(courierId, status, lat, lng) {
+      var patch = { courier_status: status, location_updated_at: new Date().toISOString() };
+      if (lat != null) patch.current_lat = lat;
+      if (lng != null) patch.current_lng = lng;
+      if (this._sb) {
+        try { await this._sb.from('profiles').update(patch).eq('id', courierId); }
+        catch (e) { console.warn('[Coursier] setCourierStatus:', e.message); }
+      }
+    },
+
+    async getCourierOffers(courierId) {
+      if (!this._sb) return [];
+      try {
+        var r = await this._sb.from('delivery_offers')
+          .select('*, deliveries(*)').eq('courier_id', courierId)
+          .eq('status', 'pending').order('offered_at', { ascending: false });
+        return (!r.error && r.data) ? r.data : [];
+      } catch (e) { console.warn('[Coursier] getCourierOffers:', e.message); return []; }
+    },
+
+    async acceptDelivery(deliveryId, courierId) {
+      if (!this._sb) return { ok: false, reason: 'offline' };
+      try {
+        var r = await this._sb.rpc('accept_delivery', { p_delivery_id: deliveryId, p_courier_id: courierId });
+        return (!r.error && r.data) ? r.data : { ok: false, reason: r.error && r.error.message };
+      } catch (e) { return { ok: false, reason: e.message }; }
+    },
+
+    // Transition de statut (picked_up / in_transit / delivered)
+    async advanceDelivery(deliveryId, status) {
+      var patch = { status: status };
+      if (status === 'picked_up') patch.picked_up_at = new Date().toISOString();
+      if (status === 'delivered') patch.delivered_at = new Date().toISOString();
+      if (this._sb) {
+        try {
+          await this._sb.from('deliveries').update(patch).eq('id', deliveryId);
+          if (status === 'delivered') {
+            var dl = await this.getDelivery(deliveryId);
+            if (dl && dl.courier_id) await this.setCourierStatus(dl.courier_id, 'available');
+          }
+        } catch (e) { console.warn('[Coursier] advanceDelivery:', e.message); }
+      }
+      // Notifier l'app (réutilise le bus d'événements existant)
+      window.dispatchEvent(new CustomEvent('nexus:delivery-updated', { detail: { id: deliveryId, status: status } }));
+      return true;
+    }
+  });
+
+  // ── Notification WhatsApp coursier (réutilise NexusWA.send) ──────────────
+  if (typeof NexusWA !== 'undefined' && NexusWA.send) {
+    NexusWA.deliveryAssigned = function (courierPhone, pickup, dropoff, payout) {
+      var msg = '🛵 *Nouvelle course NEXUS !*\n' +
+        '📍 Retrait : ' + pickup + '\n🏁 Livraison : ' + dropoff + '\n' +
+        '💰 Vous gagnez : *' + Math.round(payout) + ' FCFA*\n\n⚡ Ouvrez l\'app pour accepter.';
+      return this.send(courierPhone, msg, 'delivery_assigned');
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  2. UI ACHETEUR — Formulaire de demande de coursier
+  //     S'ouvre sur l'événement 'nexus:open-courier' (depuis checkout ou menu)
+  // ════════════════════════════════════════════════════════════════════════
+  function CourierRequestModal(props) {
+    var _u = React.useState(null), zones = _u[0], setZones = _u[1];
+    var _t = React.useState('errand'), type = _t[0], setType = _t[1];
+    var _p = React.useState(''), pickup = _p[0], setPickup = _p[1];
+    var _d = React.useState(''), dropoff = _d[0], setDropoff = _d[1];
+    var _i = React.useState(''), items = _i[0], setItems = _i[1];
+    var _pm = React.useState('wave'), pay = _pm[0], setPay = _pm[1];
+    var _q = React.useState(null), quote = _q[0], setQuote = _q[1];
+    var _b = React.useState(false), busy = _b[0], setBusy = _b[1];
+    var _r = React.useState(null), result = _r[0], setResult = _r[1];
+
+    React.useEffect(function () {
+      DataService.getDeliveryZones().then(setZones);
+      if (props.prefill) {
+        if (props.prefill.dropoff) setDropoff(props.prefill.dropoff);
+        if (props.prefill.type) setType(props.prefill.type);
+        if (props.prefill.items) setItems(props.prefill.items);
+      }
+    }, []);
+
+    React.useEffect(function () {
+      if (pickup && dropoff && zones) setQuote(DataService.quoteDelivery(pickup, dropoff));
+      else setQuote(null);
+    }, [pickup, dropoff, zones]);
+
+    function submit() {
+      if (!pickup || !dropoff || !quote) { alert('Choisissez le retrait et la livraison.'); return; }
+      setBusy(true);
+      var z = zones || [];
+      var pz = z.find(function (x) { return x.name === pickup; }) || {};
+      var dz = z.find(function (x) { return x.name === dropoff; }) || {};
+      var buyer = (props.user && props.user.id) || null;
+      DataService.createDelivery({
+        buyer_id: buyer, order_id: (function(){ var o = props.prefill && props.prefill.orderId; return (o && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o)) ? o : null; })(),
+        type: type, pickup_zone: pickup, pickup_label: pickup,
+        pickup_lat: pz.lat, pickup_lng: pz.lng,
+        dropoff_zone: dropoff, dropoff_label: dropoff,
+        dropoff_lat: dz.lat, dropoff_lng: dz.lng,
+        items_desc: items, distance_km: quote.distanceKm,
+        fee_fcfa: quote.fee, courier_payout: quote.payout,
+        commission_fcfa: quote.commission, payment_method: pay
+      }).then(function (res) {
+        setBusy(false); setResult(res);
+        window.dispatchEvent(new CustomEvent('nexus:delivery-created', { detail: res }));
+      }).catch(function (e) { setBusy(false); alert('Erreur : ' + e.message); });
+    }
+
+    var overlay = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' };
+    var card = { background: '#fff', borderRadius: 16, maxWidth: 440, width: '100%', maxHeight: '90vh', overflowY: 'auto' };
+    var lbl = { fontSize: '.72rem', color: '#666', margin: '0 0 .25rem', fontWeight: 600 };
+    var inp = { width: '100%', padding: '.6rem .7rem', border: '1.5px solid #e5e7eb', borderRadius: 10, fontSize: '.85rem', marginBottom: '.7rem', boxSizing: 'border-box' };
+    var zOpts = (zones || []).map(function (z) { return E('option', { key: z.name, value: z.name }, z.name); });
+
+    // Écran résultat (course créée)
+    if (result) {
+      return E('div', { style: overlay, onClick: props.onClose },
+        E('div', { style: card, onClick: function (e) { e.stopPropagation(); } },
+          E('div', { style: { padding: '2rem 1.5rem', textAlign: 'center' } },
+            E('div', { style: { fontSize: '3rem', marginBottom: '.5rem' } }, '🛵'),
+            E('h3', { style: { margin: '0 0 .5rem' } }, 'Recherche d\'un coursier…'),
+            E('p', { style: { color: '#666', fontSize: '.85rem', margin: '0 0 1rem' } },
+              'Nous attribuons automatiquement le coursier disponible le plus proche du point de retrait. Vous serez notifié dès qu\'un coursier accepte.'),
+            E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', fontSize: '.8rem', textAlign: 'left', marginBottom: '1rem' } },
+              E('div', null, '📍 ', pickup, ' → 🏁 ', dropoff),
+              E('div', { style: { marginTop: '.3rem', fontWeight: 700, color: '#00853E' } }, quote.fee + ' FCFA · ' + quote.distanceKm + ' km')),
+            E('button', { onClick: props.onClose, style: { width: '100%', padding: '.8rem', background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer' } }, 'Suivre ma course')
+          )
+        )
+      );
+    }
+
+    return E('div', { style: overlay, onClick: props.onClose },
+      E('div', { style: card, onClick: function (e) { e.stopPropagation(); } },
+        E('div', { style: { background: '#00853E', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 10, borderRadius: '16px 16px 0 0' } },
+          E('span', { style: { fontSize: '1.3rem' } }, '🛵'),
+          E('span', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem' } }, 'Demander un coursier'),
+          E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.3rem', cursor: 'pointer' } }, '×')),
+        E('div', { style: { padding: '1.25rem' } },
+          E('p', { style: lbl }, 'Type de course'),
+          E('div', { style: { display: 'flex', gap: 6, marginBottom: '.8rem' } },
+            [['errand', 'Faire des courses'], ['parcel', 'Colis'], ['order_delivery', 'Ma commande']].map(function (t) {
+              var on = type === t[0];
+              return E('button', { key: t[0], onClick: function () { setType(t[0]); }, style: { flex: 1, padding: '.5rem', fontSize: '.72rem', border: '1.5px solid ' + (on ? '#00853E' : '#e5e7eb'), background: on ? 'rgba(0,133,62,.08)' : '#fff', color: on ? '#00853E' : '#666', borderRadius: 8, cursor: 'pointer', fontWeight: 600 } }, t[1]);
+            })),
+          E('p', { style: lbl }, 'Point de retrait'),
+          E('select', { value: pickup, onChange: function (e) { setPickup(e.target.value); }, style: inp },
+            E('option', { value: '' }, '— Choisir une zone —'), zOpts),
+          E('p', { style: lbl }, 'Livraison'),
+          E('select', { value: dropoff, onChange: function (e) { setDropoff(e.target.value); }, style: inp },
+            E('option', { value: '' }, '— Choisir une zone —'), zOpts),
+          E('p', { style: lbl }, type === 'errand' ? 'À acheter / détails' : 'Détails (optionnel)'),
+          E('textarea', { value: items, onChange: function (e) { setItems(e.target.value); }, rows: 2, placeholder: 'Ex : 2 kg de poisson, légumes, pain…', style: Object.assign({}, inp, { resize: 'vertical' }) }),
+          quote && E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', marginBottom: '.8rem' } },
+            E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' } },
+              E('span', { style: { fontSize: '.75rem', color: '#666' } }, 'Tarif estimé'),
+              E('span', { style: { fontSize: '1.4rem', fontWeight: 700, color: '#00853E' } }, quote.fee + ' FCFA')),
+            E('div', { style: { fontSize: '.68rem', color: '#999', marginTop: '.3rem' } },
+              'Base ' + TARIF.base + ' + ' + quote.distanceKm + ' km × ' + TARIF.perKm + (quote.isNight ? ' · nuit +' + TARIF.nightSurchargePct + '%' : ''))),
+          E('p', { style: lbl }, 'Paiement'),
+          E('div', { style: { display: 'flex', gap: 6, marginBottom: '1rem' } },
+            [['wave', 'Wave', '#1DC8F2', '#06384a'], ['orange_money', 'Orange Money', '#FF6600', '#fff'], ['cash', 'Espèces', '#e5e7eb', '#444']].map(function (m) {
+              var on = pay === m[0];
+              return E('button', { key: m[0], onClick: function () { setPay(m[0]); }, style: { flex: 1, padding: '.55rem', fontSize: '.7rem', border: on ? '2px solid #00853E' : '1.5px solid #e5e7eb', background: m[2], color: m[3], borderRadius: 8, cursor: 'pointer', fontWeight: 600 } }, m[1]);
+            })),
+          E('button', { onClick: submit, disabled: busy || !quote, style: { width: '100%', padding: '.85rem', background: (busy || !quote) ? '#9ca3af' : '#00853E', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.9rem', cursor: (busy || !quote) ? 'default' : 'pointer' } },
+            busy ? 'Recherche…' : 'Commander le coursier')
+        )
+      )
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  3. MONTAGE — bouton flottant + ouverture via événements
+  // ════════════════════════════════════════════════════════════════════════
+  var mountEl = null, root = null, currentUser = null;
+
+  function getMount() {
+    if (!mountEl) { mountEl = document.createElement('div'); mountEl.id = 'nexus-courier-root'; document.body.appendChild(mountEl); }
+    if (!root && window.ReactDOM) {
+      root = ReactDOM.createRoot ? ReactDOM.createRoot(mountEl) : null;
+    }
+    return root;
+  }
+
+  function openModal(prefill) {
+    var r = getMount();
+    var close = function () { if (r) r.render(null); else ReactDOM.unmountComponentAtNode(mountEl); };
+    var el = E(CourierRequestModal, { onClose: close, prefill: prefill || null, user: currentUser });
+    if (r) r.render(el); else ReactDOM.render(el, mountEl);
+  }
+
+  // L'app peut transmettre l'utilisateur courant
+  window.addEventListener('nexus:set-user', function (e) { currentUser = e.detail || null; });
+  // Ouvrir le formulaire coursier (depuis n'importe quel bouton de l'app)
+  window.addEventListener('nexus:open-courier', function (e) { openModal(e.detail); });
+
+  // Greffe sur le checkout : après une commande, proposer la livraison coursier
+  window.addEventListener('nexus:order-created', function (e) {
+    var o = e.detail || {};
+    openModal({ type: 'order_delivery', orderId: o.id, dropoff: o.shippingCity || o.buyerAddress, items: 'Commande #' + String(o.id || '').slice(0, 8) });
+  });
+
+  // Bouton flottant "Coursier" (toujours visible)
+  function injectFab() {
+    if (document.getElementById('nexus-courier-fab') || !document.body) return;
+    var b = document.createElement('button');
+    b.id = 'nexus-courier-fab';
+    b.innerHTML = '🛵 Coursier';
+    b.setAttribute('aria-label', 'Demander un coursier');
+    b.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9997;padding:12px 18px;border-radius:30px;background:#00853E;color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600;box-shadow:0 4px 14px rgba(0,133,62,.35);font-family:inherit';
+    b.addEventListener('click', function () { openModal(null); });
+    document.body.appendChild(b);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectFab);
+  else injectFab();
+
+  console.info('[NEXUS] Module Coursier chargé ✅');
+})();
+</script>
+
+
+<!-- NEXUS COURSIER dashboard injecte -->
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS MARKET — Dashboard Coursier (front-end)
+     Dépend du module Coursier (DataService.getCourierOffers, acceptDelivery,
+     advanceDelivery, setCourierStatus déjà greffés). Pas de temps réel :
+     rafraîchissement manuel + au montage. À placer après le module Coursier.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  if (typeof DataService === 'undefined' || typeof React === 'undefined') {
+    console.warn('[Coursier-Dash] DataService/React absent'); return;
+  }
+  var E = React.createElement;
+
+  // ── Méthode données : courses en cours du coursier ────────────────────────
+  Object.assign(DataService, {
+    async getMyCourierDeliveries(courierId) {
+      if (this._sb) {
+        try {
+          var r = await this._sb.from('deliveries').select('*')
+            .eq('courier_id', courierId)
+            .in('status', ['accepted', 'picked_up', 'in_transit'])
+            .order('assigned_at', { ascending: false });
+          if (!r.error && r.data) return r.data;
+        } catch (e) { console.warn('[Coursier-Dash] getMyCourierDeliveries:', e.message); }
+      }
+      return [];
+    }
+  });
+
+  var STATUS_LABEL = {
+    accepted: 'Acceptée — aller au retrait',
+    picked_up: 'Course récupérée',
+    in_transit: 'En cours de livraison',
+    delivered: 'Livrée'
+  };
+  // Prochaine étape selon le statut courant
+  var NEXT = { accepted: 'picked_up', picked_up: 'in_transit', in_transit: 'delivered' };
+  var NEXT_LABEL = { accepted: 'J\'ai récupéré la course', picked_up: 'Je pars livrer', in_transit: 'Course livrée ✓' };
+
+  function fcfa(n) { return Math.round(n || 0).toLocaleString('fr-FR') + ' FCFA'; }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Dashboard coursier
+  // ════════════════════════════════════════════════════════════════════════
+  function CourierDashboard(props) {
+    var _o = React.useState(false), online = _o[0], setOnline = _o[1];
+    var _of = React.useState([]), offers = _of[0], setOffers = _of[1];
+    var _ac = React.useState([]), active = _ac[0], setActive = _ac[1];
+    var _l = React.useState(true), loading = _l[0], setLoading = _l[1];
+    var _b = React.useState(false), busy = _b[0], setBusy = _b[1];
+    var _pos = React.useState(null), pos = _pos[0], setPos = _pos[1];
+
+    var user = props.user || {};
+    var courierId = user.id;
+
+    function refresh() {
+      if (!courierId) { setLoading(false); return; }
+      setLoading(true);
+      Promise.all([
+        DataService.getCourierOffers(courierId),
+        DataService.getMyCourierDeliveries(courierId)
+      ]).then(function (res) {
+        setOffers(res[0] || []);
+        setActive(res[1] || []);
+        setLoading(false);
+      }).catch(function () { setLoading(false); });
+    }
+
+    React.useEffect(function () {
+      refresh();
+      // Statut initial déduit du profil
+      if (user.courier_status === 'available' || user.courier_status === 'busy') setOnline(true);
+    }, []);
+
+    // Passer en ligne : tente la géoloc, sinon utilise la zone du profil
+    function goOnline() {
+      setBusy(true);
+      function apply(lat, lng) {
+        setPos({ lat: lat, lng: lng });
+        DataService.setCourierStatus(courierId, 'available', lat, lng).then(function () {
+          setOnline(true); setBusy(false); refresh();
+        });
+      }
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          function (p) { apply(p.coords.latitude, p.coords.longitude); },
+          function () {
+            // Refus / échec géoloc → fallback centroïde de la zone du profil
+            DataService.getDeliveryZones().then(function (zs) {
+              var z = zs.find(function (x) { return x.name === user.courier_zone; }) || zs[0];
+              apply(z ? z.lat : null, z ? z.lng : null);
+            });
+          },
+          { timeout: 8000 }
+        );
+      } else {
+        DataService.getDeliveryZones().then(function (zs) {
+          var z = zs.find(function (x) { return x.name === user.courier_zone; }) || zs[0];
+          apply(z ? z.lat : null, z ? z.lng : null);
+        });
+      }
+    }
+
+    function goOffline() {
+      setBusy(true);
+      DataService.setCourierStatus(courierId, 'offline').then(function () {
+        setOnline(false); setBusy(false); setOffers([]);
+      });
+    }
+
+    function accept(offer) {
+      setBusy(true);
+      DataService.acceptDelivery(offer.delivery_id, courierId).then(function (r) {
+        setBusy(false);
+        if (r && r.ok) { refresh(); }
+        else if (r && r.reason === 'already_taken') { alert('Course déjà prise par un autre coursier.'); refresh(); }
+        else { alert('Impossible d\'accepter : ' + ((r && r.reason) || 'erreur')); refresh(); }
+      });
+    }
+
+    function advance(dl) {
+      var next = NEXT[dl.status];
+      if (!next) return;
+      setBusy(true);
+      DataService.advanceDelivery(dl.id, next).then(function () { setBusy(false); refresh(); });
+    }
+
+    var overlay = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 10000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' };
+    var card = { background: '#fff', borderRadius: 16, maxWidth: 460, width: '100%', marginTop: '2vh', marginBottom: '2vh' };
+    var sect = { padding: '0 1.25rem' };
+
+    return E('div', { style: overlay, onClick: props.onClose },
+      E('div', { style: card, onClick: function (e) { e.stopPropagation(); } },
+        // En-tête
+        E('div', { style: { background: '#111', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 10, borderRadius: '16px 16px 0 0' } },
+          E('span', { style: { fontSize: '1.3rem' } }, '🛵'),
+          E('div', null,
+            E('div', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem' } }, 'Espace Coursier'),
+            E('div', { style: { color: '#9ca3af', fontSize: '.72rem' } }, user.name || 'Coursier')),
+          E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer' } }, '×')),
+
+        // Bandeau disponibilité
+        E('div', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '1rem 1.25rem', borderBottom: '1px solid #f0f0f0' } },
+          E('div', { style: { width: 12, height: 12, borderRadius: '50%', background: online ? '#16a34a' : '#9ca3af' } }),
+          E('div', { style: { flex: 1 } },
+            E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, online ? 'En ligne — disponible' : 'Hors ligne'),
+            E('div', { style: { fontSize: '.7rem', color: '#999' } }, online ? (pos ? 'Position partagée' : 'Position : zone du profil') : 'Vous ne recevez pas d\'offres')),
+          E('button', { onClick: online ? goOffline : goOnline, disabled: busy, style: { padding: '.5rem 1rem', borderRadius: 20, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '.8rem', background: online ? '#fee2e2' : '#16a34a', color: online ? '#b91c1c' : '#fff' } },
+            busy ? '…' : (online ? 'Passer hors ligne' : 'Passer en ligne'))),
+
+        // Course active
+        active.length > 0 && E('div', { style: { padding: '1rem 1.25rem', background: '#f0fdf4' } },
+          E('div', { style: { fontSize: '.7rem', fontWeight: 700, color: '#16a34a', marginBottom: '.5rem', textTransform: 'uppercase', letterSpacing: '.04em' } }, 'Course en cours'),
+          active.map(function (dl) {
+            return E('div', { key: dl.id, style: { background: '#fff', borderRadius: 12, padding: '.9rem', marginBottom: '.6rem', border: '1px solid #bbf7d0' } },
+              E('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '.4rem' } },
+                E('span', { style: { fontWeight: 700, fontSize: '.85rem' } }, STATUS_LABEL[dl.status] || dl.status),
+                E('span', { style: { fontWeight: 700, color: '#16a34a', fontSize: '.85rem' } }, fcfa(dl.courier_payout))),
+              E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.2rem' } }, '📍 ', dl.pickup_label || dl.pickup_zone),
+              E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.5rem' } }, '🏁 ', dl.dropoff_label || dl.dropoff_zone),
+              dl.items_desc && E('div', { style: { fontSize: '.72rem', color: '#888', marginBottom: '.5rem', fontStyle: 'italic' } }, dl.items_desc),
+              NEXT[dl.status] && E('button', { onClick: function () { advance(dl); }, disabled: busy, style: { width: '100%', padding: '.7rem', borderRadius: 10, border: 'none', background: '#00853E', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' } }, NEXT_LABEL[dl.status]));
+          })),
+
+        // Offres disponibles
+        E('div', { style: Object.assign({}, sect, { paddingTop: '1rem', paddingBottom: '1.25rem' }) },
+          E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.6rem' } },
+            E('div', { style: { fontSize: '.7rem', fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '.04em' } }, 'Offres reçues' + (offers.length ? ' (' + offers.length + ')' : '')),
+            E('button', { onClick: refresh, disabled: loading, style: { background: 'none', border: 'none', color: '#00853E', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600 } }, loading ? '…' : '↻ Rafraîchir')),
+
+          !online && E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1.5rem 0' } }, 'Passez en ligne pour recevoir des offres.'),
+          online && !loading && offers.length === 0 && E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1.5rem 0' } }, 'Aucune offre pour le moment. Rafraîchissez dans un instant.'),
+
+          online && offers.map(function (of) {
+            var dl = of.deliveries || {};
+            return E('div', { key: of.id, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.9rem', marginBottom: '.6rem' } },
+              E('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '.3rem' } },
+                E('span', { style: { fontSize: '.72rem', background: '#eff6ff', color: '#1d4ed8', padding: '.15rem .5rem', borderRadius: 6, fontWeight: 600 } },
+                  (of.distance_km != null ? of.distance_km + ' km' : '—') + ' du retrait'),
+                E('span', { style: { fontWeight: 700, color: '#16a34a' } }, fcfa(dl.courier_payout))),
+              E('div', { style: { fontSize: '.78rem', color: '#555' } }, '📍 ', dl.pickup_label || dl.pickup_zone || '—'),
+              E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.5rem' } }, '🏁 ', dl.dropoff_label || dl.dropoff_zone || '—'),
+              E('button', { onClick: function () { accept(of); }, disabled: busy, style: { width: '100%', padding: '.7rem', borderRadius: 10, border: 'none', background: busy ? '#9ca3af' : '#00853E', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: busy ? 'default' : 'pointer' } }, 'Accepter la course'));
+          })
+        )
+      )
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Montage + ouverture
+  // ════════════════════════════════════════════════════════════════════════
+  var mountEl = null, root = null, currentUser = null;
+
+  function getMount() {
+    if (!mountEl) { mountEl = document.createElement('div'); mountEl.id = 'nexus-courier-dash-root'; document.body.appendChild(mountEl); }
+    if (!root && window.ReactDOM && ReactDOM.createRoot) root = ReactDOM.createRoot(mountEl);
+    return root;
+  }
+
+  function openDash() {
+    if (!currentUser || !currentUser.id) { alert('Connectez-vous avec un compte coursier.'); return; }
+    var r = getMount();
+    var close = function () { if (r) r.render(null); else ReactDOM.unmountComponentAtNode(mountEl); };
+    var el = E(CourierDashboard, { onClose: close, user: currentUser });
+    if (r) r.render(el); else ReactDOM.render(el, mountEl);
+  }
+
+  // L'app transmet l'utilisateur courant (même event que le module acheteur)
+  window.addEventListener('nexus:set-user', function (e) {
+    currentUser = e.detail || null;
+    toggleFab();
+  });
+  window.addEventListener('nexus:open-courier-dashboard', openDash);
+
+  // FAB coursier — visible uniquement si l'utilisateur est coursier
+  function isCourier(u) { return !!(u && (u.is_courier || u.role === 'courier')); }
+
+  function toggleFab() {
+    var existing = document.getElementById('nexus-courier-dash-fab');
+    if (isCourier(currentUser)) {
+      if (!existing && document.body) {
+        var b = document.createElement('button');
+        b.id = 'nexus-courier-dash-fab';
+        b.innerHTML = '📦 Mes courses';
+        b.setAttribute('aria-label', 'Ouvrir l\'espace coursier');
+        b.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9997;padding:12px 18px;border-radius:30px;background:#111;color:#fff;border:none;cursor:pointer;font-size:14px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.3);font-family:inherit';
+        b.addEventListener('click', openDash);
+        document.body.appendChild(b);
+      }
+      // Cacher le FAB "Demander un coursier" pour un coursier (évite le chevauchement)
+      var ask = document.getElementById('nexus-courier-fab');
+      if (ask) ask.style.display = 'none';
+    } else if (existing) {
+      existing.remove();
+      var ask2 = document.getElementById('nexus-courier-fab');
+      if (ask2) ask2.style.display = '';
+    }
+  }
+
+  console.info('[NEXUS] Dashboard Coursier chargé ✅');
+})();
+</script>
+
 </body>
 </html>
 
