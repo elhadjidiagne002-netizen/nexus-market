@@ -4980,9 +4980,12 @@ const DataService = {
             name: profile.name, phone: profile.phone || '', status: profile.role === 'vendor' ? 'pending' : 'active',
             shop_name: profile.shopName || '', shop_category: profile.shopCategory || '', ...profile };
           delete fallbackProfile.password;
-          // Tenter l'INSERT — peut échouer si RLS bloque (pas de session)
-          // Dans ce cas le trigger SQL prend le relais
-          this._sb.from('profiles').insert(fallbackProfile).catch(() => {});
+          // [FIX 409] UPSERT (ignoreDuplicates) au lieu d'INSERT : le trigger
+          // handle_new_user() a déjà créé la ligne profiles → un INSERT renvoie une 409
+          // (clé primaire dupliquée). On laisse le trigger SQL faire autorité.
+          this._sb.from('profiles')
+            .upsert(fallbackProfile, { onConflict: 'id', ignoreDuplicates: true })
+            .then(() => {}, () => {});
         }
         return { __emailConfirmPending: true, email: sanitizedEmail };
       }
@@ -4991,9 +4994,13 @@ const DataService = {
       const fullProfile = { id: uid, email: sanitizedEmail, role: profile.role || 'buyer', avatar, ...profile };
       delete fullProfile.password;
       // [FIX 409] INSERT uniquement à l'inscription — le profil ne doit pas encore exister
+      // [FIX 409] Le trigger SQL handle_new_user() crée déjà la ligne profiles.
+      // On fait donc un UPSERT (et non INSERT) pour compléter/écraser les champs
+      // sans déclencher d'erreur de clé dupliquée.
       try {
-        const { error: insErr } = await this._sb.from('profiles').insert(fullProfile);
-        if (insErr && insErr.code !== '23505') console.warn('[signUp] profiles insert:', insErr.message);
+        const { error: insErr } = await this._sb.from('profiles')
+          .upsert(fullProfile, { onConflict: 'id' });
+        if (insErr && insErr.code !== '23505') console.warn('[signUp] profiles upsert:', insErr.message);
       } catch (_) {}
       return fullProfile;
     }
@@ -5153,7 +5160,7 @@ const DataService = {
       created_at: authUser.created_at || new Date().toISOString() };
     // Restaurer tous les champs vendeur stockés dans user_metadata lors de l'inscription
     ['owner_name','shopName','shopCategory','shop_desc','phone','ninea','rc','address',
-     'structure_type','payment_method','orange_phone','wave_phone','iban','bank_name']
+     'structure_type','payment_method','orange_phone','wave_phone','iban','bank_name','vehicle_type']
       .forEach(k => { if (meta[k] != null) base[k] = meta[k]; });
     return base;
   },
@@ -13365,10 +13372,16 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           name:   form.name,
           phone:  form.phone,
           status: "active",
+          // [FIX courier] Conserver le type de véhicule dans user_metadata pour
+          // pouvoir créer la ligne couriers après confirmation email (1ère connexion).
+          vehicle_type: form.vehicle_type || "moto",
           avatar,
         };
         const cUser = await DataService.signUp(form.email, form.password, courierProfile);
         if (cUser?.__emailConfirmPending) {
+          // [FIX courier] Email de confirmation en attente : la ligne couriers ne peut
+          // pas encore être créée (pas de session). Elle sera créée à la 1ère connexion
+          // par ensureCourierRow() (cf. handleLogin). On marque l'intention en metadata.
           setDone(true); setLoading(false); return;
         }
         if (cUser?.id && DataService._sb) {
@@ -13379,7 +13392,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
             vehicle_type: form.vehicle_type || "moto",
             zones:        ["Dakar"],
             status:       "pending",
-          }, { onConflict: "user_id" }).catch(() => {});
+          }, { onConflict: "user_id" }).then(() => {}, () => {});
         }
         try { if (window.nexusAnalytics) window.nexusAnalytics.trackSignUp("courier"); } catch(_) {}
         setDone(true); setLoading(false); return;
@@ -32345,6 +32358,29 @@ const App = ({ onUserChange }) => {
 
     setCurrentUser(user);
     window.__nexusCurrentUser = user;
+
+    // [FIX courier] Réconcilier la ligne couriers à la connexion.
+    // Cas couvert : un livreur s'inscrit avec confirmation email activée → la ligne
+    // couriers n'a pas pu être créée au signup (pas de session). À sa 1ère connexion
+    // après confirmation, on la crée ici à partir de son rôle + métadonnées.
+    if (user.role === "courier" && user.id && DataService._sb) {
+      (async () => {
+        try {
+          const { data: existing } = await DataService._sb
+            .from("couriers").select("user_id").eq("user_id", user.id).maybeSingle();
+          if (!existing) {
+            await DataService._sb.from("couriers").upsert({
+              user_id:      user.id,
+              name:         user.name  || user.email,
+              phone:        user.phone || "",
+              vehicle_type: user.vehicle_type || "moto",
+              zones:        ["Dakar"],
+              status:       "pending",
+            }, { onConflict: "user_id" });
+          }
+        } catch (_) { /* RLS ou réseau — non bloquant */ }
+      })();
+    }
     document.dispatchEvent(new CustomEvent('nexus-user-logged-in', { detail: { user: user } }));
     if (onUserChange) onUserChange(user);
     setShowAuth(false);
