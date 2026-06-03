@@ -3156,8 +3156,21 @@ const NexusWA = {
 
   // Envoyer un message via /api/whatsapp (Cloudflare Function)
   async send(phone, message, template = null) {
-    if (!this._cfg.enabled && !this._cfg.instanceId) {
+    // [FIX] Service désactivé via Admin → on n'envoie pas. L'ancien test
+    // (!enabled && !instanceId) ne sautait que si les DEUX étaient faux : comme
+    // instanceId est codé en dur, le message partait même avec enabled === false.
+    if (this._cfg.enabled === false) {
+      console.info('[NexusWA] Service désactivé — message non envoyé:', template);
+      return { ok: false, skipped: true };
+    }
+    // [FIX] Pas de credentials → non configuré (on ne tente même pas l'appel API).
+    if (!this._cfg.instanceId || !this._cfg.apiToken) {
       console.info('[NexusWA] Non configuré — message non envoyé:', template);
+      return { ok: false, skipped: true };
+    }
+    // [FIX] Numéro destinataire manquant → on n'envoie pas.
+    if (!phone) {
+      console.warn('[NexusWA] Numéro destinataire manquant — message non envoyé:', template);
       return { ok: false, skipped: true };
     }
     // Normaliser le numéro (format sénégalais)
@@ -7324,6 +7337,46 @@ const NEXUS_EMAIL_DEFAULTS = {
       `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;">{{buyer_name}} 👋</h1><p style="margin:0 0 28px;font-size:1rem;color:#6B7280;line-height:1.6;">Bonne nouvelle ! Votre commande a été expédiée et est en route vers vous.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:linear-gradient(135deg,#1D4ED8,#2563EB);border-radius:10px;padding:18px 20px;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td><p style="margin:0 0 4px;font-size:0.7rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:1px;">Numéro de commande</p><p style="margin:0;font-size:1.05rem;font-weight:800;color:#ffffff;font-family:monospace;">{{order_id}}</p></td><td align="right"><p style="margin:0 0 4px;font-size:0.7rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:1px;">N° de suivi</p><p style="margin:0;font-size:1.05rem;font-weight:800;color:#FDEF42;font-family:monospace;">{{tracking_number}}</p></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:18px 20px;border:1px solid #E5E7EB;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Transporteur</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;">{{carrier}}</td></tr><tr><td style="padding:6px 0;font-size:0.85rem;color:#6B7280;">Livraison estimée</td><td align="right" style="padding:6px 0;font-size:0.85rem;font-weight:700;color:#00853E;">{{estimated_delivery}}</td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{tracking_url}}" style="display:inline-block;background:linear-gradient(135deg,#1D4ED8,#2563EB);color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;box-shadow:0 4px 16px rgba(29,78,216,0.3);">Suivre ma livraison →</a></td></tr></table></td></tr>` +
       _tplFooter("support@nexus.sn")
     )
+  },
+
+  // 12. Confirmation d'adresse email à l'inscription (NOUVEAU) ────────────────
+  email_confirmation: {
+    subject: "✉️ Confirmez votre adresse email — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#00853E 0%,#33A85A 100%);border-radius:16px 16px 0 0;padding:36px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(253,239,66,0.15);border:2px solid #FDEF42;border-radius:50px;padding:8px 24px;"><span style="font-size:0.85rem;color:#FDEF42;font-weight:700;letter-spacing:2px;text-transform:uppercase;">✉️ Vérification email</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:48px 40px 40px;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td align="center"><div style="display:inline-block;width:72px;height:72px;background:linear-gradient(135deg,#00853E,#33A85A);border-radius:20px;text-align:center;line-height:72px;font-size:2rem;box-shadow:0 8px 24px rgba(0,133,62,0.3);">✉️</div></td></tr></table><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;text-align:center;line-height:1.2;">Plus qu'une étape,<br>{{user_name}} !</h1><p style="margin:0 0 32px;font-size:0.95rem;color:#6B7280;text-align:center;line-height:1.6;">Confirmez votre adresse email pour activer votre compte NEXUS Market et commencer à acheter ou vendre en toute sécurité.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td align="center"><a href="{{confirm_url}}" style="display:inline-block;background:#00853E;color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:16px 48px;border-radius:50px;letter-spacing:0.5px;box-shadow:0 4px 16px rgba(0,133,62,0.3);">Confirmer mon email →</a></td></tr></table>{{#if confirm_code}}<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td align="center"><div style="display:inline-block;background:#F9F7F0;border:3px dashed #FDEF42;border-radius:16px;padding:20px 40px;text-align:center;"><p style="margin:0 0 6px;font-size:0.7rem;color:#6B7280;text-transform:uppercase;letter-spacing:2px;font-weight:700;">Ou saisissez ce code</p><p style="margin:0;font-size:2rem;font-weight:900;color:#1F2937;letter-spacing:10px;font-family:'Courier New',monospace;">{{confirm_code}}</p></div></td></tr></table>{{/if}}<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:0 10px 10px 0;padding:14px 18px;"><p style="margin:0;font-size:0.85rem;color:#92400E;font-weight:600;">⏱ Ce lien expire dans <strong>24 heures</strong>.</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#F9F7F0;border-left:4px solid #6B7280;border-radius:0 10px 10px 0;padding:14px 18px;"><p style="margin:0;font-size:0.85rem;color:#6B7280;line-height:1.5;">Vous n'avez pas créé de compte NEXUS Market ? Ignorez simplement cet email.</p></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 13. Offre acceptée — côté acheteur (NOUVEAU) ──────────────────────────────
+  offer_accepted: {
+    subject: "✅ Votre offre sur {{product_name}} a été acceptée !",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#00853E 0%,#33A85A 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(253,239,66,0.15);border:2px solid #FDEF42;border-radius:50px;padding:8px 24px;"><span style="font-size:0.85rem;color:#FDEF42;font-weight:700;letter-spacing:2px;text-transform:uppercase;">✅ Offre acceptée</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonne nouvelle,</p><h1 style="margin:0 0 20px;font-size:1.5rem;font-weight:800;color:#1F2937;line-height:1.3;">{{buyer_name}}, votre offre<br>a été acceptée ! 🎉</h1><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:18px 20px;border:1px solid #E5E7EB;"><p style="margin:0 0 4px;font-size:0.72rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;">Produit</p><p style="margin:0 0 4px;font-size:1.05rem;font-weight:700;color:#1F2937;">{{product_name}}</p><p style="margin:0;font-size:0.85rem;color:#6B7280;">Vendu par <strong style="color:#1F2937;">{{vendor_name}}</strong></p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td align="center" style="background:linear-gradient(135deg,#00853E,#33A85A);border-radius:14px;padding:28px;"><p style="margin:0 0 6px;font-size:0.75rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:2px;font-weight:600;">Prix négocié</p><p style="margin:0;font-size:3rem;font-weight:900;color:#FDEF42;line-height:1;">{{offer_amount}}</p><p style="margin:4px 0 0;font-size:1rem;color:rgba(255,255,255,0.8);font-weight:600;">FCFA</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td style="background:#EFF6FF;border-left:4px solid #1D4ED8;border-radius:0 10px 10px 0;padding:14px 18px;"><p style="margin:0;font-size:0.85rem;color:#1E40AF;font-weight:600;line-height:1.5;">💡 Finalisez votre achat rapidement pour réserver ce prix. Le vendeur a accepté votre proposition.</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{checkout_url}}" style="display:inline-block;background:#00853E;color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;box-shadow:0 4px 16px rgba(0,133,62,0.3);">Finaliser mon achat →</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 14. Offre refusée — côté acheteur (NOUVEAU) ───────────────────────────────
+  offer_rejected: {
+    subject: "Votre offre sur {{product_name}} — NEXUS Market",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#6B7280 0%,#4B5563 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.35);border-radius:50px;padding:6px 20px;"><span style="font-size:0.82rem;color:#ffffff;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">💬 Réponse à votre offre</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 16px;font-size:1.45rem;font-weight:800;color:#1F2937;line-height:1.3;">{{buyer_name}}, votre offre<br>n'a pas été retenue</h1><p style="margin:0 0 28px;font-size:0.95rem;color:#6B7280;line-height:1.6;">Le vendeur <strong style="color:#1F2937;">{{vendor_name}}</strong> n'a pas pu accepter votre proposition pour <strong style="color:#1F2937;">{{product_name}}</strong>. Ne vous découragez pas — d'autres opportunités vous attendent !</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:18px 20px;border:1px solid #E5E7EB;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Produit</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;">{{product_name}}</td></tr><tr><td style="padding:6px 0;font-size:0.85rem;color:#6B7280;">Votre offre</td><td align="right" style="padding:6px 0;font-size:0.85rem;font-weight:700;color:#1F2937;">{{offer_amount}} FCFA</td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td style="background:#F9F7F0;border-left:4px solid #00853E;border-radius:0 10px 10px 0;padding:14px 18px;"><p style="margin:0;font-size:0.85rem;color:#1F2937;line-height:1.5;">💡 Vous pouvez proposer une nouvelle offre plus proche du prix affiché, ou découvrir des produits similaires sur NEXUS Market.</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{product_url}}" style="display:inline-block;background:#1F2937;color:#FDEF42;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;">Revoir le produit →</a></td></tr></table></td></tr>` +
+      _tplFooter("support@nexus.sn")
+    )
+  },
+
+  // 15. Devis B2B envoyé — côté acheteur professionnel (NOUVEAU) ──────────────
+  quote_sent: {
+    subject: "📄 Votre devis {{quote_id}} — NEXUS Market B2B",
+    html: _tplWrap(
+      `<tr><td style="background:linear-gradient(135deg,#7B1FA2 0%,#5B21B6 100%);border-radius:16px 16px 0 0;padding:32px 40px;text-align:center;"><span style="font-size:2rem;font-weight:900;color:#FDEF42;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><div style="margin-top:14px;display:inline-block;background:rgba(253,239,66,0.15);border:2px solid rgba(253,239,66,0.5);border-radius:50px;padding:8px 24px;"><span style="font-size:0.85rem;color:#FDEF42;font-weight:700;letter-spacing:2px;text-transform:uppercase;">📄 Devis professionnel</span></div></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><p style="margin:0 0 6px;font-size:0.82rem;color:#6B7280;text-transform:uppercase;letter-spacing:1.5px;">Bonjour,</p><h1 style="margin:0 0 10px;font-size:1.5rem;font-weight:800;color:#1F2937;">{{buyer_name}} 👋</h1><p style="margin:0 0 28px;font-size:0.95rem;color:#6B7280;line-height:1.6;">Voici le devis que vous avez demandé pour <strong style="color:#1F2937;">{{company_name}}</strong>. Il est valable jusqu'au {{valid_until}}.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:linear-gradient(135deg,#7B1FA2,#5B21B6);border-radius:10px;padding:16px 20px;"><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td><p style="margin:0 0 4px;font-size:0.7rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:1px;">N° de devis</p><p style="margin:0;font-size:1.1rem;font-weight:800;color:#ffffff;font-family:monospace;">{{quote_id}}</p></td><td align="right"><p style="margin:0 0 4px;font-size:0.7rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:1px;">Validité</p><p style="margin:0;font-size:0.95rem;font-weight:700;color:#FDEF42;">{{valid_until}}</p></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:20px;border:1px solid #E5E7EB;"><p style="margin:0 0 14px;font-size:0.82rem;font-weight:700;color:#1F2937;text-transform:uppercase;letter-spacing:1px;">Récapitulatif</p><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Société</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;">{{company_name}}</td></tr><tr><td style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;color:#6B7280;">Articles</td><td align="right" style="padding:6px 0;border-bottom:1px solid #E5E7EB;font-size:0.85rem;font-weight:600;color:#1F2937;">{{items_count}}</td></tr><tr><td style="padding:6px 0;font-size:0.85rem;color:#6B7280;">Délai de livraison</td><td align="right" style="padding:6px 0;font-size:0.85rem;font-weight:600;color:#1F2937;">{{delivery_delay}}</td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;"><tr><td align="center" style="background:linear-gradient(135deg,#7B1FA2,#5B21B6);border-radius:14px;padding:28px;"><p style="margin:0 0 6px;font-size:0.75rem;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:2px;">Montant total HT</p><p style="margin:0;font-size:3rem;font-weight:900;color:#FDEF42;line-height:1;">{{quote_total}}</p><p style="margin:4px 0 0;font-size:1rem;color:rgba(255,255,255,0.8);font-weight:600;">FCFA</p></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{quote_url}}" style="display:inline-block;background:#7B1FA2;color:#ffffff;font-weight:700;font-size:0.95rem;text-decoration:none;padding:14px 40px;border-radius:50px;box-shadow:0 4px 16px rgba(123,31,162,0.3);">Consulter mon devis →</a></td></tr></table></td></tr>` +
+      _tplFooter("b2b@nexus.sn")
+    )
   }
 
 };
@@ -7600,6 +7653,70 @@ const EmailService = {
     };
     const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `🚚 Votre commande ${order.id} est en route !`;
     return this.send({ to: buyerEmail, subject: subj, templateId: 'order_shipped', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  // ── NOUVEAU : confirmation d'adresse email à l'inscription ────────────────
+  sendEmailConfirmation(userEmail, userName, confirmUrl, confirmCode) {
+    if (!userEmail) return Promise.resolve(false);
+    const tpl  = getEmailTemplate('email_confirmation');
+    const vars = {
+      user_name:    userName || 'Cher client',
+      confirm_url:  confirmUrl || (window.location.origin + '/#confirm'),
+      confirm_code: confirmCode || '',
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `✉️ Confirmez votre adresse email — NEXUS Market`;
+    return this.send({ to: userEmail, subject: subj, templateId: 'email_confirmation', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  // ── NOUVEAU : offre acceptée (notification acheteur) ──────────────────────
+  sendOfferAccepted(buyerEmail, offer) {
+    if (!buyerEmail) return Promise.resolve(false);
+    const tpl     = getEmailTemplate('offer_accepted');
+    const siteUrl = window.location.origin;
+    const vars = {
+      buyer_name:   offer.buyerName || offer.buyer_name || 'Cher client',
+      product_name: offer.productName || offer.product_name || '—',
+      vendor_name:  offer.vendorName || offer.vendor_name || 'le vendeur',
+      offer_amount: formatPrice(offer.offeredPrice || offer.amount || 0),
+      checkout_url: offer.checkoutUrl || `${siteUrl}/#orders`,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `✅ Votre offre sur ${vars.product_name} a été acceptée !`;
+    return this.send({ to: buyerEmail, subject: subj, templateId: 'offer_accepted', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  // ── NOUVEAU : offre refusée (notification acheteur) ───────────────────────
+  sendOfferRejected(buyerEmail, offer) {
+    if (!buyerEmail) return Promise.resolve(false);
+    const tpl     = getEmailTemplate('offer_rejected');
+    const siteUrl = window.location.origin;
+    const vars = {
+      buyer_name:   offer.buyerName || offer.buyer_name || 'Cher client',
+      product_name: offer.productName || offer.product_name || '—',
+      vendor_name:  offer.vendorName || offer.vendor_name || 'le vendeur',
+      offer_amount: formatPrice(offer.offeredPrice || offer.amount || 0),
+      product_url:  offer.productUrl || (offer.productId ? `${siteUrl}/?product=${offer.productId}` : siteUrl),
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `Votre offre sur ${vars.product_name} — NEXUS Market`;
+    return this.send({ to: buyerEmail, subject: subj, templateId: 'offer_rejected', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
+  },
+
+  // ── NOUVEAU : devis B2B envoyé (notification acheteur pro) ────────────────
+  sendQuote(buyerEmail, quote) {
+    if (!buyerEmail) return Promise.resolve(false);
+    const tpl     = getEmailTemplate('quote_sent');
+    const siteUrl = window.location.origin;
+    const vars = {
+      buyer_name:     quote.buyerName || quote.buyer_name || 'Cher client',
+      company_name:   quote.companyName || quote.company_name || '—',
+      quote_id:       quote.id || quote.quote_id || '—',
+      items_count:    quote.itemsCount != null ? String(quote.itemsCount) : (Array.isArray(quote.items) ? String(quote.items.length) : '—'),
+      quote_total:    formatPrice(quote.total || 0),
+      valid_until:    quote.validUntil ? new Date(quote.validUntil).toLocaleDateString('fr-FR') : '30 jours',
+      delivery_delay: quote.deliveryDelay || 'À convenir',
+      quote_url:      quote.quoteUrl || `${siteUrl}/#b2b`,
+    };
+    const subj = tpl?.subject ? applyEmailVars(tpl.subject, vars) : `📄 Votre devis ${vars.quote_id} — NEXUS Market B2B`;
+    return this.send({ to: buyerEmail, subject: subj, templateId: 'quote_sent', variables: { ...vars, html_body: applyEmailVars(tpl?.html || '', vars) } });
   },
 
   sendWelcome(userEmail, userName) {
@@ -13496,17 +13613,9 @@ if (json.token || json.accessToken) {
           };
           newUser = await DataService.signUp(form.email, form.password, profile);
           if (newUser.__emailConfirmPending) {
-          fetch('/api/email', { method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              to: form.email,
-              subject: 'Confirmez votre adresse email — NEXUS Market',
-              html: '<div style="font-family:Arial,sans-serif;padding:24px;max-width:600px">' +
-                '<h2 style="color:#00853E">Bienvenue sur NEXUS Market 🎉</h2>' +
-                '<p>Bonjour <strong>' + (form.name||form.email) + '</strong>,</p>' +
-                '<p>Vérifiez votre boîte email et cliquez sur le lien de confirmation envoyé par Supabase pour activer votre compte.</p>' +
-                '<p style="color:#888;font-size:13px">NEXUS Market · nexus.sn</p></div>'
-            })
-          }).catch(() => {});
+          // Email de confirmation maison — template "email_confirmation" (en complement
+          // du lien natif Supabase). Centralise le design dans NEXUS_EMAIL_DEFAULTS.
+          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
           setDone(true); setLoading(false); return;
         }
         }
@@ -13519,17 +13628,9 @@ if (json.token || json.accessToken) {
         const profile = { role:"buyer", name:form.name, avatar };
         const newUser = await DataService.signUp(form.email, form.password, profile);
         if (newUser.__emailConfirmPending) {
-          fetch('/api/email', { method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              to: form.email,
-              subject: 'Confirmez votre adresse email — NEXUS Market',
-              html: '<div style="font-family:Arial,sans-serif;padding:24px;max-width:600px">' +
-                '<h2 style="color:#00853E">Bienvenue sur NEXUS Market 🎉</h2>' +
-                '<p>Bonjour <strong>' + (form.name||form.email) + '</strong>,</p>' +
-                '<p>Vérifiez votre boîte email et cliquez sur le lien de confirmation envoyé par Supabase pour activer votre compte.</p>' +
-                '<p style="color:#888;font-size:13px">NEXUS Market · nexus.sn</p></div>'
-            })
-          }).catch(() => {});
+          // Email de confirmation maison — template "email_confirmation" (en complement
+          // du lien natif Supabase). Centralise le design dans NEXUS_EMAIL_DEFAULTS.
+          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
           setDone(true); setLoading(false); return;
         }
         // Parrainage via Supabase
@@ -21720,16 +21821,15 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     if (!ok) return;
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
     storage.set('pendingVendors_mem', (storage.get('pendingVendors_mem') || []).filter(v => v.id !== vendorId));
-    // Email de notification via /api/email
+    // Email de notification — template "vendor_approved" (Admin → Templates email)
     if (vendor?.email) {
-      fetch('/api/email', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: vendor.email,
-          subject: '\u2705 Votre compte NEXUS Market est activ\u00e9 !',
-          html: '<p>Bonjour <strong>' + (vendor.name||vendor.email) + '</strong>,</p>'
-            + '<p>Votre compte a \u00e9t\u00e9 valid\u00e9 par l\u2019\u00e9quipe NEXUS. Vous pouvez maintenant vous connecter.</p>'
-            + '<p><a href="https://nexus.sn">Acc\u00e9der \u00e0 NEXUS Market</a></p>'
-        })
-      }).catch(() => {});
+      EmailService.sendVendorApproval(
+        vendor.email,
+        vendor.name || vendor.ownerName || vendor.email,
+        vendor.shop_name || vendor.name || '',
+        true,
+        ''
+      ).catch(() => {});
     }
     loadData();
     addToast('\u2705 ' + (vendor?.name || 'Utilisateur') + ' approuv\u00e9 — compte activ\u00e9', 'success');
@@ -21742,6 +21842,14 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     if (!ok) return;
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
     storage.set('pendingVendors_mem', (storage.get('pendingVendors_mem') || []).filter(v => v.id !== vendorId));
+    // Email de notification — template "vendor_rejected" (avec motif communiqué)
+    if (vendor?.email) {
+      EmailService.sendVendorRejection(
+        vendor.email,
+        vendor.name || vendor.ownerName || vendor.email,
+        note
+      ).catch(() => {});
+    }
     loadData();
     addToast('Demande de ' + (vendor?.name || 'cet utilisateur') + ' refus\u00e9e', 'info');
   };
@@ -21857,6 +21965,14 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     } catch(_waErr) { console.warn('[NexusWA hook]', _waErr.message); }
 
     try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
+    // -- Email acheteur "commande expediee" (template order_shipped) --
+    try {
+      var _soMail = (typeof orders !== 'undefined' ? orders : []).find(function(o){return o.id===orderId;})
+                 || (storage.getArray('orders')||[]).find(function(o){return o.id===orderId;});
+      if (_soMail && (newStatus === 'in_transit' || newStatus === 'shipped')) {
+        EmailService.sendOrderShipped(_soMail).catch(function(){});
+      }
+    } catch(_){}
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
     // Déclenchement unique sur "delivered". Idempotent : vérifie en DB qu'aucun
     // crédit "earn" n'existe déjà pour cette commande avant de créditer.
@@ -23508,7 +23624,21 @@ CREATE POLICY "Service role only" ON invoice_sequences
         if (res.ok) {
           const ns = data.status || "processing";
           setReqs(prev => prev.map(r => r.id === id ? { ...r, status: ns, reference: data.reference || r.reference, providerStatus: data.providerStatus, _loading: false } : r));
-          if (ns === "paid") addToast(`✅ Versement effectué — Réf : ${data.reference || "N/A"}`, "success");
+          if (ns === "paid") {
+            addToast(`✅ Versement effectué — Réf : ${data.reference || "N/A"}`, "success");
+            // Email vendeur — template "payout_processed"
+            try {
+              const _pr = (reqs || []).find(r => r.id === id) || {};
+              const _vEmail = _pr.vendorEmail || _pr.vendor_email || _pr.email || data.vendorEmail || "";
+              if (_vEmail) {
+                EmailService.sendPayoutProcessed(_vEmail, _pr.vendorName || _pr.vendor_name || "Vendeur", {
+                  amount: _pr.amount || _pr.amount_fcfa || data.amount || 0,
+                  method: _pr.destination || _pr.method || "Mobile Money",
+                  id:     data.reference || _pr.reference || id,
+                }).catch(() => {});
+              }
+            } catch (_) {}
+          }
           else addToast(`⚡ Versement initié — Réf : ${data.reference || "N/A"}`, "info", 8000);
         } else {
           setReqs(prev => prev.map(r => r.id === id ? { ...r, status: data.status === "failed" ? "failed" : "pending", failReason: data.error, _loading: false } : r));
@@ -24195,8 +24325,15 @@ CREATE POLICY "Service role only" ON invoice_sequences
       const notifMsg = `\uD83D\uDCCB Message admin sur litige #${disputeId}\u00a0: ${adminMsg.trim()}`;
       DataService.addNotification(d.buyerId, { type: "system", title: "Message admin \u2014 Litige", message: notifMsg });
       DataService.addNotification(d.vendorId, { type: "system", title: "Message admin \u2014 Litige", message: notifMsg });
-      EmailService.sendMessage(d.buyerEmail || "", d.buyerName || "Client", "Admin NEXUS", adminMsg.trim(), `[NEXUS] Mise \xE0 jour litige #${disputeId}`);
-      EmailService.sendMessage(d.vendorEmail || "", d.vendorName || "Vendeur", "Admin NEXUS", adminMsg.trim(), `[NEXUS] Mise \xE0 jour litige #${disputeId}`);
+      // Notification email — template dédié "dispute_update" (litige)
+      const _disputeInfo = {
+        id:           disputeId,
+        orderId:      d.orderId || d.order_id || '—',
+        productName:  d.productName || d.product_name || '—',
+        adminMessage: adminMsg.trim(),
+      };
+      EmailService.sendDisputeUpdate(d.buyerEmail || "", d.buyerName || "Client", _disputeInfo).catch(()=>{});
+      EmailService.sendDisputeUpdate(d.vendorEmail || "", d.vendorName || "Vendeur", _disputeInfo).catch(()=>{});
       setAdminMsg("");
       loadData();
       addToast("Message envoy\xE9 aux deux parties", "success");
@@ -26935,6 +27072,14 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     addToast(`Statut mis à jour → ${newStatus}`, "success");
 
     try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
+    // -- Email acheteur "commande expediee" (template order_shipped) --
+    try {
+      var _soMail = (typeof orders !== 'undefined' ? orders : []).find(function(o){return o.id===orderId;})
+                 || (storage.getArray('orders')||[]).find(function(o){return o.id===orderId;});
+      if (_soMail && (newStatus === 'in_transit' || newStatus === 'shipped')) {
+        EmailService.sendOrderShipped(_soMail).catch(function(){});
+      }
+    } catch(_){}
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
     // Identique au flux admin. Idempotent via vérification cashback_transactions.
     if (newStatus === "delivered") {
@@ -27031,6 +27176,23 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
 
     if (!offer) { loadData(); return; }
     if (accept && offer.buyerPhone) NexusSmsService.sendOfferAccepted(offer.buyerPhone, offer).catch(function(){});
+    // ── Email acheteur : offre acceptée / refusée (templates dédiés) ─────────
+    {
+      const _offerMail = offer.buyerEmail || offer.buyer_email || '';
+      const _offerCtx = {
+        buyerName:    offer.buyerName || offer.buyer_name || '',
+        productName:  offer.productName || offer.product_name || '',
+        vendorName:   currentUser2.name || offer.vendorName || '',
+        offeredPrice: offer.offeredPrice || offer.amount || 0,
+        productId:    offer.productId || offer.product_id || null,
+      };
+      if (_offerMail) {
+        (accept
+          ? EmailService.sendOfferAccepted(_offerMail, _offerCtx)
+          : EmailService.sendOfferRejected(_offerMail, _offerCtx)
+        ).catch(function(){});
+      }
+    }
 
     DataService.addNotification(offer.buyerId, accept
       ? { type: "offer", title: "\u2705 Offre accept\xE9e !", message: `Votre offre pour "${offer.productName}" a \xE9t\xE9 accept\xE9e par ${currentUser2.name}.` }
@@ -36683,6 +36845,379 @@ window.addEventListener('unhandledrejection', function(event) {
   }
 
   console.info('[NEXUS] Dashboard Coursier chargé ✅');
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     NEXUS — CHAT PUBLIC COMMUNAUTAIRE (salon global, accès visiteurs)
+     ──────────────────────────────────────────────────────────────────────────
+     · Salon unique public ouvert à tous (visiteurs comme membres).
+     · Inscription minimale : un pseudo libre (pré-rempli avec le nom si connecté).
+     · Persistance Supabase (table public_chat) + Realtime quand dispo,
+       sinon fallback localStorage pour la démo (mono-appareil).
+     · Module 100% autonome (IIFE), monté dans son propre root React.
+     · FAB en bas À DROITE pour ne pas chevaucher les FAB coursier (à gauche).
+
+     SQL Supabase à exécuter (une fois) pour activer le mode multi-appareils :
+     ─────────────────────────────────────────────────────────────────────────
+       CREATE TABLE IF NOT EXISTS public_chat (
+         id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         nickname   text NOT NULL,
+         text       text NOT NULL,
+         user_id    uuid,
+         created_at timestamptz NOT NULL DEFAULT now()
+       );
+       ALTER TABLE public_chat ENABLE ROW LEVEL SECURITY;
+       CREATE POLICY "public_chat_read"   ON public_chat FOR SELECT USING (true);
+       CREATE POLICY "public_chat_insert" ON public_chat FOR INSERT WITH CHECK (true);
+       -- Realtime : activer la table dans Database → Replication.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+  if (!window.React || !window.ReactDOM) { console.warn('[NexusChat] React indisponible'); return; }
+  var E = React.createElement;
+
+  // ── Constantes ────────────────────────────────────────────────────────────
+  var LS_NICK = 'nexus_chat_nick';
+  var LS_MSGS = 'nexus_chat_public_msgs';   // fallback localStorage
+  var MAX_MSGS = 200;                        // garde-fou affichage/stockage
+  var MAX_LEN  = 500;                        // longueur max d'un message
+
+  var currentUser = null; // injecté via nexus:set-user
+
+  // ── Accès Supabase (optionnel) ──────────────────────────────────────────────
+  function getSb() {
+    try {
+      return (window.DataService && window.DataService._sb)
+          || window.__nexusSupabaseClient
+          || null;
+    } catch (_) { return null; }
+  }
+
+  // ── Persistance fallback (localStorage) ─────────────────────────────────────
+  function lsLoad() {
+    try { return JSON.parse(localStorage.getItem(LS_MSGS) || '[]'); } catch (_) { return []; }
+  }
+  function lsSave(arr) {
+    try { localStorage.setItem(LS_MSGS, JSON.stringify(arr.slice(-MAX_MSGS))); } catch (_) {}
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+  function escapeHtml(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function fmtTime(iso) {
+    try { return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
+    catch (_) { return ''; }
+  }
+  // Couleur stable dérivée du pseudo (pour distinguer les interlocuteurs)
+  function colorFor(name) {
+    var h = 0, s = String(name || '');
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+    return 'hsl(' + h + ',55%,42%)';
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Composant principal
+  // ════════════════════════════════════════════════════════════════════════
+  function PublicChat(props) {
+    var savedNick = '';
+    try { savedNick = localStorage.getItem(LS_NICK) || ''; } catch (_) {}
+    // Pré-remplissage : pseudo sauvegardé > nom de l'utilisateur connecté
+    var initialNick = savedNick || (currentUser && currentUser.name) || '';
+
+    var st = React.useState(initialNick ? 'chat' : 'join'); var view = st[0], setView = st[1];
+    var nk = React.useState(initialNick); var nick = nk[0], setNick = nk[1];
+    var ms = React.useState([]);          var msgs = ms[0], setMsgs = ms[1];
+    var dr = React.useState('');          var draft = ms ? dr[0] : '', setDraft = dr[1];
+    var er = React.useState('');          var err = er[0], setErr = er[1];
+    var on = React.useState(false);       var online = on[0], setOnline = on[1];
+
+    var scrollRef = React.useRef(null);
+    var chanRef   = React.useRef(null);
+
+    // Normalise une ligne (Supabase row OU objet local) vers la shape d'affichage
+    function norm(r) {
+      return {
+        id:        r.id || (Date.now() + '-' + Math.random().toString(36).slice(2, 7)),
+        nickname:  r.nickname || r.nick || 'Anonyme',
+        text:      r.text || '',
+        user_id:   r.user_id || null,
+        created_at: r.created_at || r.date || new Date().toISOString(),
+      };
+    }
+    function mergeSorted(list) {
+      var seen = {}, out = [];
+      list.forEach(function (m) { if (!seen[m.id]) { seen[m.id] = 1; out.push(m); } });
+      out.sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); });
+      return out.slice(-MAX_MSGS);
+    }
+
+    // ── Chargement initial + abonnement temps réel ────────────────────────────
+    React.useEffect(function () {
+      var mounted = true;
+      var sb = getSb();
+
+      function loadInitial() {
+        if (sb) {
+          sb.from('public_chat')
+            .select('id,nickname,text,user_id,created_at')
+            .order('created_at', { ascending: true })
+            .limit(MAX_MSGS)
+            .then(function (res) {
+              if (!mounted) return;
+              if (res.error) {
+                // Table absente / RLS → bascule localStorage silencieusement
+                console.info('[NexusChat] Supabase indispo, mode local:', res.error.message);
+                setMsgs(mergeSorted(lsLoad().map(norm)));
+                setOnline(false);
+              } else {
+                setMsgs(mergeSorted((res.data || []).map(norm)));
+                setOnline(true);
+              }
+            }, function () {
+              if (mounted) { setMsgs(mergeSorted(lsLoad().map(norm))); setOnline(false); }
+            });
+        } else {
+          setMsgs(mergeSorted(lsLoad().map(norm)));
+          setOnline(false);
+        }
+      }
+      loadInitial();
+
+      // Realtime : nouveaux messages de tous les visiteurs
+      if (sb) {
+        try {
+          var chan = sb.channel('public-chat-' + Math.random().toString(36).slice(2, 8))
+            .on('postgres_changes',
+              { event: 'INSERT', schema: 'public', table: 'public_chat' },
+              function (payload) {
+                if (!mounted || !payload.new) return;
+                setMsgs(function (prev) { return mergeSorted(prev.concat(norm(payload.new))); });
+              })
+            .subscribe(function (status) {
+              if (status === 'SUBSCRIBED' && mounted) setOnline(true);
+            });
+          chanRef.current = chan;
+        } catch (e) { console.info('[NexusChat] realtime off:', e.message); }
+      }
+
+      return function () {
+        mounted = false;
+        if (chanRef.current && sb) { try { sb.removeChannel(chanRef.current); } catch (_) {} }
+      };
+    }, []);
+
+    // Auto-scroll vers le dernier message
+    React.useEffect(function () {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }, [msgs]);
+
+    // ── Validation du pseudo (inscription facile) ─────────────────────────────
+    function joinChat() {
+      var n = (nick || '').trim();
+      if (n.length < 2)  { setErr('Pseudo trop court (min. 2 caractères)'); return; }
+      if (n.length > 20) { setErr('Pseudo trop long (max. 20 caractères)'); return; }
+      try { localStorage.setItem(LS_NICK, n); } catch (_) {}
+      setNick(n); setErr(''); setView('chat');
+    }
+
+    // ── Envoi d'un message ────────────────────────────────────────────────────
+    function sendMsg() {
+      var t = (draft || '').trim();
+      if (!t) return;
+      if (t.length > MAX_LEN) t = t.slice(0, MAX_LEN);
+      var row = {
+        id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+        nickname: nick,
+        text: t,
+        user_id: (currentUser && currentUser.id) || null,
+        created_at: new Date().toISOString(),
+      };
+      // Affichage optimiste
+      setMsgs(function (prev) { return mergeSorted(prev.concat(norm(row))); });
+      setDraft('');
+
+      var sb = getSb();
+      if (sb && online) {
+        sb.from('public_chat')
+          .insert({ nickname: row.nickname, text: row.text, user_id: row.user_id })
+          .then(function (res) {
+            if (res && res.error) {
+              console.info('[NexusChat] insert échec, fallback local:', res.error.message);
+              var arr = lsLoad(); arr.push(row); lsSave(arr);
+            }
+          }, function () {
+            var arr = lsLoad(); arr.push(row); lsSave(arr);
+          });
+      } else {
+        var arr = lsLoad(); arr.push(row); lsSave(arr);
+      }
+    }
+
+    function onKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+    }
+
+    // ── Styles ────────────────────────────────────────────────────────────────
+    var panel = {
+      position: 'fixed', bottom: '6.5rem', right: '1.25rem', zIndex: 9998,
+      width: 'min(370px, calc(100vw - 2rem))', height: 'min(520px, calc(100vh - 9rem))',
+      background: '#fff', borderRadius: 16, boxShadow: '0 12px 40px rgba(0,0,0,.25)',
+      display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      fontFamily: 'inherit', border: '1px solid #E5E7EB',
+    };
+    var header = {
+      background: 'linear-gradient(135deg,#00853E,#33A85A)', color: '#fff',
+      padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    };
+
+    // ── Rendu : écran "inscription pseudo" ────────────────────────────────────
+    function renderJoin() {
+      return E('div', { style: { padding: '28px 22px', display: 'flex', flexDirection: 'column', gap: 14, flex: 1, justifyContent: 'center' } },
+        E('div', { style: { textAlign: 'center', fontSize: '2.2rem' } }, '💬'),
+        E('h3', { style: { margin: 0, textAlign: 'center', fontSize: '1.15rem', color: '#1F2937' } }, 'Rejoindre le salon'),
+        E('p', { style: { margin: 0, textAlign: 'center', fontSize: '.85rem', color: '#6B7280', lineHeight: 1.5 } },
+          'Choisissez un pseudo pour discuter avec la communauté NEXUS Market. Aucune inscription requise.'),
+        E('input', {
+          type: 'text', value: nick, maxLength: 20, autoFocus: true,
+          placeholder: 'Votre pseudo…',
+          onChange: function (e) { setNick(e.target.value); setErr(''); },
+          onKeyDown: function (e) { if (e.key === 'Enter') joinChat(); },
+          style: { padding: '12px 14px', borderRadius: 10, border: '1px solid #D1D5DB', fontSize: '.95rem', outline: 'none' },
+        }),
+        err ? E('div', { style: { color: '#DC2626', fontSize: '.8rem', textAlign: 'center' } }, err) : null,
+        E('button', {
+          onClick: joinChat,
+          style: { padding: '12px', borderRadius: 10, border: 'none', background: '#00853E', color: '#fff', fontWeight: 700, fontSize: '.95rem', cursor: 'pointer' },
+        }, 'Entrer dans le salon →')
+      );
+    }
+
+    // ── Rendu : écran "chat" ──────────────────────────────────────────────────
+    function renderChat() {
+      return E(React.Fragment, null,
+        // Liste des messages
+        E('div', {
+          ref: scrollRef,
+          style: { flex: 1, overflowY: 'auto', padding: '14px 14px 6px', background: '#F9FAFB', display: 'flex', flexDirection: 'column', gap: 10 },
+        },
+          msgs.length === 0
+            ? E('div', { style: { textAlign: 'center', color: '#9CA3AF', fontSize: '.85rem', marginTop: 20 } }, 'Soyez le premier à écrire 👋')
+            : msgs.map(function (m) {
+                var mine = (m.nickname === nick);
+                return E('div', { key: m.id, style: { display: 'flex', flexDirection: 'column', alignItems: mine ? 'flex-end' : 'flex-start' } },
+                  E('div', { style: { fontSize: '.7rem', color: mine ? '#00853E' : colorFor(m.nickname), fontWeight: 700, marginBottom: 2, padding: '0 4px' } },
+                    (mine ? 'Vous' : escapeHtml(m.nickname)) + ' · ' + fmtTime(m.created_at)),
+                  E('div', { style: {
+                    maxWidth: '80%', padding: '8px 12px', borderRadius: 12,
+                    background: mine ? '#00853E' : '#fff', color: mine ? '#fff' : '#1F2937',
+                    border: mine ? 'none' : '1px solid #E5E7EB', fontSize: '.88rem',
+                    lineHeight: 1.4, wordBreak: 'break-word', whiteSpace: 'pre-wrap',
+                  } }, escapeHtml(m.text))
+                );
+              })
+        ),
+        // Barre de saisie
+        E('div', { style: { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid #E5E7EB', background: '#fff' } },
+          E('textarea', {
+            value: draft, rows: 1, maxLength: MAX_LEN, placeholder: 'Votre message…',
+            onChange: function (e) { setDraft(e.target.value); }, onKeyDown: onKey,
+            style: { flex: 1, resize: 'none', padding: '9px 12px', borderRadius: 20, border: '1px solid #D1D5DB', fontSize: '.88rem', outline: 'none', fontFamily: 'inherit', maxHeight: 80 },
+          }),
+          E('button', {
+            onClick: sendMsg, disabled: !draft.trim(), 'aria-label': 'Envoyer',
+            style: { width: 40, height: 40, flexShrink: 0, borderRadius: '50%', border: 'none', background: draft.trim() ? '#00853E' : '#9CA3AF', color: '#fff', cursor: draft.trim() ? 'pointer' : 'default', fontSize: '1rem' },
+          }, '➤')
+        )
+      );
+    }
+
+    return E('div', { style: panel },
+      E('div', { style: header },
+        E('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          E('span', { style: { fontSize: '1.1rem' } }, '💬'),
+          E('div', null,
+            E('div', { style: { fontWeight: 700, fontSize: '.95rem', lineHeight: 1.1 } }, 'Salon NEXUS'),
+            E('div', { style: { fontSize: '.7rem', opacity: .9 } },
+              (online ? '● En ligne' : '○ Mode local') + (view === 'chat' ? ' · ' + nick : ''))
+          )
+        ),
+        E('div', { style: { display: 'flex', gap: 4 } },
+          view === 'chat'
+            ? E('button', {
+                title: 'Changer de pseudo',
+                onClick: function () { setView('join'); },
+                style: { background: 'rgba(255,255,255,.2)', border: 'none', color: '#fff', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: '.85rem' },
+              }, '✎')
+            : null,
+          E('button', {
+            title: 'Fermer', onClick: props.onClose,
+            style: { background: 'rgba(255,255,255,.2)', border: 'none', color: '#fff', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: '1rem' },
+          }, '×')
+        )
+      ),
+      view === 'join' ? renderJoin() : renderChat()
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Montage + FAB
+  // ════════════════════════════════════════════════════════════════════════
+  var mountEl = null, root = null, isOpen = false;
+
+  function getMount() {
+    if (!mountEl) { mountEl = document.createElement('div'); mountEl.id = 'nexus-public-chat-root'; document.body.appendChild(mountEl); }
+    if (!root && window.ReactDOM && ReactDOM.createRoot) root = ReactDOM.createRoot(mountEl);
+    return root;
+  }
+
+  function closeChat() {
+    isOpen = false;
+    var r = getMount();
+    if (r) r.render(null); else if (mountEl) ReactDOM.unmountComponentAtNode(mountEl);
+    var fab = document.getElementById('nexus-public-chat-fab');
+    if (fab) fab.innerHTML = '💬';
+  }
+
+  function openChat() {
+    isOpen = true;
+    var r = getMount();
+    var el = E(PublicChat, { onClose: closeChat });
+    if (r) r.render(el); else ReactDOM.render(el, mountEl);
+    var fab = document.getElementById('nexus-public-chat-fab');
+    if (fab) fab.innerHTML = '×';
+  }
+
+  function toggleChat() { isOpen ? closeChat() : openChat(); }
+
+  function mountFab() {
+    if (document.getElementById('nexus-public-chat-fab') || !document.body) return;
+    var b = document.createElement('button');
+    b.id = 'nexus-public-chat-fab';
+    b.innerHTML = '💬';
+    b.setAttribute('aria-label', 'Ouvrir le salon de discussion');
+    b.style.cssText = 'position:fixed;bottom:1.5rem;right:1.25rem;z-index:9997;width:56px;height:56px;border-radius:50%;background:#00853E;color:#fff;border:none;cursor:pointer;font-size:24px;box-shadow:0 4px 16px rgba(0,133,62,.4);font-family:inherit;display:flex;align-items:center;justify-content:center;transition:transform .15s';
+    b.onmouseenter = function () { b.style.transform = 'scale(1.08)'; };
+    b.onmouseleave = function () { b.style.transform = 'scale(1)'; };
+    b.addEventListener('click', toggleChat);
+    document.body.appendChild(b);
+  }
+
+  // Récupère l'utilisateur courant (pour pré-remplir le pseudo si connecté)
+  window.addEventListener('nexus:set-user', function (e) { currentUser = e.detail || null; });
+  // Ouverture programmatique éventuelle (depuis un lien/menu)
+  window.addEventListener('nexus:open-public-chat', openChat);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mountFab);
+  } else {
+    mountFab();
+  }
+
+  console.info('[NEXUS] Chat public communautaire chargé ✅');
 })();
 </script>
 
