@@ -5158,10 +5158,30 @@ const DataService = {
       // Vendeurs en attente d'approbation admin ; acheteurs actifs immédiatement.
       status: role === "vendor" ? "pending" : "active",
       created_at: authUser.created_at || new Date().toISOString() };
-    // Restaurer tous les champs vendeur stockés dans user_metadata lors de l'inscription
-    ['owner_name','shopName','shopCategory','shop_desc','phone','ninea','rc','address',
-     'structure_type','payment_method','orange_phone','wave_phone','iban','bank_name','vehicle_type']
-      .forEach(k => { if (meta[k] != null) base[k] = meta[k]; });
+    // Restaurer tous les champs vendeur/livreur stockés dans user_metadata.
+    // [FIX colonnes] On mappe explicitement vers les noms de COLONNES snake_case
+    // de la table profiles. Les métadonnées peuvent arriver en camelCase
+    // (shopName) OU snake_case (shop_name) selon le point d'inscription.
+    // normalizeUser() ré-ajoutera ensuite les alias camelCase pour l'UI.
+    const pick = (...keys) => { for (const k of keys) { if (meta[k] != null && meta[k] !== '') return meta[k]; } return undefined; };
+    const colMap = {
+      owner_name:     pick('owner_name', 'ownerName'),
+      shop_name:      pick('shop_name', 'shopName'),
+      shop_category:  pick('shop_category', 'shopCategory'),
+      shop_desc:      pick('shop_desc', 'shopDesc'),
+      phone:          pick('phone'),
+      ninea:          pick('ninea'),
+      rc:             pick('rc'),
+      address:        pick('address'),
+      structure_type: pick('structure_type', 'structureType'),
+      payment_method: pick('payment_method', 'paymentMethod'),
+      orange_phone:   pick('orange_phone', 'orangePhone'),
+      wave_phone:     pick('wave_phone', 'wavePhone'),
+      iban:           pick('iban'),
+      bank_name:      pick('bank_name', 'bankName'),
+      vehicle_type:   pick('vehicle_type', 'vehicleType'),
+    };
+    Object.keys(colMap).forEach(k => { if (colMap[k] !== undefined) base[k] = colMap[k]; });
     return base;
   },
   // ── Connexion GitHub OAuth via Supabase ─────────────────────────────────────
@@ -12619,7 +12639,9 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       // Supabase — mettre à jour le rôle dans profiles
       if (DataService._sb) {
         const isCourier = role === 'courier';
-      const updatedUser = { ...user, role: isCourier ? 'buyer' : role, status: role === 'vendor' ? 'pending' : 'active' };
+      // [FIX rôle coursier] On conserve le rôle 'courier' dans profiles
+      // (auparavant forcé à 'buyer', ce qui transformait le livreur en acheteur).
+      const updatedUser = { ...user, role, status: role === 'vendor' ? 'pending' : 'active' };
       try {
         await DataService._sb.from('profiles').update({ role: updatedUser.role, status: updatedUser.status }).eq('id', updatedUser.id);
         if (isCourier) {
@@ -12627,7 +12649,7 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
           await DataService._sb.from('couriers').upsert({
             user_id: updatedUser.id, name: updatedUser.name || updatedUser.email,
             phone: '', status: 'pending', zones: ['Dakar'], vehicle_type: 'moto',
-          }, { onConflict: 'user_id' }).catch(() => {});
+          }, { onConflict: 'user_id' }).then(() => {}, () => {});
         }
       } catch(_) {}
         if (token) DataService.saveSession(token, expiresIn);
@@ -12640,7 +12662,7 @@ const GitHubRoleModal = ({ user, token, expiresIn, onDone, addToast }) => {
       addToast("Erreur lors du choix du rôle. Vous serez connecté comme acheteur.", "error");
       onDone({ ...user, role: 'buyer' });
     } finally {
-      submittingRef.current = false; setLoading(false);
+      setLoading(false);
     }
   };
 
@@ -32517,7 +32539,7 @@ const App = ({ onUserChange }) => {
       sidebarOpen,
       onToggleSidebar: toggleSidebar
     }
-  ), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
