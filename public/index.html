@@ -5104,8 +5104,9 @@ const DataService = {
         // Le profil existe déjà (créé à l'inscription). Si _fetchProfile échoue
         // (JWT stale, timeout), on utilise les métadonnées auth directement.
         let prof = await this._fetchProfile(data.user.id);
-        if (!prof) {
-          // Retry — le JWT peut ne pas être propagé immédiatement
+        if (!prof && !this._profileRlsBroken) {
+          // Retry — le JWT peut ne pas être propagé immédiatement.
+          // (Sauté si _profileRlsBroken : erreur déterministe, retry inutile.)
           await new Promise(r => setTimeout(r, 500));
           prof = await this._fetchProfile(data.user.id);
         }
@@ -5136,10 +5137,21 @@ const DataService = {
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000));
       const { data, error } = await Promise.race([query, timeout]);
       if (error) {
+        const _msg = error.message || "";
         // [FIX] "lock released/stolen" = conflit de rafraîchissement token entre onglets.
         // C'est transitoire et non bloquant : on retourne null silencieusement.
-        if (error.message && error.message.includes('lock')) return null;
-        console.warn("[_fetchProfile]", error.message);
+        if (_msg.includes('lock')) return null;
+        // [FIX RLS] "infinite recursion detected in policy" (code 42P17) =
+        // policy RLS mal configurée côté Supabase (la policy de "profiles"
+        // se référence elle-même). C'est une erreur DÉTERMINISTE : réessayer
+        // est inutile et ne fait que doubler les 500. On marque le drapeau pour
+        // que le caller saute le retry et bascule directement sur le fallback Auth.
+        if (error.code === '42P17' || _msg.toLowerCase().includes('infinite recursion')) {
+          this._profileRlsBroken = true;
+          console.warn("[_fetchProfile] RLS recursion sur 'profiles' — fallback métadonnées Auth (corrigez la policy Supabase)");
+          return null;
+        }
+        console.warn("[_fetchProfile]", _msg);
         return null;
       }
       return data || null;
@@ -5628,7 +5640,7 @@ async signOut() {
           // soit prêt (token refresh, page load). _fetchProfile peut échouer.
           // On réessaie une fois après 500 ms, puis on utilise les métadonnées auth.
           let prof = await this._fetchProfile(uid);
-          if (!prof) {
+          if (!prof && !this._profileRlsBroken) {
             await new Promise(r => setTimeout(r, 600));
             prof = await this._fetchProfile(uid);
           }
