@@ -4281,6 +4281,23 @@ const DataService = {
     if (this._sb) { await this._sb.from("products").delete().eq("id", id); }
     storage.set("products", storage.getArray("products").filter((p) => p.id !== id));
   },
+  // [FIX DATE] Normalise une ligne commande Supabase/API vers le format UI.
+  // Les lignes brutes Supabase n'ont que created_at → order.date était undefined
+  // → "Invalid Date". On garantit ici date + alias camelCase attendus par l'UI.
+  _normalizeOrder(r) {
+    if (!r || typeof r !== "object") return r;
+    const date = r.date || r.created_at || r.createdAt || null;
+    return {
+      ...r,
+      date,
+      createdAt: r.createdAt || r.created_at || date,
+      buyer:    r.buyer    || r.buyer_id    || r.buyerId    || null,
+      buyerId:  r.buyerId  || r.buyer_id    || r.buyer      || null,
+      vendor:   r.vendor   || r.vendor_id   || r.vendorId   || null,
+      vendorId: r.vendorId || r.vendor_id   || r.vendor     || null,
+      trackingNumber: r.trackingNumber || r.tracking_number || null
+    };
+  },
   async getOrders(filters = {}) {
     // ── Limites par rôle ────────────────────────────────────────────────────
     // Pagination stricte : max 20 items par requête (96% moins d'egress vs 500)
@@ -4306,7 +4323,8 @@ const DataService = {
       if (res && res.ok) {
         const json = await res.json();
         // [FIX] API retourne { orders, total } — extraire le bon champ
-        return json.orders || json.data || (Array.isArray(json) ? json : []);
+        const list = json.orders || json.data || (Array.isArray(json) ? json : []);
+        return list.map((o) => this._normalizeOrder(o));
       }
     }
 
@@ -4321,7 +4339,7 @@ const DataService = {
         if (status) q = q.eq("status", status);
         q = q.order("created_at", { ascending: false }).range((page-1)*limit, page*limit-1);
         const { data, error } = await q;
-        if (!error) return data || [];
+        if (!error) return (data || []).map((o) => this._normalizeOrder(o));
         console.warn("[getOrders] Supabase:", error.message);
       }
     }
