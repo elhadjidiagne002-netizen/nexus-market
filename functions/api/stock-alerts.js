@@ -146,7 +146,8 @@ export async function onRequest({ request, env, params }) {
       await sb(env, 'notifications', 'POST', {
         id: crypto.randomUUID(),
         user_id: alert.user_id,
-        type: 'stock_alert',
+        // type ∈ {order,offer,message,return,vendor,system,dispute} → 'system'
+        type: 'system',
         title: notifyPayload.title,
         message: notifyPayload.message,
         link: notifyPayload.url,

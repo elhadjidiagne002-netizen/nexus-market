@@ -52,6 +52,24 @@ export default {
   }
 };
 
+// ── Route HTTP Pages Function (export NOMMÉ) ─────────────────────────────
+// Cloudflare Pages n'invoque QUE les exports nommés onRequest*. Le bloc
+// `export default { fetch, scheduled }` ci-dessus est ignoré dans /functions
+// → sans ce handler, GET /cron/expire ne déclenchait jamais la maintenance.
+export async function onRequestGet({ request, env }) {
+  const token  = new URL(request.url).searchParams.get('token');
+  const secret = env.CRON_SECRET || env.NEXUS_WA_SECRET;
+  if (!secret || token !== secret) {
+    return new Response(JSON.stringify({ error: 'Non autorisé — ?token=requis' }), {
+      status: 401, headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const result = await runMaintenance(env);
+  return new Response(JSON.stringify(result, null, 2), {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 // ── Fonction principale de maintenance ──────────────────────────────────
 async function runMaintenance(env) {
   const SUPABASE_URL = env.SUPABASE_URL || 'https://pqcqbstbdujzaclsiosv.supabase.co';

@@ -13,33 +13,36 @@ on:
         type: choice
         options: [expire, cleanup, both]
 
+env:
+  SITE_URL: https://nexus-market-asb.pages.dev
+
 jobs:
   cron-expire:
-    name: Expiration annonces & boosts
+    name: Expiration annonces & boosts (horaire)
+    # Schedule horaire uniquement (ou déclenchement manuel expire/both)
+    if: github.event.schedule == '0 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'cleanup')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/expire
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://nexus-market-asb.pages.dev/cron/expire?token=${{ secrets.NEXUS_CRON_TOKEN }}")
+          BODY=$(curl -s -w "\n%{http_code}" \
+            "$SITE_URL/cron/expire?token=${{ secrets.NEXUS_CRON_TOKEN }}")
+          STATUS=$(echo "$BODY" | tail -n1)
+          echo "$BODY" | sed '$d'
           echo "HTTP Status: $STATUS"
-          [ "$STATUS" = "200" ] || echo "::warning::expire returned HTTP $STATUS"
-      - name: Résultat
-        if: always()
-        run: |
-          curl -s "https://nexus-market-asb.pages.dev/cron/expire?token=${{ secrets.NEXUS_CRON_TOKEN }}" | python3 -m json.tool || true
+          test "$STATUS" = "200"
 
   cron-cleanup:
-    name: Nettoyage base de données
+    name: Nettoyage base de données (hebdomadaire)
+    # Schedule hebdomadaire uniquement (ou déclenchement manuel cleanup/both)
+    if: github.event.schedule == '0 3 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'expire')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/cleanup
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://nexus-market-asb.pages.dev/cron/cleanup?token=${{ secrets.NEXUS_CRON_TOKEN }}")
+          BODY=$(curl -s -w "\n%{http_code}" \
+            "$SITE_URL/cron/cleanup?token=${{ secrets.NEXUS_CRON_TOKEN }}")
+          STATUS=$(echo "$BODY" | tail -n1)
+          echo "$BODY" | sed '$d'
           echo "HTTP Status: $STATUS"
-          [ "$STATUS" = "200" ] || echo "::warning::cleanup returned HTTP $STATUS"
-      - name: Résultat
-        if: always()
-        run: |
-          curl -s "https://nexus-market-asb.pages.dev/cron/cleanup?token=${{ secrets.NEXUS_CRON_TOKEN }}" | python3 -m json.tool || true
+          test "$STATUS" = "200"

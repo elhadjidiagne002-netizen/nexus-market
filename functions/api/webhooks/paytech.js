@@ -1,3 +1,7 @@
+// NOTE : ce handler (/api/webhooks/paytech) n'est branché par aucun ipn_url
+// actuellement (le flux commande utilise /api/payments/paytech/ipn, le flux
+// mobile-money /functions/paytech-webhook). Conservé et rendu schéma-valide
+// par sécurité au cas où il serait câblé.
 async function sha256(str) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf))
@@ -15,10 +19,10 @@ async function notifyVendor(env, order) {
     },
     body: JSON.stringify({
       user_id:  order.vendor_id,
-      type:     "new_order",
+      type:     "order",
       title:    "Nouvelle commande payee",
       message:  `Commande #${order.id.slice(0, 8)} - ${order.buyer_name} - ${order.total} FCFA`,
-      order_id: order.id,
+      link:     `/?order=${order.id}`,
       read:     false,
     }),
   }).catch(() => {});
@@ -61,7 +65,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const orderRes = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/orders?paytech_token=eq.${token}&select=*`,
+    `${env.SUPABASE_URL}/rest/v1/orders?mobile_money_ref=eq.${token}&select=*`,
     { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
   );
   const orders = await orderRes.json();
@@ -77,7 +81,7 @@ export async function onRequestPost({ request, env }) {
         "Content-Type": "application/json",
         Prefer: "return=minimal",
       },
-      body: JSON.stringify({ status: "paid", updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ status: "processing", payment_status: "paid", updated_at: new Date().toISOString() }),
     });
     await notifyVendor(env, order);
     await sendBuyerConfirmation(env, order);

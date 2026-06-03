@@ -47,6 +47,24 @@ export default {
   }
 };
 
+// ── Route HTTP Pages Function (export NOMMÉ) ─────────────────────────────────
+// Cloudflare Pages n'invoque QUE les exports nommés onRequest*. Le bloc
+// `export default { fetch, scheduled }` ci-dessus est ignoré dans /functions
+// → sans ce handler, GET /cron/cleanup ne déclenchait jamais le nettoyage.
+export async function onRequestGet({ request, env }) {
+  const token  = new URL(request.url).searchParams.get('token');
+  const secret = env.CRON_SECRET || env.NEXUS_WA_SECRET;
+  if (!secret || token !== secret) {
+    return new Response(JSON.stringify({ error: 'Non autorisé — ?token=requis' }), {
+      status: 401, headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const result = await runCleanup(env);
+  return new Response(JSON.stringify(result, null, 2), {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Fonction principale
 // ═══════════════════════════════════════════════════════════════════════════
@@ -154,6 +172,9 @@ async function runCleanup(env) {
   } catch (e) {
     report.errors.push_subscriptions = e.message;
   }
+
+  // ── 8b. Compteurs de rate limiting de plus de 24h ────────────────────────
+  await del('rate_limits', `window_start=lt.${ago(1)}`, 'rate_limits_24h');
 
   // ── 9. Produits inactifs sans commande depuis 1 an ────────────────────────
   // On ne supprime PAS — on log seulement pour que l'admin décide

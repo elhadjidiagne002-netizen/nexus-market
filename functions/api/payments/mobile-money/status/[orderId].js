@@ -15,7 +15,7 @@ export async function onRequest({ request, env, params }) {
       .from('orders')
       .select('*')
       .eq('id', params.orderId)
-      .eq('user_id', user.id)
+      .eq('buyer_id', user.id)
       .single();
 
     if (orderError) return err(orderError.message, 500);

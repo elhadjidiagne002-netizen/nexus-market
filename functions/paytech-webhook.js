@@ -6,6 +6,9 @@ import { createClient } from "@supabase/supabase-js";
 
 // Multiplicateur de points par défaut (tier Bronze)
 const POINTS_PER_EURO = 10;
+// Conversion FCFA → EUR (la table orders stocke `total` en FCFA ; les points
+// fidélité sont calculés par euro, cf. functions/loyalty.js).
+const EUR_TO_FCFA = 655.957;
 
 async function sha256hex(str) {
   const encoded = new TextEncoder().encode(str);
@@ -18,7 +21,9 @@ async function sha256hex(str) {
 export async function onRequestPost(context) {
   const { request, env } = context;
 
-  const { PAYTECH_API_KEY, PAYTECH_SECRET_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY } = env;
+  const { PAYTECH_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY } = env;
+  // Accepte les deux conventions de nommage du secret présentes dans le projet.
+  const PAYTECH_SECRET_KEY = env.PAYTECH_SECRET_KEY || env.PAYTECH_API_SECRET;
   if (!PAYTECH_API_KEY || !PAYTECH_SECRET_KEY) {
     console.error("[PayTech IPN] Clés manquantes");
     return new Response("Configuration incomplete", { status: 500 });
@@ -57,30 +62,45 @@ export async function onRequestPost(context) {
       console.log(`[PayTech IPN] Paiement confirmé pour la commande ${ref_command}`);
 
       if (sb) {
+        // [FIX] Colonnes conformes au schéma orders :
+        //  - persistance du payment_status='paid' (auparavant absent → la commande
+        //    restait 'pending' côté paiement même après confirmation PayTech).
+        //  - `paytech_token` n'existe pas → on stocke le token dans mobile_money_ref.
+        //  - status ∈ {pending_payment,processing,...} ; payment_method ∈ {card,mobile}.
+        const now = new Date().toISOString();
         const { error: orderErr } = await sb
           .from("orders")
-          .update({ status: "processing", paytech_token: token })
+          .update({
+            status: "processing",
+            payment_status: "paid",
+            payment_method: "mobile",
+            mobile_money_ref: token,
+            processing_at: now,
+            updated_at: now,
+          })
           .eq("id", ref_command);
 
         if (orderErr) {
           console.error("[PayTech IPN] Erreur mise à jour commande:", orderErr.message);
         } else {
           // [FIX] La colonne s'appelle buyer_id dans le schéma orders
-          // (et non user_id — cf. saveOrder dans index.html).
+          // (et non user_id — cf. saveOrder dans index.html). On lit aussi `total`
+          // (et non amount_eur, colonne inexistante).
           const { data: order } = await sb
             .from("orders")
-            .select("user_id, amount_eur")
+            .select("buyer_id, total")
             .eq("id", ref_command)
             .single();
 
-          if (order?.user_id) {
-            // Notification
+          if (order?.buyer_id) {
+            // Notification (type ∈ {order,offer,message,return,vendor,system,dispute})
             await sb.from("notifications").insert({
-              user_id: order.user_id,
-              type: "payment",
+              user_id: order.buyer_id,
+              type: "order",
               title: "✅ Paiement confirmé",
               message: `Votre paiement de ${Number(item_price).toLocaleString("fr-FR")} FCFA a été reçu. Commande en cours de traitement.`,
               read: false,
+              link: `/?order=${ref_command}`,
             }).catch(e => console.warn("[PayTech IPN] notification error:", e.message));
 
             // [PUSH] Envoyer la notification push au buyer
@@ -89,7 +109,7 @@ export async function onRequestPost(context) {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  userId: order.user_id,
+                  userId: order.buyer_id,
                   eventType: "payment_confirmed",
                   payload: {
                     title: "✅ Paiement confirmé",
@@ -108,16 +128,18 @@ export async function onRequestPost(context) {
             // Solution : appel direct au RPC Supabase avec la service key,
             // ce qui évite la couche HTTP et le problème d'authentification.
             if (order.total > 0) {
+              // total est en FCFA → conversion en EUR pour le calcul des points.
+              const amountEur = (Number(order.total) || 0) / EUR_TO_FCFA;
               context.waitUntil(
                 sb.rpc("add_loyalty_points", {
-                  p_user_id: order.user_id,
-                  p_delta: Math.floor((order.amount_eur || 0) * POINTS_PER_EURO),
+                  p_user_id: order.buyer_id,
+                  p_delta: Math.floor(amountEur * POINTS_PER_EURO),
                   p_reason: "order",
                   p_order_id: ref_command,
                   p_note: `Commande #${ref_command}`,
                 }).then(({ error }) => {
                   if (error) console.warn("[PayTech IPN] loyalty RPC error:", error.message);
-                  else console.log(`[PayTech IPN] Points fidélité crédités pour ${order.user_id}`);
+                  else console.log(`[PayTech IPN] Points fidélité crédités pour ${order.buyer_id}`);
                 })
               );
             }
@@ -128,8 +150,16 @@ export async function onRequestPost(context) {
     } else if (type_event === "sale_canceled") {
       console.log(`[PayTech IPN] Paiement annulé pour ${ref_command}`);
       if (sb) {
+        // Persister l'échec de paiement en plus de l'annulation de commande.
+        const now = new Date().toISOString();
         await sb.from("orders")
-          .update({ status: "cancelled" })
+          .update({
+            status: "cancelled",
+            payment_status: "failed",
+            cancel_reason: "Paiement PayTech annulé",
+            cancelled_at: now,
+            updated_at: now,
+          })
           .eq("id", ref_command)
           .catch(e => console.error("[PayTech IPN] cancel update error:", e.message));
       }

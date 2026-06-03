@@ -1,0 +1,259 @@
+openapi: 3.1.0
+info:
+  title: NEXUS Market API
+  version: "1.0.0"
+  description: >
+    API serverless (Cloudflare Pages Functions) de NEXUS Market.
+    Spec curée des endpoints cœur (paiements, messagerie, fidélité, crons).
+    Auth : la plupart des endpoints utilisateurs attendent un Bearer JWT Supabase.
+servers:
+  - url: https://nexus-market-asb.pages.dev
+    description: Production
+
+components:
+  securitySchemes:
+    SupabaseJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    SharedSecret:
+      type: apiKey
+      in: header
+      name: Authorization
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    OkReceived:
+      type: object
+      properties:
+        received: { type: boolean }
+
+paths:
+  /api/payments/stripe/create-intent:
+    post:
+      summary: Crée un PaymentIntent Stripe (carte)
+      security: [{ SupabaseJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, paymentMethodId]
+              properties:
+                amount: { type: integer, description: Montant en centimes }
+                currency: { type: string, default: eur }
+                paymentMethodId: { type: string }
+                orderId: { type: string, description: "Posé en metadata[order_id]" }
+      responses:
+        "200":
+          description: Intent créé
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  paymentIntentId: { type: string }
+                  clientSecret: { type: string }
+                  status: { type: string }
+        "401": { description: Non authentifié }
+        "503": { description: Stripe non configuré }
+
+  /api/webhooks/stripe:
+    post:
+      summary: Webhook Stripe (signature HMAC obligatoire)
+      description: >
+        Vérifie l'en-tête Stripe-Signature (HMAC SHA-256, anti-replay 5 min).
+        Met à jour orders.payment_status (paid/failed/refunded).
+      parameters:
+        - in: header
+          name: Stripe-Signature
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Reçu
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkReceived'
+        "401":
+          description: Signature invalide
+        "500":
+          description: STRIPE_WEBHOOK_SECRET manquante
+
+  /api/payments/paytech/init:
+    post:
+      summary: Initie un paiement PayTech (mobile money)
+      security: [{ SupabaseJWT: [] }]
+      responses:
+        "200":
+          description: URL de redirection PayTech
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  redirect_url: { type: string }
+                  token: { type: string }
+                  ref_command: { type: string }
+        "503": { description: PAYTECH_API_KEY/SECRET non configurées }
+
+  /api/payments/paytech/ipn:
+    post:
+      summary: IPN PayTech (callback paiement commande)
+      description: Vérifie le hash HMAC PayTech, met à jour la commande.
+      responses:
+        "200": { description: OK }
+        "401": { description: Hash invalide }
+        "400": { description: order_id manquant }
+
+  /api/payments/paytech/verify/{orderId}:
+    get:
+      summary: Vérifie l'état de paiement d'une commande (après IPN)
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: État du paiement
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  paid: { type: boolean }
+                  failed: { type: boolean }
+                  status: { type: string }
+                  amount: { type: number }
+        "404": { description: Commande introuvable }
+
+  /api/payments/mobile-money/status/{orderId}:
+    get:
+      summary: Statut d'une commande mobile money (propriétaire uniquement)
+      security: [{ SupabaseJWT: [] }]
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Commande }
+        "404": { description: Commande introuvable }
+
+  /payments-mobile-money:
+    post:
+      summary: Initie un paiement mobile money (Wave/Orange/…)
+      description: "Rate limit : 10/min/IP."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, amount]
+              properties:
+                orderId: { type: string, maxLength: 64 }
+                amount: { type: number, description: Montant en EUR (0 < amount ≤ 100000) }
+      responses:
+        "200": { description: Redirection PayTech }
+        "400": { description: Entrées invalides }
+        "429": { description: Trop de requêtes }
+
+  /api/sms:
+    post:
+      summary: Envoi d'un SMS (Africa's Talking / Orange / Twilio)
+      description: "Rate limit : 5/min/IP. Validation phone (8–15 chiffres) et message (≤1000)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, message]
+              properties:
+                phone: { type: string }
+                message: { type: string, maxLength: 1000 }
+      responses:
+        "200": { description: Envoyé }
+        "400": { description: Entrées invalides }
+        "429": { description: Trop de requêtes }
+        "502": { description: Échec provider }
+        "503": { description: Aucun provider configuré }
+
+  /api/whatsapp:
+    post:
+      summary: Envoi d'un message WhatsApp (Green API)
+      description: "Secret partagé obligatoire. Rate limit : 10/min/IP."
+      security: [{ SharedSecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, message, secret]
+              properties:
+                phone: { type: string }
+                message: { type: string, maxLength: 4096 }
+                secret: { type: string }
+      responses:
+        "200": { description: Envoyé }
+        "400": { description: Entrées invalides }
+        "401": { description: Non autorisé }
+        "429": { description: Trop de requêtes }
+        "503": { description: Green API non configurée }
+    get:
+      summary: Health check de la passerelle WhatsApp
+      responses:
+        "200": { description: ready }
+
+  /loyalty:
+    get:
+      summary: Solde et historique des points de fidélité
+      security: [{ SupabaseJWT: [] }]
+      responses:
+        "200": { description: Solde }
+        "401": { description: Token invalide }
+    post:
+      summary: Crédit/débit de points (utilisateur authentifié)
+      security: [{ SupabaseJWT: [] }]
+      responses:
+        "200": { description: Nouveau solde }
+        "401": { description: Token invalide }
+
+  /api/stock-alerts:
+    post:
+      summary: Notifie les utilisateurs d'un retour en stock
+      responses:
+        "200": { description: Nombre de notifiés }
+
+  /cron/expire:
+    get:
+      summary: Maintenance horaire (expiration annonces/boosts)
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Rapport de maintenance }
+        "401": { description: Non autorisé }
+
+  /cron/cleanup:
+    get:
+      summary: Nettoyage hebdomadaire de la base
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Rapport de nettoyage }
+        "401": { description: Non autorisé }

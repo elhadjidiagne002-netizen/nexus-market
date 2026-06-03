@@ -2,6 +2,8 @@
  * functions/payments-mobile-money.js
  * Initie un paiement PayTech (Wave, Orange Money, etc.)
  */
+import { rateLimit, clientIp, tooManyRequests } from "./api/_lib/ratelimit.js";
+
 const EUR_TO_FCFA = 655.957;
 
 function corsHeaders() {
@@ -24,10 +26,11 @@ export async function onRequestPost(context) {
 
   const {
     PAYTECH_API_KEY,
-    PAYTECH_SECRET_KEY,
     PAYTECH_ENV = "prod",
     FRONTEND_URL,
   } = env;
+  // Accepte les deux conventions de nommage du secret présentes dans le projet.
+  const PAYTECH_SECRET_KEY = env.PAYTECH_SECRET_KEY || env.PAYTECH_API_SECRET;
 
   // Fallback de l'URL du site
   const host = request.headers.get("host") || "";
@@ -50,11 +53,23 @@ export async function onRequestPost(context) {
   if (!orderId || amount == null || isNaN(Number(amount))) {
     return json(400, { error: "orderId et amount (EUR) requis" });
   }
+  // Validation renforcée : type/longueur de orderId + borne du montant.
+  if (typeof orderId !== "string" || orderId.length > 64) {
+    return json(400, { error: "orderId invalide" });
+  }
+  const amountNum = Number(amount);
+  if (!Number.isFinite(amountNum) || amountNum <= 0 || amountNum > 100000) {
+    return json(400, { error: "Montant invalide (0 < amount ≤ 100000 EUR)" });
+  }
 
-  const amountFcfa = Math.round(Number(amount) * EUR_TO_FCFA);
+  const amountFcfa = Math.round(amountNum * EUR_TO_FCFA);
   if (amountFcfa < 100) {
     return json(400, { error: `Montant minimum 100 FCFA (reçu ${amountFcfa})` });
   }
+
+  // ── Rate limiting : 10 tentatives de paiement / minute / IP ─────────────
+  const rl = await rateLimit(env, `pay:${clientIp(request)}`, 10, 60);
+  if (!rl.allowed) return tooManyRequests(rl.resetAt, corsHeaders());
 
   // URLs de callback
   const successUrl = `${baseUrl}/?payment=success&orderId=${encodeURIComponent(orderId)}`;

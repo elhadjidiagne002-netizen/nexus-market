@@ -17,6 +17,9 @@
 //   SUPABASE_SERVICE_KEY
 // ============================================================
 
+import { isValidPhone, isValidMessage } from './_lib/validate.js';
+import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -127,6 +130,16 @@ export async function onRequest({ request, env }) {
 
   const { phone, message, senderId } = body;
   if (!phone || !message) return json({ error: 'phone et message requis' }, 400);
+
+  // ── Validation des entrées (anti-abus / injection) ──────────────────────
+  if (!isValidPhone(phone)) return json({ error: 'Numéro de téléphone invalide' }, 400);
+  if (!isValidMessage(message, 1000)) {
+    return json({ error: 'Message vide ou trop long (max 1000 caractères)' }, 400);
+  }
+
+  // ── Rate limiting : 5 SMS / minute / IP ─────────────────────────────────
+  const rl = await rateLimit(env, `sms:${clientIp(request)}`, 5, 60);
+  if (!rl.allowed) return tooManyRequests(rl.resetAt, CORS);
 
   // Vérifier qu'au moins un provider est configuré
   const hasAT     = !!(env.AT_API_KEY);

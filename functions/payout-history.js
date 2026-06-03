@@ -41,7 +41,7 @@ export async function onRequestGet(context) {
   const { data: orders, error: ordErr } = await sb
     .from("orders")
     .select("total, commission")
-    .eq("vendor", user.id)
+    .eq("vendor_id", user.id)
     .eq("status", "delivered");
 
   if (ordErr) return json(500, { error: ordErr.message });
@@ -56,7 +56,7 @@ export async function onRequestGet(context) {
   const { data: payouts, error: payErr } = await sb
     .from("payout_requests")
     .select("id, amount_xof, method, provider, destination, status, ref_command, created_at, paid_at, failed_at")
-    .eq("vendor", user.id)
+    .eq("vendor_id", user.id)
     .order("created_at", { ascending: false });
 
   if (payErr) return json(500, { error: payErr.message });

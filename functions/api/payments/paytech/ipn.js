@@ -53,8 +53,10 @@ export async function onRequest({ request, env }) {
   const { ref_command, token, api_key_sha256, api_secret_sha256, type_event, custom_field } = payload;
 
   // 1. Vérifier le hash HMAC PayTech
+  // Accepte les deux conventions de nommage du secret présentes dans le projet :
+  // PAYTECH_API_SECRET (flux init/ipn) ou PAYTECH_SECRET_KEY (flux mobile-money).
   const expectedKeyHash    = await sha256hex(env.PAYTECH_API_KEY || '');
-  const expectedSecretHash = await sha256hex(env.PAYTECH_API_SECRET || '');
+  const expectedSecretHash = await sha256hex(env.PAYTECH_API_SECRET || env.PAYTECH_SECRET_KEY || '');
 
   if (api_key_sha256 !== expectedKeyHash || api_secret_sha256 !== expectedSecretHash) {
     console.error('[PayTech IPN] Hash invalide');
@@ -76,8 +78,10 @@ export async function onRequest({ request, env }) {
   const isPaid = type_event === 'sale_complete';
 
   // 3. Mettre à jour la commande
+  // [FIX] status ∈ {pending_payment,processing,in_transit,delivered,cancelled} :
+  // 'payment_failed' n'est pas une valeur valide → 'cancelled' en cas d'échec.
   await sbUpdate(env, 'orders', `id=eq.${order_id}`, {
-    status:         isPaid ? 'processing' : 'payment_failed',
+    status:         isPaid ? 'processing' : 'cancelled',
     payment_status: isPaid ? 'paid' : 'failed',
     payment_method: 'mobile',
     updated_at:     new Date().toISOString(),
@@ -105,7 +109,7 @@ export async function onRequest({ request, env }) {
         body: JSON.stringify({
           id:         crypto.randomUUID(),
           user_id:    order.buyer_id,
-          type:       'payment',
+          type:       'order',
           title:      '✅ Paiement confirmé',
           message:    `Votre paiement de ${Number(order.total).toLocaleString('fr-FR')} FCFA a été reçu.`,
           link:       `/?order=${order_id}`,

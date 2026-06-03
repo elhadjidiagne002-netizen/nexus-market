@@ -36,12 +36,15 @@ export async function onRequest({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
 
-  const { amount, currency = 'eur', paymentMethodId } = body;
+  const { amount, currency = 'eur', paymentMethodId, orderId } = body;
   if (!amount || !paymentMethodId) return jsonR({ error: 'amount et paymentMethodId requis' }, 400);
   if (amount < 50) return jsonR({ error: 'Montant minimum : 50 centimes' }, 400);
 
   try {
     // 1. Créer un PaymentIntent Stripe
+    // [FIX] Les metadata Stripe se passent en `metadata[clé]` (form-urlencoded),
+    // pas en JSON string — sinon Stripe les ignore et le webhook ne peut pas
+    // retrouver la commande. On pose order_id (clé lue par le webhook) + user_id.
     const params = new URLSearchParams({
       amount: String(Math.round(amount)),
       currency,
@@ -50,7 +53,8 @@ export async function onRequest({ request, env }) {
       'automatic_payment_methods[enabled]': 'true',
       'automatic_payment_methods[allow_redirects]': 'never',
       description: 'Commande NEXUS Market',
-      metadata: JSON.stringify({ user_id: uid }),
+      'metadata[user_id]': uid,
+      ...(orderId ? { 'metadata[order_id]': String(orderId) } : {}),
     });
 
     const res = await fetch('https://api.stripe.com/v1/payment_intents', {

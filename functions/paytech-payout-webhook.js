@@ -43,8 +43,10 @@ export async function onRequestPost(context) {
   // paytech-webhook.js et payments-mobile-money.js).
   const {
     SUPABASE_URL, SUPABASE_SERVICE_KEY,
-    PAYTECH_API_KEY, PAYTECH_SECRET_KEY,
+    PAYTECH_API_KEY,
   } = env;
+  // Accepte les deux conventions de nommage du secret présentes dans le projet.
+  const PAYTECH_SECRET_KEY = env.PAYTECH_SECRET_KEY || env.PAYTECH_API_SECRET;
 
   if (!SUPABASE_SERVICE_KEY) return new Response("Config error", { status: 503 });
 
@@ -142,7 +144,8 @@ export async function onRequestPost(context) {
   if (messages[newStatus]) {
     await sb.from("notifications").insert({
       user_id: payout.vendor_id,
-      type: "payout",
+      // type ∈ {order,offer,message,return,vendor,system,dispute} → 'vendor'
+      type: "vendor",
       title: messages[newStatus],
       message: messages[newStatus],
       read: false,

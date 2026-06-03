@@ -97,7 +97,7 @@ export async function onRequestPost(context) {
   const { data: orders, error: ordErr } = await sb
     .from("orders")
     .select("total, commission")
-    .eq("vendor", user.id)
+    .eq("vendor_id", user.id)
     .eq("status", "delivered");
 
   if (ordErr) return json(500, { error: "Erreur lecture commandes" });
@@ -114,7 +114,7 @@ export async function onRequestPost(context) {
   const { data: existing, error: existErr } = await sb
     .from("payout_requests")
     .select("amount_xof, status")
-    .eq("vendor", user.id)
+    .eq("vendor_id", user.id)
     .in("status", ["pending", "processing", "paid"]);
 
   if (existErr) return json(500, { error: "Erreur lecture retraits" });
@@ -186,9 +186,13 @@ export async function onRequestPost(context) {
     console.error("[payout-request] PayTech call error:", e.message);
   }
 
+  // ⚠️ user_id doit être un UUID de profil admin réel (la valeur "admin" viole
+  // la FK notifications.user_id → profiles.id ; l'insert échoue alors silencieusement
+  // via .catch). À renseigner via env.ADMIN_USER_ID une fois disponible.
   await sb.from("notifications").insert({
-    user_id: "admin",
-    type: "payout",
+    user_id: env.ADMIN_USER_ID || "admin",
+    // type ∈ {order,offer,message,return,vendor,system,dispute} → 'system'
+    type: "system",
     title: "💰 Nouvelle demande de retrait",
     message: `${vendorName} demande ${amountInt.toLocaleString("fr-FR")} FCFA via ${method === "mobile" ? PROVIDERS[provider] : "virement"}`,
     read: false,

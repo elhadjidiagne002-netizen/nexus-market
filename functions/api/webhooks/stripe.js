@@ -55,7 +55,9 @@ export async function onRequestPost(context) {
 
   const { type, data } = event;
   const pi      = data?.object;           // PaymentIntent ou Charge selon l'event
-  const orderId = pi?.metadata?.orderId;  // mis en metadata par create-intent
+  // create-intent pose la clé en snake_case (metadata[order_id]) ; on accepte
+  // aussi la variante camelCase par tolérance.
+  const orderId = pi?.metadata?.order_id || pi?.metadata?.orderId || null;
 
   console.log(`[Stripe webhook] ${type} | orderId=${orderId || "—"} | id=${pi?.id}`);
 
@@ -66,31 +68,29 @@ export async function onRequestPost(context) {
         await updateOrderByStripe(SB_URL, SB_KEY, {
           paymentIntentId: pi.id,
           orderId,
-          status:          "paid",
-          paidAmountFcfa:  Math.round((pi.amount_received || pi.amount || 0) / 100 * 655.957),
-          paidAt:          new Date().toISOString(),
+          kind:            "paid",
         });
         // [PUSH + NOTIF] Notifier l'acheteur du paiement confirmé
         if (orderId) {
           context.waitUntil((async () => {
             try {
               const hdrs = { "Content-Type":"application/json", apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
-              // Récupérer le user_id de la commande
-              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${orderId}&select=user_id`, { headers: hdrs });
+              // Récupérer l'acheteur de la commande (colonne buyer_id — cf. schéma orders)
+              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=buyer_id`, { headers: hdrs });
               const oData = await oRes.json();
-              const userId = oData?.[0]?.user_id;
-              if (!userId) return;
+              const buyerId = oData?.[0]?.buyer_id;
+              if (!buyerId) return;
               const amountFcfa = Math.round((pi.amount_received || pi.amount || 0) / 100 * 655.957);
-              // Notification Supabase
+              // Notification Supabase (type ∈ {order,offer,message,return,vendor,system,dispute})
               await fetch(`${SB_URL}/rest/v1/notifications`, {
                 method: "POST", headers: { ...hdrs, Prefer: "return=minimal" },
-                body: JSON.stringify({ user_id: userId, type: "payment", title: "✅ Paiement Stripe confirmé", message: `Paiement de ${amountFcfa.toLocaleString('fr-FR')} FCFA reçu. Commande en traitement.`, read: false }),
+                body: JSON.stringify({ user_id: buyerId, type: "order", title: "✅ Paiement Stripe confirmé", message: `Paiement de ${amountFcfa.toLocaleString('fr-FR')} FCFA reçu. Commande en traitement.`, read: false, link: `/?order=${orderId}` }),
               });
               // Push notification
               const origin = new URL(request.url).origin;
               await fetch(`${origin}/push-send`, {
                 method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId, eventType: "payment_confirmed", payload: { title: "✅ Paiement confirmé", body: `${amountFcfa.toLocaleString('fr-FR')} FCFA reçu — commande #${orderId.slice(-6)}`, icon: "/assets/Gemini_Generated_Image_51w43151w43151w4.png", data: { url: `/?order=${orderId}` } } }),
+                body: JSON.stringify({ userId: buyerId, eventType: "payment_confirmed", payload: { title: "✅ Paiement confirmé", body: `${amountFcfa.toLocaleString('fr-FR')} FCFA reçu — commande #${orderId.slice(-6)}`, icon: "/assets/Gemini_Generated_Image_51w43151w43151w4.png", data: { url: `/?order=${orderId}` } } }),
               });
             } catch(e) { console.warn("[Stripe webhook] push/notif error:", e.message); }
           })());
@@ -101,7 +101,7 @@ export async function onRequestPost(context) {
         await updateOrderByStripe(SB_URL, SB_KEY, {
           paymentIntentId: pi.id,
           orderId,
-          status:          "failed",
+          kind:            "failed",
           failureReason:   pi.last_payment_error?.message || "Échec Stripe",
         });
         break;
@@ -110,8 +110,8 @@ export async function onRequestPost(context) {
         // pi ici est une Charge, pas un PaymentIntent
         await updateOrderByStripe(SB_URL, SB_KEY, {
           paymentIntentId: pi.payment_intent || null,
-          orderId:         pi.metadata?.orderId || null,
-          status:          "refunded",
+          orderId:         pi.metadata?.order_id || pi.metadata?.orderId || null,
+          kind:            "refunded",
         });
         break;
 
@@ -132,14 +132,24 @@ export async function onRequestPost(context) {
 // Mise à jour de la commande dans Supabase
 // Cherche d'abord par orderId (metadata), puis par stripe_payment_id.
 // ─────────────────────────────────────────────────────────────────────────────
-async function updateOrderByStripe(sbUrl, sbKey, { paymentIntentId, orderId, status, paidAmountFcfa, paidAt, failureReason }) {
-  const updates = {
-    status,
-    updated_at: new Date().toISOString(),
-    ...(paidAmountFcfa ? { paid_amount_fcfa: paidAmountFcfa } : {}),
-    ...(paidAt         ? { paid_at:          paidAt         } : {}),
-    ...(failureReason  ? { failure_reason:   failureReason  } : {}),
-  };
+async function updateOrderByStripe(sbUrl, sbKey, { paymentIntentId, orderId, kind, failureReason }) {
+  // Mappe l'événement Stripe vers des colonnes/valeurs CONFORMES au schéma orders :
+  //   status         ∈ {pending_payment, processing, in_transit, delivered, cancelled}
+  //   payment_status ∈ {pending, paid, failed, refunded}
+  // (les anciennes colonnes paid_at / paid_amount_fcfa / failure_reason n'existent
+  //  pas → tout l'UPDATE était rejeté par Postgres.)
+  const now = new Date().toISOString();
+  let updates;
+  if (kind === "paid") {
+    updates = { payment_status: "paid", status: "processing", payment_method: "card", processing_at: now, updated_at: now };
+  } else if (kind === "failed") {
+    updates = { payment_status: "failed", updated_at: now,
+      ...(failureReason ? { admin_notes: `Stripe: ${failureReason}` } : {}) };
+  } else if (kind === "refunded") {
+    updates = { payment_status: "refunded", updated_at: now };
+  } else {
+    return;
+  }
 
   const headers = {
     "Content-Type":  "application/json",
@@ -155,7 +165,7 @@ async function updateOrderByStripe(sbUrl, sbKey, { paymentIntentId, orderId, sta
       { method: "PATCH", headers, body: JSON.stringify(updates) }
     ).catch(e => { console.error("[Stripe webhook] Supabase PATCH by orderId :", e.message); return null; });
     if (r && r.ok) {
-      console.log(`[Stripe webhook] ✅ Commande ${orderId} → ${status}`);
+      console.log(`[Stripe webhook] ✅ Commande ${orderId} → ${kind}`);
       return;
     }
   }
@@ -167,7 +177,7 @@ async function updateOrderByStripe(sbUrl, sbKey, { paymentIntentId, orderId, sta
       { method: "PATCH", headers, body: JSON.stringify(updates) }
     ).catch(e => { console.error("[Stripe webhook] Supabase PATCH by stripe_payment_id :", e.message); return null; });
     if (r && r.ok) {
-      console.log(`[Stripe webhook] ✅ Commande via pi=${paymentIntentId} → ${status}`);
+      console.log(`[Stripe webhook] ✅ Commande via pi=${paymentIntentId} → ${kind}`);
     }
   }
 }
