@@ -32439,19 +32439,29 @@ const App = ({ onUserChange }) => {
     if (user.role === "courier" && user.id && DataService._sb) {
       (async () => {
         try {
-          const { data: existing } = await DataService._sb
-            .from("couriers").select("user_id").eq("user_id", user.id).maybeSingle();
-          if (!existing) {
-            await DataService._sb.from("couriers").upsert({
+          // [FIX] Vérifier l'existence en lisant le STATUS, et ne créer la ligne
+          // QUE si la lecture réussit ET renvoie réellement aucune ligne.
+          // Avant : une lecture bloquée par RLS renvoyait null → l'upsert
+          // réécrivait status='pending' et annulait la validation du coursier.
+          const { data: existing, error: exErr } = await DataService._sb
+            .from("couriers").select("user_id,status").eq("user_id", user.id).maybeSingle();
+          if (exErr) {
+            // Lecture impossible (RLS/réseau) : ne RIEN écrire, pour ne pas
+            // risquer d'écraser une fiche existante déjà validée.
+            console.warn("[courier] lecture couriers impossible, upsert ignoré:", exErr.message);
+          } else if (!existing) {
+            // Aucune fiche → 1ère connexion réelle : créer en pending.
+            await DataService._sb.from("couriers").insert({
               user_id:      user.id,
               name:         user.name  || user.email,
               phone:        user.phone || "",
               vehicle_type: user.vehicle_type || "moto",
               zones:        ["Dakar"],
               status:       "pending",
-            }, { onConflict: "user_id" });
+            });
           }
-        } catch (_) { /* RLS ou réseau — non bloquant */ }
+          // Si existing existe déjà : ne toucher à rien (préserve status validé).
+        } catch (_) { /* non bloquant */ }
       })();
     }
     document.dispatchEvent(new CustomEvent('nexus-user-logged-in', { detail: { user: user } }));
