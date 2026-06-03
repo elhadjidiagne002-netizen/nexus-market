@@ -21592,17 +21592,25 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     //       EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'admin')
     //     );
     // ─────────────────────────────────────────────────────────────────────────────────────
-    if (!_apiPendingOk && DataService._sb) {
+    // [FIX PRIORITÉ] Supabase d'abord pour les vendeurs en attente : l'API backend
+    // filtre encore sur status='pending' et rate les vendeurs auto-activés par email
+    // (status='active' mais admin_approved=false). La vue pending_vendors corrigée
+    // est la source de vérité. On conserve le résultat API uniquement si Supabase
+    // ne renvoie rien (ex. RLS bloquant).
+    const _apiPendingData = pendingData;
+    if (DataService._sb) {
       try {
         // [FIX SOURCE] Les inscriptions peuvent vivre dans la vue pending_vendors
         // OU dans la table pending_approvals. On tente la 1ère, et si elle est
         // vide/absente, on bascule sur la 2ème. Ainsi l'admin voit les demandes
         // quelle que soit la table réellement alimentée.
         let sbPending = null, sbErr = null, _src = 'pending_vendors';
+        // [FIX] Ne PAS re-filtrer sur status ici : la vue pending_vendors filtre
+        // déjà sur admin_approved=false. Filtrer sur status masquait les vendeurs
+        // créés en status='active' mais non encore validés.
         ({ data: sbPending, error: sbErr } = await DataService._sb
           .from("pending_vendors")
           .select("*")
-          .in("status", ["pending", "en_attente", "submitted"])
           .order("created_at", { ascending: true }));
         if (sbErr || !Array.isArray(sbPending) || sbPending.length === 0) {
           const alt = await DataService._sb
@@ -21628,11 +21636,17 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
             address:   v.address    || v.location      || "",
             status:    v.status     || 'pending',
           }));
-          pendingData = normalized;
-          storage.set("pendingVendors_mem", normalized);
           if (normalized.length > 0) {
+            pendingData = normalized;
+            storage.set("pendingVendors_mem", normalized);
             console.info(`[loadData] pendingVendors: ${normalized.length} trouvé(s) via ${_src}`);
           } else {
+            // Supabase vide → conserver les données API si elles existent.
+            if (Array.isArray(_apiPendingData) && _apiPendingData.length > 0) {
+              pendingData = _apiPendingData;
+              console.info(`[loadData] pendingVendors: Supabase vide, ${_apiPendingData.length} via API`);
+            } else {
+              pendingData = normalized; // [] des deux côtés
             // [FIX RLS] Supabase retourne [] sans erreur quand la policy SELECT est manquante.
             // Cela explique pourquoi les vendeurs n'apparaissent pas dans le dashboard admin
             // meme si leurs données existent dans la table pending_vendors.
@@ -21652,6 +21666,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
               "exécutez nexus_full_fix.sql dans Supabase SQL Editor (voir F12 pour le SQL exact).",
               "warning"
             );
+            }
           }
         } else if (sbErr) {
           console.warn("[loadData] Supabase direct fallback error:", sbErr.message);
