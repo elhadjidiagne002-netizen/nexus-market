@@ -19937,7 +19937,7 @@ const SitePopupManager = ({ currentUser, currentPage = 'home' }) => {
     const t = setTimeout(() => {
       setCurrent(next);
       setVisible(true);
-      DataService._sb?.rpc('popup_track', { p_id: next.id, p_type: 'view' }).catch(() => {});
+      try { Promise.resolve(DataService._sb?.rpc('popup_track', { p_id: next.id, p_type: 'view' })).catch(() => {}); } catch (_) {}
     }, (next.delay_seconds || 3) * 1000);
     return () => clearTimeout(t);
   }, [queue, current]);
@@ -19952,7 +19952,7 @@ const SitePopupManager = ({ currentUser, currentPage = 'home' }) => {
   };
 
   const handleCTA = (popup) => {
-    DataService._sb?.rpc('popup_track', { p_id: popup.id, p_type: 'click' }).catch(() => {});
+    try { Promise.resolve(DataService._sb?.rpc('popup_track', { p_id: popup.id, p_type: 'click' })).catch(() => {}); } catch (_) {}
     if (popup.cta_url) {
       if (popup.cta_url.startsWith('http')) window.open(popup.cta_url, '_blank');
       else window.dispatchEvent(new CustomEvent('nexus:navigate', { detail: popup.cta_url }));
@@ -21594,29 +21594,44 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     // ─────────────────────────────────────────────────────────────────────────────────────
     if (!_apiPendingOk && DataService._sb) {
       try {
-        const { data: sbPending, error: sbErr } = await DataService._sb
+        // [FIX SOURCE] Les inscriptions peuvent vivre dans la vue pending_vendors
+        // OU dans la table pending_approvals. On tente la 1ère, et si elle est
+        // vide/absente, on bascule sur la 2ème. Ainsi l'admin voit les demandes
+        // quelle que soit la table réellement alimentée.
+        let sbPending = null, sbErr = null, _src = 'pending_vendors';
+        ({ data: sbPending, error: sbErr } = await DataService._sb
           .from("pending_vendors")
           .select("*")
           .in("status", ["pending", "en_attente", "submitted"])
-          .order("created_at", { ascending: true });
+          .order("created_at", { ascending: true }));
+        if (sbErr || !Array.isArray(sbPending) || sbPending.length === 0) {
+          const alt = await DataService._sb
+            .from("pending_approvals")
+            .select("*")
+            .order("created_at", { ascending: true })
+            .then(r => r, () => ({ data: null, error: true }));
+          if (alt && Array.isArray(alt.data) && alt.data.length > 0) {
+            sbPending = alt.data; sbErr = null; _src = 'pending_approvals';
+          }
+        }
         if (!sbErr && Array.isArray(sbPending)) {
           const normalized = sbPending.map(v => ({
-            id:        v.id,
-            name:      v.name       || v.shop_name   || v.business_name || "",
-            ownerName: v.owner_name || v.ownerName   || v.full_name     || "",
+            id:        v.id || v.user_id || v.profile_id,
+            name:      v.name       || v.shop_name   || v.business_name || v.shopName || "",
+            ownerName: v.owner_name || v.ownerName   || v.full_name     || v.fullName || "",
             email:     v.email      || "",
-            category:  v.category   || v.shop_category || "",
-            date:      v.created_at || v.date         || new Date().toISOString(),
+            category:  v.category   || v.shop_category || v.shopCategory || "",
+            date:      v.created_at || v.date         || v.submitted_at  || new Date().toISOString(),
             avatar:    v.avatar     || v.logo         || "",
-            phone:     v.phone      || "",
+            phone:     v.phone      || v.orange_phone  || "",
             ninea:     v.ninea      || v.tax_id        || "",
             address:   v.address    || v.location      || "",
-            status:    v.status,
+            status:    v.status     || 'pending',
           }));
           pendingData = normalized;
           storage.set("pendingVendors_mem", normalized);
           if (normalized.length > 0) {
-            console.info(`[loadData] pendingVendors: ${normalized.length} trouvé(s) via Supabase direct`);
+            console.info(`[loadData] pendingVendors: ${normalized.length} trouvé(s) via ${_src}`);
           } else {
             // [FIX RLS] Supabase retourne [] sans erreur quand la policy SELECT est manquante.
             // Cela explique pourquoi les vendeurs n'apparaissent pas dans le dashboard admin
