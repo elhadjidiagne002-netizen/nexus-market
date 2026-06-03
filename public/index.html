@@ -21091,19 +21091,27 @@ const AdminLivraisonPanel = ({ addToast }) => {
   const load = async () => {
     setLoading(true);
     try {
-      const [{ data:dr }, { data:co }] = await Promise.all([
+      // [FIX] allSettled : si delivery_requests échoue (RLS/absente), on affiche
+      // quand même les coursiers (et inversement). Promise.all masquait tout.
+      const [drRes, coRes] = await Promise.allSettled([
         sb.from('delivery_requests').select('*').order('created_at',{ascending:false}).limit(200),
         sb.from('couriers').select('*').order('total_earned',{ascending:false}),
       ]);
-      setDeliveries(dr||[]);
-      setCouriers(co||[]);
-      const delivered = (dr||[]).filter(d=>d.status==='delivered');
+      const dr = (drRes.status === 'fulfilled' && drRes.value && drRes.value.data) ? drRes.value.data : [];
+      const co = (coRes.status === 'fulfilled' && coRes.value && coRes.value.data) ? coRes.value.data : [];
+      if (drRes.status === 'rejected' || (drRes.value && drRes.value.error))
+        console.warn('[Livraison] delivery_requests:', drRes.reason || (drRes.value && drRes.value.error && drRes.value.error.message));
+      if (coRes.status === 'rejected' || (coRes.value && coRes.value.error))
+        console.warn('[Livraison] couriers:', coRes.reason || (coRes.value && coRes.value.error && coRes.value.error.message));
+      setDeliveries(dr);
+      setCouriers(co);
+      const delivered = dr.filter(d=>d.status==='delivered');
       setStats({
-        total: (dr||[]).length,
+        total: dr.length,
         delivered: delivered.length,
-        pending: (dr||[]).filter(d=>d.status==='pending').length,
+        pending: dr.filter(d=>d.status==='pending').length,
         revenue: delivered.reduce((s,d)=>s+(d.nexus_cut||0),0),
-        couriersActive: (co||[]).filter(c=>c.is_available).length,
+        couriersActive: co.filter(c=>c.is_available).length,
       });
     } catch(e) { addToast('Erreur : '+e.message,'error'); }
     finally { setLoading(false); }
@@ -21142,10 +21150,11 @@ const AdminLivraisonPanel = ({ addToast }) => {
     addToast('Coursier assigné : '+co.name,'success'); load();
   };
 
+  const _pendingCouriers = couriers.filter(c => c.status === 'pending').length;
   const TABS = [
     { id:'overview',   label:'📊 Vue d\'ensemble' },
     { id:'deliveries', label:'📦 Livraisons' },
-    { id:'couriers',   label:'🛵 Coursiers' },
+    { id:'couriers',   label:'🛵 Coursiers' + (_pendingCouriers > 0 ? ' (' + _pendingCouriers + ' en attente)' : '') },
     { id:'pay',        label:'💰 Payer coursiers' },
   ];
 
