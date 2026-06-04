@@ -22077,6 +22077,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "disputes", icon: "gavel", label: "Litiges",  badge: stats.openDisputes   ?? (storage.getArray("disputes")).filter((d) => d.status === "open").length },
     { id: "products", icon: "tags", label: "Produits" },
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
+    { id: "louma", icon: "store", label: "\uD83D\uDFE1 Louma du vendredi" },
     { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: stats.stockAlerts ?? (storage.getArray("stock_alerts")).length },
     { id: "email_templates", icon: "file-alt", label: "Templates email" },
     { id: "sms",    icon: "sms",      label: "SMS" },
@@ -24218,7 +24219,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && (() => { const ref = React.useRef(null); React.useEffect(() => {   try { window.__nexusToast = addToast; } catch(e) {}   const mount = () => { try { if (window.NexusLouma && ref.current) { window.NexusLouma.reload(); window.NexusLouma.renderAdmin(ref.current); } } catch(e){} };   mount();   const onChange = () => mount();   window.addEventListener("nexus:louma-changed", onChange);   return () => window.removeEventListener("nexus:louma-changed", onChange); }, []); return /* @__PURE__ */ React.createElement("div", { ref: ref, id: "nexus-louma-admin-mount" },   /* @__PURE__ */ React.createElement("div", { style: { color: "var(--text-secondary)", padding: "1rem" } }, "Chargement du Louma\u2026"));})(), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
@@ -37220,6 +37221,725 @@ window.addEventListener('unhandledrejection', function(event) {
   console.info('[NEXUS] Chat public communautaire chargé ✅');
 })();
 </script>
+
+<!-- ============================================================
+     NEXUS MARKET — LE LOUMA VIRTUEL DU VENDREDI
+     Module autonome. Géré 100% depuis le tableau de bord admin.
+     Persistance: localStorage (clé nexus_louma_v1). Fonctionne
+     indépendamment du backend (API/Supabase) — robuste en single-file.
+     ============================================================ -->
+<style>
+  :root{
+    --louma-gold:#F4B400; --louma-gold-dark:#C98A00; --louma-green:#00853E;
+    --louma-red:#E63946; --louma-ink:#1a1a1a; --louma-paper:#FFFBF0;
+  }
+  /* ---- Bandeau d'accès (page d'accueil) ---- */
+  #louma-banner{position:fixed;left:0;right:0;bottom:0;z-index:9990;display:none;
+    background:linear-gradient(90deg,var(--louma-gold-dark),var(--louma-gold));
+    color:#1a1a1a;padding:.7rem 1rem;box-shadow:0 -4px 20px rgba(0,0,0,.25);
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    align-items:center;justify-content:center;gap:1rem;flex-wrap:wrap;text-align:center}
+  #louma-banner.show{display:flex}
+  #louma-banner b{font-weight:800}
+  #louma-banner .lb-cta{background:#1a1a1a;color:var(--louma-gold);border:none;
+    padding:.5rem 1.1rem;border-radius:999px;font-weight:800;cursor:pointer;font-size:.9rem}
+  #louma-banner .lb-close{background:transparent;border:none;font-size:1.3rem;cursor:pointer;color:#1a1a1a;line-height:1}
+
+  /* ---- Overlay page /louma acheteur ---- */
+  #louma-overlay{position:fixed;inset:0;z-index:10050;display:none;overflow-y:auto;
+    background:radial-gradient(circle at 20% 0%,#fff6d8,transparent 45%),
+               radial-gradient(circle at 90% 10%,#ffe9c7,transparent 40%),
+               var(--louma-paper);
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:var(--louma-ink)}
+  #louma-overlay.show{display:block}
+  .louma-wrap{max-width:1100px;margin:0 auto;padding:1.2rem 1rem 4rem}
+  .louma-top{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:.4rem}
+  .louma-hero{position:relative;border-radius:20px;overflow:hidden;padding:2.2rem 1.5rem;margin:.6rem 0 1.4rem;
+    background:linear-gradient(120deg,var(--louma-green),#0aa85a 60%,var(--louma-gold));
+    color:#fff;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.18)}
+  .louma-hero h1{margin:0;font-size:clamp(1.6rem,5vw,2.6rem);font-weight:900;letter-spacing:-.5px}
+  .louma-hero p{margin:.5rem 0 0;opacity:.95;font-size:1rem}
+  .louma-hero .pill{display:inline-block;margin-top:.9rem;background:rgba(0,0,0,.28);
+    padding:.45rem 1rem;border-radius:999px;font-weight:700;font-size:.95rem}
+  .louma-flag{font-size:1.4rem}
+  .louma-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:1rem}
+  .louma-card{background:#fff;border:2px solid #f0e3bf;border-radius:16px;overflow:hidden;
+    box-shadow:0 6px 18px rgba(0,0,0,.07);display:flex;flex-direction:column;transition:transform .15s}
+  .louma-card:hover{transform:translateY(-3px)}
+  .louma-card.sold{opacity:.55;filter:grayscale(.85)}
+  .louma-card .img{height:150px;background:#f3f3f3 center/cover no-repeat;position:relative}
+  .louma-badge{position:absolute;top:8px;left:8px;background:var(--louma-gold);color:#1a1a1a;
+    font-weight:800;font-size:.72rem;padding:.25rem .55rem;border-radius:999px;box-shadow:0 2px 6px rgba(0,0,0,.2)}
+  .louma-disc{position:absolute;top:8px;right:8px;background:var(--louma-red);color:#fff;
+    font-weight:800;font-size:.8rem;padding:.25rem .5rem;border-radius:8px}
+  .louma-card .body{padding:.8rem;display:flex;flex-direction:column;gap:.4rem;flex:1}
+  .louma-card .name{font-weight:700;font-size:.95rem;line-height:1.25;min-height:2.4em}
+  .louma-card .vendor{font-size:.74rem;color:#888}
+  .louma-price{display:flex;align-items:baseline;gap:.5rem;flex-wrap:wrap}
+  .louma-price .now{font-weight:900;color:var(--louma-green);font-size:1.1rem}
+  .louma-price .was{text-decoration:line-through;color:#aaa;font-size:.82rem}
+  .louma-meta{display:flex;justify-content:space-between;align-items:center;gap:.4rem;font-size:.75rem;margin-top:auto}
+  .louma-stock{font-weight:700}
+  .louma-stock .bar{height:6px;border-radius:3px;background:#eee;margin-top:3px;overflow:hidden}
+  .louma-stock .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--louma-green),var(--louma-gold))}
+  .louma-count{font-weight:800;color:var(--louma-red);font-variant-numeric:tabular-nums}
+  .louma-buy{margin-top:.5rem;background:var(--louma-green);color:#fff;border:none;border-radius:10px;
+    padding:.55rem;font-weight:800;cursor:pointer}
+  .louma-buy:disabled{background:#bbb;cursor:not-allowed}
+  .louma-soldtag{display:inline-block;background:#444;color:#fff;font-weight:800;font-size:.72rem;
+    padding:.2rem .5rem;border-radius:6px}
+  .louma-closed{text-align:center;padding:3rem 1rem}
+  .louma-closed .big{font-size:clamp(1.8rem,6vw,3rem);font-weight:900;color:var(--louma-green)}
+  .louma-closed .cd{font-size:1.4rem;font-weight:800;color:var(--louma-gold-dark);margin-top:.6rem;font-variant-numeric:tabular-nums}
+  .louma-xbtn{background:#1a1a1a;color:#fff;border:none;border-radius:999px;width:40px;height:40px;font-size:1.1rem;cursor:pointer}
+  .louma-empty{text-align:center;color:#999;padding:2.5rem 1rem}
+
+  /* ---- Panneau admin ---- */
+  .lmadmin{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+  .lmadmin .lm-card{background:#fff;border-radius:14px;padding:1.2rem;margin-bottom:1.2rem;
+    box-shadow:0 2px 10px rgba(0,0,0,.06);border:1px solid #eee}
+  .lmadmin h2{margin:0 0 .3rem;font-size:1.15rem}
+  .lmadmin h2 .flag{margin-right:.3rem}
+  .lmadmin .sub{color:#777;font-size:.85rem;margin:0 0 1rem}
+  .lmadmin label{display:block;font-weight:600;font-size:.82rem;margin:.2rem 0 .25rem}
+  .lmadmin input,.lmadmin select{width:100%;padding:.55rem;border:1px solid #ddd;border-radius:8px;font-size:.9rem;box-sizing:border-box}
+  .lm-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem;margin-bottom:.8rem}
+  .lm-btn{background:var(--louma-green);color:#fff;border:none;padding:.6rem 1.1rem;border-radius:9px;font-weight:700;cursor:pointer}
+  .lm-btn.gold{background:var(--louma-gold-dark)}
+  .lm-btn.ghost{background:#fff;color:#333;border:1px solid #ccc}
+  .lm-btn.danger{background:var(--louma-red)}
+  .lm-btn.sm{padding:.35rem .7rem;font-size:.8rem}
+  .lm-table{width:100%;border-collapse:collapse;font-size:.85rem}
+  .lm-table th,.lm-table td{text-align:left;padding:.55rem .5rem;border-bottom:1px solid #eee;vertical-align:middle}
+  .lm-table th{color:#888;font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.3px}
+  .lm-status{font-weight:700;font-size:.72rem;padding:.2rem .5rem;border-radius:999px;display:inline-block}
+  .lm-status.pending{background:#fff3cd;color:#8a6d00}
+  .lm-status.approved{background:#d4f5e0;color:#0a6b34}
+  .lm-status.rejected{background:#fde2e2;color:#b3201f}
+  .lm-toggle{display:flex;align-items:center;gap:.5rem;font-size:.88rem}
+  .lm-switch{position:relative;width:44px;height:24px;background:#ccc;border-radius:999px;cursor:pointer;transition:.2s;flex:0 0 auto}
+  .lm-switch.on{background:var(--louma-green)}
+  .lm-switch i{position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:.2s}
+  .lm-switch.on i{left:22px}
+  .lm-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.8rem;margin-bottom:1rem}
+  .lm-kpi .b{background:#fafafa;border:1px solid #eee;border-radius:10px;padding:.7rem .8rem}
+  .lm-kpi .b .n{font-size:1.5rem;font-weight:900;color:var(--louma-green)}
+  .lm-kpi .b .l{font-size:.72rem;color:#888}
+  .lm-day{display:flex;gap:.3rem;flex-wrap:wrap}
+  .lm-day button{flex:1;min-width:42px;padding:.4rem;border:1px solid #ddd;background:#fff;border-radius:8px;cursor:pointer;font-size:.78rem}
+  .lm-day button.on{background:var(--louma-green);color:#fff;border-color:var(--louma-green)}
+  .lm-tag{font-size:.72rem;color:#999}
+  @media(max-width:640px){.lm-table thead{display:none}.lm-table td{display:block;border:none;padding:.2rem .5rem}.lm-table tr{display:block;border-bottom:1px solid #eee;padding:.5rem 0}}
+</style>
+
+<!-- Bandeau accueil -->
+<div id="louma-banner" role="region" aria-label="Louma du vendredi">
+  <span class="louma-flag">🟡</span>
+  <span><b>Le Louma NEXUS est ouvert&nbsp;!</b> Promotions flash jusqu'à <b>-50%</b> — ferme à 20h.</span>
+  <button class="lb-cta" id="louma-banner-cta">Entrer au Louma →</button>
+  <button class="lb-close" id="louma-banner-close" aria-label="Fermer">×</button>
+</div>
+
+<!-- Page /louma -->
+<div id="louma-overlay" role="dialog" aria-modal="true" aria-label="Louma du vendredi">
+  <div class="louma-wrap">
+    <div class="louma-top">
+      <div style="font-weight:900;font-size:1.1rem"><span class="louma-flag">🟡</span> NEXUS</div>
+      <button class="louma-xbtn" id="louma-close" aria-label="Fermer le Louma">×</button>
+    </div>
+    <div id="louma-content"></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   NEXUS LOUMA — logique
+   ============================================================ */
+(function(){
+  "use strict";
+  if (window.__NEXUS_LOUMA_LOADED__) return;
+  window.__NEXUS_LOUMA_LOADED__ = true;
+
+  var LS_KEY   = "nexus_louma_v1";       // état complet (config + offres)
+  var SEEN_KEY = "nexus_louma_seen";     // dernière date d'ouverture notifiée
+
+  /* ---------- Persistance ---------- */
+  function defaultState(){
+    return {
+      config: {
+        enabled: true,
+        day: 5,            // 0=Dim … 5=Vendredi
+        openHour: 6,
+        closeHour: 20,
+        notifyOnOpen: true,
+        forceOpen: false   // bouton admin "ouvrir maintenant" (test/exception)
+      },
+      offers: []           // {id, productId, name, vendorName, price, originalPrice,
+                           //  imageUrl, discount, promoPrice, qty, sold, status,
+                           //  slotStart, slotEnd, submittedBy, createdAt}
+    };
+  }
+  function load(){
+    try{
+      var raw = localStorage.getItem(LS_KEY);
+      if(!raw) return defaultState();
+      var s = JSON.parse(raw);
+      var d = defaultState();
+      s.config = Object.assign({}, d.config, s.config||{});
+      s.offers = Array.isArray(s.offers) ? s.offers : [];
+      return s;
+    }catch(e){ return defaultState(); }
+  }
+  function save(s){
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch(e){}
+    window.dispatchEvent(new CustomEvent("nexus:louma-changed"));
+  }
+  var state = load();
+
+  /* ---------- Accès aux produits de la marketplace ---------- */
+  function getProducts(){
+    // 1) localStorage "products"  2) clés candidates  3) []
+    var keys = ["products","nexus_products"];
+    for (var i=0;i<keys.length;i++){
+      try{
+        var raw = localStorage.getItem(keys[i]);
+        if(raw){
+          var arr = JSON.parse(raw);
+          if(Array.isArray(arr) && arr.length) return arr;
+          if(arr && typeof arr==="object"){ var v=Object.values(arr); if(v.length) return v; }
+        }
+      }catch(e){}
+    }
+    // fallback: variable globale éventuellement exposée
+    if (Array.isArray(window.__NEXUS_PRODUCTS__)) return window.__NEXUS_PRODUCTS__;
+    return [];
+  }
+  function getWishlistProductIds(){
+    // structure connue: storage "wishlists" -> {userId:[ids]} ou [ids]
+    var ids = [];
+    try{
+      var raw = localStorage.getItem("wishlists");
+      if(raw){
+        var w = JSON.parse(raw);
+        if(Array.isArray(w)) ids = w.slice();
+        else if(w && typeof w==="object"){
+          Object.values(w).forEach(function(v){ if(Array.isArray(v)) ids=ids.concat(v); });
+        }
+      }
+    }catch(e){}
+    return ids.map(String);
+  }
+  function fmtPrice(eur){
+    var rate = (typeof window.EUR_TO_FCFA==="number") ? window.EUR_TO_FCFA : 655.957;
+    var v = (Number(eur)||0)*rate;
+    return v.toLocaleString("fr-FR",{maximumFractionDigits:0})+" FCFA";
+  }
+  function toast(msg,type){
+    if (typeof window.__nexusToast==="function"){ window.__nexusToast(msg,type); return; }
+    try{ window.dispatchEvent(new CustomEvent("nexus:toast",{detail:{message:msg,type:type||"info"}})); }catch(e){}
+  }
+
+  /* ---------- Logique d'ouverture ---------- */
+  function isOpenNow(){
+    var c = state.config;
+    if(!c.enabled) return false;
+    if(c.forceOpen) return true;
+    var now = new Date();
+    if(now.getDay() !== c.day) return false;
+    var h = now.getHours();
+    return h >= c.openHour && h < c.closeHour;
+  }
+  function msUntilNextOpen(){
+    var c = state.config;
+    var now = new Date();
+    var target = new Date(now);
+    target.setHours(c.openHour,0,0,0);
+    var addDays = (c.day - now.getDay() + 7) % 7;
+    if(addDays===0){
+      // aujourd'hui est le bon jour
+      if(now.getHours() >= c.openHour && now.getHours() < c.closeHour) return 0; // ouvert
+      if(now.getHours() >= c.closeHour) addDays = 7; // déjà fermé -> semaine prochaine
+    }
+    target.setDate(now.getDate()+addDays);
+    return target - now;
+  }
+  function msUntilClose(){
+    var c = state.config;
+    var now = new Date();
+    var close = new Date(now); close.setHours(c.closeHour,0,0,0);
+    return Math.max(0, close - now);
+  }
+  function activeOffers(){
+    var now = new Date();
+    return state.offers.filter(function(o){
+      if(o.status !== "approved") return false;
+      // créneau horaire optionnel
+      if(o.slotStart!=null && now.getHours() < o.slotStart) return false;
+      if(o.slotEnd!=null && now.getHours() >= o.slotEnd) return false;
+      return true;
+    });
+  }
+
+  /* ---------- Helpers offre ---------- */
+  function computePromo(price, discount){
+    var d = Math.max(0,Math.min(90, Number(discount)||0));
+    return Math.round((Number(price)||0)*(1-d/100)*100)/100;
+  }
+  function uid(){ return "lm_"+Date.now()+"_"+Math.random().toString(36).slice(2,7); }
+
+  /* ============================================================
+     RENDU ACHETEUR — page /louma
+     ============================================================ */
+  function fmtCountdown(ms){
+    if(ms<=0) return "00:00:00";
+    var s = Math.floor(ms/1000);
+    var d = Math.floor(s/86400); s%=86400;
+    var h = Math.floor(s/3600); s%=3600;
+    var m = Math.floor(s/60); s%=60;
+    var pad=function(n){return (n<10?"0":"")+n;};
+    if(d>0) return d+"j "+pad(h)+":"+pad(m)+":"+pad(s);
+    return pad(h)+":"+pad(m)+":"+pad(s);
+  }
+  function fmtDaysUntil(ms){
+    var totalMin = Math.floor(ms/60000);
+    var d = Math.floor(totalMin/1440);
+    var h = Math.floor((totalMin%1440)/60);
+    var m = totalMin%60;
+    if(d>0) return d+" jour"+(d>1?"s":"")+" "+h+"h"+(m<10?"0":"")+m;
+    return h+"h"+(m<10?"0":"")+m;
+  }
+
+  function renderBuyer(){
+    var content = document.getElementById("louma-content");
+    if(!content) return;
+
+    if(!isOpenNow()){
+      var ms = msUntilNextOpen();
+      content.innerHTML =
+        '<div class="louma-hero"><h1>🟡 Le Louma NEXUS</h1>'+
+        '<p>Le marché du vendredi — chaque semaine, des promotions flash exclusives.</p></div>'+
+        '<div class="louma-closed">'+
+          '<div class="big">Le Louma est fermé</div>'+
+          '<p style="color:#777;margin:.6rem 0 0">Rendez-vous '+dayName(state.config.day)+
+            ' de '+state.config.openHour+'h à '+state.config.closeHour+'h.</p>'+
+          '<div class="cd">Prochain Louma dans <span id="louma-next-cd">'+fmtDaysUntil(ms)+'</span></div>'+
+        '</div>';
+      return;
+    }
+
+    var offers = activeOffers();
+    var head =
+      '<div class="louma-hero"><h1>🟡 Le Louma est ouvert&nbsp;!</h1>'+
+      '<p>Promotions flash exclusives — stock limité, premier arrivé, premier servi.</p>'+
+      '<span class="pill">⏳ Ferme dans <span id="louma-close-cd">'+fmtCountdown(msUntilClose())+'</span></span></div>';
+
+    if(!offers.length){
+      content.innerHTML = head + '<div class="louma-empty">Aucune offre pour le moment — les vendeurs préparent le marché. Revenez bientôt&nbsp;!</div>';
+      return;
+    }
+
+    var cards = offers.map(function(o){
+      var remaining = Math.max(0, (o.qty||0) - (o.sold||0));
+      var sold = remaining<=0;
+      var pct = o.qty? Math.round(remaining/o.qty*100):0;
+      var img = o.imageUrl ? 'style="background-image:url(\''+escapeAttr(o.imageUrl)+'\')"' : '';
+      return ''+
+        '<div class="louma-card'+(sold?' sold':'')+'">'+
+          '<div class="img" '+img+'>'+
+            '<span class="louma-badge">🟡 LOUMA</span>'+
+            '<span class="louma-disc">-'+o.discount+'%</span>'+
+          '</div>'+
+          '<div class="body">'+
+            '<div class="name">'+escapeHtml(o.name)+'</div>'+
+            (o.vendorName?'<div class="vendor">par '+escapeHtml(o.vendorName)+'</div>':'')+
+            '<div class="louma-price"><span class="now">'+fmtPrice(o.promoPrice)+'</span>'+
+              '<span class="was">'+fmtPrice(o.price)+'</span></div>'+
+            '<div class="louma-meta">'+
+              (sold? '<span class="louma-soldtag">Épuisé</span>'
+                   : '<span class="louma-stock">'+remaining+' / '+o.qty+' restant'+(remaining>1?'s':'')+
+                       '<span class="bar"><i style="width:'+pct+'%"></i></span></span>')+
+            '</div>'+
+            '<button class="louma-buy" data-offer="'+o.id+'"'+(sold?' disabled':'')+'>'+
+              (sold?'Épuisé':'🛒 Acheter au Louma')+'</button>'+
+          '</div>'+
+        '</div>';
+    }).join("");
+
+    content.innerHTML = head + '<div class="louma-grid">'+cards+'</div>';
+
+    // brancher les boutons d'achat
+    Array.prototype.forEach.call(content.querySelectorAll('.louma-buy[data-offer]'), function(btn){
+      btn.addEventListener('click', function(){ buyOffer(btn.getAttribute('data-offer')); });
+    });
+  }
+
+  function buyOffer(id){
+    var o = state.offers.find(function(x){return x.id===id;});
+    if(!o) return;
+    var remaining = (o.qty||0)-(o.sold||0);
+    if(remaining<=0){ toast("Cet article est épuisé.","error"); return; }
+    o.sold = (o.sold||0)+1;
+    save(state);
+    renderBuyer();
+    toast("Article réservé au prix Louma ! Finalisez votre commande.","success");
+    // Tenter d'ajouter au panier de la marketplace si l'API est exposée
+    try{
+      window.dispatchEvent(new CustomEvent("nexus:add-to-cart",{detail:{productId:o.productId, loumaPrice:o.promoPrice, source:"louma"}}));
+    }catch(e){}
+  }
+
+  /* ============================================================
+     NOTIFICATIONS
+     ============================================================ */
+  function todayKey(){ var d=new Date(); return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate(); }
+  function maybeNotifyOpen(){
+    if(!state.config.enabled || !state.config.notifyOnOpen) return;
+    if(!isOpenNow()) return;
+    var seen=null; try{seen=localStorage.getItem(SEEN_KEY);}catch(e){}
+    if(seen===todayKey()) return;
+    try{localStorage.setItem(SEEN_KEY, todayKey());}catch(e){}
+
+    // bandeau visible
+    showBanner();
+
+    // favoris au louma -> alerte prioritaire
+    var fav = getWishlistProductIds();
+    var matched = activeOffers().filter(function(o){ return fav.indexOf(String(o.productId))>=0; });
+
+    // notification navigateur si déjà autorisée
+    if(typeof Notification!=="undefined" && Notification.permission==="granted"){
+      try{
+        if(matched.length){
+          new Notification("🟡 Vos favoris sont au Louma !",{
+            body: matched.length+" produit(s) de vos favoris en promo aujourd'hui — jusqu'à 20h.",
+          });
+        }else{
+          new Notification("🟡 Le Louma NEXUS est ouvert",{
+            body: "Promotions jusqu'à -50% jusqu'à 20h !",
+          });
+        }
+      }catch(e){}
+    }
+    // notification in-app (toast + event pour le centre de notifs natif)
+    if(matched.length){
+      toast("🟡 "+matched.length+" de vos favoris sont au Louma aujourd'hui !","success");
+    }
+    try{
+      window.dispatchEvent(new CustomEvent("nexus:notify",{detail:{
+        title:"🟡 Le Louma est ouvert",
+        body:"Promotions jusqu'à -50% jusqu'à 20h."+(matched.length?" Vos favoris y sont !":""),
+        link:"/louma"
+      }}));
+    }catch(e){}
+  }
+
+  /* ============================================================
+     BANDEAU & OVERLAY
+     ============================================================ */
+  function showBanner(){
+    var b=document.getElementById("louma-banner");
+    if(b && isOpenNow()) b.classList.add("show");
+  }
+  function hideBanner(){ var b=document.getElementById("louma-banner"); if(b) b.classList.remove("show"); }
+  function openOverlay(){
+    var ov=document.getElementById("louma-overlay");
+    if(ov){ ov.classList.add("show"); document.body.style.overflow="hidden"; renderBuyer(); }
+    if(history.replaceState){ try{history.replaceState(null,"","#louma");}catch(e){} }
+  }
+  function closeOverlay(){
+    var ov=document.getElementById("louma-overlay");
+    if(ov){ ov.classList.remove("show"); document.body.style.overflow=""; }
+    if(location.hash==="#louma" && history.replaceState){ try{history.replaceState(null,"",location.pathname+location.search);}catch(e){} }
+  }
+
+  /* ============================================================
+     PANNEAU ADMIN (rendu dans un conteneur fourni)
+     ============================================================ */
+  function dayName(d){ return ["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"][d]||"?"; }
+  function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function escapeAttr(s){ return escapeHtml(s).replace(/'/g,"&#39;"); }
+
+  function renderAdmin(host){
+    if(!host) return;
+    var c = state.config;
+    var prods = getProducts();
+    var pending = state.offers.filter(function(o){return o.status==="pending";});
+    var approved = state.offers.filter(function(o){return o.status==="approved";});
+    var openNow = isOpenNow();
+
+    var prodOptions = '<option value="">Choisir un produit…</option>' +
+      prods.map(function(p){
+        var pid = p.id!=null?p.id:p._id;
+        return '<option value="'+escapeAttr(pid)+'">'+escapeHtml(p.name)+' — '+fmtPrice(p.price)+
+               ' (stock '+(p.stock!=null?p.stock:'?')+')</option>';
+      }).join("");
+
+    var dayBtns = [0,1,2,3,4,5,6].map(function(d){
+      var labels=["Dim","Lun","Mar","Mer","Jeu","Ven","Sam"];
+      return '<button data-day="'+d+'" class="'+(c.day===d?'on':'')+'">'+labels[d]+'</button>';
+    }).join("");
+
+    function offerRow(o, isPending){
+      var remaining = Math.max(0,(o.qty||0)-(o.sold||0));
+      var slot = (o.slotStart!=null||o.slotEnd!=null)
+        ? (o.slotStart!=null?o.slotStart+'h':c.openHour+'h')+'→'+(o.slotEnd!=null?o.slotEnd+'h':c.closeHour+'h')
+        : 'Journée';
+      return '<tr>'+
+        '<td><b>'+escapeHtml(o.name)+'</b><div class="lm-tag">'+escapeHtml(o.vendorName||'—')+'</div></td>'+
+        '<td>-'+o.discount+'%<div class="lm-tag">'+fmtPrice(o.promoPrice)+'</div></td>'+
+        '<td>'+remaining+'/'+(o.qty||0)+'</td>'+
+        '<td>'+slot+'</td>'+
+        '<td><span class="lm-status '+o.status+'">'+
+          (o.status==='pending'?'En attente':o.status==='approved'?'Validée':'Rejetée')+'</span></td>'+
+        '<td style="white-space:nowrap">'+
+          (isPending
+            ? '<button class="lm-btn sm" data-act="approve" data-id="'+o.id+'">Valider</button> '+
+              '<button class="lm-btn sm danger" data-act="reject" data-id="'+o.id+'">Rejeter</button>'
+            : '<button class="lm-btn sm ghost" data-act="remove" data-id="'+o.id+'">Retirer</button>')+
+        '</td></tr>';
+    }
+
+    host.classList.add("lmadmin");
+    host.innerHTML =
+      // KPI + état
+      '<div class="lm-card">'+
+        '<h2><span class="flag">🟡</span> Le Louma du Vendredi</h2>'+
+        '<p class="sub">Marché hebdomadaire de promotions flash. État actuel : '+
+          (c.enabled ? (openNow?'<b style="color:var(--louma-green)">OUVERT</b>':'Programmé — fermé pour l\'instant') : '<b style="color:#b3201f">Désactivé</b>')+'</p>'+
+        '<div class="lm-kpi">'+
+          '<div class="b"><div class="n">'+approved.length+'</div><div class="l">Offres en ligne</div></div>'+
+          '<div class="b"><div class="n">'+pending.length+'</div><div class="l">À valider</div></div>'+
+          '<div class="b"><div class="n">'+approved.reduce(function(a,o){return a+(o.sold||0);},0)+'</div><div class="l">Ventes Louma</div></div>'+
+          '<div class="b"><div class="n">'+(openNow?fmtDaysUntil(msUntilClose())+' rest.':fmtDaysUntil(msUntilNextOpen()))+'</div><div class="l">'+(openNow?'Avant fermeture':'Avant ouverture')+'</div></div>'+
+        '</div>'+
+        '<div style="display:flex;gap:.6rem;flex-wrap:wrap">'+
+          '<button class="lm-btn" id="lm-preview">👁️ Aperçu page Louma</button>'+
+          '<button class="lm-btn '+(c.forceOpen?'danger':'gold')+'" id="lm-force">'+(c.forceOpen?'■ Arrêter l\'ouverture forcée':'▶ Ouvrir maintenant (test)')+'</button>'+
+        '</div>'+
+      '</div>'+
+
+      // Configuration
+      '<div class="lm-card">'+
+        '<h2>⚙️ Réglages</h2>'+
+        '<p class="sub">Jour et horaires d\'ouverture automatique, et notifications.</p>'+
+        '<div class="lm-toggle" style="margin-bottom:.9rem">'+
+          '<div class="lm-switch '+(c.enabled?'on':'')+'" id="lm-enabled"><i></i></div>'+
+          '<span>Louma activé</span></div>'+
+        '<label>Jour du Louma</label>'+
+        '<div class="lm-day" id="lm-days" style="margin-bottom:.8rem">'+dayBtns+'</div>'+
+        '<div class="lm-row">'+
+          '<div><label>Heure d\'ouverture</label><input type="number" id="lm-open" min="0" max="23" value="'+c.openHour+'"></div>'+
+          '<div><label>Heure de fermeture</label><input type="number" id="lm-close" min="1" max="24" value="'+c.closeHour+'"></div>'+
+        '</div>'+
+        '<div class="lm-toggle">'+
+          '<div class="lm-switch '+(c.notifyOnOpen?'on':'')+'" id="lm-notify"><i></i></div>'+
+          '<span>Notifier les acheteurs à l\'ouverture (push + favoris prioritaires)</span></div>'+
+      '</div>'+
+
+      // Offres en attente (validation)
+      '<div class="lm-card">'+
+        '<h2>📥 Offres soumises par les vendeurs</h2>'+
+        '<p class="sub">Validez ou rejetez les offres avant publication. Les offres validées apparaissent à l\'ouverture.</p>'+
+        (pending.length
+          ? '<table class="lm-table"><thead><tr><th>Produit</th><th>Remise</th><th>Qté</th><th>Créneau</th><th>Statut</th><th>Action</th></tr></thead><tbody>'+
+              pending.map(function(o){return offerRow(o,true);}).join("")+'</tbody></table>'
+          : '<p style="color:#999;font-size:.88rem">Aucune offre en attente.</p>')+
+      '</div>'+
+
+      // Création directe par l'admin
+      '<div class="lm-card">'+
+        '<h2>➕ Créer une offre Louma</h2>'+
+        '<p class="sub">L\'admin peut aussi monter une offre directement (validée d\'office).</p>'+
+        '<label>Produit</label><select id="lm-prod">'+prodOptions+'</select>'+
+        '<div class="lm-row" style="margin-top:.8rem">'+
+          '<div><label>Remise (%)</label><input type="number" id="lm-disc" min="5" max="80" value="30"></div>'+
+          '<div><label>Quantité mise en jeu</label><input type="number" id="lm-qty" min="1" value="10"></div>'+
+        '</div>'+
+        '<div class="lm-row">'+
+          '<div><label>Début créneau (h, vide = ouverture)</label><input type="number" id="lm-slotstart" min="0" max="23" placeholder="'+c.openHour+'"></div>'+
+          '<div><label>Fin créneau (h, vide = fermeture)</label><input type="number" id="lm-slotend" min="1" max="24" placeholder="'+c.closeHour+'"></div>'+
+        '</div>'+
+        '<button class="lm-btn" id="lm-create">Ajouter au Louma</button>'+
+      '</div>'+
+
+      // Offres en ligne
+      '<div class="lm-card">'+
+        '<h2>🟢 Offres validées</h2>'+
+        (approved.length
+          ? '<table class="lm-table"><thead><tr><th>Produit</th><th>Remise</th><th>Stock</th><th>Créneau</th><th>Statut</th><th>Action</th></tr></thead><tbody>'+
+              approved.map(function(o){return offerRow(o,false);}).join("")+'</tbody></table>'
+          : '<p style="color:#999;font-size:.88rem">Aucune offre validée pour le moment.</p>')+
+      '</div>';
+
+    wireAdmin(host);
+  }
+
+  function wireAdmin(host){
+    var c = state.config;
+    function rerender(){ renderAdmin(host); }
+
+    var $=function(id){return host.querySelector('#'+id);};
+
+    if($('lm-preview')) $('lm-preview').onclick=function(){ openOverlay(); };
+    if($('lm-force')) $('lm-force').onclick=function(){
+      state.config.forceOpen=!state.config.forceOpen; save(state);
+      if(state.config.forceOpen){ maybeNotifyOpen(); } else { hideBanner(); }
+      rerender();
+    };
+    if($('lm-enabled')) $('lm-enabled').onclick=function(){ state.config.enabled=!state.config.enabled; save(state); rerender(); };
+    if($('lm-notify')) $('lm-notify').onclick=function(){ state.config.notifyOnOpen=!state.config.notifyOnOpen; save(state); rerender(); };
+
+    var days=host.querySelectorAll('#lm-days button');
+    Array.prototype.forEach.call(days,function(b){
+      b.onclick=function(){ state.config.day=parseInt(b.getAttribute('data-day'),10); save(state); rerender(); };
+    });
+    function bindHour(id,key,min,max){
+      var el=$(id); if(!el) return;
+      el.onchange=function(){
+        var v=parseInt(el.value,10); if(isNaN(v)) return;
+        v=Math.max(min,Math.min(max,v)); state.config[key]=v; save(state); rerender();
+      };
+    }
+    bindHour('lm-open','openHour',0,23);
+    bindHour('lm-close','closeHour',1,24);
+
+    // valider / rejeter / retirer
+    Array.prototype.forEach.call(host.querySelectorAll('[data-act]'),function(btn){
+      btn.onclick=function(){
+        var id=btn.getAttribute('data-id'), act=btn.getAttribute('data-act');
+        var o=state.offers.find(function(x){return x.id===id;});
+        if(!o) return;
+        if(act==='approve'){ o.status='approved'; toast('Offre validée et publiée au Louma.','success'); }
+        else if(act==='reject'){ o.status='rejected'; toast('Offre rejetée.','info'); }
+        else if(act==='remove'){ state.offers=state.offers.filter(function(x){return x.id!==id;}); toast('Offre retirée.','info'); }
+        save(state); rerender();
+      };
+    });
+
+    // création admin
+    if($('lm-create')) $('lm-create').onclick=function(){
+      var pid=$('lm-prod').value;
+      if(!pid){ toast('Choisissez un produit.','error'); return; }
+      var prods=getProducts();
+      var p=prods.find(function(x){return String(x.id!=null?x.id:x._id)===String(pid);});
+      if(!p){ toast('Produit introuvable.','error'); return; }
+      var disc=parseInt($('lm-disc').value,10)||30;
+      var qty=parseInt($('lm-qty').value,10)||10;
+      var ss=$('lm-slotstart').value!==''?parseInt($('lm-slotstart').value,10):null;
+      var se=$('lm-slotend').value!==''?parseInt($('lm-slotend').value,10):null;
+      state.offers.push({
+        id:uid(), productId:(p.id!=null?p.id:p._id), name:p.name,
+        vendorName:p.vendorName||p.vendor_name||'', price:p.price,
+        originalPrice:p.originalPrice||p.original_price||null,
+        imageUrl:p.imageUrl||p.image_url||null,
+        discount:disc, promoPrice:computePromo(p.price,disc),
+        qty:qty, sold:0, status:'approved',
+        slotStart:ss, slotEnd:se, submittedBy:'admin', createdAt:new Date().toISOString()
+      });
+      save(state); toast('Offre ajoutée au Louma.','success'); rerender();
+    };
+  }
+
+  /* ============================================================
+     API VENDEUR (soumission d'offre) — exposée globalement
+     ============================================================ */
+  function submitVendorOffer(payload){
+    // payload: {productId, discount, qty, slotStart?, slotEnd?, vendorName?}
+    var prods=getProducts();
+    var p=prods.find(function(x){return String(x.id!=null?x.id:x._id)===String(payload.productId);});
+    if(!p){ toast('Produit introuvable.','error'); return null; }
+    var disc=parseInt(payload.discount,10)||0;
+    var offer={
+      id:uid(), productId:payload.productId, name:p.name,
+      vendorName:payload.vendorName||p.vendorName||p.vendor_name||'',
+      price:p.price, originalPrice:p.originalPrice||p.original_price||null,
+      imageUrl:p.imageUrl||p.image_url||null,
+      discount:disc, promoPrice:computePromo(p.price,disc),
+      qty:parseInt(payload.qty,10)||1, sold:0, status:'pending',
+      slotStart:(payload.slotStart!=null?parseInt(payload.slotStart,10):null),
+      slotEnd:(payload.slotEnd!=null?parseInt(payload.slotEnd,10):null),
+      submittedBy:'vendor', createdAt:new Date().toISOString()
+    };
+    state.offers.push(offer); save(state);
+    toast('Offre Louma soumise — en attente de validation admin.','success');
+    return offer;
+  }
+
+  /* ============================================================
+     BOUCLE TEMPS RÉEL (countdowns + ouverture auto)
+     ============================================================ */
+  function tick(){
+    // mise à jour bandeau
+    var b=document.getElementById("louma-banner");
+    if(b){
+      if(isOpenNow()) b.classList.contains("show") || (function(){ /* affiché par notif seulement */ })();
+      else b.classList.remove("show");
+    }
+    // countdowns visibles
+    var cc=document.getElementById("louma-close-cd");
+    if(cc) cc.textContent=fmtCountdown(msUntilClose());
+    var nc=document.getElementById("louma-next-cd");
+    if(nc) nc.textContent=fmtDaysUntil(msUntilNextOpen());
+    // si overlay ouvert et l'état d'ouverture a changé, re-render
+    var ov=document.getElementById("louma-overlay");
+    if(ov && ov.classList.contains("show")){
+      var key=isOpenNow()? (activeOffers().length+"-open") : "closed";
+      if(ov.getAttribute("data-state")!==key){ ov.setAttribute("data-state",key); renderBuyer(); }
+    }
+  }
+
+  /* ============================================================
+     INITIALISATION & EVENTS
+     ============================================================ */
+  function init(){
+    // boutons bandeau / overlay
+    var cta=document.getElementById("louma-banner-cta");
+    if(cta) cta.onclick=function(){ openOverlay(); hideBanner(); };
+    var bclose=document.getElementById("louma-banner-close");
+    if(bclose) bclose.onclick=hideBanner;
+    var oclose=document.getElementById("louma-close");
+    if(oclose) oclose.onclick=closeOverlay;
+
+    // ouverture via #louma dans l'URL
+    if(location.hash==="#louma") openOverlay();
+    window.addEventListener("hashchange",function(){ if(location.hash==="#louma") openOverlay(); });
+
+    // ouverture programmatique depuis le reste de l'app
+    window.addEventListener("nexus:open-louma", openOverlay);
+
+    // re-render admin/buyer quand l'état change
+    window.addEventListener("nexus:louma-changed", function(){
+      var ov=document.getElementById("louma-overlay");
+      if(ov && ov.classList.contains("show")) renderBuyer();
+    });
+
+    maybeNotifyOpen();
+    tick();
+    setInterval(tick,1000);
+    // re-vérifier l'ouverture/notif chaque minute (changement d'heure)
+    setInterval(maybeNotifyOpen,60000);
+
+    console.info("[NEXUS] Module Louma du vendredi chargé ✅");
+  }
+
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init);
+  else init();
+
+  /* ============================================================
+     API PUBLIQUE
+     ============================================================ */
+  window.NexusLouma = {
+    open: openOverlay,
+    close: closeOverlay,
+    renderAdmin: renderAdmin,       // NexusLouma.renderAdmin(domElement)
+    submitVendorOffer: submitVendorOffer,
+    isOpen: isOpenNow,
+    getState: function(){ return JSON.parse(JSON.stringify(state)); },
+    reload: function(){ state=load(); }
+  };
+})();
+</script>
+<!-- ============== FIN MODULE LOUMA ============== -->
 
 </body>
 </html>
