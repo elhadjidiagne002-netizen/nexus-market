@@ -4408,8 +4408,32 @@ const DataService = {
     if (this._sb) {
       try {
         const ids = itemsWithId.map(i => i.id);
-        const { data: stocks, error } = await this._sb.rpc("check_products_stock", { p_ids: ids });
+        let { data: stocks, error } = await this._sb.rpc("check_products_stock", { p_ids: ids });
         if (!error && stocks) {
+          // [NEXUS-FIX] Auto-réparation des ids fantômes : si un article du panier
+          // a un id absent du résultat (produit de démo / ancien cache), on tente
+          // de le retrouver par son NOM dans la table products. Si trouvé, on
+          // corrige l'id à la volée ; sinon on le signale clairement.
+          const missing = itemsWithId.filter(item => !stocks[item.id]);
+          if (missing.length > 0) {
+            console.warn("[checkStock] ids du panier introuvables en base:",
+              missing.map(m => ({ id: m.id, name: m.name })));
+            try {
+              const names = missing.map(m => m.name).filter(Boolean);
+              if (names.length) {
+                const { data: byName } = await this._sb
+                  .from("products").select("id,name,stock,active").in("name", names);
+                (byName || []).forEach(row => {
+                  // injecter dans stocks sous l'id du panier ET corriger l'id de l'article
+                  const it = missing.find(m => m.name === row.name);
+                  if (it) {
+                    stocks[it.id] = { stock: row.stock, active: row.active !== false };
+                    it.realId = row.id;   // vrai UUID pour la commande
+                  }
+                });
+              }
+            } catch(_) {}
+          }
           const outOfStock = itemsWithId.filter(item => {
             const sObj = stocks[item.id];
             if (!sObj || !sObj.active) return true;
@@ -4418,7 +4442,12 @@ const DataService = {
             id: item.id, name: item.name,
             requested: item.quantity || 1,
             available: stocks[item.id]?.stock ?? 0,
+            phantom: !stocks[item.id],
           }));
+          if (outOfStock.length) {
+            console.warn("[checkStock] Articles bloquants:", outOfStock,
+              "| ids retournés par la RPC:", Object.keys(stocks));
+          }
           return { ok: outOfStock.length === 0, outOfStock, stocks };
         }
         if (error) console.warn("[checkStock] RPC:", error.message);
@@ -12085,10 +12114,19 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
       const stockCheck = await DataService.checkStockAvailability(cart).catch(() => ({ ok: true, outOfStock: [] }));
       if (!stockCheck.ok) {
         submittingRef.current = false; setLoading(false);
-        const names = stockCheck.outOfStock.map(i =>
-          `${i.name} (${i.available} disponible${i.available > 1 ? 's' : ''})`
-        ).join(', ');
-        addToast(`\u26A0\uFE0F Stock insuffisant : ${names}. Veuillez mettre Ã  jour votre panier.`, "error", 8000);
+        const phantoms = stockCheck.outOfStock.filter(i => i.phantom);
+        const lowstock = stockCheck.outOfStock.filter(i => !i.phantom);
+        if (phantoms.length) {
+          const pn = phantoms.map(i => i.name).join(', ');
+          addToast(`\u26A0\uFE0F ${pn} n\u2019est plus disponible sur la boutique et a \xe9t\xe9 retir\xe9 de votre panier.`, "error", 8000);
+          // auto-nettoyage du panier invitÃ© (le parent re-lira ce storage) + signal global
+          try { const gc = (storage.getArray("guest_cart")||[]).filter(ci => !phantoms.some(p => p.id === ci.id)); storage.set("guest_cart", gc); } catch(_) {}
+          try { window.dispatchEvent(new CustomEvent("nexus:remove-cart-items", { detail: { ids: phantoms.map(p => p.id) } })); } catch(_) {}
+        }
+        if (lowstock.length) {
+          const names = lowstock.map(i => `${i.name} (${i.available} disponible${i.available > 1 ? 's' : ''})`).join(', ');
+          addToast(`\u26A0\uFE0F Stock insuffisant : ${names}. Veuillez mettre \xe0 jour votre panier.`, "error", 8000);
+        }
         if (stockCheck.stocks) {
           const allProds = storage.getArray("products");
           Object.entries(stockCheck.stocks).forEach(([id, s]) => {
