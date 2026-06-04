@@ -3091,6 +3091,7 @@ if (typeof window !== 'undefined') {
 // ════════════════════════════════════════════════════════════════════════════
 // NexusWA — Service WhatsApp automatique via Green API / /api/whatsapp
 // ════════════════════════════════════════════════════════════════════════════
+try { window.DataService = DataService; } catch(e){}
 const NexusWA = {
   // Config (peuplée depuis Admin → WhatsApp ou Supabase whatsapp_config)
   _cfg: {
@@ -3307,6 +3308,7 @@ if (typeof window !== 'undefined') {
 //   setLang('en') ; getLang()        → "en"
 //   window.nexusI18n.locales         → { fr:{label,flag}, en:{...}, wo:{...} }
 // ════════════════════════════════════════════════════════════════════════════
+try { window.NexusWA = NexusWA; } catch(e){}
 const NEXUS_LOCALES = {
   fr: { label: 'Français', flag: '🇫🇷', dir: 'ltr' },
   en: { label: 'English',  flag: '🇬🇧', dir: 'ltr' },
@@ -36686,6 +36688,7 @@ window.addEventListener('unhandledrejection', function(event) {
       function apply(lat, lng) {
         setPos({ lat: lat, lng: lng });
         DataService.setCourierStatus(courierId, 'available', lat, lng).then(function () {
+          try { window.__NEXUS_COURIER_ONLINE__ = true; } catch(e){}
           setOnline(true); setBusy(false); refresh();
         });
       }
@@ -36712,6 +36715,7 @@ window.addEventListener('unhandledrejection', function(event) {
     function goOffline() {
       setBusy(true);
       DataService.setCourierStatus(courierId, 'offline').then(function () {
+        try { window.__NEXUS_COURIER_ONLINE__ = false; } catch(e){}
         setOnline(false); setBusy(false); setOffers([]);
       });
     }
@@ -38113,6 +38117,313 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULE LOUMA ============== -->
+
+<!-- ============================================================
+     NEXUS MARKET — CARTE COURSIER (Leaflet + OpenStreetMap, GRATUIT)
+     Aucune clé API. Lazy-load : Leaflet n'est chargé qu'au 1er usage.
+     API :
+       NexusMap.track(el, delivery)        -> carte retrait/dépôt/coursier + suivi live
+       NexusMap.nearby(el, point, couriers)-> point + coursiers autour
+       NexusMap.locateMe()                 -> Promise<{lat,lng}> (GPS navigateur)
+     ============================================================ -->
+<style>
+  .nexus-map{width:100%;height:300px;border-radius:14px;overflow:hidden;
+    border:1px solid var(--border,#e5e5e5);background:#eef2f4}
+  .nexus-map.tall{height:420px}
+  .nexus-map-wrap{position:relative}
+  .nexus-map-legend{display:flex;gap:1rem;flex-wrap:wrap;font-size:.8rem;color:var(--text-secondary,#666);
+    margin:.5rem 0 0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+  .nexus-map-legend span{display:inline-flex;align-items:center;gap:.35rem}
+  .nexus-map-legend i{width:14px;height:14px;border-radius:50%;display:inline-block}
+  .nmk-pin{filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
+  .leaflet-container{font:inherit}
+</style>
+<script>
+(function(){
+  "use strict";
+  if (window.__NEXUS_MAP_LOADED__) return;
+  window.__NEXUS_MAP_LOADED__ = true;
+
+  var LEAFLET_CSS = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css";
+  var LEAFLET_JS  = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js";
+  var _loading = null;
+
+  function sb(){ return window.__nexusSupabaseClient || null; }
+
+  // Charge Leaflet une seule fois ; renvoie une Promise résolue avec window.L
+  function ensureLeaflet(){
+    if (window.L) return Promise.resolve(window.L);
+    if (_loading) return _loading;
+    _loading = new Promise(function(resolve, reject){
+      // CSS
+      if (!document.querySelector('link[data-nexus-leaflet]')){
+        var link=document.createElement('link');
+        link.rel='stylesheet'; link.href=LEAFLET_CSS; link.setAttribute('data-nexus-leaflet','1');
+        document.head.appendChild(link);
+      }
+      // JS
+      var s=document.createElement('script');
+      s.src=LEAFLET_JS; s.async=true;
+      s.onload=function(){ window.L ? resolve(window.L) : reject(new Error("Leaflet introuvable")); };
+      s.onerror=function(){ reject(new Error("Échec chargement Leaflet")); };
+      document.head.appendChild(s);
+    });
+    return _loading;
+  }
+
+  // Icône SVG colorée (pas d'images externes → pas de 404)
+  function pin(L, color){
+    var svg='<svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40" class="nmk-pin">'
+      +'<path fill="'+color+'" stroke="#fff" stroke-width="2" d="M14 1C7 1 1.5 6.5 1.5 13.5 1.5 23 14 39 14 39s12.5-16 12.5-25.5C26.5 6.5 21 1 14 1z"/>'
+      +'<circle cx="14" cy="13.5" r="4.5" fill="#fff"/></svg>';
+    return L.divIcon({ className:'', html:svg, iconSize:[28,40], iconAnchor:[14,40], popupAnchor:[0,-36] });
+  }
+  function dot(L, color){
+    return L.divIcon({ className:'', iconSize:[18,18], iconAnchor:[9,9],
+      html:'<div style="width:14px;height:14px;border-radius:50%;background:'+color+';border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>' });
+  }
+
+  var COLORS = { pickup:'#00853E', dropoff:'#E63946', courier:'#1d4ed8', me:'#7c3aed' };
+
+  function num(v){ var n=parseFloat(v); return isFinite(n)?n:null; }
+
+  // ── Carte de suivi d'une course ────────────────────────────────────────────
+  function track(el, delivery){
+    if(!el || !delivery) return Promise.resolve(null);
+    return ensureLeaflet().then(function(L){
+      el.classList.add('nexus-map');
+      // (ré)initialisation propre
+      if(el.__map){ try{ el.__map.remove(); }catch(e){} el.__map=null; }
+      var pLat=num(delivery.pickup_lat),  pLng=num(delivery.pickup_lng);
+      var dLat=num(delivery.dropoff_lat), dLng=num(delivery.dropoff_lng);
+      var cLat=num(delivery.courier_lat), cLng=num(delivery.courier_lng);
+
+      var center = pLat!=null ? [pLat,pLng] : (dLat!=null?[dLat,dLng]:[14.6928,-17.4467]); // défaut: Dakar
+      var map = L.map(el,{ zoomControl:true, attributionControl:true }).setView(center, 13);
+      el.__map = map;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+        maxZoom:19, attribution:'© OpenStreetMap'
+      }).addTo(map);
+
+      var pts=[];
+      if(pLat!=null){ L.marker([pLat,pLng],{icon:pin(L,COLORS.pickup)}).addTo(map).bindPopup('Retrait : '+(delivery.pickup_label||'')); pts.push([pLat,pLng]); }
+      if(dLat!=null){ L.marker([dLat,dLng],{icon:pin(L,COLORS.dropoff)}).addTo(map).bindPopup('Livraison : '+(delivery.dropoff_label||'')); pts.push([dLat,dLng]); }
+
+      var courierMarker=null;
+      function setCourier(lat,lng){
+        if(lat==null||lng==null) return;
+        if(courierMarker) courierMarker.setLatLng([lat,lng]);
+        else courierMarker=L.marker([lat,lng],{icon:dot(L,COLORS.courier)}).addTo(map).bindPopup('Coursier');
+      }
+      if(cLat!=null){ setCourier(cLat,cLng); pts.push([cLat,cLng]); }
+
+      // trait retrait → dépôt
+      if(pLat!=null && dLat!=null){
+        L.polyline([[pLat,pLng],[dLat,dLng]],{color:'#999',weight:3,dashArray:'6 8',opacity:.7}).addTo(map);
+      }
+      if(pts.length>1){ map.fitBounds(pts,{padding:[40,40]}); }
+      setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} }, 250);
+
+      // ── Suivi temps réel de la position du coursier ──
+      var client=sb();
+      if(client && delivery.id){
+        try{
+          var ch=client.channel('dlv_track_'+delivery.id)
+            .on('postgres_changes',{event:'UPDATE',schema:'public',table:'deliveries',filter:'id=eq.'+delivery.id},
+              function(payload){
+                var row=payload && payload.new; if(!row) return;
+                setCourier(num(row.courier_lat), num(row.courier_lng));
+              })
+            .subscribe();
+          el.__chan=ch;
+        }catch(e){}
+      }
+      return map;
+    }).catch(function(err){
+      el.innerHTML='<div style="padding:1rem;color:#999;font:14px system-ui">Carte indisponible ('+(err&&err.message||'')+')</div>';
+      return null;
+    });
+  }
+
+  // ── Carte « coursiers autour d'un point » (vue admin/dispatch) ──────────────
+  function nearby(el, point, couriers){
+    if(!el || !point) return Promise.resolve(null);
+    return ensureLeaflet().then(function(L){
+      el.classList.add('nexus-map');
+      if(el.__map){ try{ el.__map.remove(); }catch(e){} el.__map=null; }
+      var lat=num(point.lat), lng=num(point.lng);
+      var map=L.map(el).setView([lat!=null?lat:14.6928, lng!=null?lng:-17.4467], 13);
+      el.__map=map;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+      var pts=[];
+      if(lat!=null){ L.marker([lat,lng],{icon:pin(L,COLORS.pickup)}).addTo(map).bindPopup(point.label||'Point de retrait'); pts.push([lat,lng]); }
+      (couriers||[]).forEach(function(c){
+        var clat=num(c.lat!=null?c.lat:c.current_lat), clng=num(c.lng!=null?c.lng:c.current_lng);
+        if(clat==null) return;
+        var d=(c.distance_km!=null)?(' — '+c.distance_km.toFixed(1)+' km'):'';
+        L.marker([clat,clng],{icon:dot(L,COLORS.courier)}).addTo(map).bindPopup((c.name||'Coursier')+d);
+        pts.push([clat,clng]);
+      });
+      if(pts.length>1) map.fitBounds(pts,{padding:[40,40]});
+      setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} },250);
+      return map;
+    }).catch(function(){ return null; });
+  }
+
+  // ── Position de l'appareil (GPS navigateur, gratuit) ────────────────────────
+  function locateMe(opts){
+    return new Promise(function(resolve, reject){
+      if(!navigator.geolocation){ reject(new Error('Géolocalisation non supportée')); return; }
+      navigator.geolocation.getCurrentPosition(
+        function(p){ resolve({ lat:p.coords.latitude, lng:p.coords.longitude, accuracy:p.coords.accuracy }); },
+        function(err){ reject(err); },
+        Object.assign({ enableHighAccuracy:true, timeout:10000, maximumAge:30000 }, opts||{})
+      );
+    });
+  }
+
+  // ── Auto-montage : tout <div data-nexus-map='{...delivery json...}'> ────────
+  function autoMount(root){
+    var nodes=(root||document).querySelectorAll('[data-nexus-map]:not([data-nexus-mounted])');
+    Array.prototype.forEach.call(nodes,function(el){
+      el.setAttribute('data-nexus-mounted','1');
+      var raw=el.getAttribute('data-nexus-map');
+      try{ var dlv=JSON.parse(raw); track(el,dlv); }catch(e){}
+    });
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){autoMount();});
+  else autoMount();
+  // re-scan périodique léger (l'app React monte des vues dynamiquement)
+  setInterval(function(){ autoMount(); }, 1500);
+
+  // ── Ping GPS du coursier (position live → courier_ping RPC) ────────────────
+  // Activé quand l'app coursier passe online : window.__NEXUS_COURIER_ONLINE__ = true
+  // (et false hors-ligne). Utilise watchPosition pour suivre en continu, à coût nul.
+  var _watchId=null, _lastPing=0;
+  function startCourierPing(){
+    if(_watchId!=null || !navigator.geolocation) return;
+    _watchId=navigator.geolocation.watchPosition(function(p){
+      if(!window.__NEXUS_COURIER_ONLINE__) return;
+      var now=Date.now();
+      if(now-_lastPing < 8000) return;          // au plus 1 ping / 8 s
+      _lastPing=now;
+      var client=sb(); if(!client) return;
+      try{ client.rpc('courier_ping',{ p_lat:p.coords.latitude, p_lng:p.coords.longitude }); }catch(e){}
+    }, function(){}, { enableHighAccuracy:true, maximumAge:5000, timeout:15000 });
+  }
+  function stopCourierPing(){
+    if(_watchId!=null && navigator.geolocation){ try{ navigator.geolocation.clearWatch(_watchId); }catch(e){} }
+    _watchId=null;
+  }
+  // démarre/arrête selon le flag global, vérifié périodiquement
+  setInterval(function(){
+    if(window.__NEXUS_COURIER_ONLINE__) startCourierPing(); else stopCourierPing();
+  }, 2000);
+
+  window.NexusMap = { track:track, nearby:nearby, locateMe:locateMe, autoMount:autoMount,
+                      ensureLeaflet:ensureLeaflet, startCourierPing:startCourierPing, stopCourierPing:stopCourierPing };
+  console.info("[NEXUS] Module carte (Leaflet/OSM) prêt ✅");
+})();
+</script>
+<!-- ============== FIN MODULE CARTE ============== -->
+
+<!-- ============================================================
+     NEXUS MARKET — NOTIFICATION WHATSAPP DES COURSIERS
+     À la création d'une course, envoie un WhatsApp à chaque coursier
+     proche sollicité (via le service NexusWA / Green API déjà configuré).
+     Le message invite à se connecter et valider la course.
+     ============================================================ -->
+<script>
+(function(){
+  "use strict";
+  if (window.__NEXUS_WA_COURIER_LOADED__) return;
+  window.__NEXUS_WA_COURIER_LOADED__ = true;
+
+  function siteUrl(){
+    try { return (window.location && window.location.origin) ? window.location.origin + "/" : "https://nexus.sn/"; }
+    catch(e){ return "https://nexus.sn/"; }
+  }
+
+  // Numéro au format international chiffres-seuls pour Green API (ex. 221771234567)
+  function normPhone(p){
+    if(!p) return null;
+    var d = String(p).replace(/\D/g, "");
+    if(!d) return null;
+    // Sénégal : si 9 chiffres commençant par 7, préfixer 221
+    if(d.length === 9 && d[0] === "7") d = "221" + d;
+    // si commence déjà par 00, retirer
+    if(d.indexOf("00") === 0) d = d.slice(2);
+    return d;
+  }
+
+  function fcfa(n){
+    if(n==null || isNaN(n)) return "";
+    return Number(n).toLocaleString("fr-FR") + " FCFA";
+  }
+
+  function buildMessage(dlv, courier){
+    var parts = [];
+    parts.push("🛵 *NEXUS — Nouvelle course disponible !*");
+    if(courier && courier.distance_km != null){
+      parts.push("📍 À ~" + Number(courier.distance_km).toFixed(1) + " km de vous");
+    }
+    if(dlv.pickup_label)  parts.push("📦 Retrait : " + dlv.pickup_label);
+    if(dlv.dropoff_label) parts.push("🎯 Livraison : " + dlv.dropoff_label);
+    if(dlv.distance_km != null) parts.push("🛣️ Distance : " + Number(dlv.distance_km).toFixed(1) + " km");
+    if(dlv.courier_payout != null) parts.push("💰 Votre gain : " + fcfa(dlv.courier_payout));
+    else if(dlv.fee_fcfa != null)  parts.push("💰 Montant : " + fcfa(dlv.fee_fcfa));
+    parts.push("");
+    parts.push("⚡ *Premier qui accepte remporte la course.*");
+    parts.push("👉 Connectez-vous pour valider : " + siteUrl());
+    return parts.join("\n");
+  }
+
+  // Envoie les WhatsApp à tous les coursiers notifiés (résultat de create_delivery)
+  function notifyCouriers(deliveryResult){
+    try{
+      if(!deliveryResult) return;
+      var list = deliveryResult.notified_couriers;
+      if(!Array.isArray(list) || !list.length) return;
+      if(typeof window.NexusWA === "undefined" || typeof window.NexusWA.send !== "function"){
+        console.info("[NexusWA-Coursier] NexusWA indisponible — notification WhatsApp ignorée.");
+        return;
+      }
+      list.forEach(function(c, idx){
+        var phone = normPhone(c.phone);
+        if(!phone) return;
+        var msg = buildMessage(deliveryResult, c);
+        // léger étalement pour ne pas saturer l'API (250 ms entre envois)
+        setTimeout(function(){
+          try{ window.NexusWA.send(phone, msg, "courier_new_delivery"); }catch(e){}
+        }, idx * 250);
+      });
+      console.info("[NexusWA-Coursier] " + list.length + " coursier(s) notifié(s) par WhatsApp.");
+    }catch(e){ try{console.warn("[NexusWA-Coursier]", e && e.message);}catch(_){} }
+  }
+  window.__nexusNotifyCouriersWA = notifyCouriers;
+
+  // ── Greffe sur DataService.createDelivery (sans toucher au bundle) ──────────
+  function patch(){
+    if(typeof window.DataService === "undefined" || typeof window.DataService.createDelivery !== "function") return false;
+    if(window.DataService.__waCourierPatched) return true;
+    var orig = window.DataService.createDelivery.bind(window.DataService);
+    window.DataService.createDelivery = function(payload){
+      return Promise.resolve(orig(payload)).then(function(res){
+        try{ notifyCouriers(res); }catch(e){}
+        return res;
+      });
+    };
+    window.DataService.__waCourierPatched = true;
+    console.info("[NexusWA-Coursier] createDelivery instrumenté ✅");
+    return true;
+  }
+  if(!patch()){
+    var tries=0;
+    var t=setInterval(function(){ tries++; if(patch() || tries>40) clearInterval(t); }, 300);
+  }
+})();
+</script>
+<!-- ============== FIN MODULE WHATSAPP COURSIER ============== -->
 
 </body>
 </html>
