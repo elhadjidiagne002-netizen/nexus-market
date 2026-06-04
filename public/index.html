@@ -4410,10 +4410,10 @@ const DataService = {
         const ids = itemsWithId.map(i => i.id);
         let { data: stocks, error } = await this._sb.rpc("check_products_stock", { p_ids: ids });
         if (!error && stocks) {
-          // [NEXUS-FIX] Auto-réparation des ids fantômes : si un article du panier
-          // a un id absent du résultat (produit de démo / ancien cache), on tente
-          // de le retrouver par son NOM dans la table products. Si trouvé, on
-          // corrige l'id à la volée ; sinon on le signale clairement.
+          // [NEXUS-FIX] Auto-rï¿½paration des ids fantï¿½mes : si un article du panier
+          // a un id absent du rï¿½sultat (produit de dï¿½mo / ancien cache), on tente
+          // de le retrouver par son NOM dans la table products. Si trouvï¿½, on
+          // corrige l'id ï¿½ la volï¿½e ; sinon on le signale clairement.
           const missing = itemsWithId.filter(item => !stocks[item.id]);
           if (missing.length > 0) {
             console.warn("[checkStock] ids du panier introuvables en base:",
@@ -4446,7 +4446,7 @@ const DataService = {
           }));
           if (outOfStock.length) {
             console.warn("[checkStock] Articles bloquants:", outOfStock,
-              "| ids retournés par la RPC:", Object.keys(stocks));
+              "| ids retournï¿½s par la RPC:", Object.keys(stocks));
           }
           return { ok: outOfStock.length === 0, outOfStock, stocks };
         }
@@ -5866,10 +5866,12 @@ async signOut() {
         // [FIX] id supprimÃ© â€” "RET-TIMESTAMP" n'est pas un UUID valide pour Supabase
         order_id:       req.orderId,
         buyer_id:       req.buyerId,
-        buyer_name:     req.buyerName,
+        // [FIX] buyer_name / vendor_name sont NOT NULL en base â†’ fallback obligatoire
+        // (sinon un nom manquant fait Ã©chouer tout l'INSERT).
+        buyer_name:     req.buyerName   || "Client",
         buyer_email:    req.buyerEmail  || null,
         vendor_id:      req.vendorId    || null,
-        vendor_name:    req.vendorName  || null,
+        vendor_name:    req.vendorName  || "Vendeur",
         products:       req.products    || [],
         order_total:    req.orderTotal  || 0,
         category:       req.category,
@@ -6270,8 +6272,9 @@ async signOut() {
     if (this._sb) {
       const row = {
         order_id:    dispute.orderId,  buyer_id:   dispute.buyerId,
-        buyer_name:  dispute.buyerName, vendor_id:  dispute.vendorId,
-        vendor_name: dispute.vendorName, reason:     dispute.reason,
+        // [FIX] buyer_name / vendor_name sont NOT NULL en base â†’ fallback obligatoire.
+        buyer_name:  dispute.buyerName || "Client", vendor_id:  dispute.vendorId,
+        vendor_name: dispute.vendorName || "Vendeur", reason:     dispute.reason,
         description: dispute.description, status:   dispute.status || "open"
         // [FIX] colonne "date" supprimÃ©e â€” Supabase utilise created_at automatiquement
       };
@@ -11420,7 +11423,7 @@ const initializeData = () => {
   // Produits de dÃ©monstration â€” les champs vendor/vendorName seront Ã©crasÃ©s
   // par les vraies donnÃ©es Supabase. Les IDs vendor1/vendor2 sont supprimÃ©s
   // car ils rÃ©fÃ©renÃ§aient les anciens comptes dÃ©mo.
-  const products = [];  /* [NEXUS-FIX] Produits de démo retirés : ils portaient de faux ids (prod1..prod10) absents de Supabase et provoquaient "Stock insuffisant / 0 disponible". Le catalogue se charge désormais uniquement depuis Supabase. */
+  const products = [];  /* [NEXUS-FIX] Produits de dï¿½mo retirï¿½s : ils portaient de faux ids (prod1..prod10) absents de Supabase et provoquaient "Stock insuffisant / 0 disponible". Le catalogue se charge dï¿½sormais uniquement depuis Supabase. */
   storage.set("products", products);
   // Les avis, wishlists et commandes de dÃ©mo sont supprimÃ©s â€” ils rÃ©fÃ©renÃ§aient
   // les comptes dÃ©mo (buyer1, vendor1, vendor2) qui n'existent plus.
@@ -14205,7 +14208,7 @@ if (json.token || json.accessToken) {
         React.createElement("input",{id:"c-name",className:"form-input",value:form.name,onChange:function(e){setF("name",e.target.value)},placeholder:"Moussa Diallo",autoFocus:true}),
         React.createElement(Err,{k:"name"})
       ),
-      React.createElement(PhoneInput,{value:form.phone,onChange:function(v){setF("phone",v)},label:"Téléphone",required:true}),
+      React.createElement(PhoneInput,{value:form.phone,onChange:function(v){setF("phone",v)},label:"Tï¿½lï¿½phone",required:true}),
       React.createElement(Err,{k:"phone"}),
       React.createElement("div",{className:"form-group"},
         React.createElement("label",{className:"form-label",htmlFor:"c-email"},"Email ",React.createElement("span",{className:"required"},"*")),
@@ -14233,12 +14236,12 @@ if (json.token || json.accessToken) {
         )
       ),
       React.createElement("div",{className:"form-group"},
-        React.createElement("label",{className:"form-label"},"Ð’éhicule"),
+        React.createElement("label",{className:"form-label"},"Ð’ï¿½hicule"),
         React.createElement("select",{className:"form-select",value:form.vehicle_type||"moto",onChange:function(e){setF("vehicle_type",e.target.value)}},
           React.createElement("option",{value:"moto"},"ðŸ›µ Moto / Scooter"),
-          React.createElement("option",{value:"velo"},"ðŸš² Vélo"),
+          React.createElement("option",{value:"velo"},"ðŸš² Vï¿½lo"),
           React.createElement("option",{value:"voiture"},"ðŸš— Voiture"),
-          React.createElement("option",{value:"pied"},"ðŸš¶ À pied")
+          React.createElement("option",{value:"pied"},"ðŸš¶ ï¿½ pied")
         )
       ),
       React.createElement("label",{className:"checkbox-label",style:{marginBottom:"1rem"}},
@@ -27035,9 +27038,9 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     }
 
     // [NEXUS-FIX] Enregistrement Supabase PRIORITAIRE avec vrai UUID + colonnes snake_case.
-    // L'ancien code créait un id "prod_<timestamp>" et faisait un insert silencieux
-    // (try/catch vide) avec des clés camelCase -> échec muet -> produit fantôme local
-    // introuvable au checkout ("0 disponible"). On insère proprement et on vérifie.
+    // L'ancien code crï¿½ait un id "prod_<timestamp>" et faisait un insert silencieux
+    // (try/catch vide) avec des clï¿½s camelCase -> ï¿½chec muet -> produit fantï¿½me local
+    // introuvable au checkout ("0 disponible"). On insï¿½re proprement et on vï¿½rifie.
     const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID()
                : (Date.now().toString(16) + Math.random().toString(16).slice(2));
     const dbRow = {
@@ -27061,7 +27064,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         else { savedOk = true; }
       } catch (e) { console.warn("[addProduct Supabase]", e && e.message); }
     }
-    // Cache local pour affichage immédiat (avec le MÊME id que Supabase)
+    // Cache local pour affichage immï¿½diat (avec le Mï¿½ME id que Supabase)
     const all = storage.getArray("products");
     all.push({ id, ...payload, vendor: currentUser2.id, vendorName: currentUser2.name, rating: 0, reviewsCount: 0, moderated: false });
     storage.set("products", all);
