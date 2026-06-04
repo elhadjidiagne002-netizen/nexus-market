@@ -1,27 +1,57 @@
-﻿# scripts/setup-cf-secrets.ps1 - Injection secrets Cloudflare Workers
-# Usage : wrangler login ; .\scripts\setup-cf-secrets.ps1
+# ============================================================================
+# Pousse les secrets Cloudflare PAGES depuis le fichier .env LOCAL (jamais commité).
+# AUCUNE valeur en dur ici (l'ancienne version contenait des secrets en clair).
+#
+# Prérequis :
+#   1. npm i -g wrangler ; wrangler login
+#   2. Renseigner les valeurs ROTÉES dans .env (cf. .env.example)
+# Usage : .\scripts\setup-cf-secrets.ps1
+# ============================================================================
+$ErrorActionPreference = "Stop"
+$Project = "nexus-market"
+$EnvFile = Join-Path $PSScriptRoot "..\.env"
 
-function Push-Secret($name, $value) {
-    if ([string]::IsNullOrEmpty($value)) { Write-Host "  IGNORE: $name" -ForegroundColor Yellow; return }
-    $value | wrangler secret put $name 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-Host "  OK  $name" -ForegroundColor Green }
-    else                     { Write-Host "  !!  ECHEC: $name" -ForegroundColor Red }
+if (-not (Get-Command wrangler -ErrorAction SilentlyContinue)) {
+  Write-Host "wrangler absent : npm i -g wrangler ; wrangler login" -ForegroundColor Red; exit 1
+}
+if (-not (Test-Path $EnvFile)) {
+  Write-Host "Fichier .env introuvable : $EnvFile" -ForegroundColor Red; exit 1
 }
 
-Write-Host "`n Injection secrets Cloudflare...`n" -ForegroundColor Cyan
+# Parse .env -> hashtable (sans le sourcer)
+$envVars = @{}
+foreach ($line in Get-Content $EnvFile) {
+  $t = $line.Trim()
+  if ($t -eq "" -or $t.StartsWith("#")) { continue }
+  $idx = $t.IndexOf("=")
+  if ($idx -lt 1) { continue }
+  $k = $t.Substring(0, $idx).Trim()
+  $v = $t.Substring($idx + 1).Trim().Trim('"').Trim("'")
+  $envVars[$k] = $v
+}
 
-Push-Secret "SUPABASE_SERVICE_KEY"    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDgxMzQ5MiwiZXhwIjoyMDkwMzg5NDkyfQ.fBlPt4g40xZ5F3lbempAYNuLZtvcnwxshnipACZPy08"
-Push-Secret "SUPABASE_SERVICE_ROLE_KEY" "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDgxMzQ5MiwiZXhwIjoyMDkwMzg5NDkyfQ.fBlPt4g40xZ5F3lbempAYNuLZtvcnwxshnipACZPy08"
-Push-Secret "JWT_SECRET"               "32b7d9b81f59004dbb00efde2a1956bda5886742aaa1dca83506de503db1b34c"
-Push-Secret "REFRESH_TOKEN_SECRET"     "bf2697e53a4c9dd2dd200e76c0241b9d221c5a1fc720c86999502f877e1c863ef"
-Push-Secret "STRIPE_SECRET_KEY"        "sk_test_51TGdXe1H2qyHRVYhe7XAk8L4W0KuGOA46QsyVfbekSYd9O3dExf7R7ODZo21DWd7G6HNuL7V5OVAilIj3H0GUYfS00xaayPhVe"
-Push-Secret "STRIPE_WEBHOOK_SECRET"    "whsec_Xlt4nDaTfXw0MVWKwcee5ljjJLP4QDl8"
-Push-Secret "SMTP_PASS"                "lokaasorlefafaze"
-Push-Secret "VAPID_PRIVATE_KEY"        "c_sPmJ7KJzVW4ZGIheVHPiCF8fq5lBF09-tH96vRSH0"
-Push-Secret "VAPID_SUBJECT"            "mailto:elhadjidiagne002@gmail.com"
-Push-Secret "GROQ_API_KEY"             "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"
-Push-Secret "EMAILJS_PRIVATE_KEY"      "MYTRFE7rqZ2rC7IZcRTuf"
-Push-Secret "INTERNAL_API_KEY"         "nexus-internal-2024"
-Push-Secret "DELIVERY_WEBHOOK_SECRET"  "nexus-delivery-secret-2024"
+# Seuls les SECRETS sont poussés ici. Les variables PUBLIQUES restent dans wrangler.toml [vars].
+$secrets = @(
+  "SUPABASE_SERVICE_KEY",
+  "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
+  "PAYTECH_API_KEY", "PAYTECH_API_SECRET",
+  "RESEND_API_KEY", "GROQ_API_KEY",
+  "VAPID_PRIVATE_KEY",
+  "GREEN_API_TOKEN", "NEXUS_WA_SECRET",
+  "INTERNAL_API_KEY", "DELIVERY_WEBHOOK_SECRET",
+  "CRON_SECRET", "ADMIN_USER_ID",
+  "SMTP_PASS"
+)
 
-Write-Host "`n Termine ! Verifier dans CF Dashboard > Workers & Pages > Settings`n" -ForegroundColor Green
+Write-Host "`n[*] Injection des secrets Cloudflare Pages ($Project)...`n" -ForegroundColor Cyan
+foreach ($name in $secrets) {
+  $val = $envVars[$name]
+  if ([string]::IsNullOrWhiteSpace($val)) {
+    Write-Host "  SKIP (absent du .env) : $name" -ForegroundColor Yellow
+    continue
+  }
+  $val | wrangler pages secret put $name --project-name $Project | Out-Null
+  if ($LASTEXITCODE -eq 0) { Write-Host "  OK   $name" -ForegroundColor Green }
+  else                     { Write-Host "  FAIL $name" -ForegroundColor Red }
+}
+Write-Host "`n[OK] Termine. Verifier : CF Dashboard - Workers and Pages - $Project - Settings - Variables`n" -ForegroundColor Green

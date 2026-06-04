@@ -7486,9 +7486,14 @@ const EmailService = {
     }
     // ── 3. Backend API ────────────────────────────────────────────────────
     const _t = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
-    if (NEXUS_CONFIG.apiUrl && _t) {
+    // [FIX] Backend serveur (Resend) tenté même en INVITÉ (sans token) : en
+    // same-origin (Cloudflare Pages) apiUrl est vide → l'URL relative suffit.
+    // L'endpoint applique un quota strict pour les invités (anti-spam).
+    {
       try {
-        const r = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/email/send", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_t}` }, body: JSON.stringify({ to, subject, html: htmlBody }) });
+        const _h = { "Content-Type": "application/json" };
+        if (_t) _h["Authorization"] = `Bearer ${_t}`;
+        const r = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/email/send", { method: "POST", headers: _h, body: JSON.stringify({ to, subject, html: htmlBody }) });
         if (r.ok) { const j = await r.json(); if (j.ok) { console.log("[EmailService] ✅ backend", to); return true; } }
       } catch(e) { console.warn("[EmailService] backend:", e.message); }
     }
