@@ -26995,18 +26995,42 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       }
     }
 
-    // Fallback localStorage/Supabase si backend injoignable
-    const id = "prod_" + Date.now();
-    const localProduct = { id, ...payload, vendor: currentUser2.id, vendorName: currentUser2.name, rating: 0, reviewsCount: 0, moderated: false };
+    // [NEXUS-FIX] Enregistrement Supabase PRIORITAIRE avec vrai UUID + colonnes snake_case.
+    // L'ancien code créait un id "prod_<timestamp>" et faisait un insert silencieux
+    // (try/catch vide) avec des clés camelCase -> échec muet -> produit fantôme local
+    // introuvable au checkout ("0 disponible"). On insère proprement et on vérifie.
+    const id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID()
+               : (Date.now().toString(16) + Math.random().toString(16).slice(2));
+    const dbRow = {
+      id,
+      name:           payload.name,
+      category:       payload.category,
+      price:          payload.price,
+      original_price: payload.originalPrice ?? null,
+      stock:          payload.stock,
+      description:    payload.description ?? null,
+      image_url:      payload.imageUrl,
+      active:         payload.active,
+      vendor_id:      currentUser2.id,
+      vendor_name:    currentUser2.name,
+    };
+    let savedOk = false;
+    if (DataService._sb) {
+      try {
+        const { error } = await DataService._sb.from("products").insert(dbRow);
+        if (error) { console.warn("[addProduct Supabase]", error.message); }
+        else { savedOk = true; }
+      } catch (e) { console.warn("[addProduct Supabase]", e && e.message); }
+    }
+    // Cache local pour affichage immédiat (avec le MÊME id que Supabase)
     const all = storage.getArray("products");
-    all.push(localProduct);
+    all.push({ id, ...payload, vendor: currentUser2.id, vendorName: currentUser2.name, rating: 0, reviewsCount: 0, moderated: false });
     storage.set("products", all);
-    if (DataService._sb) { try { DataService._sb.from("products").insert(localProduct); } catch(_) {} }
     setShowAddProduct(false);
     setNewProduct({ name: "", category: "\xC9lectronique", priceFcfa: "", originalPriceFcfa: "", stock: "", description: "", imageUrl: "", active: true });
     try { sessionStorage.removeItem('nexus_ss_vendor_draft'); } catch(_) {}
     loadData();
-    addToast("Produit ajout\xE9 (hors-ligne) !", "success");
+    addToast(savedOk ? "Produit publi\xE9 ! \u2705" : "\u26A0\uFE0F Produit ajout\xE9 en local mais NON enregistr\xE9 dans Supabase \u2014 v\xE9rifiez la connexion/les droits.", savedOk ? "success" : "warning", savedOk ? 4000 : 8000);
   };
   const updateOrderStatus = async (orderId, newStatus) => {
     // Update optimiste immÃ©diat
