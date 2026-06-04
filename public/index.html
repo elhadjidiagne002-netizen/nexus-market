@@ -24219,7 +24219,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && (() => { const ref = React.useRef(null); React.useEffect(() => {   try { window.__nexusToast = addToast; } catch(e) {}   const mount = () => { try { if (window.NexusLouma && ref.current) { window.NexusLouma.reload(); window.NexusLouma.renderAdmin(ref.current); } } catch(e){} };   mount();   const onChange = () => mount();   window.addEventListener("nexus:louma-changed", onChange);   return () => window.removeEventListener("nexus:louma-changed", onChange); }, []); return /* @__PURE__ */ React.createElement("div", { ref: ref, id: "nexus-louma-admin-mount" },   /* @__PURE__ */ React.createElement("div", { style: { color: "var(--text-secondary)", padding: "1rem" } }, "Chargement du Louma\u2026"));})(), view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && (() => { const ref = React.useRef(null); React.useEffect(() => {   try { window.__nexusToast = addToast; } catch(e) {}   const mount = () => { try { if (window.NexusLouma && ref.current) { window.NexusLouma.reload(); window.NexusLouma.renderAdmin(ref.current); if (window.NexusLouma.sync) window.NexusLouma.sync(); } } catch(e){} };   mount();   const onChange = () => mount();   window.addEventListener("nexus:louma-changed", onChange);   return () => window.removeEventListener("nexus:louma-changed", onChange); }, []); return /* @__PURE__ */ React.createElement("div", { ref: ref, id: "nexus-louma-admin-mount" },   /* @__PURE__ */ React.createElement("div", { style: { color: "var(--text-secondary)", padding: "1rem" } }, "Chargement du Louma\u2026"));})(), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
@@ -37379,6 +37379,8 @@ window.addEventListener('unhandledrejection', function(event) {
                            //  slotStart, slotEnd, submittedBy, createdAt}
     };
   }
+  // Cache local pour un rendu instantané (et repli hors-ligne). La SOURCE DE
+  // VÉRITÉ est Supabase ; ce cache est rafraîchi par syncFromSupabase().
   function load(){
     try{
       var raw = localStorage.getItem(LS_KEY);
@@ -37390,15 +37392,66 @@ window.addEventListener('unhandledrejection', function(event) {
       return s;
     }catch(e){ return defaultState(); }
   }
+  function cache(s){ try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch(e){} }
+  // save() = met en cache + notifie l'UI (conservé pour compat ; n'écrit PAS en base)
   function save(s){
-    try{ localStorage.setItem(LS_KEY, JSON.stringify(s)); }catch(e){}
+    cache(s);
     window.dispatchEvent(new CustomEvent("nexus:louma-changed"));
   }
   var state = load();
 
+  /* ---------- Client Supabase partagé ---------- */
+  function sb(){
+    return window.__nexusSupabaseClient ||
+           (window.NEXUS_CONFIG && window.NEXUS_CONFIG.__sb) || null;
+  }
+  function hasSupabase(){ return !!sb(); }
+
+  // Mapping colonnes snake_case (DB) -> camelCase (état interne)
+  function rowToOffer(r){
+    return {
+      id:r.id, productId:r.product_id, vendorName:r.vendor_name||'',
+      name:r.name, price:Number(r.price)||0,
+      originalPrice:(r.original_price!=null?Number(r.original_price):null),
+      imageUrl:r.image_url||null, discount:Number(r.discount)||0,
+      promoPrice:Number(r.promo_price)||0, qty:Number(r.qty)||0,
+      sold:Number(r.sold)||0, status:r.status,
+      slotStart:(r.slot_start!=null?Number(r.slot_start):null),
+      slotEnd:(r.slot_end!=null?Number(r.slot_end):null),
+      submittedBy:r.submitted_by||'vendor', createdAt:r.created_at
+    };
+  }
+  function rowToConfig(r){
+    return {
+      enabled:r.enabled!==false, day:Number(r.day),
+      openHour:Number(r.open_hour), closeHour:Number(r.close_hour),
+      notifyOnOpen:r.notify_on_open!==false, forceOpen:r.force_open===true
+    };
+  }
+
+  // Rafraîchit state depuis Supabase puis re-render. Renvoie une promesse.
+  var _syncing=false;
+  function syncFromSupabase(){
+    var client=sb();
+    if(!client) return Promise.resolve(false);
+    if(_syncing) return Promise.resolve(false);
+    _syncing=true;
+    var pCfg=client.from("louma_config").select("*").eq("id",1).maybeSingle();
+    var pOff=client.from("louma_offers").select("*").order("created_at",{ascending:false});
+    return Promise.all([pCfg,pOff]).then(function(res){
+      var cfg=res[0], off=res[1];
+      if(cfg && cfg.data) state.config=Object.assign({}, defaultState().config, rowToConfig(cfg.data));
+      if(off && Array.isArray(off.data)) state.offers=off.data.map(rowToOffer);
+      cache(state);
+      window.dispatchEvent(new CustomEvent("nexus:louma-changed"));
+      return true;
+    }).catch(function(e){ try{console.warn("[Louma] sync:",e&&e.message);}catch(_){} return false; })
+      .finally(function(){ _syncing=false; });
+  }
+
   /* ---------- Accès aux produits de la marketplace ---------- */
   function getProducts(){
-    // 1) localStorage "products"  2) clés candidates  3) []
+    // 1) localStorage "products" (peuplé par l'app)  2) global  3) []
     var keys = ["products","nexus_products"];
     for (var i=0;i<keys.length;i++){
       try{
@@ -37410,9 +37463,26 @@ window.addEventListener('unhandledrejection', function(event) {
         }
       }catch(e){}
     }
-    // fallback: variable globale éventuellement exposée
     if (Array.isArray(window.__NEXUS_PRODUCTS__)) return window.__NEXUS_PRODUCTS__;
     return [];
+  }
+  // Charge les produits depuis Supabase pour le <select> admin (si cache vide)
+  function loadProductsFromSupabase(){
+    var client=sb();
+    if(!client) return Promise.resolve(getProducts());
+    return client.from("products").select("id,name,price,stock,image_url,vendor_id,vendor_name,original_price")
+      .neq("active",false).limit(500)
+      .then(function(r){
+        if(r && Array.isArray(r.data) && r.data.length){
+          var mapped=r.data.map(function(p){
+            return {id:p.id,name:p.name,price:Number(p.price)||0,stock:p.stock,
+                    imageUrl:p.image_url,vendorName:p.vendor_name,originalPrice:p.original_price};
+          });
+          window.__NEXUS_PRODUCTS__=mapped;
+          return mapped;
+        }
+        return getProducts();
+      }).catch(function(){ return getProducts(); });
   }
   function getWishlistProductIds(){
     // structure connue: storage "wishlists" -> {userId:[ids]} ou [ids]
@@ -37578,14 +37648,28 @@ window.addEventListener('unhandledrejection', function(event) {
     if(!o) return;
     var remaining = (o.qty||0)-(o.sold||0);
     if(remaining<=0){ toast("Cet article est épuisé.","error"); return; }
-    o.sold = (o.sold||0)+1;
-    save(state);
-    renderBuyer();
+
+    var client=sb();
+    if(client){
+      // Décrément atomique côté base (anti-survente)
+      client.rpc("louma_buy",{p_offer_id:id}).then(function(r){
+        if(r && r.data && r.data.ok){
+          o.sold=(o.qty - r.data.remaining);
+          cache(state); renderBuyer();
+          toast("Article réservé au prix Louma ! Finalisez votre commande.","success");
+          try{ window.dispatchEvent(new CustomEvent("nexus:add-to-cart",{detail:{productId:o.productId, loumaPrice:o.promoPrice, source:"louma"}})); }catch(e){}
+        }else{
+          var reason=(r&&r.data&&r.data.reason)||"";
+          toast(reason==="SOLD_OUT_OR_INACTIVE"?"Trop tard — article épuisé.":"Achat indisponible.","error");
+          syncFromSupabase().then(renderBuyer);
+        }
+      }).catch(function(){ toast("Connexion requise pour acheter au Louma.","error"); });
+      return;
+    }
+    // Repli hors-ligne (démo) : décrément local
+    o.sold = (o.sold||0)+1; cache(state); renderBuyer();
     toast("Article réservé au prix Louma ! Finalisez votre commande.","success");
-    // Tenter d'ajouter au panier de la marketplace si l'API est exposée
-    try{
-      window.dispatchEvent(new CustomEvent("nexus:add-to-cart",{detail:{productId:o.productId, loumaPrice:o.promoPrice, source:"louma"}}));
-    }catch(e){}
+    try{ window.dispatchEvent(new CustomEvent("nexus:add-to-cart",{detail:{productId:o.productId, loumaPrice:o.promoPrice, source:"louma"}})); }catch(e){}
   }
 
   /* ============================================================
@@ -37663,6 +37747,11 @@ window.addEventListener('unhandledrejection', function(event) {
     if(!host) return;
     var c = state.config;
     var prods = getProducts();
+    // si aucun produit en cache, les charger depuis Supabase puis re-render
+    if((!prods || !prods.length) && hasSupabase() && !host.__lmProdLoading){
+      host.__lmProdLoading=true;
+      loadProductsFromSupabase().then(function(){ host.__lmProdLoading=false; renderAdmin(host); });
+    }
     var pending = state.offers.filter(function(o){return o.status==="pending";});
     var approved = state.offers.filter(function(o){return o.status==="approved";});
     var openNow = isOpenNow();
@@ -37774,49 +37863,74 @@ window.addEventListener('unhandledrejection', function(event) {
     wireAdmin(host);
   }
 
+  // Écrit la config courante (state.config) dans Supabase, puis re-sync.
+  function saveConfigToSupabase(){
+    var client=sb();
+    if(!client){ cache(state); window.dispatchEvent(new CustomEvent("nexus:louma-changed")); return Promise.resolve(); }
+    var c=state.config;
+    return client.from("louma_config").update({
+      enabled:c.enabled, day:c.day, open_hour:c.openHour, close_hour:c.closeHour,
+      notify_on_open:c.notifyOnOpen, force_open:c.forceOpen
+    }).eq("id",1).then(function(r){
+      if(r && r.error){ toast("Réglage non enregistré : "+(r.error.message||"droits admin requis"),"error"); }
+      cache(state);
+      window.dispatchEvent(new CustomEvent("nexus:louma-changed"));
+    }).catch(function(){ cache(state); });
+  }
+
   function wireAdmin(host){
     var c = state.config;
     function rerender(){ renderAdmin(host); }
-
     var $=function(id){return host.querySelector('#'+id);};
 
     if($('lm-preview')) $('lm-preview').onclick=function(){ openOverlay(); };
     if($('lm-force')) $('lm-force').onclick=function(){
-      state.config.forceOpen=!state.config.forceOpen; save(state);
-      if(state.config.forceOpen){ maybeNotifyOpen(); } else { hideBanner(); }
-      rerender();
+      state.config.forceOpen=!state.config.forceOpen;
+      saveConfigToSupabase().then(function(){
+        if(state.config.forceOpen){ maybeNotifyOpen(); } else { hideBanner(); }
+        rerender();
+      });
     };
-    if($('lm-enabled')) $('lm-enabled').onclick=function(){ state.config.enabled=!state.config.enabled; save(state); rerender(); };
-    if($('lm-notify')) $('lm-notify').onclick=function(){ state.config.notifyOnOpen=!state.config.notifyOnOpen; save(state); rerender(); };
+    if($('lm-enabled')) $('lm-enabled').onclick=function(){ state.config.enabled=!state.config.enabled; saveConfigToSupabase().then(rerender); };
+    if($('lm-notify')) $('lm-notify').onclick=function(){ state.config.notifyOnOpen=!state.config.notifyOnOpen; saveConfigToSupabase().then(rerender); };
 
     var days=host.querySelectorAll('#lm-days button');
     Array.prototype.forEach.call(days,function(b){
-      b.onclick=function(){ state.config.day=parseInt(b.getAttribute('data-day'),10); save(state); rerender(); };
+      b.onclick=function(){ state.config.day=parseInt(b.getAttribute('data-day'),10); saveConfigToSupabase().then(rerender); };
     });
     function bindHour(id,key,min,max){
       var el=$(id); if(!el) return;
       el.onchange=function(){
         var v=parseInt(el.value,10); if(isNaN(v)) return;
-        v=Math.max(min,Math.min(max,v)); state.config[key]=v; save(state); rerender();
+        v=Math.max(min,Math.min(max,v)); state.config[key]=v; saveConfigToSupabase().then(rerender);
       };
     }
     bindHour('lm-open','openHour',0,23);
     bindHour('lm-close','closeHour',1,24);
 
-    // valider / rejeter / retirer
+    // valider / rejeter / retirer  -> Supabase
     Array.prototype.forEach.call(host.querySelectorAll('[data-act]'),function(btn){
       btn.onclick=function(){
         var id=btn.getAttribute('data-id'), act=btn.getAttribute('data-act');
-        var o=state.offers.find(function(x){return x.id===id;});
-        if(!o) return;
-        if(act==='approve'){ o.status='approved'; toast('Offre validée et publiée au Louma.','success'); }
-        else if(act==='reject'){ o.status='rejected'; toast('Offre rejetée.','info'); }
-        else if(act==='remove'){ state.offers=state.offers.filter(function(x){return x.id!==id;}); toast('Offre retirée.','info'); }
-        save(state); rerender();
+        var client=sb();
+        var done=function(msg,type){ toast(msg,type||'success'); syncFromSupabase().then(rerender); };
+        if(!client){
+          var o=state.offers.find(function(x){return x.id===id;});
+          if(o){ if(act==='approve')o.status='approved'; else if(act==='reject')o.status='rejected'; else if(act==='remove') state.offers=state.offers.filter(function(x){return x.id!==id;}); }
+          cache(state); rerender(); return;
+        }
+        if(act==='approve'){
+          client.from("louma_offers").update({status:'approved'}).eq("id",id).then(function(r){
+            done(r&&r.error?("Échec : "+r.error.message):"Offre validée et publiée au Louma.", r&&r.error?'error':'success'); });
+        } else if(act==='reject'){
+          client.from("louma_offers").update({status:'rejected'}).eq("id",id).then(function(){ done('Offre rejetée.','info'); });
+        } else if(act==='remove'){
+          client.from("louma_offers").delete().eq("id",id).then(function(){ done('Offre retirée.','info'); });
+        }
       };
     });
 
-    // création admin
+    // création admin -> insert Supabase (validée d'office)
     if($('lm-create')) $('lm-create').onclick=function(){
       var pid=$('lm-prod').value;
       if(!pid){ toast('Choisissez un produit.','error'); return; }
@@ -37827,16 +37941,25 @@ window.addEventListener('unhandledrejection', function(event) {
       var qty=parseInt($('lm-qty').value,10)||10;
       var ss=$('lm-slotstart').value!==''?parseInt($('lm-slotstart').value,10):null;
       var se=$('lm-slotend').value!==''?parseInt($('lm-slotend').value,10):null;
-      state.offers.push({
-        id:uid(), productId:(p.id!=null?p.id:p._id), name:p.name,
-        vendorName:p.vendorName||p.vendor_name||'', price:p.price,
-        originalPrice:p.originalPrice||p.original_price||null,
-        imageUrl:p.imageUrl||p.image_url||null,
-        discount:disc, promoPrice:computePromo(p.price,disc),
-        qty:qty, sold:0, status:'approved',
-        slotStart:ss, slotEnd:se, submittedBy:'admin', createdAt:new Date().toISOString()
-      });
-      save(state); toast('Offre ajoutée au Louma.','success'); rerender();
+      var client=sb();
+      if(!client){
+        state.offers.push({ id:uid(), productId:(p.id!=null?p.id:p._id), name:p.name,
+          vendorName:p.vendorName||p.vendor_name||'', price:p.price,
+          originalPrice:p.originalPrice||p.original_price||null, imageUrl:p.imageUrl||p.image_url||null,
+          discount:disc, promoPrice:computePromo(p.price,disc), qty:qty, sold:0, status:'approved',
+          slotStart:ss, slotEnd:se, submittedBy:'admin', createdAt:new Date().toISOString() });
+        cache(state); toast('Offre ajoutée au Louma.','success'); rerender(); return;
+      }
+      client.from("louma_offers").insert({
+        product_id:(p.id!=null?p.id:p._id), vendor_id:(p.vendor||p.vendor_id||null),
+        vendor_name:p.vendorName||p.vendor_name||'', name:p.name, price:p.price,
+        original_price:p.originalPrice||p.original_price||null, image_url:p.imageUrl||p.image_url||null,
+        discount:disc, promo_price:computePromo(p.price,disc), qty:qty, sold:0,
+        status:'approved', slot_start:ss, slot_end:se, submitted_by:'admin'
+      }).then(function(r){
+        if(r&&r.error){ toast("Échec création : "+r.error.message,"error"); return; }
+        toast('Offre ajoutée au Louma.','success'); syncFromSupabase().then(rerender);
+      }).catch(function(){ toast("Échec de la création.","error"); });
     };
   }
 
@@ -37845,24 +37968,49 @@ window.addEventListener('unhandledrejection', function(event) {
      ============================================================ */
   function submitVendorOffer(payload){
     // payload: {productId, discount, qty, slotStart?, slotEnd?, vendorName?}
+    // Renvoie une Promise<offer|null>.
+    var disc=parseInt(payload.discount,10)||0;
+    var qty=parseInt(payload.qty,10)||1;
+    var ss=(payload.slotStart!=null?parseInt(payload.slotStart,10):null);
+    var se=(payload.slotEnd!=null?parseInt(payload.slotEnd,10):null);
+    var client=sb();
+
+    if(client){
+      return client.rpc("louma_submit_offer",{
+        p_product_id:payload.productId, p_discount:disc, p_qty:qty,
+        p_slot_start:ss, p_slot_end:se
+      }).then(function(r){
+        if(r&&r.error){
+          var m=r.error.message||"";
+          toast(m.indexOf("AUTH")>=0?"Connectez-vous pour soumettre une offre."
+               :m.indexOf("PRODUCT")>=0?"Produit introuvable."
+               :"Échec de la soumission : "+m, "error");
+          return null;
+        }
+        toast('Offre Louma soumise — en attente de validation admin.','success');
+        var off=r&&r.data?rowToOffer(r.data):null;
+        syncFromSupabase();
+        return off;
+      }).catch(function(){ toast("Échec de la soumission.","error"); return null; });
+    }
+
+    // Repli hors-ligne (démo)
     var prods=getProducts();
     var p=prods.find(function(x){return String(x.id!=null?x.id:x._id)===String(payload.productId);});
-    if(!p){ toast('Produit introuvable.','error'); return null; }
-    var disc=parseInt(payload.discount,10)||0;
+    if(!p){ toast('Produit introuvable.','error'); return Promise.resolve(null); }
     var offer={
       id:uid(), productId:payload.productId, name:p.name,
       vendorName:payload.vendorName||p.vendorName||p.vendor_name||'',
       price:p.price, originalPrice:p.originalPrice||p.original_price||null,
       imageUrl:p.imageUrl||p.image_url||null,
       discount:disc, promoPrice:computePromo(p.price,disc),
-      qty:parseInt(payload.qty,10)||1, sold:0, status:'pending',
-      slotStart:(payload.slotStart!=null?parseInt(payload.slotStart,10):null),
-      slotEnd:(payload.slotEnd!=null?parseInt(payload.slotEnd,10):null),
-      submittedBy:'vendor', createdAt:new Date().toISOString()
+      qty:qty, sold:0, status:'pending',
+      slotStart:ss, slotEnd:se, submittedBy:'vendor', createdAt:new Date().toISOString()
     };
-    state.offers.push(offer); save(state);
+    state.offers.push(offer); cache(state);
+    window.dispatchEvent(new CustomEvent("nexus:louma-changed"));
     toast('Offre Louma soumise — en attente de validation admin.','success');
-    return offer;
+    return Promise.resolve(offer);
   }
 
   /* ============================================================
@@ -37919,7 +38067,29 @@ window.addEventListener('unhandledrejection', function(event) {
     // re-vérifier l'ouverture/notif chaque minute (changement d'heure)
     setInterval(maybeNotifyOpen,60000);
 
-    console.info("[NEXUS] Module Louma du vendredi chargé ✅");
+    // ── Supabase : sync initial + temps réel ──────────────────────────────
+    function startSupabase(){
+      var client=sb();
+      if(!client) return false;
+      syncFromSupabase().then(function(){ maybeNotifyOpen(); });
+      loadProductsFromSupabase();
+      try{
+        client.channel("louma_rt")
+          .on("postgres_changes",{event:"*",schema:"public",table:"louma_offers"},function(){ syncFromSupabase(); })
+          .on("postgres_changes",{event:"*",schema:"public",table:"louma_config"},function(){ syncFromSupabase(); })
+          .subscribe();
+      }catch(e){}
+      // resync périodique (filet de sécurité si le realtime est coupé)
+      setInterval(function(){ if(sb()) syncFromSupabase(); }, 30000);
+      return true;
+    }
+    if(!startSupabase()){
+      // le SDK/Client peut être prêt un peu plus tard
+      var tries=0;
+      var t=setInterval(function(){ tries++; if(startSupabase()||tries>20) clearInterval(t); }, 500);
+    }
+
+    console.info("[NEXUS] Module Louma du vendredi chargé ✅ (Supabase)");
   }
 
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init);
@@ -37932,10 +38102,12 @@ window.addEventListener('unhandledrejection', function(event) {
     open: openOverlay,
     close: closeOverlay,
     renderAdmin: renderAdmin,       // NexusLouma.renderAdmin(domElement)
-    submitVendorOffer: submitVendorOffer,
+    submitVendorOffer: submitVendorOffer,  // -> Promise<offer|null>
+    sync: syncFromSupabase,         // force un rafraîchissement depuis la base
+    loadProducts: loadProductsFromSupabase,
     isOpen: isOpenNow,
     getState: function(){ return JSON.parse(JSON.stringify(state)); },
-    reload: function(){ state=load(); }
+    reload: function(){ state=load(); }  // recharge le cache local
   };
 })();
 </script>
