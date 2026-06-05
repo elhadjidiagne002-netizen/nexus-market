@@ -3165,6 +3165,11 @@ const NexusWA = {
       console.info('[NexusWA] Service désactivé — message non envoyé:', template);
       return { ok: false, skipped: true };
     }
+    // Gating par événement (centre de notifications)
+    if (template && typeof NexusNotif !== 'undefined' && !NexusNotif.waEnabled(template)) {
+      console.info('[NexusWA] événement désactivé par l\'admin :', template);
+      return { ok: false, skipped: true };
+    }
     // [FIX] Pas de credentials → non configuré (on ne tente même pas l'appel API).
     if (!this._cfg.instanceId || !this._cfg.apiToken) {
       console.info('[NexusWA] Non configuré — message non envoyé:', template);
@@ -3202,11 +3207,14 @@ const NexusWA = {
         }
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { console.warn('[NexusWA] API error:', res.status, data); return { ok: false, error: data.message || data.error || 'erreur Green API' }; }
+      const _logW = (status, extra) => { try { if (typeof NexusNotif !== 'undefined') NexusNotif.logWhatsApp({ phone: intlPhone, message, template: template || null, status, ...(extra || {}) }); } catch(_){} };
+      if (!res.ok) { console.warn('[NexusWA] API error:', res.status, data); _logW('failed', { error_msg: data.message || data.error || ('Green API ' + res.status) }); return { ok: false, error: data.message || data.error || 'erreur Green API' }; }
       console.info('[NexusWA] ✅ Message envoyé →', intlPhone, '| template:', template, '| id:', data.idMessage);
+      _logW('sent', { green_id: data.idMessage || null });
       return { ok: true, idMessage: data.idMessage };
     } catch(err) {
       console.warn('[NexusWA] fetch error:', err.message);
+      try { if (typeof NexusNotif !== 'undefined') NexusNotif.logWhatsApp({ phone: intlPhone, message, template: template || null, status: 'failed', error_msg: err.message }); } catch(_){}
       return { ok: false, error: err.message };
     }
   },
@@ -6283,6 +6291,7 @@ async signOut() {
       if (!error && data) {
         const saved = { ...dispute, id: data.id };
         const all = storage.getArray("disputes"); all.push(saved); storage.set("disputes", all);
+        EmailService.notifyAdmin('admin_new_dispute', { dispute_id: data.id, order_id: dispute.orderId || '—', buyer_name: dispute.buyerName || 'Client' });
         return saved;
       }
     }
@@ -7440,6 +7449,25 @@ const applyEmailVars = (str, vars) => {
   return result.replace(/\{\{[^}]+\}\}/g, '');
 };
 
+// ── NexusNotif : cache des canaux (on/off par événement) + journalisation ──────
+// Source : table notification_events. Fail-OPEN (si non chargé/inconnu → on envoie).
+const NexusNotif = {
+  _flags: null, _loading: false,
+  async load() {
+    try {
+      const sb = (typeof DataService !== "undefined") ? DataService?._sb : null;
+      if (!sb) return;
+      const { data } = await sb.from("notification_events").select("event_key,email_enabled,whatsapp_enabled");
+      if (data) { const m = {}; data.forEach(r => { m[r.event_key] = r; }); this._flags = m; }
+    } catch (_) {}
+  },
+  _ensure() { if (this._flags === null && !this._loading) { this._loading = true; Promise.resolve(this.load()).finally(() => { this._loading = false; }); } },
+  emailEnabled(key) { this._ensure(); if (!this._flags || !key || !this._flags[key]) return true; return this._flags[key].email_enabled !== false; },
+  waEnabled(key)    { this._ensure(); if (!this._flags || !key || !this._flags[key]) return true; return this._flags[key].whatsapp_enabled !== false; },
+  async logEmail(row)    { try { const sb = DataService?._sb; if (sb) await sb.from("email_logs").insert(row); } catch (_) {} },
+  async logWhatsApp(row) { try { const sb = DataService?._sb; if (sb) await sb.from("whatsapp_logs").insert(row); } catch (_) {} },
+};
+
 const EmailService = {
   _initialized: false,
   reset() { this._initialized = false; },
@@ -7465,6 +7493,13 @@ const EmailService = {
       return false;
     }
 
+    // ── Gating + journalisation (centre de notifications) ──────────────────
+    if (templateId && !NexusNotif.emailEnabled(templateId)) {
+      console.info("[EmailService] événement désactivé par l'admin :", templateId);
+      return { skipped: true };
+    }
+    const _logE = (status) => { try { NexusNotif.logEmail({ to_email: to, subject: subject || "", template: templateId || null, status, user_id: ((typeof DataService !== "undefined") ? DataService?._user?.id : null) || null }); } catch (_) {} };
+
     // ── 1. BREVO (300/jour gratuits) ──────────────────────────────────────
     if (NEXUS_CONFIG.brevo?.apiKey) {
       try {
@@ -7473,7 +7508,7 @@ const EmailService = {
           headers: { "Content-Type": "application/json", "api-key": NEXUS_CONFIG.brevo.apiKey },
           body: JSON.stringify({ sender: { name: NEXUS_CONFIG.brevo.senderName||"NEXUS Market", email: NEXUS_CONFIG.brevo.senderEmail||"noreply@nexus.sn" }, to: [{ email: to }], subject, htmlContent: htmlBody })
         });
-        if (r.ok) { console.log("[Brevo] ✅", to, "—", subject); return true; }
+        if (r.ok) { console.log("[Brevo] ✅", to, "—", subject); _logE("sent"); return true; }
         const err = await r.json().catch(()=>({}));
         console.warn("[Brevo] ⚠️", r.status, err.message || JSON.stringify(err));
       } catch(e) { console.warn("[Brevo] réseau:", e.message); }
@@ -7482,7 +7517,7 @@ const EmailService = {
     const uTpl = NEXUS_CONFIG.emailjs.universalTemplateId;
     if (!this._initialized && window.emailjs && isEmailjsConfigured()) { window.emailjs.init({ publicKey: NEXUS_CONFIG.emailjs.publicKey }); this._initialized = true; }
     if (isEmailjsConfigured() && this._initialized && uTpl) {
-      try { await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId, uTpl, { to_email: to, reply_to: to, subject, html_body: htmlBody, ...variables }); console.log("[EmailJS] ✅", to); return true; }
+      try { await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId, uTpl, { to_email: to, reply_to: to, subject, html_body: htmlBody, ...variables }); console.log("[EmailJS] ✅", to); _logE("sent"); return true; }
       catch(e) { console.warn("[EmailJS]", e?.status || e?.message || e); }
     }
     // ── 3. Backend API ────────────────────────────────────────────────────
@@ -7495,7 +7530,7 @@ const EmailService = {
         const _h = { "Content-Type": "application/json" };
         if (_t) _h["Authorization"] = `Bearer ${_t}`;
         const r = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/email/send", { method: "POST", headers: _h, body: JSON.stringify({ to, subject, html: htmlBody }) });
-        if (r.ok) { const j = await r.json(); if (j.ok) { console.log("[EmailService] ✅ backend", to); return true; } }
+        if (r.ok) { const j = await r.json(); if (j.ok) { console.log("[EmailService] ✅ backend", to); _logE("sent"); return true; } }
       } catch(e) { console.warn("[EmailService] backend:", e.message); }
     }
     // Tentative finale via Cloudflare Function /api/email (si elle existe)
@@ -7507,14 +7542,51 @@ const EmailService = {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${_t2}` },
           body: JSON.stringify({ to, subject, html: htmlBody }),
         });
-        if (r.ok) { const j = await r.json(); if (j.ok) { console.log('[EmailService] ✅ /api/email', to); return true; } }
+        if (r.ok) { const j = await r.json(); if (j.ok) { console.log('[EmailService] ✅ /api/email', to); _logE("sent"); return true; } }
       } catch(_) {}
     }
     console.warn(
       '[EmailService] ⚠️ Aucun provider configuré. Email non envoyé à:', to,
       '\nPour activer les emails : Admin → Configuration → Emails → renseigner la clé API Brevo'
     );
+    _logE("failed");
     return false;
+  },
+
+  // Envoi générique par clé d'événement — couvre les 33 situations du catalogue.
+  // Source du template : getEmailTemplate(eventKey) (admin) → fallback EMAIL_TPL_DEFS.
+  // Le gating (interrupteur admin) + la journalisation sont gérés dans send().
+  sendEvent(eventKey, to, vars = {}) {
+    if (!to) return Promise.resolve({ skipped: true });
+    const tpl = (typeof getEmailTemplate === 'function') ? getEmailTemplate(eventKey) : null;
+    const def = (typeof EMAIL_TPL_DEFS !== 'undefined') ? EMAIL_TPL_DEFS.find(d => d.id === eventKey) : null;
+    const allVars = { site_url: window.location.origin, ...vars };
+    const subjSrc = (tpl && tpl.subject) ? tpl.subject : (def ? def.defaultSubject : 'NEXUS Market');
+    const htmlSrc = (tpl && tpl.html) ? tpl.html : (def && typeof _defaultHtmlBody === 'function' ? _defaultHtmlBody(def) : '');
+    const subject = applyEmailVars(subjSrc, allVars);
+    const html    = applyEmailVars(htmlSrc, allVars);
+    return this.send({ to, subject, templateId: eventKey, variables: { ...allVars, html_body: html } });
+  },
+
+  // Alerte admin via backend (l'admin email est côté serveur : env.ADMIN_EMAIL).
+  notifyAdmin(event, vars) {
+    try {
+      const _t = (typeof DataService !== 'undefined' ? DataService?._token : null) || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+      const h = { 'Content-Type': 'application/json' };
+      if (_t) h.Authorization = 'Bearer ' + _t;
+      return fetch((NEXUS_CONFIG.apiUrl || '') + '/api/notify-admin', { method: 'POST', headers: h, body: JSON.stringify({ event, vars: vars || {} }) }).catch(function(){});
+    } catch (_) { return Promise.resolve(); }
+  },
+
+  // Email à un utilisateur (vendeur…) par son id — adresse résolue côté serveur.
+  notifyUser(event, userId, vars) {
+    try {
+      if (!userId) return Promise.resolve();
+      const _t = (typeof DataService !== 'undefined' ? DataService?._token : null) || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+      const h = { 'Content-Type': 'application/json' };
+      if (_t) h.Authorization = 'Bearer ' + _t;
+      return fetch((NEXUS_CONFIG.apiUrl || '') + '/api/notify-user', { method: 'POST', headers: h, body: JSON.stringify({ event, userId, vars: vars || {} }) }).catch(function(){});
+    } catch (_) { return Promise.resolve(); }
   },
 
   sendOrderConfirmation(order, items) {
@@ -13561,6 +13633,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           avatar,
         };
         const newVendor = await DataService.signUp(form.email, form.password, profile);
+        try { EmailService.notifyAdmin('admin_new_vendor', { vendor_name: form.shopName || form.name || 'Vendeur', vendor_email: form.email }); } catch(_){}
         if (newVendor.__emailConfirmPending) {
           // Email de bienvenue pour le vendeur (via Cloudflare Function /api/email)
           fetch('/api/email', { method:'POST', headers:{'Content-Type':'application/json'},
@@ -19164,6 +19237,103 @@ const EMAIL_TPL_DEFS = [
     trigger:"Envoyé aux deux parties quand l'admin intervient sur un litige",
     defaultSubject:"[NEXUS] Mise à jour litige #{{dispute_id}}",
     vars:[["recipient_name","Destinataire"],["dispute_id","ID litige"],["message","Message admin"]] },
+  // ── Compléments (centre de notifications) ────────────────────────────────
+  { id:"welcome", label:"Bienvenue / compte créé", icon:"hand-sparkles", color:"#00853E", category:"buyer",
+    trigger:"Envoyé au nouvel utilisateur après création de compte",
+    defaultSubject:"🎉 Bienvenue sur NEXUS Market, {{buyer_name}} !",
+    vars:[["buyer_name","Prénom"]] },
+  { id:"email_confirmation", label:"Confirmation d'email", icon:"envelope-circle-check", color:"#0EA5E9", category:"buyer",
+    trigger:"Envoyé pour vérifier l'adresse email",
+    defaultSubject:"Confirmez votre email — NEXUS Market",
+    vars:[["buyer_name","Prénom"],["confirm_url","Lien de confirmation"]] },
+  { id:"payment_received", label:"Paiement reçu", icon:"money-check-dollar", color:"#16a34a", category:"buyer",
+    trigger:"Envoyé à l'acheteur quand le paiement est confirmé",
+    defaultSubject:"✅ Paiement reçu — Commande {{order_id}}",
+    vars:[["buyer_name","Acheteur"],["order_id","N° commande"],["total","Montant FCFA"]] },
+  { id:"order_shipped", label:"Commande expédiée", icon:"truck-fast", color:"#2563EB", category:"buyer",
+    trigger:"Envoyé quand la commande passe en transit",
+    defaultSubject:"🚚 Votre commande {{order_id}} est en route",
+    vars:[["buyer_name","Acheteur"],["order_id","N° commande"],["tracking","N° suivi"],["carrier","Transporteur"]] },
+  { id:"order_delivered", label:"Commande livrée", icon:"box-open", color:"#15803D", category:"buyer",
+    trigger:"Envoyé quand la commande est marquée livrée",
+    defaultSubject:"📦 Commande {{order_id}} livrée — merci !",
+    vars:[["buyer_name","Acheteur"],["order_id","N° commande"]] },
+  { id:"order_cancelled", label:"Commande annulée", icon:"ban", color:"#DC2626", category:"buyer",
+    trigger:"Envoyé quand une commande est annulée",
+    defaultSubject:"Commande {{order_id}} annulée",
+    vars:[["buyer_name","Acheteur"],["order_id","N° commande"],["cancel_reason","Motif"]] },
+  { id:"refund_processed", label:"Remboursement effectué", icon:"rotate-left", color:"#0891B2", category:"buyer",
+    trigger:"Envoyé quand un remboursement est traité",
+    defaultSubject:"💸 Remboursement effectué — Commande {{order_id}}",
+    vars:[["buyer_name","Acheteur"],["order_id","N° commande"],["amount","Montant FCFA"]] },
+  { id:"return_approved", label:"Retour approuvé", icon:"circle-check", color:"#16a34a", category:"buyer",
+    trigger:"Envoyé quand une demande de retour est approuvée",
+    defaultSubject:"✅ Retour approuvé — Commande {{order_id}}",
+    vars:[["buyer_name","Acheteur"],["order_id","N° commande"]] },
+  { id:"return_rejected", label:"Retour refusé", icon:"circle-xmark", color:"#DC2626", category:"buyer",
+    trigger:"Envoyé quand une demande de retour est refusée",
+    defaultSubject:"Décision sur votre demande de retour — Commande {{order_id}}",
+    vars:[["buyer_name","Acheteur"],["order_id","N° commande"],["reason","Motif"]] },
+  { id:"offer_rejected", label:"Offre refusée (acheteur)", icon:"thumbs-down", color:"#9CA3AF", category:"buyer",
+    trigger:"Envoyé à l'acheteur quand le vendeur refuse son offre",
+    defaultSubject:"Votre offre sur {{product_name}}",
+    vars:[["buyer_name","Acheteur"],["product_name","Produit"]] },
+  { id:"loyalty_earned", label:"Points fidélité gagnés", icon:"award", color:"#F59E0B", category:"buyer",
+    trigger:"Envoyé quand l'acheteur gagne des points",
+    defaultSubject:"⭐ +{{points}} points fidélité — NEXUS Market",
+    vars:[["buyer_name","Acheteur"],["points","Points gagnés"],["balance","Solde total"]] },
+  { id:"stock_back", label:"Produit de nouveau en stock", icon:"bell", color:"#7C3AED", category:"buyer",
+    trigger:"Envoyé aux abonnés d'alerte stock quand le produit revient",
+    defaultSubject:"🔔 {{product_name}} est de nouveau disponible",
+    vars:[["buyer_name","Acheteur"],["product_name","Produit"],["product_url","Lien produit"]] },
+  { id:"review_request", label:"Demande d'avis", icon:"star", color:"#EAB308", category:"buyer",
+    trigger:"Envoyé après livraison pour solliciter un avis",
+    defaultSubject:"Votre avis sur {{product_name}} ?",
+    vars:[["buyer_name","Acheteur"],["product_name","Produit"],["review_url","Lien avis"]] },
+  { id:"vendor_new_order", label:"Nouvelle commande (vendeur)", icon:"bell-concierge", color:"#00853E", category:"vendor",
+    trigger:"Envoyé au vendeur dès qu'il reçoit une commande",
+    defaultSubject:"🛒 Nouvelle commande {{order_id}} — {{total}} FCFA",
+    vars:[["vendor_name","Vendeur"],["order_id","N° commande"],["buyer_name","Acheteur"],["total","Montant FCFA"]] },
+  { id:"payout_processed", label:"Virement traité (vendeur)", icon:"sack-dollar", color:"#16a34a", category:"vendor",
+    trigger:"Envoyé au vendeur quand son virement est effectué",
+    defaultSubject:"💰 Virement de {{amount_fcfa}} FCFA effectué",
+    vars:[["vendor_name","Vendeur"],["amount_fcfa","Montant FCFA"],["payout_method","Méthode"]] },
+  { id:"payout_requested", label:"Demande de virement reçue", icon:"hourglass-half", color:"#D97706", category:"vendor",
+    trigger:"Envoyé au vendeur à la réception de sa demande de retrait",
+    defaultSubject:"⏳ Demande de virement reçue — {{amount_fcfa}} FCFA",
+    vars:[["vendor_name","Vendeur"],["amount_fcfa","Montant FCFA"]] },
+  { id:"payout_failed", label:"Virement échoué", icon:"triangle-exclamation", color:"#DC2626", category:"vendor",
+    trigger:"Envoyé au vendeur si le virement échoue",
+    defaultSubject:"⚠️ Échec du virement — {{amount_fcfa}} FCFA",
+    vars:[["vendor_name","Vendeur"],["amount_fcfa","Montant FCFA"],["reason","Motif"]] },
+  { id:"low_stock", label:"Stock faible (vendeur)", icon:"battery-quarter", color:"#F59E0B", category:"vendor",
+    trigger:"Envoyé au vendeur quand un produit passe sous le seuil",
+    defaultSubject:"📉 Stock faible : {{product_name}} ({{stock}} restant)",
+    vars:[["vendor_name","Vendeur"],["product_name","Produit"],["stock","Stock restant"]] },
+  { id:"product_moderated", label:"Produit modéré / rejeté", icon:"gavel", color:"#7C3AED", category:"vendor",
+    trigger:"Envoyé au vendeur quand l'admin modère un produit",
+    defaultSubject:"Modération de votre produit {{product_name}}",
+    vars:[["vendor_name","Vendeur"],["product_name","Produit"],["reason","Motif"]] },
+  { id:"admin_new_vendor", label:"Admin · Nouveau vendeur", icon:"user-plus", color:"#0EA5E9", category:"admin",
+    trigger:"Envoyé à l'admin quand un vendeur s'inscrit",
+    defaultSubject:"🆕 Nouveau vendeur : {{vendor_name}}",
+    vars:[["vendor_name","Vendeur"],["vendor_email","Email"]] },
+  { id:"admin_payout_request", label:"Admin · Demande de retrait", icon:"money-bill-transfer", color:"#D97706", category:"admin",
+    trigger:"Envoyé à l'admin à chaque demande de retrait vendeur",
+    defaultSubject:"💸 Demande de retrait : {{amount_fcfa}} FCFA — {{vendor_name}}",
+    vars:[["vendor_name","Vendeur"],["amount_fcfa","Montant FCFA"],["method","Méthode"]] },
+  { id:"admin_new_dispute", label:"Admin · Nouveau litige", icon:"scale-balanced", color:"#DC2626", category:"admin",
+    trigger:"Envoyé à l'admin à l'ouverture d'un litige",
+    defaultSubject:"⚖️ Nouveau litige #{{dispute_id}}",
+    vars:[["dispute_id","ID litige"],["order_id","N° commande"],["buyer_name","Acheteur"]] },
+  { id:"quote_sent", label:"Devis envoyé (B2B)", icon:"file-invoice", color:"#2563EB", category:"b2b",
+    trigger:"Envoyé à l'acheteur B2B quand un devis lui est transmis",
+    defaultSubject:"📄 Votre devis NEXUS Market",
+    vars:[["buyer_name","Acheteur"],["quote_id","N° devis"],["total","Montant FCFA"]] },
+  { id:"quote_request", label:"Demande de devis (vendeur)", icon:"file-circle-question", color:"#8B5CF6", category:"b2b",
+    trigger:"Envoyé au vendeur quand un acheteur B2B demande un devis",
+    defaultSubject:"📨 Nouvelle demande de devis de {{buyer_name}}",
+    vars:[["vendor_name","Vendeur"],["buyer_name","Acheteur"],["request_text","Demande"]] },
 ];
 
 const _defaultHtmlBody = (def) => {
@@ -19195,6 +19365,149 @@ const _loadAllTemplates = () => { try { return JSON.parse(localStorage.getItem("
 const _saveAllTemplates = (t) => {
   localStorage.setItem("nexus_email_templates", JSON.stringify(t));
   NexusAdminConfig.set('nexus_email_templates', t, DataService?._user?.id).catch(() => {});
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Centre de notifications — Canaux (on/off par événement), Journal, WhatsApp manuel
+// ═══════════════════════════════════════════════════════════════════════════════
+const _notifSb = () => (typeof DataService !== "undefined" ? DataService?._sb : null) || (typeof window !== "undefined" ? window.__sb : null) || null;
+
+const NotifChannelsCard = ({ addToast }) => {
+  const E = React.createElement;
+  const [rows, setRows]       = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => { (async () => {
+    const sb = _notifSb(); if (!sb) { setLoading(false); return; }
+    try { const { data } = await sb.from("notification_events").select("*").order("sort_order"); setRows(data || []); }
+    catch (_) {}
+    setLoading(false);
+  })(); }, []);
+  const toggle = async (key, field, val) => {
+    setRows(p => p.map(r => r.event_key === key ? { ...r, [field]: val } : r));
+    const sb = _notifSb(); if (!sb) return;
+    try { const { error } = await sb.from("notification_events").update({ [field]: val, updated_at: new Date().toISOString() }).eq("event_key", key); if (error) throw error; }
+    catch (e) { addToast?.("Échec mise à jour : " + (e.message || ""), "error"); }
+  };
+  const cats = { buyer: "Acheteur", vendor: "Vendeur", admin: "Admin", b2b: "B2B" };
+  return E("div", { className: "card" },
+    E("div", { className: "card-header" }, E("h2", { className: "card-title", style: { margin: 0 } }, "🔔 Canaux de notification")),
+    E("div", { style: { padding: "0 1rem 1rem" } },
+      loading ? E("div", { style: { padding: "1rem", color: "var(--text-secondary)" } }, "Chargement…")
+      : rows.length === 0 ? E("div", { style: { padding: "1rem", color: "var(--text-secondary)" } }, "Exécutez la migration SQL « notifications_center » pour activer le catalogue.")
+      : Object.keys(cats).map(cat => {
+          const list = rows.filter(r => r.category === cat);
+          if (!list.length) return null;
+          return E("div", { key: cat, style: { marginBottom: ".4rem" } },
+            E("div", { style: { fontWeight: 700, fontSize: ".7rem", textTransform: "uppercase", color: "var(--text-secondary)", margin: ".6rem 0 .2rem", letterSpacing: ".5px" } }, cats[cat]),
+            list.map(r => E("div", { key: r.event_key, style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: ".3rem .4rem", borderBottom: "1px solid var(--border)" } },
+              E("span", { style: { fontSize: ".82rem" } }, r.label),
+              E("div", { style: { display: "flex", gap: "1rem", flexShrink: 0 } },
+                E("label", { style: { display: "flex", alignItems: "center", gap: ".3rem", fontSize: ".74rem", cursor: "pointer" } },
+                  E("input", { type: "checkbox", checked: !!r.email_enabled, onChange: e => toggle(r.event_key, "email_enabled", e.target.checked) }), "Email"),
+                E("label", { style: { display: "flex", alignItems: "center", gap: ".3rem", fontSize: ".74rem", cursor: "pointer" } },
+                  E("input", { type: "checkbox", checked: !!r.whatsapp_enabled, onChange: e => toggle(r.event_key, "whatsapp_enabled", e.target.checked) }), "WhatsApp")
+              )
+            ))
+          );
+        })
+    )
+  );
+};
+
+const NotifLogsCard = () => {
+  const E = React.createElement;
+  const [tab, setTab]         = React.useState("email");
+  const [logs, setLogs]       = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    const sb = _notifSb(); if (!sb) { setLoading(false); return; }
+    try {
+      const table = tab === "email" ? "email_logs" : "whatsapp_logs";
+      const { data } = await sb.from(table).select("*").order("created_at", { ascending: false }).limit(50);
+      setLogs(data || []);
+    } catch (_) { setLogs([]); }
+    setLoading(false);
+  }, [tab]);
+  React.useEffect(() => { load(); }, [load]);
+  const badge = s => E("span", { className: "badge " + (s === "sent" ? "badge-success" : s === "failed" ? "badge-danger" : "badge-warning") }, s || "—");
+  return E("div", { className: "card" },
+    E("div", { className: "card-header", style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: ".4rem" } },
+      E("h2", { className: "card-title", style: { margin: 0 } }, "📜 Journal des envois"),
+      E("div", { style: { display: "flex", gap: ".4rem" } },
+        E("button", { className: "btn btn-sm " + (tab === "email" ? "btn-primary" : "btn-secondary"), onClick: () => setTab("email") }, "Email"),
+        E("button", { className: "btn btn-sm " + (tab === "whatsapp" ? "btn-primary" : "btn-secondary"), onClick: () => setTab("whatsapp") }, "WhatsApp"),
+        E("button", { className: "btn btn-sm btn-secondary", onClick: load, title: "Rafraîchir" }, E("i", { className: "fas fa-sync" }))
+      )
+    ),
+    E("div", { style: { padding: "0 1rem 1rem", maxHeight: 320, overflowY: "auto" } },
+      loading ? E("div", { style: { color: "var(--text-secondary)" } }, "Chargement…")
+      : logs.length === 0 ? E("div", { style: { color: "var(--text-secondary)" } }, "Aucun envoi journalisé pour l'instant.")
+      : logs.map(l => E("div", { key: l.id, style: { display: "flex", justifyContent: "space-between", gap: ".5rem", padding: ".35rem 0", borderBottom: "1px solid var(--border)", fontSize: ".8rem" } },
+          E("div", { style: { overflow: "hidden", flex: 1 } },
+            E("div", { style: { fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, tab === "email" ? ((l.to_email || "—") + " · " + (l.subject || "")) : ((l.phone || "—") + " · " + String(l.message || "").slice(0, 50))),
+            E("div", { style: { color: "var(--text-secondary)", fontSize: ".7rem" } }, (l.template || "—") + " · " + (l.created_at ? new Date(l.created_at).toLocaleString("fr-FR") : ""))
+          ),
+          badge(l.status)
+        ))
+    )
+  );
+};
+
+const ManualWhatsAppCard = ({ addToast }) => {
+  const E = React.createElement;
+  const [phone, setPhone]     = React.useState("");
+  const [message, setMessage] = React.useState("");
+  const [q, setQ]             = React.useState("");
+  const [results, setResults] = React.useState([]);
+  const [sending, setSending] = React.useState(false);
+  const search = async (val) => {
+    setQ(val);
+    if (val.trim().length < 2) { setResults([]); return; }
+    const sb = _notifSb(); if (!sb) return;
+    try {
+      const { data } = await sb.from("profiles").select("id,name,phone,whatsapp_number,role").or("name.ilike.%" + val + "%,phone.ilike.%" + val + "%").limit(8);
+      setResults(data || []);
+    } catch (_) { setResults([]); }
+  };
+  const pick = (p) => { setPhone(p.whatsapp_number || p.phone || ""); setQ(p.name || ""); setResults([]); };
+  const send = async () => {
+    if (!phone || !message.trim()) { addToast?.("Numéro et message requis", "warning"); return; }
+    setSending(true);
+    try {
+      const r = (typeof NexusWA !== "undefined" && NexusWA.send) ? await NexusWA.send(phone, message, "manual_admin") : { ok: false, error: "Service WhatsApp indisponible" };
+      const sb = _notifSb();
+      if (r && r.ok) {
+        addToast?.("✅ WhatsApp envoyé", "success");
+        if (sb) { try { await sb.from("whatsapp_logs").insert({ phone: String(phone).replace(/\D/g, ""), message, template: "manual_admin", status: "sent" }); } catch (_) {} }
+        setMessage("");
+      } else {
+        addToast?.("Échec envoi" + (r && r.error ? " : " + r.error : ""), "error");
+        if (sb) { try { await sb.from("whatsapp_logs").insert({ phone: String(phone).replace(/\D/g, ""), message, template: "manual_admin", status: "failed", error_msg: (r && r.error) || "" }); } catch (_) {} }
+      }
+    } catch (e) { addToast?.("Erreur : " + e.message, "error"); }
+    setSending(false);
+  };
+  return E("div", { className: "card" },
+    E("div", { className: "card-header" }, E("h2", { className: "card-title", style: { margin: 0 } }, "📱 Envoi WhatsApp manuel")),
+    E("div", { style: { padding: "0 1rem 1rem", display: "flex", flexDirection: "column", gap: ".6rem" } },
+      E("div", { className: "form-group", style: { margin: 0, position: "relative" } },
+        E("label", { className: "form-label" }, "Rechercher un client"),
+        E("input", { className: "form-input", value: q, onChange: e => search(e.target.value), placeholder: "Nom ou téléphone…" }),
+        results.length > 0 && E("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: "var(--bg, #fff)", border: "1px solid var(--border)", borderRadius: 8, zIndex: 20, maxHeight: 200, overflowY: "auto", boxShadow: "0 6px 18px rgba(0,0,0,.12)" } },
+          results.map(p => E("div", { key: p.id, onClick: () => pick(p), style: { padding: ".4rem .6rem", cursor: "pointer", fontSize: ".82rem", borderBottom: "1px solid var(--border)" } },
+            E("strong", null, p.name || "—"), " ", E("span", { style: { color: "var(--text-secondary)" } }, (p.whatsapp_number || p.phone || "sans n°") + " · " + (p.role || "")))))
+      ),
+      E("div", { className: "form-group", style: { margin: 0 } },
+        E("label", { className: "form-label" }, "Numéro destinataire"),
+        E("input", { className: "form-input", value: phone, onChange: e => setPhone(e.target.value), placeholder: "77 123 45 67" })),
+      E("div", { className: "form-group", style: { margin: 0 } },
+        E("label", { className: "form-label" }, "Message"),
+        E("textarea", { className: "form-input", value: message, onChange: e => setMessage(e.target.value), rows: 3, maxLength: 4096, placeholder: "Votre message…" })),
+      E("button", { className: "btn btn-primary", onClick: send, disabled: sending, style: { alignSelf: "flex-start", display: "flex", alignItems: "center", gap: ".4rem" } },
+        sending ? E("i", { className: "fas fa-spinner fa-spin" }) : E("i", { className: "fab fa-whatsapp" }), "Envoyer")
+    )
+  );
 };
 
 const EmailTemplatesPanel = ({ addToast, currentUser }) => {
@@ -19252,6 +19565,10 @@ const EmailTemplatesPanel = ({ addToast, currentUser }) => {
       icon && E("i",{className:`fas fa-${icon}`}), label);
 
   return E("div",{style:{display:"flex",flexDirection:"column",gap:"1.25rem"}},
+
+    E(NotifChannelsCard,{addToast}),
+    E(ManualWhatsAppCard,{addToast}),
+    E(NotifLogsCard,null),
 
     // ── Bloc config Brevo ──────────────────────────────────────────────────
     E("div",{className:"card"},
@@ -22005,12 +22322,22 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     } catch(_waErr) { console.warn('[NexusWA hook]', _waErr.message); }
 
     try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
-    // -- Email acheteur "commande expediee" (template order_shipped) --
+    // -- Email acheteur selon le nouveau statut (expédiée / livrée / annulée) --
     try {
       var _soMail = (typeof orders !== 'undefined' ? orders : []).find(function(o){return o.id===orderId;})
                  || (storage.getArray('orders')||[]).find(function(o){return o.id===orderId;});
-      if (_soMail && (newStatus === 'in_transit' || newStatus === 'shipped')) {
-        EmailService.sendOrderShipped(_soMail).catch(function(){});
+      if (_soMail) {
+        var _bMail = _soMail.buyerEmail || _soMail.buyer_email;
+        var _bName = _soMail.buyerName  || _soMail.buyer_name || 'Client';
+        var _oId   = _soMail.id;
+        if (newStatus === 'in_transit' || newStatus === 'shipped') {
+          EmailService.sendOrderShipped(_soMail).catch(function(){});
+        } else if (newStatus === 'delivered') {
+          EmailService.sendEvent('order_delivered', _bMail, { buyer_name:_bName, order_id:_oId }).catch(function(){});
+          EmailService.sendEvent('review_request', _bMail, { buyer_name:_bName, product_name:(_soMail.products&&_soMail.products[0]&&_soMail.products[0].name)||'votre article', review_url:(window.location.origin+'/?order='+_oId) }).catch(function(){});
+        } else if (newStatus === 'cancelled') {
+          EmailService.sendEvent('order_cancelled', _bMail, { buyer_name:_bName, order_id:_oId, cancel_reason:(_soMail.cancel_reason||_soMail.cancelReason||'—') }).catch(function(){});
+        }
       }
     } catch(_){}
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
@@ -22095,6 +22422,11 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
                     ? `. Total : ${ptsTotal.toLocaleString("fr-FR")} pts${tierStr}.`
                     : "."),
             });
+            // Email acheteur : points fidélité gagnés (centre de notifications)
+            try {
+              var _lMail = fullOrder && (fullOrder.buyer_email || fullOrder.buyerEmail);
+              if (_lMail) EmailService.sendEvent('loyalty_earned', _lMail, { buyer_name:(fullOrder.buyer_name||fullOrder.buyerName||'Client'), points:ptsAdded, balance:(ptsTotal!=null?ptsTotal:ptsAdded) }).catch(function(){});
+            } catch(_){}
           }
         }
       } catch (eRewards) {
@@ -22249,6 +22581,13 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     const pending = products.filter((p) => !p.moderated);
     const approved = products.filter((p) => p.moderated);
     const moderateProduct = async (pid, approve) => {
+      // Email vendeur en cas de refus (centre de notifications)
+      if (!approve && DataService._sb) {
+        try {
+          const { data: _p } = await DataService._sb.from("products").select("vendor_id,name").eq("id", pid).maybeSingle();
+          if (_p?.vendor_id) EmailService.notifyUser('product_moderated', _p.vendor_id, { product_name: _p.name || 'votre produit', reason: 'Non conforme aux règles NEXUS' });
+        } catch(_){}
+      }
       // [FIX #1] PATCH /api/products/:id/moderate
       if (NEXUS_CONFIG.apiUrl) {
         try {
@@ -22508,6 +22847,15 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
         setReturns(prev => prev.map(r => r.id === retId ? { ...r, status: newStatus } : r));
         const label = STATUS_RETURN?.[newStatus]?.label || newStatus;
         addToast(`Retour marqué : ${label}`, "success");
+        // -- Email acheteur : retour approuvé / refusé --
+        try {
+          const _r = (typeof returns !== 'undefined' ? returns : []).find(x => x.id === retId);
+          const _rMail = _r && (_r.buyerEmail || _r.buyer_email);
+          if (_rMail && (newStatus === 'approved' || newStatus === 'rejected')) {
+            EmailService.sendEvent(newStatus === 'approved' ? 'return_approved' : 'return_rejected', _rMail,
+              { buyer_name: _r.buyerName || _r.buyer_name || 'Client', order_id: _r.orderId || _r.order_id || '—', reason: adminNotes || '' }).catch(function(){});
+          }
+        } catch(_){}
       } catch (networkErr) {
         addToast("Erreur — impossible de mettre à jour le retour.", "danger");
       }
@@ -27137,12 +27485,22 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     addToast(`Statut mis à jour → ${newStatus}`, "success");
 
     try { var _so=(typeof orders!=='undefined'?orders:[]).find(function(o){return o.id===orderId;})||(storage.getArray('orders')||[]).find(function(o){return o.id===orderId;}); if(_so&&['in_transit','delivered','cancelled'].indexOf(newStatus)>=0) NexusSmsService.sendStatusUpdate(_so,newStatus).catch(function(){}); } catch(_){}
-    // -- Email acheteur "commande expediee" (template order_shipped) --
+    // -- Email acheteur selon le nouveau statut (expédiée / livrée / annulée) --
     try {
       var _soMail = (typeof orders !== 'undefined' ? orders : []).find(function(o){return o.id===orderId;})
                  || (storage.getArray('orders')||[]).find(function(o){return o.id===orderId;});
-      if (_soMail && (newStatus === 'in_transit' || newStatus === 'shipped')) {
-        EmailService.sendOrderShipped(_soMail).catch(function(){});
+      if (_soMail) {
+        var _bMail = _soMail.buyerEmail || _soMail.buyer_email;
+        var _bName = _soMail.buyerName  || _soMail.buyer_name || 'Client';
+        var _oId   = _soMail.id;
+        if (newStatus === 'in_transit' || newStatus === 'shipped') {
+          EmailService.sendOrderShipped(_soMail).catch(function(){});
+        } else if (newStatus === 'delivered') {
+          EmailService.sendEvent('order_delivered', _bMail, { buyer_name:_bName, order_id:_oId }).catch(function(){});
+          EmailService.sendEvent('review_request', _bMail, { buyer_name:_bName, product_name:(_soMail.products&&_soMail.products[0]&&_soMail.products[0].name)||'votre article', review_url:(window.location.origin+'/?order='+_oId) }).catch(function(){});
+        } else if (newStatus === 'cancelled') {
+          EmailService.sendEvent('order_cancelled', _bMail, { buyer_name:_bName, order_id:_oId, cancel_reason:(_soMail.cancel_reason||_soMail.cancelReason||'—') }).catch(function(){});
+        }
       }
     } catch(_){}
     // ── [CASHBACK & FIDÉLITÉ v2] Récompenses automatiques à la livraison ──────
@@ -27219,6 +27577,11 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
                     ? `. Total : ${ptsTotal.toLocaleString("fr-FR")} pts${tierStr}.`
                     : "."),
             });
+            // Email acheteur : points fidélité gagnés (centre de notifications)
+            try {
+              var _lMail = fullOrder && (fullOrder.buyer_email || fullOrder.buyerEmail);
+              if (_lMail) EmailService.sendEvent('loyalty_earned', _lMail, { buyer_name:(fullOrder.buyer_name||fullOrder.buyerName||'Client'), points:ptsAdded, balance:(ptsTotal!=null?ptsTotal:ptsAdded) }).catch(function(){});
+            } catch(_){}
           }
         }
       } catch (eRewards) {
@@ -30148,6 +30511,8 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
       if (sb) {
         const { error } = await sb.from('b2b_quotes').insert([rec]);
         if (error) throw new Error(error.message);
+        // Email vendeur : nouvelle demande de devis (centre de notifications)
+        EmailService.notifyUser('quote_request', form.vendorId, { buyer_name: cu.name || 'Un acheteur', request_text: (form.requestText || '').slice(0, 300) });
       } else {
         // Stockage via NexusOfflineStore → IndexedDB + queue Supabase
         storage.set('nexus_b2b_quotes', [rec, ...storage.getArray('nexus_b2b_quotes')]);

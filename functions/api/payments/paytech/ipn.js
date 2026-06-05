@@ -6,6 +6,8 @@
 // On vérifie le hash HMAC avant de marquer la commande paid.
 // ============================================================
 
+import { sendEventEmail } from '../../_lib/notify.js';
+
 const jsonR = (d, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { 'Content-Type': 'application/json' } });
 
@@ -95,7 +97,7 @@ export async function onRequest({ request, env }) {
 
   // 5. Créer une notification in-app
   if (isPaid) {
-    const orders = await sbGet(env, `orders?id=eq.${order_id}&select=buyer_id,total`);
+    const orders = await sbGet(env, `orders?id=eq.${order_id}&select=buyer_id,total,buyer_email,buyer_name`);
     const order = orders?.[0];
     if (order?.buyer_id) {
       await fetch(`${env.SUPABASE_URL}/rest/v1/notifications`, {
@@ -117,6 +119,16 @@ export async function onRequest({ request, env }) {
           created_at: new Date().toISOString(),
         }),
       });
+    }
+    // Email acheteur : paiement reçu (centre de notifications)
+    if (order?.buyer_email) {
+      await sendEventEmail(env, 'payment_received', order.buyer_email, {
+        buyer_name: order.buyer_name || 'Client',
+        order_id:   order_id,
+        total:      Number(order.total || 0).toLocaleString('fr-FR'),
+        _userId:    order.buyer_id || null,
+        _orderId:   order_id,
+      }).catch(e => console.warn('[PayTech IPN] email:', e.message));
     }
   }
 

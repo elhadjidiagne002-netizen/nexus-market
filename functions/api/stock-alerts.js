@@ -15,6 +15,8 @@
 //   POST   /api/stock-alerts/migrate      → migrer localStorage → Supabase
 // ============================================================
 
+import { sendEventEmail } from './_lib/notify.js';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -125,7 +127,7 @@ export async function onRequest({ request, env, params }) {
     if ((product.stock || 0) <= 0) return jsonR({ ok: false, reason: 'Toujours hors stock' });
 
     // Récupérer tous les abonnés pour ce produit
-    const { data: alerts } = await sb(env, `stock_alerts?product_id=eq.${productId}&notified=is.false&select=user_id`);
+    const { data: alerts } = await sb(env, `stock_alerts?product_id=eq.${productId}&notified=is.false&select=user_id,user_email`);
     if (!alerts?.length) return jsonR({ ok: true, notified: 0 });
 
     let notified = 0;
@@ -154,6 +156,14 @@ export async function onRequest({ request, env, params }) {
         read: false,
         created_at: new Date().toISOString(),
       });
+
+      // Email "de nouveau en stock" (centre de notifications)
+      if (env.RESEND_API_KEY && alert.user_email) {
+        await sendEventEmail(env, 'stock_back', alert.user_email, {
+          buyer_name: 'Client', product_name: product.name,
+          product_url: notifyPayload.url, _userId: alert.user_id || null,
+        }).catch(() => {});
+      }
 
       notified++;
     }

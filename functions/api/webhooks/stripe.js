@@ -19,6 +19,8 @@
 //   Endpoint URL : https://<votre-site>.pages.dev/api/webhooks/stripe
 //   Événements  : payment_intent.succeeded, payment_intent.payment_failed, charge.refunded
 
+import { sendEventEmail } from '../_lib/notify.js';
+
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -76,9 +78,10 @@ export async function onRequestPost(context) {
             try {
               const hdrs = { "Content-Type":"application/json", apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
               // Récupérer l'acheteur de la commande (colonne buyer_id — cf. schéma orders)
-              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=buyer_id`, { headers: hdrs });
+              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=buyer_id,buyer_email,buyer_name,total`, { headers: hdrs });
               const oData = await oRes.json();
-              const buyerId = oData?.[0]?.buyer_id;
+              const order = oData?.[0] || {};
+              const buyerId = order.buyer_id;
               if (!buyerId) return;
               const amountFcfa = Math.round((pi.amount_received || pi.amount || 0) / 100 * 655.957);
               // Notification Supabase (type ∈ {order,offer,message,return,vendor,system,dispute})
@@ -92,6 +95,13 @@ export async function onRequestPost(context) {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ userId: buyerId, eventType: "payment_confirmed", payload: { title: "✅ Paiement confirmé", body: `${amountFcfa.toLocaleString('fr-FR')} FCFA reçu — commande #${orderId.slice(-6)}`, icon: "/assets/Gemini_Generated_Image_51w43151w43151w4.png", data: { url: `/?order=${orderId}` } } }),
               });
+              // Email acheteur : paiement reçu (centre de notifications)
+              if (order.buyer_email) {
+                await sendEventEmail(env, "payment_received", order.buyer_email, {
+                  buyer_name: order.buyer_name || "Client", order_id: orderId,
+                  total: amountFcfa.toLocaleString('fr-FR'), _userId: buyerId, _orderId: orderId,
+                }).catch(() => {});
+              }
             } catch(e) { console.warn("[Stripe webhook] push/notif error:", e.message); }
           })());
         }
@@ -106,14 +116,33 @@ export async function onRequestPost(context) {
         });
         break;
 
-      case "charge.refunded":
+      case "charge.refunded": {
         // pi ici est une Charge, pas un PaymentIntent
+        const rOrderId = pi.metadata?.order_id || pi.metadata?.orderId || null;
         await updateOrderByStripe(SB_URL, SB_KEY, {
           paymentIntentId: pi.payment_intent || null,
-          orderId:         pi.metadata?.order_id || pi.metadata?.orderId || null,
+          orderId:         rOrderId,
           kind:            "refunded",
         });
+        // Email acheteur : remboursement effectué (centre de notifications)
+        if (rOrderId && SB_URL && SB_KEY && env.RESEND_API_KEY) {
+          context.waitUntil((async () => {
+            try {
+              const hdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
+              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(rOrderId)}&select=buyer_id,buyer_email,buyer_name`, { headers: hdrs });
+              const o = (await oRes.json())?.[0];
+              if (o?.buyer_email) {
+                const amt = Math.round((pi.amount_refunded || 0) / 100 * 655.957);
+                await sendEventEmail(env, "refund_processed", o.buyer_email, {
+                  buyer_name: o.buyer_name || "Client", order_id: rOrderId,
+                  amount: amt.toLocaleString("fr-FR"), _userId: o.buyer_id || null, _orderId: rOrderId,
+                });
+              }
+            } catch (_) {}
+          })());
+        }
         break;
+      }
 
       default:
         // Événement non géré — répondre 200 quand même pour éviter les retransmissions Stripe

@@ -14,6 +14,7 @@
 
 import { normalizePhone, isValidPhone, isValidMessage } from './_lib/validate.js';
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
+import { getEventConfig, logWhatsApp } from './_lib/notify.js';
 
 export async function onRequestPost(ctx) {
   const { request, env } = ctx;
@@ -53,6 +54,14 @@ export async function onRequestPost(ctx) {
     return json({ ok: false, error: 'Message vide ou trop long (max 4096 caractères)' }, 400, corsHeaders);
   }
 
+  // ── Gating centre de notifications (si un événement est fourni) ─────────
+  if (body.event) {
+    const cfg = await getEventConfig(env, body.event);
+    if (cfg && cfg.whatsapp_enabled === false) {
+      return json({ ok: true, skipped: 'event_disabled' }, 200, corsHeaders);
+    }
+  }
+
   // ── Rate limiting : 10 messages / minute / IP ───────────────────────────
   const rl = await rateLimit(env, `wa:${clientIp(request)}`, 10, 60);
   if (!rl.allowed) return tooManyRequests(rl.resetAt, corsHeaders);
@@ -60,6 +69,7 @@ export async function onRequestPost(ctx) {
   // Normaliser le numéro → format 221XXXXXXXXX@c.us
   const raw    = normalizePhone(body.phone);
   const chatId = (raw.startsWith('221') ? raw : raw.length === 9 ? '221' + raw : raw) + '@c.us';
+  const logRow = { phone: raw, message: body.message, template: body.event || null, user_id: body.userId || null };
 
   let res;
   try {
@@ -69,12 +79,17 @@ export async function onRequestPost(ctx) {
       body:    JSON.stringify({ chatId, message: body.message }),
     });
   } catch(err) {
+    await logWhatsApp(env, { ...logRow, status: 'failed', error_msg: 'Green API injoignable : ' + err.message });
     return json({ ok: false, error: 'Green API injoignable : ' + err.message }, 502, corsHeaders);
   }
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return json({ ok: false, error: 'Green API ' + res.status, detail: data }, res.status, corsHeaders);
+  if (!res.ok) {
+    await logWhatsApp(env, { ...logRow, status: 'failed', error_msg: 'Green API ' + res.status });
+    return json({ ok: false, error: 'Green API ' + res.status, detail: data }, res.status, corsHeaders);
+  }
 
+  await logWhatsApp(env, { ...logRow, status: 'sent', green_id: data.idMessage || null });
   return json({ ok: true, idMessage: data.idMessage, chatId }, 200, corsHeaders);
 }
 

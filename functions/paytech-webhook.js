@@ -3,6 +3,7 @@
  * IPN PayTech – Confirme ou annule une commande
  */
 import { createClient } from "@supabase/supabase-js";
+import { sendEventEmail } from "./api/_lib/notify.js";
 
 // Multiplicateur de points par défaut (tier Bronze)
 const POINTS_PER_EURO = 10;
@@ -88,7 +89,7 @@ export async function onRequestPost(context) {
           // (et non amount_eur, colonne inexistante).
           const { data: order } = await sb
             .from("orders")
-            .select("buyer_id, total")
+            .select("buyer_id, total, buyer_email, buyer_name")
             .eq("id", ref_command)
             .single();
 
@@ -102,6 +103,19 @@ export async function onRequestPost(context) {
               read: false,
               link: `/?order=${ref_command}`,
             }).catch(e => console.warn("[PayTech IPN] notification error:", e.message));
+
+            // [EMAIL] Paiement reçu (centre de notifications)
+            if (order.buyer_email) {
+              context.waitUntil(
+                sendEventEmail(env, "payment_received", order.buyer_email, {
+                  buyer_name: order.buyer_name || "Client",
+                  order_id:   ref_command,
+                  total:      Number(order.total || item_price || 0).toLocaleString("fr-FR"),
+                  _userId:    order.buyer_id || null,
+                  _orderId:   ref_command,
+                }).catch(e => console.warn("[PayTech IPN] email:", e.message))
+              );
+            }
 
             // [PUSH] Envoyer la notification push au buyer
             context.waitUntil(

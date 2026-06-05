@@ -4,6 +4,7 @@
 // la clé API. Auth Supabase requise + rate limit (anti-spam).
 import { options, json, err, requireAuth, sendEmail, CORS } from '../_lib/utils.js';
 import { rateLimit, clientIp, tooManyRequests } from '../_lib/ratelimit.js';
+import { getEventConfig, logEmail } from '../_lib/notify.js';
 
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
@@ -21,7 +22,8 @@ export async function onRequest({ request, env }) {
 
   let body;
   try { body = await request.json(); } catch { return err('JSON invalide', 400); }
-  const { to, subject, html } = body || {};
+  // event/userId/orderId : métadonnées du centre de notifications (gating + log).
+  const { to, subject, html, event, userId, orderId } = body || {};
 
   // ── Validation ──────────────────────────────────────────────────────────
   if (typeof to !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to))
@@ -31,20 +33,38 @@ export async function onRequest({ request, env }) {
   if (typeof html !== 'string' || html.length === 0 || html.length > 100000)
     return err('Contenu HTML invalide', 400);
 
+  // ── Gating par événement (centre de notifications) ──────────────────────
+  // Si un `event` est fourni et désactivé pour l'email par l'admin → on n'envoie
+  // pas (et on ne journalise pas un "envoi" fantôme).
+  if (event) {
+    const cfg = await getEventConfig(env, event);
+    if (cfg && cfg.email_enabled === false) {
+      return json({ ok: true, skipped: 'event_disabled' });
+    }
+  }
+
   // ── Rate limiting (buckets séparés) : connecté 20/min, invité 5/min / IP ──
   const max = authed ? 20 : 5;
   const bucket = authed ? 'auth' : 'guest';
   const rl = await rateLimit(env, `email:${bucket}:${clientIp(request)}`, max, 60);
   if (!rl.allowed) return tooManyRequests(rl.resetAt, CORS);
 
+  const logBase = { to_email: to, subject, template: event || null,
+    user_id: userId || null, order_id: orderId || null };
   try {
     const r = await sendEmail(env, { to, subject, html });
-    if (r && r.ok) return json({ ok: true });
+    if (r && r.ok) {
+      const data = await r.json().catch(() => ({}));
+      await logEmail(env, { ...logBase, status: 'sent', provider_id: data?.id || null });
+      return json({ ok: true });
+    }
     const detail = r ? await r.text().catch(() => '') : 'no-response';
     console.error('[email/send] Resend KO:', detail);
+    await logEmail(env, { ...logBase, status: 'failed' });
     return json({ ok: false, error: 'Échec envoi email' }, 502);
   } catch (e) {
     console.error('[email/send]', e.message);
+    await logEmail(env, { ...logBase, status: 'failed' });
     return err(e.message, 500);
   }
 }
