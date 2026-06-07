@@ -29,6 +29,11 @@ function jsonLdScript(obj) {
   return `<script type="application/ld+json">${json}</script>`;
 }
 
+// Segment d'URL public selon le type d'annonce.
+function listingSeg(kind) {
+  return kind === 'annonce' ? 'annonce' : kind === 'troc' ? 'troc' : 'produit';
+}
+
 // Balises hreflang communes (FR par défaut, Wolof/EN via ?lang=, x-default).
 function hreflangTags(url) {
   const sep = url.includes('?') ? '&' : '?';
@@ -47,9 +52,11 @@ function hreflangTags(url) {
  *   vendorName, vendorId, priceValidUntil, brand }
  */
 export function renderListingPage(o) {
-  const kind = o.kind === 'annonce' ? 'annonce' : 'produit';
+  const kind = o.kind === 'annonce' ? 'annonce' : o.kind === 'troc' ? 'troc' : 'produit';
   const url = `${o.origin}/${kind}/${encodeURIComponent(o.id)}`;
-  const appUrl = `${o.origin}/?product=${encodeURIComponent(o.id)}`;
+  const appUrl = kind === 'troc'
+    ? `${o.origin}/?troc=${encodeURIComponent(o.id)}`
+    : `${o.origin}/?product=${encodeURIComponent(o.id)}`;
   const title = redactContact(o.title || 'Annonce NEXUS Market');
   const priceTxt = o.priceFcfa ? `${Number(o.priceFcfa).toLocaleString('fr-FR')} FCFA` : '';
   const desc = redactContact(String(o.description || `${title} — ${o.category || ''} ${o.city || ''} sur NEXUS Market Sénégal.`)
@@ -125,7 +132,7 @@ ${(rc > 0 && rv > 0) ? `<div class="rating">★ ${rv.toFixed(1)} <span style="co
 ${o.image ? `<p><img src="${esc(img)}" alt="${esc(title)}" loading="lazy"></p>` : ''}
 ${priceTxt ? `<div class="price">${esc(priceTxt)}</div>` : ''}
 <p>${esc(desc)}</p>
-<a class="cta" href="${esc(appUrl)}">Voir ${kind === 'annonce' ? "l'annonce" : 'le produit'} sur NEXUS Market →</a>
+<a class="cta" href="${esc(appUrl)}">${kind === 'troc' ? 'Proposer un échange' : 'Voir ' + (kind === 'annonce' ? "l'annonce" : 'le produit')} sur NEXUS Market →</a>
 <p class="foot">NEXUS Market — Marketplace sécurisée au Sénégal · Orange Money · Wave · Livraison partout.</p>
 </body></html>`;
 }
@@ -144,7 +151,7 @@ export function renderListPage(o) {
     '@type': 'ItemList', name: o.title, numberOfItems: items.length,
     itemListElement: items.slice(0, 100).map((it, i) => ({
       '@type': 'ListItem', position: i + 1,
-      url: `${o.origin}/${it.kind === 'annonce' ? 'annonce' : 'produit'}/${encodeURIComponent(it.id)}`,
+      url: `${o.origin}/${listingSeg(it.kind)}/${encodeURIComponent(it.id)}`,
       name: it.title,
     })),
   };
@@ -161,7 +168,7 @@ export function renderListPage(o) {
   ).join(' <span class="sep">›</span> ');
 
   const cards = items.map(it => {
-    const link = `${o.origin}/${it.kind === 'annonce' ? 'annonce' : 'produit'}/${encodeURIComponent(it.id)}`;
+    const link = `${o.origin}/${listingSeg(it.kind)}/${encodeURIComponent(it.id)}`;
     const priceTxt = it.priceFcfa ? `${Number(it.priceFcfa).toLocaleString('fr-FR')} FCFA` : '';
     return `<a class="card" href="${esc(link)}">${it.image ? `<img src="${esc(it.image)}" alt="${esc(it.title)}" loading="lazy">` : '<div class="ph"></div>'}<div class="ci"><div class="ct">${esc(it.title)}</div>${priceTxt ? `<div class="cp">${esc(priceTxt)}</div>` : ''}</div></a>`;
   }).join('');

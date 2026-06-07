@@ -26,10 +26,11 @@ async function handle({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const nowIso = new Date().toISOString().slice(0, 10);
 
-  // Produits actifs + annonces express non expirées.
-  const [products, annonces] = await Promise.all([
+  // Produits actifs + annonces express + trocs actifs.
+  const [products, annonces, trocs] = await Promise.all([
     sbGet(env, 'products?select=id,name,image_url,updated_at&active=eq.true&order=updated_at.desc&limit=5000'),
     sbGet(env, `annonces_express?select=id,category,city,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
+    sbGet(env, `troc_listings?select=id,title,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
   ]);
 
   const urls = [];
@@ -42,6 +43,11 @@ async function handle({ request, env }) {
     const loc = `${origin}/annonce/${encodeURIComponent(a.id)}`;
     const img = a.photo_url ? `\n    <image:image><image:loc>${xmlEscape(a.photo_url)}</image:loc></image:image>` : '';
     urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(a.created_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.6</priority>${img}\n  </url>`);
+  }
+  for (const tr of (trocs || [])) {
+    const loc = `${origin}/troc/${encodeURIComponent(tr.id)}`;
+    const img = tr.photo_url ? `\n    <image:image><image:loc>${xmlEscape(tr.photo_url)}</image:loc><image:title>${xmlEscape(tr.title)}</image:title></image:image>` : '';
+    urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(tr.created_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.6</priority>${img}\n  </url>`);
   }
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>

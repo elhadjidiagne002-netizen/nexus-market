@@ -12918,6 +12918,160 @@ function vendorCanOperate(user) {
   return vendorGraceActive(user); // 'pending' → accès provisoire 72h
 }
 
+// [NEXUS TROC] Widget autonome d'échange d'objets sans argent (« mon téléphone
+// contre ta tablette »). Bouton flottant + modal : parcourir / publier / proposer.
+// Écrit directement dans Supabase (troc_listings / troc_proposals) avec repli local.
+const TROC_CATS = ['Électronique', 'Téléphones', 'Informatique', 'Mode & Vêtements', 'Maison & Déco', 'Sport & Loisirs', 'Auto & Moto', 'Autre'];
+const TROC_CITIES = ['Dakar', 'Thiès', 'Saint-Louis', 'Touba', 'Rufisque', 'Mbour', 'Kaolack', 'Ziguinchor', 'Autre'];
+const NexusTrocWidget = ({ user }) => {
+  const [open, setOpen] = React.useState(false);
+  const [tab, setTab] = React.useState('browse');
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [form, setForm] = React.useState({ title: '', description: '', category: 'Électronique', city: 'Dakar', want: '', phone: '', photoUrl: '' });
+  const [proposeFor, setProposeFor] = React.useState(null);
+  const [prop, setProp] = React.useState({ offered_title: '', message: '', phone: '' });
+  const fileRef = React.useRef(null);
+  const toast = (m, t) => (window.__nexusToast || function () {})(m, t || 'info');
+  const E = React.createElement;
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      if (DataService._sb) {
+        const { data } = await DataService._sb.from('troc_listings').select('*').eq('status', 'active').order('created_at', { ascending: false }).limit(50);
+        if (data) { setItems(data); setLoading(false); return; }
+      }
+    } catch (_) {}
+    try { setItems(JSON.parse(localStorage.getItem('nexus_troc') || '[]')); } catch (_) { setItems([]); }
+    setLoading(false);
+  };
+  React.useEffect(() => { if (open) load(); }, [open]);
+  // Ouverture auto si l'URL contient ?troc=... (depuis une page SEO /troc/:id)
+  React.useEffect(() => {
+    try { if (new URLSearchParams(location.search).get('troc')) setOpen(true); } catch (_) {}
+  }, []);
+
+  const pickPhoto = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      let url = '';
+      if (DataService._sb && DataService._sb.storage) {
+        const ext = ((file.type || 'image/jpeg').split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+        const fn = 'troc/' + Date.now() + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+        const { data: up, error } = await DataService._sb.storage.from('nexus-images').upload(fn, file, { contentType: file.type || 'image/jpeg', upsert: true });
+        if (error) throw error;
+        url = DataService._sb.storage.from('nexus-images').getPublicUrl(up.path).data.publicUrl;
+      } else {
+        url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+      }
+      setForm(f => ({ ...f, photoUrl: url }));
+    } catch (e) { toast('Échec photo : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+  };
+
+  const submitCreate = async () => {
+    if (!form.title.trim()) { toast('Donnez un titre à votre objet.', 'error'); return; }
+    if (!form.want.trim()) { toast('Indiquez ce que vous recherchez en échange.', 'error'); return; }
+    setBusy(true);
+    try {
+      const rec = { id: (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+        owner_id: (user && user.id) || null, owner_name: (user && user.name) || 'Anonyme',
+        title: form.title.trim(), description: form.description.trim() || null, photo_url: form.photoUrl || null,
+        category: form.category, city: form.city || 'Dakar', want: form.want.trim(),
+        phone: form.phone || null, status: 'active', created_at: new Date().toISOString() };
+      let ok = false;
+      if (DataService._sb) { const { error } = await DataService._sb.from('troc_listings').insert([rec]); ok = !error; if (error) console.warn('[troc]', error.message); }
+      try { const a = JSON.parse(localStorage.getItem('nexus_troc') || '[]'); a.unshift(rec); localStorage.setItem('nexus_troc', JSON.stringify(a.slice(0, 100))); } catch (_) {}
+      try { fetch('/api/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: ['/troc/' + rec.id, '/troc'] }) }).catch(() => {}); } catch (_) {}
+      toast(ok ? 'Annonce de troc publiée ! 🔄' : 'Publié en local (vérifiez la connexion).', ok ? 'success' : 'warning');
+      setForm({ title: '', description: '', category: 'Électronique', city: 'Dakar', want: '', phone: '', photoUrl: '' });
+      setTab('browse'); load();
+    } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+  };
+
+  const submitProposal = async () => {
+    if (!prop.offered_title.trim()) { toast('Indiquez l’objet que vous proposez.', 'error'); return; }
+    setBusy(true);
+    try {
+      const rec = { id: (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), listing_id: proposeFor.id,
+        proposer_id: (user && user.id) || null, proposer_name: (user && user.name) || 'Anonyme',
+        offered_title: prop.offered_title.trim(), message: prop.message.trim() || null, phone: prop.phone || null,
+        status: 'pending', created_at: new Date().toISOString() };
+      let ok = false;
+      if (DataService._sb) { const { error } = await DataService._sb.from('troc_proposals').insert([rec]); ok = !error; if (error) console.warn('[troc prop]', error.message); }
+      toast(ok ? 'Proposition envoyée ! Le propriétaire vous recontactera. 🤝' : 'Proposition enregistrée localement.', ok ? 'success' : 'warning');
+      setProposeFor(null); setProp({ offered_title: '', message: '', phone: '' });
+    } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+  };
+
+  const inp = (val, on, ph, type) => E('input', { type: type || 'text', value: val, onChange: e => on(e.target.value), placeholder: ph, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem' } });
+
+  const card = (t) => E('div', { key: t.id, style: { border: '1px solid var(--border,#e5e7eb)', borderRadius: 12, overflow: 'hidden', background: '#fff', display: 'flex', flexDirection: 'column' } },
+    t.photo_url ? E('img', { src: t.photo_url, alt: t.title, loading: 'lazy', style: { width: '100%', height: 120, objectFit: 'cover' } }) : E('div', { style: { height: 120, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34 } }, '🔄'),
+    E('div', { style: { padding: '0.6rem', flex: 1, display: 'flex', flexDirection: 'column' } },
+      E('div', { style: { fontWeight: 700, fontSize: '0.9rem' } }, t.title),
+      E('div', { style: { fontSize: '0.8rem', color: 'var(--text-secondary,#6b7280)', margin: '0.2rem 0', flex: 1 } }, '🎯 Cherche : ' + (t.want || '—')),
+      E('div', { style: { fontSize: '0.72rem', color: '#9ca3af', marginBottom: '0.4rem' } }, (t.category || '') + (t.city ? ' · ' + t.city : '')),
+      E('button', { onClick: () => setProposeFor(t), style: { background: '#00853E', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' } }, 'Proposer un échange')
+    )
+  );
+
+  const overlay = (children) => E('div', { onClick: () => { setProposeFor(null); if (!proposeFor) setOpen(false); }, style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' } },
+    E('div', { onClick: e => e.stopPropagation(), style: { background: '#fff', borderRadius: 16, width: '100%', maxWidth: 760, maxHeight: '88vh', overflow: 'auto', padding: '1.2rem' } }, children));
+
+  return E(React.Fragment, null,
+    // Bouton flottant
+    E('button', { onClick: () => setOpen(true), 'aria-label': 'NEXUS Troc', style: { position: 'fixed', left: 16, bottom: 16, zIndex: 9990, background: 'linear-gradient(135deg,#00853E,#0d9488)', color: '#fff', border: 'none', borderRadius: 999, padding: '0.7rem 1.1rem', boxShadow: '0 6px 18px rgba(0,0,0,.25)', cursor: 'pointer', fontWeight: 800, fontSize: '0.9rem' } }, '🔄 Troc'),
+    open && overlay(E(React.Fragment, null,
+      E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.8rem' } },
+        E('h2', { style: { margin: 0, fontSize: '1.25rem', color: '#00853E' } }, '🔄 NEXUS Troc'),
+        E('button', { onClick: () => setOpen(false), style: { background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', lineHeight: 1 } }, '×')
+      ),
+      E('p', { style: { marginTop: 0, color: 'var(--text-secondary,#6b7280)', fontSize: '0.86rem' } }, 'Échangez vos objets sans argent — « mon téléphone contre ta tablette ». Sans commission.'),
+      E('div', { style: { display: 'flex', gap: '0.5rem', marginBottom: '1rem' } },
+        E('button', { onClick: () => setTab('browse'), style: { flex: 1, padding: '0.5rem', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, background: tab === 'browse' ? '#00853E' : '#eef2f0', color: tab === 'browse' ? '#fff' : '#374151' } }, 'Parcourir'),
+        E('button', { onClick: () => setTab('create'), style: { flex: 1, padding: '0.5rem', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, background: tab === 'create' ? '#00853E' : '#eef2f0', color: tab === 'create' ? '#fff' : '#374151' } }, '+ Publier mon objet')
+      ),
+      tab === 'browse' && (loading
+        ? E('p', { style: { textAlign: 'center', color: '#6b7280' } }, 'Chargement…')
+        : items.length === 0
+          ? E('p', { style: { textAlign: 'center', color: '#6b7280', padding: '1.5rem 0' } }, 'Aucun troc pour le moment. Soyez le premier à publier !')
+          : E('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: '0.8rem' } }, items.map(card))
+      ),
+      tab === 'create' && E('div', null,
+        inp(form.title, v => setForm(f => ({ ...f, title: v })), 'Objet à troquer (ex. iPhone 11 64 Go)'),
+        E('textarea', { value: form.description, onChange: e => setForm(f => ({ ...f, description: e.target.value })), placeholder: 'Description, état…', rows: 3, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem', resize: 'vertical' } }),
+        inp(form.want, v => setForm(f => ({ ...f, want: v })), '🎯 Ce que vous cherchez en échange'),
+        E('div', { style: { display: 'flex', gap: '0.6rem' } },
+          E('select', { value: form.category, onChange: e => setForm(f => ({ ...f, category: e.target.value })), style: { flex: 1, padding: '0.55rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem' } }, TROC_CATS.map(c => E('option', { key: c, value: c }, c))),
+          E('select', { value: form.city, onChange: e => setForm(f => ({ ...f, city: e.target.value })), style: { flex: 1, padding: '0.55rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem' } }, TROC_CITIES.map(c => E('option', { key: c, value: c }, c)))
+        ),
+        inp(form.phone, v => setForm(f => ({ ...f, phone: v })), 'Téléphone (WhatsApp) — optionnel', 'tel'),
+        E('input', { ref: fileRef, type: 'file', accept: 'image/*', style: { display: 'none' }, onChange: e => pickPhoto(e.target.files && e.target.files[0]) }),
+        E('div', { style: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.8rem' } },
+          E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, style: { background: '#eef2f0', border: 'none', borderRadius: 8, padding: '0.5rem 0.8rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : '📷 Photo'),
+          form.photoUrl && E('img', { src: form.photoUrl, alt: 'aperçu', style: { width: 44, height: 44, borderRadius: 8, objectFit: 'cover' } })
+        ),
+        E('button', { onClick: submitCreate, disabled: busy, style: { width: '100%', background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, busy ? 'Publication…' : 'Publier mon troc')
+      )
+    )),
+    // Sous-modal : proposer un échange
+    proposeFor && overlay(E(React.Fragment, null,
+      E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' } },
+        E('h3', { style: { margin: 0 } }, 'Proposer pour : ' + proposeFor.title),
+        E('button', { onClick: () => setProposeFor(null), style: { background: 'none', border: 'none', fontSize: 22, cursor: 'pointer' } }, '×')
+      ),
+      E('p', { style: { marginTop: 0, fontSize: '0.85rem', color: '#6b7280' } }, '🎯 Recherche : ' + (proposeFor.want || '—')),
+      inp(prop.offered_title, v => setProp(p => ({ ...p, offered_title: v })), 'Objet que vous proposez en échange'),
+      E('textarea', { value: prop.message, onChange: e => setProp(p => ({ ...p, message: e.target.value })), placeholder: 'Message (optionnel)', rows: 3, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem', resize: 'vertical' } }),
+      inp(prop.phone, v => setProp(p => ({ ...p, phone: v })), 'Votre téléphone (WhatsApp) — optionnel', 'tel'),
+      E('button', { onClick: submitProposal, disabled: busy, style: { width: '100%', background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, busy ? 'Envoi…' : 'Envoyer ma proposition')
+    ))
+  );
+};
+
 // [GRACE 72H] Bandeau global de compte à rebours, affiché en haut de l'app pour un
 // vendeur en accès provisoire (status pending dans la fenêtre de 72h).
 const VendorGraceBanner = ({ user }) => {
@@ -33426,7 +33580,7 @@ const App = ({ onUserChange }) => {
       sidebarOpen,
       onToggleSidebar: toggleSidebar
     }
-  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
