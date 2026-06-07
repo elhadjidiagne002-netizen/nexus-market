@@ -21299,14 +21299,14 @@ const CourierApp = ({ currentUser, addToast }) => {
                 E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)',marginTop:'.15rem'}},'📍 Retrait: ',job.pickup_address)
               ),
               E('div',{style:{textAlign:'right'}},
-                E('div',{style:{fontWeight:800,fontSize:'1.05rem',color:'var(--primary)'}}),
-                FCFA(job.courier_net),
+                E('div',{style:{fontWeight:800,fontSize:'1.05rem',color:'var(--primary)'}},FCFA(job.courier_net)),
                 E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)'}},'gain net')
               )
             ),
-            E('div',{style:{fontSize:'.8rem',color:'var(--text-secondary)',marginBottom:'.75rem'}},
+            E('div',{style:{fontSize:'.8rem',color:'var(--text-secondary)',marginBottom:'.5rem'}},
               '🏠 Livraison: ',job.delivery_address,' (',job.delivery_city,')'
             ),
+            (job.distance_km!=null) && E('div',{style:{fontSize:'.74rem',color:'var(--text-secondary)',marginBottom:'.75rem'}},'📏 ',Number(job.distance_km).toFixed(1),' km'),
             E('button',{className:'btn btn-primary btn-block',onClick:()=>acceptJob(job)},'✅ Accepter cette mission')
           ))
         )
@@ -21325,7 +21325,8 @@ const CourierApp = ({ currentUser, addToast }) => {
               ),
               E('div',{style:{fontSize:'.82rem',marginBottom:'.3rem'}},'📍 Retrait: ',job.pickup_address),
               E('div',{style:{fontSize:'.82rem',marginBottom:'.3rem'}},'🏠 Livraison: ',job.delivery_address),
-              job.buyer_phone && E('a',{href:'tel:'+job.buyer_phone,style:{fontSize:'.82rem',color:'var(--primary)',display:'block',marginBottom:'.75rem'}},'📞 Appeler client: ',job.buyer_phone),
+              job.buyer_phone && E('a',{href:'tel:'+job.buyer_phone,style:{fontSize:'.82rem',color:'var(--primary)',display:'block',marginBottom:'.3rem'}},'📞 Appeler client: ',job.buyer_phone),
+              job.buyer_phone && E('a',{href:'https://wa.me/'+String(job.buyer_phone).replace(/\D/g,''),target:'_blank',rel:'noopener',style:{fontSize:'.82rem',color:'#25D366',fontWeight:600,display:'block',marginBottom:'.75rem'}},'💬 WhatsApp client'),
               // Boutons d'action selon statut
               E('div',{style:{display:'flex',gap:'.5rem',flexWrap:'wrap'}},
                 job.status==='accepted' && E('button',{className:'btn btn-primary',style:{flex:1},onClick:()=>updateStatus(job,'picked_up')},'📦 Colis récupéré'),
@@ -21550,31 +21551,54 @@ const AdminLivraisonPanel = ({ addToast }) => {
     try {
       // [FIX] allSettled : si delivery_requests échoue (RLS/absente), on affiche
       // quand même les coursiers (et inversement). Promise.all masquait tout.
+      // [UNIFICATION] L'admin gère désormais la table `deliveries` (celle que les
+      // coursiers utilisent réellement) ; `delivery_requests` était vide/legacy.
       const [drRes, coRes] = await Promise.allSettled([
-        sb.from('delivery_requests').select('*').order('created_at',{ascending:false}).limit(200),
+        sb.from('deliveries').select('*').order('created_at',{ascending:false}).limit(200),
         sb.from('couriers').select('*').order('total_earned',{ascending:false}),
       ]);
-      const dr = (drRes.status === 'fulfilled' && drRes.value && drRes.value.data) ? drRes.value.data : [];
+      const _raw = (drRes.status === 'fulfilled' && drRes.value && drRes.value.data) ? drRes.value.data : [];
       const co = (coRes.status === 'fulfilled' && coRes.value && coRes.value.data) ? coRes.value.data : [];
       if (drRes.status === 'rejected' || (drRes.value && drRes.value.error))
-        console.warn('[Livraison] delivery_requests:', drRes.reason || (drRes.value && drRes.value.error && drRes.value.error.message));
+        console.warn('[Livraison] deliveries:', drRes.reason || (drRes.value && drRes.value.error && drRes.value.error.message));
       if (coRes.status === 'rejected' || (coRes.value && coRes.value.error))
         console.warn('[Livraison] couriers:', coRes.reason || (coRes.value && coRes.value.error && coRes.value.error.message));
+      // Mapping des champs `deliveries` vers les noms attendus par le rendu existant.
+      const dr = _raw.map(d => ({
+        ...d,
+        pickup_city:   d.pickup_label || d.pickup_zone || d.pickup_city || '—',
+        delivery_city: d.dropoff_label || d.dropoff_zone || d.delivery_city || '—',
+        nexus_cut:     d.nexus_cut != null ? d.nexus_cut : (d.commission_fcfa || 0),
+      }));
       setDeliveries(dr);
       setCouriers(co);
       const delivered = dr.filter(d=>d.status==='delivered');
+      const _openStatuses = ['searching','pending','accepted','assigned','picked_up','in_transit'];
       setStats({
         total: dr.length,
         delivered: delivered.length,
-        pending: dr.filter(d=>d.status==='pending').length,
+        pending: dr.filter(d=>_openStatuses.includes(d.status)).length,
         revenue: delivered.reduce((s,d)=>s+(d.nexus_cut||0),0),
-        couriersActive: co.filter(c=>c.is_available).length,
+        couriersActive: co.filter(c=>c.courier_status==='available'||c.is_available||c.status==='active').length,
       });
     } catch(e) { addToast('Erreur : '+e.message,'error'); }
     finally { setLoading(false); }
   };
 
   React.useEffect(()=>{ load(); },[]);
+
+  // [TEMPS RÉEL] Rafraîchissement auto sur changement de livraison/coursier
+  // (Supabase Realtime). Sans effet si la réplication realtime n'est pas activée.
+  React.useEffect(()=>{
+    if (!sb || !sb.channel) return;
+    let _t = null;
+    const _debouncedLoad = () => { clearTimeout(_t); _t = setTimeout(()=>load(), 400); };
+    const ch = sb.channel('admin-deliveries-rt')
+      .on('postgres_changes', { event:'*', schema:'public', table:'deliveries' }, _debouncedLoad)
+      .on('postgres_changes', { event:'*', schema:'public', table:'couriers' }, _debouncedLoad)
+      .subscribe();
+    return ()=>{ try { clearTimeout(_t); sb.removeChannel(ch); } catch(_){} };
+  },[]);
 
   const approveCourier = async (id) => {
     await sb.from('couriers').update({ status:'active', approved_at:new Date().toISOString() }).eq('id',id);
@@ -21603,8 +21627,16 @@ const AdminLivraisonPanel = ({ addToast }) => {
   const assignCourier = async (deliveryId, courierId) => {
     const co = couriers.find(c=>c.id===courierId);
     if (!co) return;
-    await sb.from('delivery_requests').update({ courier_id:courierId, status:'accepted', accepted_at:new Date().toISOString() }).eq('id',deliveryId);
-    addToast('Coursier assigné : '+co.name,'success'); load();
+    // [UNIFICATION] Assignation sur la table `deliveries` (celle des coursiers).
+    await sb.from('deliveries').update({ courier_id:courierId, status:'accepted', assigned_at:new Date().toISOString() }).eq('id',deliveryId);
+    addToast('Coursier assigné : '+co.name,'success');
+    try {
+      const _d = deliveries.find(x=>x.id===deliveryId) || {};
+      if (co.phone && typeof NexusWA!=='undefined' && NexusWA.deliveryAssigned)
+        NexusWA.deliveryAssigned(co.phone, _d.pickup_city, _d.delivery_city, _d.courier_payout||0);
+      if (_d.buyer_id) DataService.addNotification(_d.buyer_id, { type:'order', title:'Coursier assigné', message:'🛵 Un coursier a été assigné à votre livraison.', link: _d.order_id ? ('/?order='+_d.order_id) : undefined });
+    } catch(_){}
+    load();
   };
 
   const _pendingCouriers = couriers.filter(c => c.status === 'pending').length;
@@ -21671,7 +21703,7 @@ const AdminLivraisonPanel = ({ addToast }) => {
           deliveries.map(d=>{
             const st = DR_STATUS[d.status]||DR_STATUS.pending;
             const co = couriers.find(c=>c.id===d.courier_id);
-            const avail = couriers.filter(c=>c.status==='active'&&(c.zones||[]).includes(d.delivery_city));
+            const avail = couriers.filter(c=>(c.status==='active'||c.courier_status==='available')&&(!c.zones||!c.zones.length||c.zones.includes(d.delivery_city)));
             return E('tr',{key:d.id},
               E('td',null,E('code',{style:{fontSize:'.75rem'}},'#'+(d.order_id||'').slice(0,8).toUpperCase())),
               E('td',{style:{fontSize:'.78rem'}},d.pickup_city),
@@ -21681,7 +21713,7 @@ const AdminLivraisonPanel = ({ addToast }) => {
               E('td',{style:{fontWeight:600}},FCFA(d.fee_fcfa||0)),
               E('td',{style:{fontWeight:600,color:'var(--primary)'}},FCFA(d.nexus_cut||0)),
               E('td',null,
-                d.status==='pending'&&avail.length>0&&E('select',{
+                (!d.courier_id&&['pending','searching'].includes(d.status))&&avail.length>0&&E('select',{
                   style:{fontSize:'.75rem',padding:'.2rem .4rem',borderRadius:6,border:'1px solid var(--border)'},
                   onChange:e=>e.target.value&&assignCourier(d.id,e.target.value),defaultValue:''
                 },
@@ -36848,9 +36880,14 @@ window.addEventListener('unhandledrejection', function(event) {
       if (this._sb) {
         try {
           await this._sb.from('deliveries').update(patch).eq('id', deliveryId);
-          if (status === 'delivered') {
-            var dl = await this.getDelivery(deliveryId);
-            if (dl && dl.courier_id) await this.setCourierStatus(dl.courier_id, 'available');
+          var dl = await this.getDelivery(deliveryId);
+          if (status === 'delivered' && dl && dl.courier_id) await this.setCourierStatus(dl.courier_id, 'available');
+          // [NOTIF LIVRAISON] Informer l'acheteur de l'étape (in-app)
+          if (dl && dl.buyer_id) {
+            var _msgs = { picked_up:'📦 Votre colis a été récupéré par le coursier.', in_transit:'🚚 Votre coursier est en route !', delivered:'✅ Votre commande a été livrée. Merci !' };
+            if (_msgs[status]) {
+              try { DataService.addNotification(dl.buyer_id, { type:'order', title:'Suivi de livraison', message:_msgs[status], link: dl.order_id ? ('/?order='+dl.order_id) : undefined }); } catch(_){}
+            }
           }
         } catch (e) { console.warn('[Coursier] advanceDelivery:', e.message); }
       }
