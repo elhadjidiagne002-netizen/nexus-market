@@ -187,17 +187,24 @@ export async function onRequestPost(context) {
     console.error("[payout-request] PayTech call error:", e.message);
   }
 
-  // ⚠️ user_id doit être un UUID de profil admin réel (la valeur "admin" viole
-  // la FK notifications.user_id → profiles.id ; l'insert échoue alors silencieusement
-  // via .catch). À renseigner via env.ADMIN_USER_ID une fois disponible.
-  await sb.from("notifications").insert({
-    user_id: env.ADMIN_USER_ID || "admin",
-    // type ∈ {order,offer,message,return,vendor,system,dispute} → 'system'
-    type: "system",
-    title: "💰 Nouvelle demande de retrait",
-    message: `${vendorName} demande ${amountInt.toLocaleString("fr-FR")} FCFA via ${method === "mobile" ? PROVIDERS[provider] : "virement"}`,
-    read: false,
-  }).catch(e => console.warn("[payout-request] notif error:", e.message));
+  // [FIX] notifications.user_id est une FK vers profiles.id (UUID). L'ancienne
+  // valeur de repli "admin" violait la contrainte → insert en échec silencieux.
+  // On n'insère la notification admin QUE si un UUID admin valide est configuré
+  // (env.ADMIN_USER_ID) ; sinon on journalise et on s'appuie sur l'email admin.
+  const adminId = (env.ADMIN_USER_ID || "").trim();
+  const ADMIN_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (ADMIN_UUID_RE.test(adminId)) {
+    await sb.from("notifications").insert({
+      user_id: adminId,
+      // type ∈ {order,offer,message,return,vendor,system,dispute} → 'system'
+      type: "system",
+      title: "💰 Nouvelle demande de retrait",
+      message: `${vendorName} demande ${amountInt.toLocaleString("fr-FR")} FCFA via ${method === "mobile" ? PROVIDERS[provider] : "virement"}`,
+      read: false,
+    }).catch(e => console.warn("[payout-request] notif error:", e.message));
+  } else {
+    console.warn("[payout-request] ADMIN_USER_ID absent/invalide — notification admin ignorée (email envoyé à la place).");
+  }
 
   // Emails (centre de notifications) : accusé au vendeur + alerte à l'admin.
   const _amtFcfa = amountInt.toLocaleString("fr-FR");
