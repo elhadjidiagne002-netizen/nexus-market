@@ -33,16 +33,22 @@ export async function onRequestGet(context) {
   const { data: { user }, error: authErr } = await sb.auth.getUser(auth.slice(7));
   if (authErr || !user) return json(401, { error: "Token invalide" });
 
-  const commissionRate = parseFloat(env.NEXUS_COMMISSION || "0.15");
+  // [COMMISSION] Défaut 0 % (phase de lancement RT-01/PM-01) ; piloté par NEXUS_COMMISSION.
+  const commissionRate = parseFloat(env.NEXUS_COMMISSION || "0");
   const eurToXof = parseFloat(env.EUR_TO_XOF || "655.957");
 
   // [FIX] La colonne du vendeur est vendor_id dans le schéma orders
   // (et non vendor — cf. saveOrder dans index.html).
-  const { data: orders, error: ordErr } = await sb
+  // [#13 ESCROW] Cohérent avec payout-request : si REQUIRE_DELIVERY_PHOTO=true,
+  // seules les commandes livrées avec preuve comptent dans le solde affiché.
+  const requireProof = String(env.REQUIRE_DELIVERY_PHOTO || "") === "true";
+  let ordersQuery = sb
     .from("orders")
-    .select("total, commission")
+    .select("total, commission, delivery_photo_url")
     .eq("vendor_id", user.id)
     .eq("status", "delivered");
+  if (requireProof) ordersQuery = ordersQuery.not("delivery_photo_url", "is", null);
+  const { data: orders, error: ordErr } = await ordersQuery;
 
   if (ordErr) return json(500, { error: ordErr.message });
 

@@ -3,10 +3,15 @@
 // catégorie avec JSON-LD ItemList + BreadcrumbList. URLs propres (slug sans accent).
 import { renderListPage, render404, sbGet } from '../_lib/seo.js';
 import { categoryBySlug } from '../_lib/categories.js';
+import { cachedResponse } from '../_lib/edgecache.js';
 
 const EUR_TO_FCFA = 655.957;
 
-export async function onRequest({ request, env, params }) {
+export async function onRequest(context) {
+  return cachedResponse(context, () => handle(context));
+}
+
+async function handle({ request, env, params }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const cat = categoryBySlug(params.slug);
   if (!cat) return render404(origin, "Cette catégorie n'existe pas.");

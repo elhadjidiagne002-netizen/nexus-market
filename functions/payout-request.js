@@ -89,17 +89,24 @@ export async function onRequestPost(context) {
     return json(400, { error: "Destination obligatoire" });
   }
 
-  const commissionRate = parseFloat(env.NEXUS_COMMISSION || "0.15");
+  // [COMMISSION] Défaut 0 % (phase de lancement RT-01/PM-01) ; piloté par NEXUS_COMMISSION.
+  const commissionRate = parseFloat(env.NEXUS_COMMISSION || "0");
   const eurToXof = parseFloat(env.EUR_TO_XOF || "655.957");
 
   // Calcul du solde
   // [FIX] La colonne du vendeur est vendor_id (et non vendor)
   // conformément au schéma orders (cf. saveOrder dans index.html).
-  const { data: orders, error: ordErr } = await sb
+  // [#13 ESCROW] Option : ne compter dans le solde retirable que les commandes
+  // livrées AVEC preuve de livraison (photo). Inactif par défaut → aucun
+  // changement de comportement tant que REQUIRE_DELIVERY_PHOTO !== "true".
+  const requireProof = String(env.REQUIRE_DELIVERY_PHOTO || "") === "true";
+  let ordersQuery = sb
     .from("orders")
-    .select("total, commission")
+    .select("total, commission, delivery_photo_url")
     .eq("vendor_id", user.id)
     .eq("status", "delivered");
+  if (requireProof) ordersQuery = ordersQuery.not("delivery_photo_url", "is", null);
+  const { data: orders, error: ordErr } = await ordersQuery;
 
   if (ordErr) return json(500, { error: "Erreur lecture commandes" });
 

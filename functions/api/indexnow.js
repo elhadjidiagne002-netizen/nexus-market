@@ -10,6 +10,7 @@
 // (header X-Admin-Token). Sans variable configurée, l'endpoint reste ouvert mais
 // inoffensif (ne fait que (re)signaler des URLs publiques du site).
 import { submitToIndexNow, indexNowKey } from '../_lib/indexnow.js';
+import { json, err } from './_lib/response.js';
 
 export async function onRequest({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
@@ -21,19 +22,11 @@ export async function onRequest({ request, env }) {
     });
   }
 
-  if (method !== 'POST') {
-    return new Response(JSON.stringify({ ok: false, error: 'GET ou POST uniquement' }), {
-      status: 405, headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  if (method !== 'POST') return err('GET ou POST uniquement', 405);
 
   if (env.INDEXNOW_ADMIN_TOKEN) {
     const tok = request.headers.get('X-Admin-Token');
-    if (tok !== env.INDEXNOW_ADMIN_TOKEN) {
-      return new Response(JSON.stringify({ ok: false, error: 'Non autorisé' }), {
-        status: 401, headers: { 'Content-Type': 'application/json' },
-      });
-    }
+    if (tok !== env.INDEXNOW_ADMIN_TOKEN) return err('Non autorisé', 401);
   }
 
   let body = {};
@@ -48,8 +41,5 @@ export async function onRequest({ request, env }) {
   urls = urls.map(u => (/^https?:\/\//i.test(u) ? u : `${origin}${u.startsWith('/') ? '' : '/'}${u}`));
 
   const result = await submitToIndexNow(env, urls, origin);
-  return new Response(JSON.stringify({ submitted: urls.length, ...result }), {
-    status: result.ok ? 200 : 502,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return json({ submitted: urls.length, ...result }, result.ok ? 200 : 502);
 }

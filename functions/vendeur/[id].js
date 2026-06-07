@@ -2,10 +2,15 @@
 // Vitrine SEO d'un vendeur : produits du vendeur + JSON-LD Store (LocalBusiness)
 // pour le référencement local Sénégal + BreadcrumbList + ItemList.
 import { renderListPage, render404, sbGetOne, sbGet } from '../_lib/seo.js';
+import { cachedResponse } from '../_lib/edgecache.js';
 
 const EUR_TO_FCFA = 655.957;
 
-export async function onRequest({ request, env, params }) {
+export async function onRequest(context) {
+  return cachedResponse(context, () => handle(context));
+}
+
+async function handle({ request, env, params }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const id = params.id;
 

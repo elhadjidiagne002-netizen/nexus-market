@@ -2,8 +2,13 @@
 // Page d'atterrissage SEO d'un produit (méta + JSON-LD Product + Breadcrumb +
 // AggregateRating), indexable par Google.
 import { renderListingPage, render404, sbGetOne } from '../_lib/seo.js';
+import { cachedResponse } from '../_lib/edgecache.js';
 
-export async function onRequest({ request, env, params }) {
+export async function onRequest(context) {
+  return cachedResponse(context, () => handle(context));
+}
+
+async function handle({ request, env, params }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const id = params.id;
   const p = await sbGetOne(env, `products?select=id,name,description,image_url,price,category,stock,rating,reviews_count,vendor_name&id=eq.${encodeURIComponent(id)}&active=eq.true&limit=1`);

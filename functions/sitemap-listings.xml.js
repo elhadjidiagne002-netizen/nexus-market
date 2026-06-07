@@ -16,7 +16,13 @@ async function sbGet(env, path) {
   } catch { return []; }
 }
 
-export async function onRequest({ request, env }) {
+import { cachedResponse } from './_lib/edgecache.js';
+
+export async function onRequest(context) {
+  return cachedResponse(context, () => handle(context));
+}
+
+async function handle({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const nowIso = new Date().toISOString().slice(0, 10);
 

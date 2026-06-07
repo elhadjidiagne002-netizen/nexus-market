@@ -2412,6 +2412,12 @@ const { useState, useEffect, useRef, createContext, useContext, useCallback, use
 
 const NEXUS_CONFIG = {
   apiUrl: "", // [Cloudflare Pages] Backend Railway supprimé — toutes les données via Supabase + Netlify Functions
+  // [COMMISSION] Taux de commission marketplace sur les ventes — SOURCE DE VÉRITÉ UNIQUE.
+  // Phase de lancement = 0 % (0) pendant 90 jours pour réduire la friction d'adoption
+  // et empêcher la fuite vers WhatsApp (RT-01 / PM-01), puis montée progressive
+  // (0.05 → 0.10 → 0.13-0.15). NB : ne concerne PAS les commissions ambassadeur
+  // (5-10 %) ni la marge de livraison, qui sont gérées séparément.
+  commissionRate: 0,
   // BUG FIX: nexus-confirm.html n'existe pas dans le déploiement single-file Vercel.
   // La confirmation Supabase redirige vers cette URL avec le token dans le hash #access_token=...
   // Le SDK Supabase JS le lit automatiquement si on pointe vers la même page (index.html).
@@ -4821,6 +4827,8 @@ const DataService = {
     inTransitAt: "in_transit_at", processingAt: "processing_at", updatedAt: "updated_at",
     buyerId: "buyer_id", vendorId: "vendor_id", stripePaymentId: "stripe_payment_id",
     mobileMoneyRef: "mobile_money_ref",
+    deliveryPhotoUrl: "delivery_photo_url", deliveryConfirmedAt: "delivery_confirmed_at",
+    deliveryConfirmedBy: "delivery_confirmed_by", waTracking: "wa_tracking",
   },
   _mapOrderCols(updates) {
     const out = {};
@@ -8309,7 +8317,7 @@ const RelatedProducts = ({ product, products, onSelect, onAddToCart }) => {
       onMouseEnter: (e) => e.currentTarget.style.boxShadow = "0 4px 12px var(--shadow)",
       onMouseLeave: (e) => e.currentTarget.style.boxShadow = "none"
     },
-    /* @__PURE__ */ React.createElement("img", { src: p.imageUrl || `https://picsum.photos/seed/${p.id}/140/100`, alt: p.name, style: { width: "100%", height: "90px", objectFit: "cover" }, onError: (e) => e.target.style.display = "none" }),
+    /* @__PURE__ */ React.createElement("img", { src: p.imageUrl || `https://picsum.photos/seed/${p.id}/140/100`, alt: p.name, loading: "lazy", decoding: "async", style: { width: "100%", height: "90px", objectFit: "cover" }, onError: (e) => e.target.style.display = "none" }),
     /* @__PURE__ */ React.createElement("div", { style: { padding: "0.5rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.78rem", fontWeight: 600, marginBottom: "0.25rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.name), /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: "var(--primary)", fontSize: "0.82rem", marginBottom: "0.4rem" } }, formatPrice(p.price)), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", style: { width: "100%", fontSize: "0.72rem", padding: "0.25rem" }, onClick: (e) => {
       e.stopPropagation();
       onAddToCart == null ? void 0 : onAddToCart(p);
@@ -10834,7 +10842,7 @@ const printOrderSlip = (order) => {
       var price = (p.price || 0).toLocaleString('fr-FR') + ' FCFA';
       var name = (p.name || 'Produit').replace(/"/g, '&quot;');
       var imgEl = img
-        ? '<div style="width:100%;height:180px;position:relative;overflow:hidden;background:#f0f0ec"><img class="nexus-prod-img" src="' + img + '" alt="' + name + '" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\'" style="position:absolute;inset:0">'
+        ? '<div style="width:100%;height:180px;position:relative;overflow:hidden;background:#f0f0ec"><img class="nexus-prod-img" loading="lazy" decoding="async" src="' + img + '" alt="' + name + '" onerror="this.style.display=\'none\';this.nextSibling.style.display=\'flex\'" style="position:absolute;inset:0">'
           + '<div class="nexus-prod-img-ph" style="display:none;position:absolute;inset:0">🛍️</div></div>'
         : '<div class="nexus-prod-img-ph">🛍️</div>';
       return '<div class="nexus-prod-card">'
@@ -11610,7 +11618,8 @@ const ProductImg = ({ product, height = 220, className = "" }) => {
       className: `product-image ${className}`,
       style: { height },
       onError: () => setImgError(true),
-      loading: "lazy"
+      loading: "lazy",
+      decoding: "async"
     }
   );
 };
@@ -12325,7 +12334,7 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           buyerEmail:    customerInfo.email,
           vendor:        vendorOrder.vendor,
           vendorName:    vendorOrder.vendorName,
-          commission:    vendorTotal * 0.15,
+          commission:    vendorTotal * NEXUS_CONFIG.commissionRate,
           status:        "processing",
           shipping:      shippingEur > 0 ? "standard" : "gratuit",
           trackingNumber,
@@ -15072,7 +15081,7 @@ const FCFA_RATE        = NEXUS_CONFIG.currency.eurToFcfa;  // taux centralisé
     // ALTER TABLE products ADD COLUMN IF NOT EXISTS boost_ends_at timestamptz;
     // ═══════════════════════════════════════════════════════════════════════
     const NEXUS_TVA        = 0.18;
-const NEXUS_COMMISSION = 0.10;
+const NEXUS_COMMISSION = NEXUS_CONFIG.commissionRate; // [COMMISSION] cf. source unique NEXUS_CONFIG
 const _C = {
   green:  [0, 133, 62],
   greenL: [51, 168, 90],
@@ -16076,7 +16085,7 @@ const downloadMonthlyStatement = async (month) => {
 
   // ── Calculs globaux ────────────────────────────────────────────────────────
   const RATE        = FCFA_RATE;          // EUR → FCFA
-  const COMMISSION  = 0.10;
+  const COMMISSION  = NEXUS_CONFIG.commissionRate; // [COMMISSION] cf. source unique NEXUS_CONFIG
   const TVA_RATE    = NEXUS_TVA;          // 0.18
 
   let totalTTC = 0, totalCommission = 0, totalNet = 0, totalTVA = 0;
@@ -16520,7 +16529,7 @@ const CGUModal = ({ onClose }) => /* @__PURE__ */ React.createElement("div", { c
   { title: "1. Objet et champ d\u2019application", text: "Les pr\xE9sentes Conditions G\xE9n\xE9rales d\u2019Utilisation (CGU) r\xE9gissent l\u2019utilisation de la plateforme NEXUS Market (nexus.sn), place de march\xE9 B2B/B2C en ligne d\xE9di\xE9e au commerce \xE9lectronique au S\xE9n\xE9gal et en Afrique de l\u2019Ouest. En acc\xE9dant au site ou en cr\xE9ant un compte, vous acceptez sans r\xE9serve les pr\xE9sentes CGU dans leur int\xE9gralit\xE9. Si vous n\u2019acceptez pas ces conditions, vous devez cesser d\u2019utiliser la plateforme." },
   { title: "2. Op\xE9rateur de la plateforme", text: "NEXUS Market est exploit\xE9 par NEXUS Market, entreprise en cours d\u2019immatriculation au registre du commerce et du cr\xE9dit mobilier (RCCM) de Dakar, S\xE9n\xE9gal. Contact : elhadjidiagne002@gmail.com \u2014 T\xE9l. : +221 77 625 48 95 \u2014 Adresse : Dakar, S\xE9n\xE9gal. NINEA et RCCM en cours d\u2019obtention aupr\xE8s des autorit\xE9s comp\xE9tentes." },
   { title: "3. Acc\xE8s et inscription", text: "L\u2019inscription est gratuite et ouverte \xE0 toute personne physique majeure (+18 ans) ou personne morale l\xE9galement constitu\xE9e. Les Annonces Express sont accessibles sans inscription. Vous \xEAtes enti\xE8rement responsable de la s\xE9curit\xE9 de vos identifiants et de tous les actes accomplis depuis votre compte. NEXUS Market se r\xE9serve le droit de suspendre ou supprimer tout compte en cas de violation des pr\xE9sentes CGU." },
-  { title: "4. Vendeurs \u2014 Obligations et commissions", text: "Les vendeurs sont des tiers ind\xE9pendants. Ils s\u2019engagent \xE0 : (i) vendre uniquement des produits l\xE9gaux, conformes aux normes en vigueur au S\xE9n\xE9gal ; (ii) honorer leurs commandes dans les d\xE9lais annonc\xE9s ; (iii) fournir des informations exactes sur leurs produits. NEXUS Market per\xE7oit une commission de 12 \xE0 15% HT sur chaque transaction valid\xE9e (8% pour les vendeurs parrains\xE9s pendant 3 mois). Cette commission est d\xE9duite automatiquement du montant vers\xE9 au vendeur." },
+  { title: "4. Vendeurs \u2014 Obligations et commissions", text: "Les vendeurs sont des tiers ind\xE9pendants. Ils s\u2019engagent \xE0 : (i) vendre uniquement des produits l\xE9gaux, conformes aux normes en vigueur au S\xE9n\xE9gal ; (ii) honorer leurs commandes dans les d\xE9lais annonc\xE9s ; (iii) fournir des informations exactes sur leurs produits. Pendant la phase de lancement, NEXUS Market applique une commission de 0% sur les ventes ; elle \xE9voluera ensuite progressivement (jusqu’\xE0 12-15% HT par transaction valid\xE9e, avec un taux r\xE9duit pour les vendeurs parrain\xE9s). Le taux applicable est toujours affich\xE9 dans le tableau de bord vendeur. Cette commission est d\xE9duite automatiquement du montant vers\xE9 au vendeur." },
   { title: "5. Protection acheteur \u2014 Syst\xE8me Escrow", text: "NEXUS Market propose un syst\xE8me de protection acheteur (escrow) : le paiement est s\xE9curis\xE9 et n\u2019est vers\xE9 au vendeur qu\u2019apr\xE8s confirmation de la r\xE9ception par l\u2019acheteur, ou automatiquement apr\xE8s 48h sans litige. En cas de litige, l\u2019acheteur dispose de 48h ouvrables apr\xE8s livraison pour ouvrir une r\xE9clamation. NEXUS Market agit comme m\xE9diateur neutre et rend une d\xE9cision sous 72h ouvrables. Cette m\xE9diation est gratuite." },
   { title: "6. Paiements", text: "Les paiements sont accept\xE9s via : Wave, Orange Money, carte bancaire (Visa/Mastercard via Stripe), PayTech et Stripe. Les transactions sont s\xE9curis\xE9es par chiffrement TLS. NEXUS Market ne stocke aucun num\xE9ro de carte bancaire. Les remboursements sont effectu\xE9s via le m\xEAme mode de paiement sous 5 jours ouvrables apr\xE8s validation de la r\xE9clamation." },
   { title: "7. Annonces Express (sans inscription)", text: "Les Annonces Express permettent de publier une petite annonce sans cr\xE9er de compte, \xE0 titre gratuit. L\u2019annonceur est enti\xE8rement responsable du contenu de son annonce. NEXUS Market se r\xE9serve le droit de supprimer toute annonce contraire \xE0 la loi ou aux bonnes m\u0153urs. Les annonces expirent automatiquement apr\xE8s 30 jours." },
@@ -16533,6 +16542,7 @@ const CGUModal = ({ onClose }) => /* @__PURE__ */ React.createElement("div", { c
   { title: "14. Loi applicable et juridiction comp\xE9tente", text: "Les pr\xE9sentes CGU sont r\xE9gies par le droit s\xE9n\xE9galais, notamment : le Code des Obligations Civiles et Commerciales (COCC), l\u2019Acte Uniforme OHADA sur le Droit Commercial G\xE9n\xE9ral, la loi n\xB02008-08 sur les transactions \xE9lectroniques, et la loi n\xB02008-12 sur la protection des donn\xE9es personnelles. Tout litige non r\xE9solu par m\xE9diation sera soumis \xE0 la comp\xE9tence exclusive des tribunaux de Dakar, S\xE9n\xE9gal." },
   { title: "15. Donn\xE9es agr\xE9g\xE9es et anonymis\xE9es (statistiques & DaaS)", text: "NEXUS Market peut produire, exploiter et commercialiser des statistiques de march\xE9 (prix moyens, tendances, volumes) issues de l’activit\xE9 de la plateforme. Ces donn\xE9es sont strictement agr\xE9g\xE9es et anonymis\xE9es : aucun vendeur ni acheteur individuel n’est identifiable. Ce traitement, conforme \xE0 la loi n\xB02008-12 sur la protection des donn\xE9es personnelles, constitue une pratique standard des places de march\xE9. En utilisant la plateforme, vous consentez \xE0 cette utilisation \xE0 des fins statistiques et commerciales." },
   { title: "16. Fonds en s\xE9questre (escrow) et placements", text: "Les sommes vers\xE9es par les acheteurs sont conserv\xE9es en s\xE9questre (escrow) jusqu’\xE0 confirmation de la livraison, puis revers\xE9es au vendeur d\xE9duction faite de la commission. Pendant la p\xE9riode de blocage, ces fonds peuvent \xEAtre plac\xE9s sur des comptes professionnels r\xE9mun\xE9r\xE9s, conform\xE9ment aux pratiques des \xE9tablissements de paiement ; les int\xE9r\xEAts \xE9ventuels reviennent \xE0 NEXUS Market et ne modifient ni le montant d\xFB \xE0 l’acheteur ni celui d\xFB au vendeur. Durant la phase de lancement, le montant prot\xE9g\xE9 par transaction peut \xEAtre plafonn\xE9 (par ex. 50 000 FCFA) pour des raisons de s\xE9curit\xE9." },
+  { title: "17. Premier achat garanti (offre de lancement)", text: "Pour rassurer les nouveaux acheteurs, NEXUS Market garantit votre premier achat : en cas de fraude av\xE9r\xE9e d’un vendeur lors de votre toute premi\xE8re commande pay\xE9e via la plateforme, NEXUS vous rembourse int\xE9gralement le montant pay\xE9, dans la limite du plafond de protection en vigueur et sous r\xE9serve d’ouverture d’une r\xE9clamation dans les 48h suivant la livraison (ou la date de livraison pr\xE9vue). Cette garantie s’applique exclusivement aux transactions r\xE9gl\xE9es int\xE9gralement sur NEXUS via le syst\xE8me de protection (escrow) ; les paiements conclus hors plateforme en sont exclus. Offre de lancement, susceptible d’\xE9voluer." },
 ].map(({ title, text }, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { marginBottom: "1.5rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, fontSize: "0.95rem", color: "var(--primary)", marginBottom: "0.5rem" } }, title), /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.88rem", lineHeight: 1.7, color: "var(--text-secondary)" } }, text))),
 /* @__PURE__ */ React.createElement("div", { style: { background: "var(--bg-light)", borderRadius: 10, padding: "1rem", marginTop: "1.5rem", fontSize: "0.82rem", color: "var(--text-secondary)" } },
   /* @__PURE__ */ React.createElement("strong", null, "Contact r\xE9clamations : "),
@@ -19773,7 +19783,7 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
         };
         byVendor[k].orders++;
         byVendor[k].revenue += o.total || 0;
-        byVendor[k].commission += o.commission || (o.total || 0) * 0.15;
+        byVendor[k].commission += o.commission != null ? o.commission : (o.total || 0) * NEXUS_CONFIG.commissionRate;
       });
       const comms = Object.values(byVendor).sort((a,b) => b.commission - a.commission);
 
@@ -27191,6 +27201,86 @@ const InsuranceWidget = ({ product, currentUser, addToast }) => {
 
 // ── Fin BoostModal ────────────────────────────────────────────────────────────
 
+// [#13 ESCROW] Bouton autonome « Preuve de livraison » : le vendeur joint une
+// photo de remise du colis, ce qui marque la commande livrée + débloque les fonds
+// (cf. gate REQUIRE_DELIVERY_PHOTO côté payout). Upload vers Supabase Storage
+// (bucket nexus-images/delivery), fallback base64 en mode démo/local.
+const DeliveryProofButton = ({ order, addToast, onDone }) => {
+  const inputRef = React.useRef(null);
+  const [busy, setBusy] = React.useState(false);
+  const existing = order.delivery_photo_url || order.deliveryPhotoUrl;
+  const toast = (m, t) => (addToast || window.__nexusToast || function(){})(m, t || 'info');
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) { toast('Photo trop lourde (max 8 Mo).', 'error'); return; }
+    setBusy(true);
+    try {
+      let url = '';
+      if (DataService._sb && DataService._sb.storage) {
+        const ext = ((file.type || 'image/jpeg').split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+        const fname = `delivery/${order.id}_${Date.now()}.${ext}`;
+        const { data: up, error } = await DataService._sb.storage.from('nexus-images')
+          .upload(fname, file, { contentType: file.type || 'image/jpeg', upsert: true });
+        if (error) throw error;
+        url = DataService._sb.storage.from('nexus-images').getPublicUrl(up.path).data.publicUrl;
+      } else {
+        url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+      }
+      await DataService.updateOrder(order.id, {
+        deliveryPhotoUrl: url,
+        deliveryConfirmedAt: new Date().toISOString(),
+        deliveryConfirmedBy: 'vendor',
+        status: 'delivered',
+      });
+      toast('Preuve enregistrée ✅ — commande livrée, fonds débloqués pour retrait.', 'success');
+      if (onDone) onDone(url);
+    } catch (e) {
+      toast('Échec de l’envoi de la preuve : ' + (e && e.message || e), 'error');
+    } finally { setBusy(false); }
+  };
+  return React.createElement(React.Fragment, null,
+    React.createElement('input', { ref: inputRef, type: 'file', accept: 'image/*', capture: 'environment', style: { display: 'none' }, onChange: (e) => handleFile(e.target.files && e.target.files[0]) }),
+    React.createElement('button', {
+      className: 'btn btn-sm', disabled: busy,
+      style: { background: existing ? '#15803d' : '#0d9488', color: 'white', border: 'none', borderRadius: '6px', padding: '0.3rem 0.6rem', cursor: 'pointer', fontSize: '0.8rem' },
+      onClick: () => inputRef.current && inputRef.current.click(),
+      title: 'Photo de preuve de livraison (débloque les fonds escrow)'
+    }, busy ? '⏳…' : (existing ? '📷 Preuve ✓' : '📷 Preuve'))
+  );
+};
+
+// [REVENU PASSIF #23] Onglet « Équiper ma boutique » — liens d'affiliation B2B.
+// 100% passif : commission côté partenaire, aucun stock/gestion. Liens
+// personnalisables via NEXUS_CONFIG.affiliateB2B (sinon défauts génériques).
+// rel="nofollow sponsored" = conforme aux règles SEO sur les liens affiliés.
+const BoutiqueEquipement = () => {
+  const links = (typeof NEXUS_CONFIG !== 'undefined' && Array.isArray(NEXUS_CONFIG.affiliateB2B) && NEXUS_CONFIG.affiliateB2B.length)
+    ? NEXUS_CONFIG.affiliateB2B
+    : [
+      { cat: 'Emballages & expédition', icon: '📦', desc: 'Cartons, pochettes, scotch, papier bulle — grossistes locaux.', url: 'https://www.jumia.sn/emballage/', cta: 'Voir les emballages' },
+      { cat: 'Étiquettes & impression', icon: '🏷️', desc: 'Imprimantes thermiques et rouleaux d’étiquettes pour vos colis.', url: 'https://www.aliexpress.com/wholesale?SearchText=thermal+label+printer', cta: 'Voir le matériel' },
+      { cat: 'Caisse & encaissement', icon: '🧾', desc: 'Logiciels de caisse et terminaux pour points de vente.', url: 'https://www.jumia.sn/', cta: 'Découvrir' },
+      { cat: 'Compte pro & banque', icon: '🏦', desc: 'Ouvrez un compte pro (NINEA/RCCM) chez un partenaire bancaire.', url: '#', cta: 'Bientôt disponible' },
+    ];
+  return React.createElement('div', { style: { maxWidth: 980 } },
+    React.createElement('h2', { style: { fontSize: '1.3rem', fontWeight: 800, marginBottom: '0.4rem' } }, '🛠️ Équiper ma boutique'),
+    React.createElement('p', { style: { color: 'var(--text-secondary)', marginBottom: '1.25rem', fontSize: '0.9rem' } },
+      'Ressources sélectionnées pour développer votre activité. NEXUS peut percevoir une commission d’affiliation, sans surcoût pour vous.'),
+    React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: '1rem' } },
+      links.map((l, i) => React.createElement('div', { key: i, style: { border: '1px solid var(--border)', borderRadius: 12, padding: '1rem', background: 'var(--bg-card,#fff)', display: 'flex', flexDirection: 'column' } },
+        React.createElement('div', { style: { fontSize: '1.8rem', marginBottom: '0.5rem' } }, l.icon),
+        React.createElement('div', { style: { fontWeight: 700, marginBottom: '0.3rem' } }, l.cat),
+        React.createElement('div', { style: { fontSize: '0.84rem', color: 'var(--text-secondary)', flex: 1, marginBottom: '0.8rem' } }, l.desc),
+        React.createElement('a', { href: l.url, target: '_blank', rel: 'nofollow sponsored noopener',
+          className: 'btn btn-primary btn-sm',
+          style: { textAlign: 'center', textDecoration: 'none', pointerEvents: l.url === '#' ? 'none' : 'auto', opacity: l.url === '#' ? 0.55 : 1 } }, l.cta)
+      ))
+    ),
+    React.createElement('p', { style: { fontSize: '0.75rem', color: 'var(--text-muted,#9CA3AF)', marginTop: '1rem' } },
+      'Liens d’affiliation — NEXUS Market peut toucher une commission sur les achats réalisés via ces liens.')
+  );
+};
+
 const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, onDownloadStatement }) => {
   // [FIX #310] Hooks remontés au niveau du composant — interdit dans les IIFEs conditionnelles
   const [_myReturns, _setMyReturns] = React.useState(
@@ -27738,7 +27828,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
             buyerAddress: "\xC0 confirmer", buyerPhone: "",
             vendor: currentUser2.id, vendorName: currentUser2.name,
             products: [{ id: product.id, name: product.name, price: offer.offeredPrice, quantity: 1 }],
-            total: offer.offeredPrice, commission: offer.offeredPrice * 0.15,
+            total: offer.offeredPrice, commission: offer.offeredPrice * NEXUS_CONFIG.commissionRate,
             status: "processing", shipping: "standard", trackingNumber, fromOffer: offerId,
           });
           storage.set("orders", allOrders);
@@ -27784,6 +27874,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     })() },
     { id: "boost", icon: "rocket", label: "⚡ Booster mes annonces" },
     { id: "parrainage", icon: "handshake", label: "Parrainage vendeur" },
+    { id: "equipement", icon: "store-alt", label: "🛠️ Équiper ma boutique" },
     { id: "profile", icon: "store", label: "Ma Boutique" }
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
     if (item.id !== 'orders') setOrdersPage(1);
@@ -27831,6 +27922,8 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
         )
       )
     ),
+
+    !isLoading && view === "equipement" && /* @__PURE__ */ React.createElement(BoutiqueEquipement, null),
 
     !isLoading && view === "overview" && /* @__PURE__ */ React.createElement(React.Fragment, null,
     /* ── Onboarding checklist (visible si vendeur nouveau ou incomplet) ── */
@@ -27997,6 +28090,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
 view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Offres re\xE7ues (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Les offres de vos clients appara\xEEtront ici")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Acheteur"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Acheteur" }, offer.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, offer.status === "pending" ? /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleOffer(offer.id, true) }, "Accepter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleOffer(offer.id, false) }, "Refuser")) : /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : "danger"}` }, offer.status)))))))), !isLoading && view === "orders" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Commandes (", orders.length, ")")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.6rem", flexWrap: "wrap", padding: "0.75rem 1rem", background: "var(--bg-light)", borderBottom: "1px solid var(--border)" } }, /* @__PURE__ */ React.createElement("input", { type: "search", className: "form-input", placeholder: "Rechercher ID ou client…", value: orderSearch, onChange: e => { setOrderSearch(e.target.value); setOrdersPage(1); }, style: { flex: "1 1 160px", padding: "0.45rem 0.75rem", fontSize: "0.88rem" } }), /* @__PURE__ */ React.createElement("select", { className: "form-select", value: orderStatusFilter, onChange: e => { setOrderStatusFilter(e.target.value); setOrdersPage(1); }, style: { flex: "0 0 auto", padding: "0.45rem 0.65rem", fontSize: "0.88rem" } }, /* @__PURE__ */ React.createElement("option", { value: "all" }, "Tous les statuts"), /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livré"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annulé"))), orders.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shopping-cart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune commande")) : (() => { const filteredOrders = orders.filter(o => { const ms = !orderSearch || o.id.toLowerCase().includes(orderSearch.toLowerCase()) || (o.buyerName||'').toLowerCase().includes(orderSearch.toLowerCase()); const mst = orderStatusFilter === 'all' || o.status === orderStatusFilter; return ms && mst; }); return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table", "aria-label": "Toutes mes commandes" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", { scope: "col" }, "ID"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Client"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Produits"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Montant"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Statut"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Date"), /* @__PURE__ */ React.createElement("th", { scope: "col" }, "Action"))), /* @__PURE__ */ React.createElement("tbody", null, filteredOrders.slice((ordersPage - 1) * ITEMS_PER_PAGE, ordersPage * ITEMS_PER_PAGE).map((o) => {
     var _a, _b;
     return /* @__PURE__ */ React.createElement("tr", { key: o.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.82rem" } }, o.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, o.buyerName), /* @__PURE__ */ React.createElement("td", { "data-label": "Produits" }, (o.products || []).map((p, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: "0.82rem" } }, p.name, " ×", p.quantity))), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(o.total))), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${(_a = STATUS_MAP[o.status]) == null ? void 0 : _a.badge}` }, (_b = STATUS_MAP[o.status]) == null ? void 0 : _b.label)), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, o.date ? new Date(o.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, /* @__PURE__ */ React.createElement("div", { className: "flex gap-1", style: { alignItems: "center" } }, /* @__PURE__ */ React.createElement("select", { className: "form-select", style: { padding: "0.3rem", fontSize: "0.8rem", width: "auto" }, value: o.status, onChange: (e) => updateOrderStatus(o.id, e.target.value), "aria-label": `Statut commande ${o.id}` }, /* @__PURE__ */ React.createElement("option", { value: "processing" }, "En cours"), /* @__PURE__ */ React.createElement("option", { value: "in_transit" }, "En transit"), /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livré"), /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annulé")), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => downloadBuyerInvoicePDF(o), title: "Facture client PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Client"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-sm", style: { background: "#ea580c", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => downloadVendorInvoicePDF(o), title: "Relevé de vente PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-chart-line" }), " Relevé"),
+            (o.status === "in_transit" || o.status === "delivered") && /* @__PURE__ */ React.createElement(DeliveryProofButton, { order: o, addToast, onDone: () => { try { if (typeof loadData === "function") loadData(); } catch (_) {} } }),
             /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { background: "#1e40af", color: "white", border: "none", borderRadius: "6px", padding: "0.3rem 0.6rem", cursor: "pointer", fontSize: "0.8rem" }, onClick: () => { const m = new Date(o.date || o.created_at || Date.now()).toISOString().slice(0,7); _downloadStatement(m); }, title: "Relevé mensuel PDF" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-calendar-alt" }), " Mois"))));
   })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(filteredOrders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: filteredOrders.length, itemsPerPage: ITEMS_PER_PAGE })); })()), !isLoading && view === "messages" && React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), !isLoading && view === "qa" && (() => {
     const allQA = storage.get("product_qa") || {};

@@ -1,8 +1,13 @@
 // functions/annonce/[id].js → /annonce/:id
 // Page d'atterrissage SEO d'une annonce express (méta + JSON-LD + Breadcrumb), indexable.
 import { renderListingPage, render404, sbGetOne } from '../_lib/seo.js';
+import { cachedResponse } from '../_lib/edgecache.js';
 
-export async function onRequest({ request, env, params }) {
+export async function onRequest(context) {
+  return cachedResponse(context, () => handle(context));
+}
+
+async function handle({ request, env, params }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const id = params.id;
   const a = await sbGetOne(env, `annonces_express?select=id,category,city,description,photo_url,price_fcfa&id=eq.${encodeURIComponent(id)}&limit=1`);

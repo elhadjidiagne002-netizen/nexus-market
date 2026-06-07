@@ -9,6 +9,19 @@ export function esc(s) {
   return String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 }
 
+// [ANTI-CONTOURNEMENT RT-01] Masque les coordonnées (numéros sénégalais, liens
+// WhatsApp/Telegram) glissées dans les titres/descriptions, sur les pages publiques
+// indexées — pour que le contact passe par la plateforme (escrow + commission).
+// Cible les numéros SN (mobiles 70/75/76/77/78, fixes 33), avec ou sans +221 et
+// séparateurs ; n'altère pas les prix (exige un préfixe opérateur valide).
+export function redactContact(s) {
+  if (s == null) return s;
+  return String(s)
+    .replace(/(?<!\d)(\+?221[\s.\-]?)?(7[05678]|33)[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}(?!\d)/g, '[contact via NEXUS]')
+    .replace(/\b(?:wa\.me|t\.me)\/\S+/gi, '[contact via NEXUS]')
+    .replace(/\b(whats?app|telegram|whatsap)\b\s*[:#]?\s*\+?\d[\d\s.\-]{6,}/gi, '[contact via NEXUS]');
+}
+
 // Sérialise un objet JSON-LD en bloc <script> sûr (échappe < > & pour éviter toute
 // rupture du contexte HTML / injection).
 function jsonLdScript(obj) {
@@ -37,10 +50,10 @@ export function renderListingPage(o) {
   const kind = o.kind === 'annonce' ? 'annonce' : 'produit';
   const url = `${o.origin}/${kind}/${encodeURIComponent(o.id)}`;
   const appUrl = `${o.origin}/?product=${encodeURIComponent(o.id)}`;
-  const title = o.title || 'Annonce NEXUS Market';
+  const title = redactContact(o.title || 'Annonce NEXUS Market');
   const priceTxt = o.priceFcfa ? `${Number(o.priceFcfa).toLocaleString('fr-FR')} FCFA` : '';
-  const desc = String(o.description || `${title} — ${o.category || ''} ${o.city || ''} sur NEXUS Market Sénégal.`)
-    .replace(/\s+/g, ' ').trim().slice(0, 300);
+  const desc = redactContact(String(o.description || `${title} — ${o.category || ''} ${o.city || ''} sur NEXUS Market Sénégal.`)
+    .replace(/\s+/g, ' ').trim()).slice(0, 300);
   const img = o.image || `${o.origin}/og-image.png`;
 
   // ── Product ────────────────────────────────────────────────

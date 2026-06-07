@@ -3,6 +3,7 @@
 // Capte les recherches géolocalisées (« acheter à Thiès », « annonces Saint-Louis »).
 import { renderListPage, render404, sbGet } from '../_lib/seo.js';
 import { slugify } from '../_lib/categories.js';
+import { cachedResponse } from '../_lib/edgecache.js';
 
 // Principales villes du Sénégal (slug → libellé + variantes DB).
 const VILLES = [
@@ -20,7 +21,11 @@ const VILLES = [
   { slug: 'kolda',       label: 'Kolda',       aliases: ['Kolda'] },
 ];
 
-export async function onRequest({ request, env, params }) {
+export async function onRequest(context) {
+  return cachedResponse(context, () => handle(context));
+}
+
+async function handle({ request, env, params }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const s = slugify(params.slug);
   const ville = VILLES.find(v => v.slug === s);

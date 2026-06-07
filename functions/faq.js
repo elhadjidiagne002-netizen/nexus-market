@@ -13,6 +13,8 @@ const FAQ = [
     a: 'Vous pouvez publier une annonce express en 2 minutes sans créer de compte, ou ouvrir une boutique vendeur pour gérer vos produits, commandes et paiements depuis un tableau de bord complet.' },
   { q: 'Mes achats sont-ils protégés ?',
     a: 'Oui. La protection acheteur NEXUS sécurise chaque transaction et les litiges sont résolus sous 24h. Votre argent n’est libéré au vendeur qu’après confirmation de la bonne réception de la commande.' },
+  { q: 'C’est mon premier achat : suis-je couvert ?',
+    a: 'Oui — avec le « Premier achat garanti », si votre toute première commande payée sur NEXUS est victime d’une fraude avérée, nous vous remboursons intégralement (réclamation sous 48h, transaction réglée via la plateforme). De quoi acheter en ligne en toute confiance.' },
   { q: 'Quels sont les frais pour les vendeurs ?',
     a: 'La publication d’annonces est gratuite. NEXUS prélève une commission sur les ventes conclues via la plateforme (réduite pour les vendeurs parrainés). Aucun frais caché.' },
   { q: 'NEXUS Market est-il disponible en Wolof ?',
