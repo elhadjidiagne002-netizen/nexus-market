@@ -42,6 +42,10 @@ CREATE POLICY "no_client_access_api_keys" ON public.api_keys FOR ALL USING (fals
 -- Renvoie un JSON consommé tel quel par products-feed.js :
 --   { valid:boolean, error?:string, plan?, allow_xml?, allow_json?, allow_csv?, remaining? }
 -- Effets de bord : reset du compteur quotidien + incrément atomique des appels.
+-- [FIX] Une version antérieure de la fonction peut exister avec un type de retour
+-- différent → CREATE OR REPLACE échoue ("cannot change return type"). On la
+-- supprime d'abord (idempotent).
+DROP FUNCTION IF EXISTS public.api_key_validate(TEXT);
 CREATE OR REPLACE FUNCTION public.api_key_validate(p_key TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
