@@ -12918,6 +12918,29 @@ function vendorCanOperate(user) {
   return vendorGraceActive(user); // 'pending' → accès provisoire 72h
 }
 
+// [GRACE 72H] Bandeau global de compte à rebours, affiché en haut de l'app pour un
+// vendeur en accès provisoire (status pending dans la fenêtre de 72h).
+const VendorGraceBanner = ({ user }) => {
+  const hours = vendorGraceHoursLeft(user);
+  if (hours <= 0) return null;
+  const d = Math.floor(hours / 24), h = hours % 24;
+  const label = d > 0 ? (d + " j " + h + " h") : (h + " h");
+  const urgent = hours <= 12;
+  return React.createElement('div', {
+    role: 'status', 'aria-live': 'polite',
+    style: {
+      background: urgent ? 'linear-gradient(90deg,#b45309,#d97706)' : 'linear-gradient(90deg,#00853E,#0d9488)',
+      color: '#fff', padding: '8px 14px', fontSize: '0.85rem', lineHeight: 1.4,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+      flexWrap: 'wrap', textAlign: 'center'
+    }
+  },
+    React.createElement('span', { style: { fontWeight: 700 } }, '⏳ Accès vendeur provisoire'),
+    React.createElement('span', null, "il reste " + label + " avant que l'approbation de l'admin ne devienne obligatoire."),
+    React.createElement('span', { style: { opacity: 0.9 } }, 'Publiez et vendez dès maintenant !')
+  );
+};
+
 const AuthModal = ({ onLogin, onCancel, targetRole, onShowCGU, onShowPrivacy, initialTab = "login" }) => {
   const [tab, setTab] = useState(initialTab);
   const [showForgot, setShowForgot] = useState(false);
@@ -33403,7 +33426,7 @@ const App = ({ onUserChange }) => {
       sidebarOpen,
       onToggleSidebar: toggleSidebar
     }
-  ), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
