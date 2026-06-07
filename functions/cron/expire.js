@@ -176,6 +176,32 @@ async function runMaintenance(env) {
     results.boosts = { error: e.message };
   }
 
+  // ── 2bis. Expirer les annonces de troc dépassées (>30j) ────────────────
+  try {
+    const now = new Date().toISOString();
+    // status='expired' pour les trocs actifs dont expires_at < now
+    const expireTroc = await fetch(
+      `${SUPABASE_URL}/rest/v1/troc_listings?status=eq.active&expires_at=lt.${now}`,
+      {
+        method:  'PATCH',
+        headers: { ...headers, 'Prefer': 'return=minimal' },
+        body:    JSON.stringify({ status: 'expired' }),
+      }
+    );
+    // Purge des trocs expirés depuis plus de 90 jours
+    const cutoff90 = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+    const deleteOldTroc = await fetch(
+      `${SUPABASE_URL}/rest/v1/troc_listings?status=eq.expired&expires_at=lt.${cutoff90}`,
+      { method: 'DELETE', headers }
+    );
+    results.troc = {
+      expired:     expireTroc.ok    ? 'OK' : `Erreur ${expireTroc.status}`,
+      deleted_old: deleteOldTroc.ok ? 'OK' : `Erreur ${deleteOldTroc.status}`,
+    };
+  } catch (e) {
+    results.troc = { error: e.message };
+  }
+
   // ── 3. Log dans maintenance_log ────────────────────────────────────────
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/maintenance_log`, {
