@@ -20,6 +20,8 @@ export async function onRequest({ request, env }) {
   urls.push(`  <url>\n    <loc>${origin}/faq</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.6</priority>\n  </url>`);
   // NEXUS Troc — page d'atterrissage des échanges
   urls.push(`  <url>\n    <loc>${origin}/troc</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.7</priority>\n  </url>`);
+  // NEXUS Stories — page d'atterrissage des vidéos produit
+  urls.push(`  <url>\n    <loc>${origin}/stories</loc>\n    <lastmod>${today}</lastmod>\n    <changefreq>daily</changefreq>\n    <priority>0.7</priority>\n  </url>`);
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">

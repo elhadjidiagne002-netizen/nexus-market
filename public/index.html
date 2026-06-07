@@ -176,6 +176,8 @@
     </script>
     <!-- Librairies utilitaires — defer: ne bloquent plus le rendu -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- [NEXUS STORIES] hls.js — lecture HLS Mux (Chrome/Firefox/Android ; Safari/iOS = natif) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
     <!-- bcryptjs supprimé — hachage des mots de passe uniquement côté serveur via npm bcryptjs -->
     <!-- EmailJS SDK v4 -->
     <script defer src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
@@ -13075,6 +13077,102 @@ const NexusTrocWidget = ({ user }) => {
       inp(prop.phone, v => setProp(p => ({ ...p, phone: v })), 'Votre téléphone (WhatsApp) — optionnel', 'tel'),
       E('button', { onClick: submitProposal, disabled: busy, style: { width: '100%', background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, busy ? 'Envoi…' : 'Envoyer ma proposition')
     ))
+  );
+};
+
+// [NEXUS STORIES] Widget autonome de vidéos produit (format Reels). Bouton flottant
+// + visionneuse plein écran (lecture HLS via Mux/hls.js, navigation ▲▼) + upload
+// vendeur (POST /api/stories/upload → PUT direct Mux). Ouverture via événement.
+const NexusStoriesWidget = ({ user }) => {
+  const [open, setOpen] = React.useState(false);
+  const [items, setItems] = React.useState([]);
+  const [idx, setIdx] = React.useState(0);
+  const [loading, setLoading] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const videoRef = React.useRef(null);
+  const hlsRef = React.useRef(null);
+  const fileRef = React.useRef(null);
+  const E = React.createElement;
+  const toast = (m, t) => (window.__nexusToast || function () {})(m, t || 'info');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      if (DataService._sb) {
+        const { data } = await DataService._sb.from('stories').select('*').eq('status', 'active').not('mux_playback_id', 'is', null).order('created_at', { ascending: false }).limit(50);
+        if (data) { setItems(data); setIdx(0); setLoading(false); return; }
+      }
+    } catch (_) {}
+    setItems([]); setLoading(false);
+  };
+  React.useEffect(() => { if (open) load(); }, [open]);
+  React.useEffect(() => { const h = () => setOpen(true); window.addEventListener('nexus:open-stories', h); return () => window.removeEventListener('nexus:open-stories', h); }, []);
+  React.useEffect(() => { try { const q = new URLSearchParams(location.search); if (q.get('stories') || q.get('story')) setOpen(true); } catch (_) {} }, []);
+
+  // Charge la vidéo HLS courante
+  React.useEffect(() => {
+    if (!open) return;
+    const v = videoRef.current; const cur = items[idx];
+    if (!v || !cur || !cur.mux_playback_id) return;
+    const src = 'https://stream.mux.com/' + cur.mux_playback_id + '.m3u8';
+    if (hlsRef.current) { try { hlsRef.current.destroy(); } catch (_) {} hlsRef.current = null; }
+    if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = src; }
+    else if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls(); h.loadSource(src); h.attachMedia(v); hlsRef.current = h; }
+    else { v.src = src; }
+    if (v.play) v.play().catch(() => {});
+  }, [open, idx, items]);
+
+  const go = (d) => setIdx(i => Math.max(0, Math.min(items.length - 1, i + d)));
+
+  const startUpload = async (file) => {
+    if (!file) return;
+    if (!user || !user.id) { toast('Connectez-vous comme vendeur pour publier une story.', 'warning'); return; }
+    if (!/^video\//.test(file.type || '')) { toast('Choisissez un fichier vidéo (15–60s).', 'error'); return; }
+    if (file.size > 100 * 1024 * 1024) { toast('Vidéo trop lourde (max 100 Mo).', 'error'); return; }
+    setBusy(true);
+    try {
+      let token = '';
+      try { const { data } = await DataService._sb.auth.getSession(); token = (data && data.session && data.session.access_token) || ''; } catch (_) {}
+      const title = (typeof prompt === 'function' ? prompt('Titre de votre story (ex. iPhone 11 — démo)') : '') || '';
+      const r = await fetch('/api/stories/upload', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ title }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.uploadUrl) { toast(j.error || 'Upload vidéo indisponible (Mux non configuré ?).', 'error'); setBusy(false); return; }
+      const put = await fetch(j.uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+      if (!put.ok) { toast('Échec de l’envoi de la vidéo.', 'error'); setBusy(false); return; }
+      try { fetch('/api/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: ['/stories'] }) }).catch(() => {}); } catch (_) {}
+      toast('Vidéo envoyée ! Encodage en cours — visible dans ~1 min. 🎬', 'success', 9000);
+    } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+  };
+
+  const cur = items[idx];
+  const navBtn = (txt, on, pos) => E('button', { onClick: on, style: { position: 'absolute', right: 12, ...pos, background: 'rgba(0,0,0,.5)', color: '#fff', border: 'none', borderRadius: 999, width: 44, height: 44, fontSize: 18, cursor: 'pointer' } }, txt);
+
+  return E(React.Fragment, null,
+    E('button', { onClick: () => setOpen(true), 'aria-label': 'NEXUS Stories', style: { position: 'fixed', left: 16, bottom: 74, zIndex: 9990, background: 'linear-gradient(135deg,#7c3aed,#db2777)', color: '#fff', border: 'none', borderRadius: 999, padding: '0.7rem 1.1rem', boxShadow: '0 6px 18px rgba(0,0,0,.25)', cursor: 'pointer', fontWeight: 800, fontSize: '0.9rem' } }, '🎬 Stories'),
+    open && E('div', { style: { position: 'fixed', inset: 0, background: '#000', zIndex: 9997, display: 'flex', flexDirection: 'column' } },
+      E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', color: '#fff' } },
+        E('strong', null, '🎬 NEXUS Stories'),
+        E('div', { style: { display: 'flex', gap: 8 } },
+          (user && user.id) && E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, style: { background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem 0.8rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : '＋ Publier'),
+          E('button', { onClick: () => setOpen(false), style: { background: 'none', border: 'none', color: '#fff', fontSize: 26, cursor: 'pointer', lineHeight: 1 } }, '×')
+        )
+      ),
+      E('input', { ref: fileRef, type: 'file', accept: 'video/*', capture: 'environment', style: { display: 'none' }, onChange: e => startUpload(e.target.files && e.target.files[0]) }),
+      loading ? E('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' } }, 'Chargement…')
+        : !cur ? E('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', justifyContent: 'center', color: '#fff', padding: 24, textAlign: 'center' } },
+            E('div', { style: { fontSize: 44 } }, '🎬'),
+            E('div', null, 'Aucune vidéo pour le moment.'),
+            (user && user.id) && E('button', { onClick: () => fileRef.current && fileRef.current.click(), style: { background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem 1.2rem', fontWeight: 800, cursor: 'pointer' } }, '＋ Publier la première vidéo'))
+          : E('div', { style: { flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' } },
+              E('video', { ref: videoRef, controls: true, playsInline: true, autoPlay: true, loop: true, muted: false, style: { width: '100%', height: '100%', objectFit: 'contain', background: '#000' } }),
+              E('div', { style: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: '16px', color: '#fff', background: 'linear-gradient(transparent,rgba(0,0,0,.7))' } },
+                E('div', { style: { fontWeight: 800 } }, cur.title || 'Vidéo produit'),
+                E('div', { style: { fontSize: '.85rem', opacity: .85 } }, (cur.category || '') + (cur.city ? ' · ' + cur.city : '') + (cur.vendor_name ? ' · ' + cur.vendor_name : ''))
+              ),
+              idx > 0 && navBtn('▲', () => go(-1), { top: 10 }),
+              idx < items.length - 1 && navBtn('▼', () => go(1), { bottom: 92 })
+            )
+    )
   );
 };
 
@@ -33667,7 +33765,7 @@ const App = ({ onUserChange }) => {
       sidebarOpen,
       onToggleSidebar: toggleSidebar
     }
-  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
