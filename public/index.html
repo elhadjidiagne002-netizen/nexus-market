@@ -13036,8 +13036,7 @@ const NexusTrocWidget = ({ user }) => {
     E('div', { onClick: e => e.stopPropagation(), style: { background: '#fff', borderRadius: 16, width: '100%', maxWidth: 760, maxHeight: '88vh', overflow: 'auto', padding: '1.2rem' } }, children));
 
   return E(React.Fragment, null,
-    // Bouton flottant
-    E('button', { onClick: () => setOpen(true), 'aria-label': 'NEXUS Troc', style: { position: 'fixed', left: 16, bottom: 16, zIndex: 9990, background: 'linear-gradient(135deg,#00853E,#0d9488)', color: '#fff', border: 'none', borderRadius: 999, padding: '0.7rem 1.1rem', boxShadow: '0 6px 18px rgba(0,0,0,.25)', cursor: 'pointer', fontWeight: 800, fontSize: '0.9rem' } }, '🔄 Troc'),
+    // [UI] Accès via le méga-menu (☰ Tout) — plus de bouton flottant (anti-chevauchement)
     open && overlay(E(React.Fragment, null,
       E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.8rem' } },
         E('h2', { style: { margin: 0, fontSize: '1.25rem', color: '#00853E' } }, '🔄 NEXUS Troc'),
@@ -13163,7 +13162,7 @@ const NexusStoriesWidget = ({ user }) => {
   const navBtn = (txt, on, pos) => E('button', { onClick: on, style: { position: 'absolute', right: 12, ...pos, background: 'rgba(0,0,0,.5)', color: '#fff', border: 'none', borderRadius: 999, width: 44, height: 44, fontSize: 18, cursor: 'pointer' } }, txt);
 
   return E(React.Fragment, null,
-    E('button', { onClick: () => setOpen(true), 'aria-label': 'NEXUS Stories', style: { position: 'fixed', left: 16, bottom: 74, zIndex: 9990, background: 'linear-gradient(135deg,#7c3aed,#db2777)', color: '#fff', border: 'none', borderRadius: 999, padding: '0.7rem 1.1rem', boxShadow: '0 6px 18px rgba(0,0,0,.25)', cursor: 'pointer', fontWeight: 800, fontSize: '0.9rem' } }, '🎬 Stories'),
+    // [UI] Accès via le méga-menu (☰ Tout) — plus de bouton flottant (anti-chevauchement)
     open && E('div', { style: { position: 'fixed', inset: 0, background: '#000', zIndex: 9997, display: 'flex', flexDirection: 'column' } },
       E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', color: '#fff' } },
         E('strong', null, '🎬 NEXUS Stories'),
@@ -13187,6 +13186,70 @@ const NexusStoriesWidget = ({ user }) => {
               idx > 0 && navBtn('▲', () => go(-1), { top: 10 }),
               idx < items.length - 1 && navBtn('▼', () => go(1), { bottom: 92 })
             )
+    )
+  );
+};
+
+// [UI] Méga-menu global type Amazon « ☰ Tout » : lanceur sous le logo + tiroir
+// latéral avec recherche, toutes les catégories, les fonctionnalités (Troc, Stories,
+// vendre, compte, panier, FAQ) et raccourcis. Remplace les boutons flottants épars.
+const NEXUS_MENU_CATS = [
+  ['Électronique', 'electronique'], ['Téléphones', 'telephones'], ['Informatique', 'informatique'],
+  ['Mode & Vêtements', 'mode'], ['Maison & Déco', 'maison'], ['Beauté & Santé', 'beaute'],
+  ['Sport & Loisirs', 'sport'], ['Alimentation', 'alimentation'], ['Auto & Moto', 'auto'], ['Services', 'services'],
+];
+const NexusMegaMenu = ({ user }) => {
+  const [open, setOpen] = React.useState(false);
+  const [q, setQ] = React.useState('');
+  const E = React.createElement;
+  const go = (url) => { try { window.location.href = url; } catch (_) {} };
+  const emit = (name) => { try { window.dispatchEvent(new CustomEvent(name)); } catch (_) {} setOpen(false); };
+  const search = () => { const v = q.trim(); if (v) go('/?q=' + encodeURIComponent(v)); };
+  React.useEffect(() => { const h = () => setOpen(true); window.addEventListener('nexus:open-menu', h); return () => window.removeEventListener('nexus:open-menu', h); }, []);
+
+  const sec = (title, children) => E('div', { style: { padding: '8px 0', borderBottom: '1px solid #eef0ee' } },
+    E('div', { style: { fontSize: '.7rem', fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9ca3af', margin: '4px 14px 4px' } }, title), children);
+  const item = (label, onClick, icon) => E('button', { onClick, style: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: 'none', border: 'none', textAlign: 'left', padding: '9px 14px', fontSize: '.92rem', color: '#1f2937', cursor: 'pointer' } },
+    E('span', { style: { width: 20, textAlign: 'center', flexShrink: 0 } }, icon || '•'), label);
+
+  return E(React.Fragment, null,
+    E('button', {
+      onClick: () => setOpen(true), 'aria-label': 'Menu — toutes les catégories et fonctionnalités',
+      style: { position: 'fixed', top: 64, left: 8, zIndex: 9985, display: 'flex', alignItems: 'center', gap: 7, background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, padding: '7px 12px', boxShadow: '0 4px 12px rgba(0,0,0,.18)', cursor: 'pointer', fontWeight: 800, fontSize: '.85rem' }
+    }, E('span', { style: { fontSize: 16, lineHeight: 1 } }, '☰'), 'Tout'),
+    open && E('div', { onClick: () => setOpen(false), style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 9994 } },
+      E('nav', { onClick: e => e.stopPropagation(), style: { position: 'absolute', top: 0, left: 0, bottom: 0, width: 'min(86vw,340px)', background: '#fff', overflowY: 'auto', boxShadow: '2px 0 20px rgba(0,0,0,.25)' } },
+        E('div', { style: { background: 'linear-gradient(135deg,#00853E,#0d9488)', color: '#fff', padding: '14px' } },
+          E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+            E('strong', null, user && user.name ? ('Bonjour, ' + String(user.name).split(' ')[0]) : 'Menu NEXUS'),
+            E('button', { onClick: () => setOpen(false), 'aria-label': 'Fermer', style: { background: 'none', border: 'none', color: '#fff', fontSize: 24, cursor: 'pointer', lineHeight: 1 } }, '×')
+          ),
+          E('div', { style: { display: 'flex', marginTop: 10, background: '#fff', borderRadius: 8, overflow: 'hidden' } },
+            E('input', { value: q, onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === 'Enter') search(); }, placeholder: 'Rechercher un produit…', style: { flex: 1, border: 'none', padding: '9px 10px', fontSize: '.9rem', outline: 'none', color: '#111' } }),
+            E('button', { onClick: search, 'aria-label': 'Rechercher', style: { border: 'none', background: '#FFC72C', color: '#111', padding: '0 14px', fontWeight: 800, cursor: 'pointer' } }, '🔍')
+          )
+        ),
+        sec('Explorer', E(React.Fragment, null,
+          item('Accueil', () => go('/'), '🏠'),
+          item('Toutes les catégories', () => go('/?view=catalog'), '🗂️')
+        )),
+        sec('Nouveautés NEXUS', E(React.Fragment, null,
+          item('NEXUS Troc — échanger sans argent', () => emit('nexus:open-troc'), '🔄'),
+          item('NEXUS Stories — vidéos produit', () => emit('nexus:open-stories'), '🎬')
+        )),
+        sec('Catégories', NEXUS_MENU_CATS.map(([label, slug]) => item(label, () => go('/categorie/' + slug), '›'))),
+        sec('Vendre & gagner', E(React.Fragment, null,
+          item('Devenir vendeur', () => go('/?register=vendor'), '🏪'),
+          item('Programme ambassadeur', () => go('/?register=vendor'), '🤝')
+        )),
+        sec('Mon compte', E(React.Fragment, null,
+          (user && user.id) ? item('Mon tableau de bord', () => go('/'), '📊') : item('Se connecter / S’inscrire', () => emit('nexus:open-login'), '👤'),
+          item('Mon panier', () => emit('nexus:open-cart'), '🛒'),
+          item('Mes favoris', () => go('/?view=wishlist'), '❤️')
+        )),
+        sec('Aide', item('FAQ & support', () => go('/faq'), '❓')),
+        E('div', { style: { padding: '14px', color: '#9ca3af', fontSize: '.75rem' } }, 'NEXUS Market — Sénégal · Orange Money · Wave · Livraison partout')
+      )
     )
   );
 };
@@ -33630,6 +33693,15 @@ const App = ({ onUserChange }) => {
     return () => document.removeEventListener('nexus:open-messaging', _h);
   }, []);
 
+  // [UI] Le méga-menu (☰ Tout) déclenche connexion / panier via événements globaux.
+  useEffect(() => {
+    const _l = () => { try { handleLoginClick('buyer'); } catch (_) {} };
+    const _c = () => { try { handleCartClick(); } catch (_) {} };
+    window.addEventListener('nexus:open-login', _l);
+    window.addEventListener('nexus:open-cart', _c);
+    return () => { window.removeEventListener('nexus:open-login', _l); window.removeEventListener('nexus:open-cart', _c); };
+  }, []);
+
   const handleLogin = (user) => {
     var _a;
     // [GRACE 72H] Verrou central (connexion + session restaurée) : un vendeur non
@@ -33847,7 +33919,7 @@ const App = ({ onUserChange }) => {
       sidebarOpen,
       onToggleSidebar: toggleSidebar
     }
-  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusMegaMenu, { user: currentUser2 }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
