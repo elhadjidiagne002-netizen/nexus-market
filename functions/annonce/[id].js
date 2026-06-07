@@ -1,12 +1,12 @@
 // functions/annonce/[id].js → /annonce/:id
-// Page d'atterrissage SEO d'une annonce express (méta + JSON-LD), indexable.
-import { renderListingPage, sbGetOne } from '../_lib/seo.js';
+// Page d'atterrissage SEO d'une annonce express (méta + JSON-LD + Breadcrumb), indexable.
+import { renderListingPage, render404, sbGetOne } from '../_lib/seo.js';
 
 export async function onRequest({ request, env, params }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const id = params.id;
   const a = await sbGetOne(env, `annonces_express?select=id,category,city,description,photo_url,price_fcfa&id=eq.${encodeURIComponent(id)}&limit=1`);
-  if (!a) return Response.redirect(`${origin}/`, 302);
+  if (!a) return render404(origin, "Cette annonce n'est plus disponible.");
 
   // annonces_express n'a pas de titre dédié → on en compose un à partir des données.
   const firstSentence = String(a.description || '').replace(/\s+/g, ' ').trim().split(/[.\n!?]/)[0].slice(0, 70);

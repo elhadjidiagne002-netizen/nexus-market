@@ -24,7 +24,7 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
 };
 
-const BASE_URL = 'https://nexus.sn';
+const BASE_URL = 'https://nexus-market-asb.pages.dev';
 // [FIX PRIX] products.price est stocké en EUR (cf. frontend ×EUR_TO_FCFA).
 // Le feed doit sortir des FCFA/XOF → conversion ici (entier, FCFA sans décimale).
 const EUR_TO_FCFA = 655.957;
