@@ -25,6 +25,10 @@ const CORS = {
 };
 
 const BASE_URL = 'https://nexus.sn';
+// [FIX PRIX] products.price est stocké en EUR (cf. frontend ×EUR_TO_FCFA).
+// Le feed doit sortir des FCFA/XOF → conversion ici (entier, FCFA sans décimale).
+const EUR_TO_FCFA = 655.957;
+const priceXof = (p) => Math.round((parseFloat(p && p.price) || 0) * EUR_TO_FCFA);
 
 // ── Supabase REST helper ─────────────────────────────────────
 async function sb(env, path, method = 'GET', body = null) {
@@ -100,11 +104,11 @@ function toXML(products) {
   };
 
   for (const p of products) {
-    const url    = `${BASE_URL}/?product=${esc(p.id)}`;
+    const url    = `${BASE_URL}/produit/${esc(p.id)}`;
     const img    = p.image_url || '';
     const gCat   = CAT_MAP[p.category] || 'Shopping';
     const avail  = (p.stock || 0) > 0 ? 'in stock' : 'out of stock';
-    const price  = parseFloat(p.price || 0).toFixed(2);
+    const price  = priceXof(p);
 
     lines.push('    <item>');
     lines.push(`      <g:id>${esc(p.id)}</g:id>`);
@@ -138,12 +142,12 @@ function toJSON(products) {
       id:           p.id,
       name:         p.name,
       description:  p.description || '',
-      price_xof:    parseFloat(p.price || 0),
+      price_xof:    priceXof(p),
       category:     p.category || '',
       stock:        p.stock || 0,
       available:    (p.stock || 0) > 0,
       image_url:    p.image_url || '',
-      product_url:  `${BASE_URL}/?product=${p.id}`,
+      product_url:  `${BASE_URL}/produit/${p.id}`,
       updated_at:   p.updated_at || p.created_at,
     })),
   }, null, 2);
@@ -155,9 +159,9 @@ function toCSV(products) {
     const csvStr = (s) => '"' + String(s || '').replace(/"/g, '""') + '"';
     return [
       csvStr(p.id), csvStr(p.name), csvStr((p.description||'').slice(0,200)),
-      p.price || 0, csvStr(p.category || ''), p.stock || 0,
+      priceXof(p), csvStr(p.category || ''), p.stock || 0,
       (p.stock || 0) > 0 ? 'true' : 'false',
-      csvStr(p.image_url || ''), csvStr(`${BASE_URL}/?product=${p.id}`),
+      csvStr(p.image_url || ''), csvStr(`${BASE_URL}/produit/${p.id}`),
       csvStr(p.updated_at || p.created_at),
     ].join(',');
   });
