@@ -202,6 +202,30 @@ async function runMaintenance(env) {
     results.troc = { error: e.message };
   }
 
+  // ── 2ter. Expirer les stories vidéo dépassées (>30j) ───────────────────
+  try {
+    const now = new Date().toISOString();
+    const expireStories = await fetch(
+      `${SUPABASE_URL}/rest/v1/stories?status=eq.active&expires_at=lt.${now}`,
+      {
+        method:  'PATCH',
+        headers: { ...headers, 'Prefer': 'return=minimal' },
+        body:    JSON.stringify({ status: 'closed' }),
+      }
+    );
+    const cutoff90 = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+    const deleteOldStories = await fetch(
+      `${SUPABASE_URL}/rest/v1/stories?status=eq.closed&expires_at=lt.${cutoff90}`,
+      { method: 'DELETE', headers }
+    );
+    results.stories = {
+      expired:     expireStories.ok    ? 'OK' : `Erreur ${expireStories.status}`,
+      deleted_old: deleteOldStories.ok ? 'OK' : `Erreur ${deleteOldStories.status}`,
+    };
+  } catch (e) {
+    results.stories = { error: e.message };
+  }
+
   // ── 3. Log dans maintenance_log ────────────────────────────────────────
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/maintenance_log`, {
