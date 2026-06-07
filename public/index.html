@@ -13078,6 +13078,70 @@ const NexusTrocWidget = ({ user }) => {
   );
 };
 
+// [NEXUS TROC] Panneau de modération admin : liste tous les trocs (RLS admin),
+// permet de masquer (status=closed), réactiver ou supprimer une annonce abusive.
+const TrocAdminPanel = ({ addToast }) => {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [busyId, setBusyId] = React.useState(null);
+  const E = React.createElement;
+  const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await DataService._sb.from('troc_listings').select('*').order('created_at', { ascending: false }).limit(200);
+      if (error) throw error;
+      setItems(data || []);
+    } catch (e) { toast('Lecture des trocs échouée : ' + (e.message || e), 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { if (DataService._sb) load(); else setLoading(false); }, []);
+  const setStatus = async (it, status) => {
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('troc_listings').update({ status }).eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.map(x => x.id === it.id ? { ...x, status } : x));
+      toast('Statut mis à jour.', 'success');
+    } catch (e) { toast('Échec : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  const del = async (it) => {
+    if (typeof confirm === 'function' && !confirm('Supprimer définitivement ce troc ?')) return;
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('troc_listings').delete().eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.filter(x => x.id !== it.id));
+      toast('Troc supprimé.', 'success');
+    } catch (e) { toast('Échec suppression : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      E('h2', { className: 'card-title' }, '🔄 Modération NEXUS Troc (' + items.length + ')'),
+      E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir')
+    ),
+    loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : items.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-exchange-alt' }), E('h3', null, 'Aucun troc'))
+        : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null, ['Objet', 'Cherche', 'Ville', 'Auteur', 'Statut', 'Date', 'Actions'].map(h => E('th', { key: h }, h)))),
+          E('tbody', null, items.map(it => E('tr', { key: it.id },
+            E('td', { 'data-label': 'Objet' }, E('strong', null, it.title)),
+            E('td', { 'data-label': 'Cherche' }, it.want || '—'),
+            E('td', { 'data-label': 'Ville' }, it.city || '—'),
+            E('td', { 'data-label': 'Auteur' }, it.owner_name || '—'),
+            E('td', { 'data-label': 'Statut' }, E('span', { className: 'badge badge-' + (it.status === 'active' ? 'success' : it.status === 'closed' ? 'secondary' : 'warning') }, it.status)),
+            E('td', { 'data-label': 'Date' }, it.created_at ? new Date(it.created_at).toLocaleDateString('fr-FR') : '—'),
+            E('td', { 'data-label': 'Actions' }, E('div', { className: 'flex gap-1' },
+              it.status === 'active'
+                ? E('button', { className: 'btn btn-sm btn-secondary', disabled: busyId === it.id, onClick: () => setStatus(it, 'closed') }, 'Masquer')
+                : E('button', { className: 'btn btn-sm btn-success', disabled: busyId === it.id, onClick: () => setStatus(it, 'active') }, 'Réactiver'),
+              E('button', { className: 'btn btn-sm btn-danger', disabled: busyId === it.id, onClick: () => del(it) }, 'Supprimer')
+            ))
+          )))
+        ))
+  );
+};
+
 // [GRACE 72H] Bandeau global de compte à rebours, affiché en haut de l'app pour un
 // vendeur en accès provisoire (status pending dans la fenêtre de 72h).
 const VendorGraceBanner = ({ user }) => {
@@ -22735,6 +22799,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "returns",  icon: "undo",  label: "Retours",  badge: stats.pendingReturns ?? (storage.getArray("return_requests")).filter((r) => r.status === "pending").length },
     { id: "disputes", icon: "gavel", label: "Litiges",  badge: stats.openDisputes   ?? (storage.getArray("disputes")).filter((d) => d.status === "open").length },
     { id: "products", icon: "tags", label: "Produits" },
+    { id: "troc", icon: "exchange-alt", label: "🔄 Troc" },
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
     { id: "louma", icon: "store", label: "\uD83D\uDFE1 Louma du vendredi" },
     { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: stats.stockAlerts ?? (storage.getArray("stock_alerts")).length },
@@ -22864,7 +22929,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"),
       /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")
     )));
-  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "products" && (() => {
+  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "products" && (() => {
     const pending = products.filter((p) => !p.moderated);
     const approved = products.filter((p) => p.moderated);
     const moderateProduct = async (pid, approve) => {
