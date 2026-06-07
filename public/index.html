@@ -178,6 +178,8 @@
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <!-- [NEXUS STORIES] hls.js — lecture HLS Mux (Chrome/Firefox/Android ; Safari/iOS = natif) -->
     <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+    <!-- [NEXUS STORIES] mux-embed — analytics d'engagement vidéo (Mux Data) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/mux-embed@5/dist/mux-embed.js"></script>
     <!-- bcryptjs supprimé — hachage des mots de passe uniquement côté serveur via npm bcryptjs -->
     <!-- EmailJS SDK v4 -->
     <script defer src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
@@ -2420,6 +2422,10 @@ const NEXUS_CONFIG = {
   // (0.05 → 0.10 → 0.13-0.15). NB : ne concerne PAS les commissions ambassadeur
   // (5-10 %) ni la marge de livraison, qui sont gérées séparément.
   commissionRate: 0,
+  // [NEXUS STORIES] Clé d'environnement Mux Data (analytics vidéo) — PUBLIQUE.
+  // Mesure vues, temps de visionnage, taux de rebuffering. Ne PAS confondre avec
+  // l'Access Token Mux (ID+Secret) qui, lui, reste en variables Cloudflare serveur.
+  muxEnvKey: "3l6gnsub9mk0si2j22gt2ospm",
   // BUG FIX: nexus-confirm.html n'existe pas dans le déploiement single-file Vercel.
   // La confirmation Supabase redirige vers cette URL avec le token dans le hash #access_token=...
   // Le SDK Supabase JS le lit automatiquement si on pointe vers la même page (index.html).
@@ -13119,6 +13125,15 @@ const NexusStoriesWidget = ({ user }) => {
     if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = src; }
     else if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls(); h.loadSource(src); h.attachMedia(v); hlsRef.current = h; }
     else { v.src = src; }
+    // [MUX DATA] suivi d'engagement (clé publique). Monitor une seule fois par
+    // élément vidéo ; changement de vidéo signalé via 'videochange'.
+    try {
+      if (window.mux && NEXUS_CONFIG.muxEnvKey) {
+        const md = { env_key: NEXUS_CONFIG.muxEnvKey, player_name: 'NEXUS Stories', player_init_time: Date.now(), video_id: cur.id, video_title: cur.title || 'Story', video_stream_type: 'on-demand' };
+        if (!v.mux) window.mux.monitor(v, { debug: false, data: md });
+        else v.mux.emit('videochange', md);
+      }
+    } catch (_) {}
     if (v.play) v.play().catch(() => {});
   }, [open, idx, items]);
 
