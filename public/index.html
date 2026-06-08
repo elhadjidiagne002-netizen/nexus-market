@@ -13201,11 +13201,19 @@ const NEXUS_MENU_CATS = [
 const NexusMegaMenu = ({ user }) => {
   const [open, setOpen] = React.useState(false);
   const [q, setQ] = React.useState('');
+  const [topPx, setTopPx] = React.useState(72);
   const E = React.createElement;
   const go = (url) => { try { window.location.href = url; } catch (_) {} };
   const emit = (name) => { try { window.dispatchEvent(new CustomEvent(name)); } catch (_) {} setOpen(false); };
   const search = () => { const v = q.trim(); if (v) go('/?q=' + encodeURIComponent(v)); };
   React.useEffect(() => { const h = () => setOpen(true); window.addEventListener('nexus:open-menu', h); return () => window.removeEventListener('nexus:open-menu', h); }, []);
+  // Place le ☰ juste sous le header (la « bande jaune » sticky) — adaptatif.
+  React.useEffect(() => {
+    const calc = () => { try { const el = document.querySelector('.global-header'); const hh = el ? el.getBoundingClientRect().height : 64; setTopPx(Math.max(56, Math.round(hh) + 6)); } catch (_) { setTopPx(72); } };
+    calc(); const t1 = setTimeout(calc, 800); const t2 = setTimeout(calc, 2000);
+    window.addEventListener('resize', calc);
+    return () => { clearTimeout(t1); clearTimeout(t2); window.removeEventListener('resize', calc); };
+  }, []);
 
   const sec = (title, children) => E('div', { style: { padding: '8px 0', borderBottom: '1px solid #eef0ee' } },
     E('div', { style: { fontSize: '.7rem', fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9ca3af', margin: '4px 14px 4px' } }, title), children);
@@ -13213,13 +13221,10 @@ const NexusMegaMenu = ({ user }) => {
     E('span', { style: { width: 20, textAlign: 'center', flexShrink: 0 } }, icon || '•'), label);
 
   return E(React.Fragment, null,
-    E('div', {
-      style: { position: 'fixed', top: 60, left: 8, zIndex: 9985, display: 'flex', alignItems: 'center', gap: 6, background: '#fff', borderRadius: 12, boxShadow: '0 4px 14px rgba(0,0,0,.18)', padding: '4px 4px 4px 6px', width: 'min(92vw,440px)' }
-    },
-      E('button', { onClick: () => setOpen(true), 'aria-label': 'Menu — toutes les catégories et fonctionnalités', style: { display: 'flex', alignItems: 'center', gap: 6, background: '#00853E', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 10px', cursor: 'pointer', fontWeight: 800, fontSize: '.82rem', flexShrink: 0 } }, E('span', { style: { fontSize: 15, lineHeight: 1 } }, '☰'), 'Tout'),
-      E('input', { value: q, onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === 'Enter') search(); }, placeholder: 'Rechercher un produit…', 'aria-label': 'Rechercher', style: { flex: 1, minWidth: 60, border: 'none', outline: 'none', padding: '7px 6px', fontSize: '.85rem', color: '#111', background: 'transparent' } }),
-      E('button', { onClick: search, 'aria-label': 'Lancer la recherche', style: { background: '#FFC72C', color: '#111', border: 'none', borderRadius: 8, padding: '7px 11px', cursor: 'pointer', fontWeight: 800, flexShrink: 0 } }, '🔍')
-    ),
+    E('button', {
+      onClick: () => setOpen(true), 'aria-label': 'Menu', title: 'Menu',
+      style: { position: 'fixed', top: topPx, left: 10, zIndex: 9985, width: 44, height: 44, borderRadius: 12, background: '#00853E', color: '#fff', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,.22)', cursor: 'pointer', fontSize: 20, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }
+    }, '☰'),
     open && E('div', { onClick: () => setOpen(false), style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 9994 } },
       E('nav', { onClick: e => e.stopPropagation(), style: { position: 'absolute', top: 0, left: 0, bottom: 0, width: 'min(86vw,340px)', background: '#fff', overflowY: 'auto', boxShadow: '2px 0 20px rgba(0,0,0,.25)' } },
         E('div', { style: { background: 'linear-gradient(135deg,#00853E,#0d9488)', color: '#fff', padding: '14px' } },
@@ -13264,14 +13269,18 @@ const TrocAdminPanel = ({ addToast }) => {
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [busyId, setBusyId] = React.useState(null);
+  const [notReady, setNotReady] = React.useState(false);
   const E = React.createElement;
   const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const TABLE_MISSING = /could not find the table|pgrst205|does not exist|schema cache/i;
   const load = async () => {
     setLoading(true);
     try {
       const { data, error } = await DataService._sb.from('troc_listings').select('*').order('created_at', { ascending: false }).limit(200);
-      if (error) throw error;
-      setItems(data || []);
+      if (error) {
+        if (TABLE_MISSING.test((error.message || '') + ' ' + (error.code || ''))) { setNotReady(true); setItems([]); }
+        else throw error;
+      } else { setNotReady(false); setItems(data || []); }
     } catch (e) { toast('Lecture des trocs échouée : ' + (e.message || e), 'error'); }
     setLoading(false);
   };
@@ -13301,6 +13310,9 @@ const TrocAdminPanel = ({ addToast }) => {
       E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir')
     ),
     loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : notReady ? E('div', { style: { padding: '1.2rem', margin: '1rem', background: '#FEF9C3', border: '1px solid #F59E0B', borderRadius: 10, color: '#78350F' } },
+          E('div', { style: { fontWeight: 800, marginBottom: 6 } }, '⚠️ Module Troc non encore activé'),
+          E('div', { style: { fontSize: '.9rem' } }, 'Exécutez la migration ', E('code', null, 'sql/2026_06_07_troc.sql'), ' dans Supabase (SQL Editor), puis rafraîchissez.'))
       : items.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-exchange-alt' }), E('h3', null, 'Aucun troc'))
         : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
           E('thead', null, E('tr', null, ['Objet', 'Cherche', 'Ville', 'Auteur', 'Statut', 'Date', 'Actions'].map(h => E('th', { key: h }, h)))),
@@ -13328,14 +13340,18 @@ const StoriesAdminPanel = ({ addToast }) => {
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [busyId, setBusyId] = React.useState(null);
+  const [notReady, setNotReady] = React.useState(false);
   const E = React.createElement;
   const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const TABLE_MISSING = /could not find the table|pgrst205|does not exist|schema cache/i;
   const load = async () => {
     setLoading(true);
     try {
       const { data, error } = await DataService._sb.from('stories').select('*').order('created_at', { ascending: false }).limit(200);
-      if (error) throw error;
-      setItems(data || []);
+      if (error) {
+        if (TABLE_MISSING.test((error.message || '') + ' ' + (error.code || ''))) { setNotReady(true); setItems([]); }
+        else throw error;
+      } else { setNotReady(false); setItems(data || []); }
     } catch (e) { toast('Lecture des stories échouée : ' + (e.message || e), 'error'); }
     setLoading(false);
   };
@@ -13365,6 +13381,9 @@ const StoriesAdminPanel = ({ addToast }) => {
       E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir')
     ),
     loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : notReady ? E('div', { style: { padding: '1.2rem', margin: '1rem', background: '#FEF9C3', border: '1px solid #F59E0B', borderRadius: 10, color: '#78350F' } },
+          E('div', { style: { fontWeight: 800, marginBottom: 6 } }, '⚠️ Module Stories non encore activé'),
+          E('div', { style: { fontSize: '.9rem' } }, 'La table « stories » n’existe pas dans la base. Exécutez la migration ', E('code', null, 'sql/2026_06_07_stories.sql'), ' dans Supabase (SQL Editor), puis rafraîchissez.'))
       : items.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-video' }), E('h3', null, 'Aucune vidéo'))
         : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
           E('thead', null, E('tr', null, ['Aperçu', 'Titre', 'Vendeur', 'Statut', 'Vues', 'Date', 'Actions'].map(h => E('th', { key: h }, h)))),
