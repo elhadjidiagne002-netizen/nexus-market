@@ -37569,6 +37569,28 @@ window.addEventListener('unhandledrejection', function(event) {
       return { id: id, status: 'searching' };
     },
 
+    // Coursiers disponibles autour d'un point (RPC PostGIS nearby_couriers)
+    async nearbyCouriers(lat, lng, radiusM, limit) {
+      if (this._sb && lat != null && lng != null) {
+        try {
+          var r = await this._sb.rpc('nearby_couriers', { p_lat: lat, p_lng: lng, p_radius_m: radiusM || 7000, p_limit: limit || 15 });
+          if (!r.error && r.data) return r.data;
+        } catch (e) { console.warn('[Coursier] nearbyCouriers:', e.message); }
+      }
+      return [];
+    },
+
+    // Noter un coursier après livraison (RPC rate_courier, anti double-notation)
+    async rateCourier(deliveryId, stars) {
+      if (this._sb) {
+        try {
+          var r = await this._sb.rpc('rate_courier', { p_delivery_id: deliveryId, p_stars: stars });
+          return (!r.error && r.data) ? r.data : { ok: false, reason: (r.error && r.error.message) || 'error' };
+        } catch (e) { return { ok: false, reason: e.message }; }
+      }
+      return { ok: false, reason: 'offline' };
+    },
+
     // Lire l'état d'une course (pas de temps réel : appelé au refresh / sur action)
     async getDelivery(id) {
       if (this._sb) {
@@ -37672,6 +37694,10 @@ window.addEventListener('unhandledrejection', function(event) {
     var _pg = React.useState(null), pGeo = _pg[0], setPGeo = _pg[1];   // {lat,lng} retrait GPS
     var _dg = React.useState(null), dGeo = _dg[0], setDGeo = _dg[1];   // {lat,lng} livraison GPS
     var _loc = React.useState(''), locating = _loc[0], setLocating = _loc[1]; // 'pickup'|'dropoff'|''
+    var _nb = React.useState(null), nearby = _nb[0], setNearby = _nb[1];      // coursiers proches du retrait
+
+    // ETA indicatif (min) : ~22 km/h moyenne moto Dakar + 4 min de prise en charge
+    function etaMin(km) { return Math.max(5, Math.round((km / 22) * 60) + 4); }
 
     React.useEffect(function () {
       DataService.getDeliveryZones().then(setZones);
@@ -37719,6 +37745,17 @@ window.addEventListener('unhandledrejection', function(event) {
       } else setQuote(null);
     }, [pickup, dropoff, zones, pGeo, dGeo]);
 
+    // Coursiers disponibles autour du point de retrait (preuve sociale + confiance)
+    React.useEffect(function () {
+      var pc = coordsOf('pickup');
+      if (!pc) { setNearby(null); return; }
+      var cancelled = false;
+      DataService.nearbyCouriers(pc.lat, pc.lng, 7000, 15).then(function (list) {
+        if (!cancelled) setNearby(list || []);
+      });
+      return function () { cancelled = true; };
+    }, [pickup, zones, pGeo]);
+
     function submit() {
       if (!quote) { alert('Choisissez le retrait et la livraison (quartier ou 📍 position).'); return; }
       var pc = coordsOf('pickup'), dc = coordsOf('dropoff');
@@ -37758,6 +37795,14 @@ window.addEventListener('unhandledrejection', function(event) {
         el.__nexusTracked = true;
         NexusMap.track(el, result);
       };
+      var shareTrack = function () {
+        var origin = (window.location && window.location.origin) || 'https://nexus.sn';
+        var msg = '🛵 Suivez ma livraison NEXUS\n📍 ' + pLab + ' → 🏁 ' + dLab
+          + '\n⏱️ ~' + etaMin(quote.distanceKm) + ' min · ' + quote.fee + ' FCFA'
+          + '\n👉 ' + origin + (result && result.id ? ('/?track=' + result.id) : '');
+        if (navigator.share) { navigator.share({ title: 'Suivi livraison NEXUS', text: msg }).catch(function () {}); }
+        else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
+      };
       return E('div', { style: overlay, onClick: props.onClose },
         E('div', { style: card, onClick: function (e) { e.stopPropagation(); } },
           E('div', { style: { padding: '1.5rem 1.5rem 1.25rem', textAlign: 'center' } },
@@ -37769,8 +37814,10 @@ window.addEventListener('unhandledrejection', function(event) {
             E('div', { ref: mapMount, className: 'nexus-map', style: { height: 240, marginBottom: '.9rem' } }),
             E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', fontSize: '.8rem', textAlign: 'left', marginBottom: '.9rem' } },
               E('div', null, '📍 ', pLab, ' → 🏁 ', dLab),
-              E('div', { style: { marginTop: '.3rem', fontWeight: 700, color: '#00853E' } }, quote.fee + ' FCFA · ' + quote.distanceKm + ' km')),
-            dRoute && E('button', { onClick: function () { NexusMap.openDirections(dRoute.lat, dRoute.lng, dLab); }, style: { width: '100%', padding: '.75rem', background: '#fff', color: '#1d4ed8', border: '1.5px solid #1d4ed8', borderRadius: 10, fontWeight: 700, cursor: 'pointer', marginBottom: '.6rem' } }, '🧭 M\'y rendre (itinéraire)'),
+              E('div', { style: { marginTop: '.3rem', fontWeight: 700, color: '#00853E' } }, quote.fee + ' FCFA · ' + quote.distanceKm + ' km · ⏱️ ~' + etaMin(quote.distanceKm) + ' min')),
+            E('div', { style: { display: 'flex', gap: 8, marginBottom: '.6rem' } },
+              E('button', { onClick: shareTrack, style: { flex: 1, padding: '.75rem', background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, cursor: 'pointer' } }, '📤 Partager le suivi'),
+              dRoute && E('button', { onClick: function () { NexusMap.openDirections(dRoute.lat, dRoute.lng, dLab); }, style: { flex: 1, padding: '.75rem', background: '#fff', color: '#1d4ed8', border: '1.5px solid #1d4ed8', borderRadius: 10, fontWeight: 700, cursor: 'pointer' } }, '🧭 M\'y rendre')),
             E('button', { onClick: props.onClose, style: { width: '100%', padding: '.8rem', background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer' } }, 'Suivre ma course')
           )
         )
@@ -37808,13 +37855,21 @@ window.addEventListener('unhandledrejection', function(event) {
                 E('select', { value: dropoff, onChange: function (e) { setDropoff(e.target.value); }, style: Object.assign({}, inp, { marginBottom: 0, flex: 1 }) },
                   E('option', { value: '' }, '— Choisir un quartier —'), zOpts),
                 E('button', { onClick: function () { detect('dropoff'); }, disabled: locating === 'dropoff', title: 'Utiliser ma position GPS', style: { padding: '0 .8rem', borderRadius: 10, border: '1.5px solid #E63946', background: '#fff', color: '#E63946', fontWeight: 700, fontSize: '.78rem', cursor: 'pointer', whiteSpace: 'nowrap' } }, locating === 'dropoff' ? '…' : '📍 Ici')),
+          // Preuve sociale : coursiers disponibles autour du retrait (+ carte de zone)
+          (nearby != null) && E('div', { style: { marginBottom: '.7rem' } },
+            nearby.length > 0
+              ? E('div', { style: { fontSize: '.8rem', color: '#00853E', fontWeight: 600, marginBottom: '.4rem' } }, '🟢 ' + nearby.length + ' coursier' + (nearby.length > 1 ? 's' : '') + ' en ligne près du retrait')
+              : E('div', { style: { fontSize: '.8rem', color: '#b45309', marginBottom: '.4rem' } }, '⏳ Aucun coursier en ligne à l\'instant — votre demande sera proposée dès qu\'un coursier se connecte.'),
+            (function () { var pc = coordsOf('pickup'); return (pc && nearby.length > 0) && E('div', { ref: function (el) { if (!el || el.__nb || !window.NexusMap) return; el.__nb = true; NexusMap.nearby(el, { lat: pc.lat, lng: pc.lng, label: 'Point de retrait' }, []); }, className: 'nexus-map', style: { height: 160 } }); })()
+          ),
           E('p', { style: lbl }, type === 'errand' ? 'À acheter / détails' : 'Détails (optionnel)'),
           E('textarea', { value: items, onChange: function (e) { setItems(e.target.value); }, rows: 2, placeholder: 'Ex : 2 kg de poisson, légumes, pain…', style: Object.assign({}, inp, { resize: 'vertical' }) }),
           quote && E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', marginBottom: '.8rem' } },
             E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' } },
               E('span', { style: { fontSize: '.75rem', color: '#666' } }, 'Tarif estimé'),
               E('span', { style: { fontSize: '1.4rem', fontWeight: 700, color: '#00853E' } }, quote.fee + ' FCFA')),
-            E('div', { style: { fontSize: '.68rem', color: '#999', marginTop: '.3rem' } },
+            E('div', { style: { fontSize: '.74rem', color: '#444', marginTop: '.25rem', fontWeight: 600 } }, '⏱️ Livraison estimée ~' + etaMin(quote.distanceKm) + ' min'),
+            E('div', { style: { fontSize: '.68rem', color: '#999', marginTop: '.2rem' } },
               'Base ' + TARIF.base + ' + ' + quote.distanceKm + ' km × ' + TARIF.perKm + (quote.isNight ? ' · nuit +' + TARIF.nightSurchargePct + '%' : ''))),
           E('p', { style: lbl }, 'Paiement'),
           E('div', { style: { display: 'flex', gap: 6, marginBottom: '1rem' } },
@@ -39825,6 +39880,215 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULE WHATSAPP COURSIER ============== -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS — PETITES FONCTIONNALITÉS UX (modules autonomes, vanilla JS)
+     Socle partagé NexusUX (toast/sb/user) + 5 modules :
+       1. Notation coursier   2. Points fidélité   3. Coach-marks FAB
+       4. Coursiers en ligne (badge sur le FAB)     5. Partage produit WhatsApp
+     Tous dégradent gracieusement si une table/colonne/élément manque.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+/* ── Socle partagé NexusUX ─────────────────────────────────────────────── */
+(function () {
+  'use strict';
+  if (window.NexusUX) return;
+  function sb() { try { return (window.DataService && DataService._sb) || window.__nexusSupabaseClient || null; } catch (e) { return null; } }
+  var _user = null;
+  window.addEventListener('nexus:set-user', function (e) { _user = e.detail || null; });
+  function user() { return _user; }
+  function ensureCt() {
+    var c = document.getElementById('nexus-ux-toasts');
+    if (!c) { c = document.createElement('div'); c.id = 'nexus-ux-toasts';
+      c.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:10050;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+      document.body.appendChild(c); }
+    return c;
+  }
+  function toast(msg, opts) {
+    opts = opts || {}; var c = ensureCt(); var t = document.createElement('div'); t.textContent = msg;
+    t.style.cssText = 'pointer-events:auto;max-width:88vw;text-align:center;background:' + (opts.bg || '#111') + ';color:' + (opts.color || '#fff') + ';padding:10px 16px;border-radius:24px;font-weight:600;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.25);opacity:0;transform:translateY(-8px);transition:all .25s';
+    c.appendChild(t); requestAnimationFrame(function () { t.style.opacity = '1'; t.style.transform = 'translateY(0)'; });
+    setTimeout(function () { t.style.opacity = '0'; t.style.transform = 'translateY(-8px)'; setTimeout(function () { try { c.removeChild(t); } catch (e) {} }, 300); }, opts.duration || 4200);
+  }
+  window.NexusUX = { sb: sb, user: user, toast: toast };
+})();
+
+/* ── 1. Notation du coursier après livraison ───────────────────────────── */
+(function () {
+  'use strict';
+  if (window.__NEXUS_RATING_LOADED__) return; window.__NEXUS_RATING_LOADED__ = true;
+  var seen = {};
+  function check(u) {
+    if (!u || !u.id) return; var sb = window.NexusUX.sb(); if (!sb) return;
+    try {
+      sb.from('deliveries').select('id,courier_id,pickup_label,dropoff_label')
+        .eq('buyer_id', u.id).eq('status', 'delivered').is('courier_rating', null)
+        .not('courier_id', 'is', null).order('delivered_at', { ascending: false }).limit(1)
+        .then(function (r) { var d = r && r.data && r.data[0]; if (d && !seen[d.id]) { seen[d.id] = true; openModal(d); } })
+        .catch(function () {});
+    } catch (e) {}
+  }
+  function openModal(d) {
+    if (document.getElementById('nexus-rating-ov')) return;
+    var ov = document.createElement('div'); ov.id = 'nexus-rating-ov';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10060;display:flex;align-items:center;justify-content:center;padding:1rem;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+    var stars = 0;
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#fff;border-radius:16px;max-width:360px;width:100%;padding:1.5rem;text-align:center';
+    card.innerHTML = '<div style="font-size:2.4rem">🛵</div>'
+      + '<h3 style="margin:.3rem 0 .2rem;font-size:1.05rem">Notez votre livraison</h3>'
+      + '<p style="color:#666;font-size:.82rem;margin:0 0 1rem">' + (d.pickup_label || '') + ' → ' + (d.dropoff_label || '') + '</p>'
+      + '<div id="nx-stars" style="font-size:2.1rem;letter-spacing:.2rem;cursor:pointer">★★★★★</div>'
+      + '<button id="nx-rate-send" disabled style="margin-top:1rem;width:100%;padding:.8rem;border:none;border-radius:10px;background:#9ca3af;color:#fff;font-weight:700;cursor:default">Envoyer ma note</button>'
+      + '<button id="nx-rate-skip" style="margin-top:.5rem;width:100%;padding:.5rem;border:none;background:none;color:#999;cursor:pointer;font-size:.8rem">Plus tard</button>';
+    ov.appendChild(card); document.body.appendChild(ov);
+    var starsEl = card.querySelector('#nx-stars'), sendEl = card.querySelector('#nx-rate-send');
+    function paint(n) { starsEl.innerHTML = ''; for (var i = 1; i <= 5; i++) starsEl.innerHTML += '<span data-s="' + i + '" style="color:' + (i <= n ? '#f59e0b' : '#d1d5db') + '">★</span>'; }
+    paint(0);
+    starsEl.addEventListener('click', function (e) { var s = e.target && e.target.getAttribute('data-s'); if (!s) return; stars = parseInt(s, 10); paint(stars); sendEl.disabled = false; sendEl.style.background = '#00853E'; sendEl.style.cursor = 'pointer'; });
+    function close() { try { document.body.removeChild(ov); } catch (e) {} }
+    card.querySelector('#nx-rate-skip').addEventListener('click', close);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    sendEl.addEventListener('click', function () {
+      if (!stars || !window.DataService || !DataService.rateCourier) { close(); return; }
+      sendEl.disabled = true; sendEl.textContent = 'Envoi…';
+      DataService.rateCourier(d.id, stars).then(function (res) {
+        close();
+        if (res && res.ok) window.NexusUX.toast('🙏 Merci pour votre note !', { bg: '#00853E' });
+        else window.NexusUX.toast('Note non enregistrée' + (res && res.reason ? ' (' + res.reason + ')' : ''), { bg: '#b45309' });
+      });
+    });
+  }
+  window.addEventListener('nexus:set-user', function (e) { setTimeout(function () { check(e.detail); }, 1200); });
+  window.addEventListener('nexus:delivery-updated', function () { setTimeout(function () { check(window.NexusUX.user()); }, 1500); });
+})();
+
+/* ── 2. Points fidélité : pastille de solde + toast de remerciement ─────── */
+(function () {
+  'use strict';
+  if (window.__NEXUS_LOYALTY_LOADED__) return; window.__NEXUS_LOYALTY_LOADED__ = true;
+  function readPoints(u) {
+    return new Promise(function (res) {
+      var sb = window.NexusUX.sb(); if (!sb || !u || !u.id) return res(null);
+      try {
+        sb.from('loyalty_points').select('*').eq('user_id', u.id).maybeSingle().then(function (r) {
+          var d = r && r.data; if (!d) return res(null);
+          var p = (d.points != null) ? d.points : (d.balance != null) ? d.balance
+                 : (d.total_earned != null) ? (d.total_earned - (d.total_redeemed || 0)) : null;
+          res(p);
+        }).catch(function () { res(null); });
+      } catch (e) { res(null); }
+    });
+  }
+  function renderPill(p) {
+    if (p == null) return;
+    var el = document.getElementById('nexus-loyalty-pill');
+    if (!el) {
+      el = document.createElement('button'); el.id = 'nexus-loyalty-pill';
+      el.style.cssText = 'position:fixed;top:10px;right:10px;z-index:9970;background:#fff7ed;color:#b45309;border:1.5px solid #f59e0b;border-radius:20px;padding:5px 12px;font:700 12px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)';
+      el.title = 'Vos points de fidélité NEXUS';
+      el.addEventListener('click', function () { window.dispatchEvent(new CustomEvent('nexus:open-loyalty')); });
+      document.body.appendChild(el);
+    }
+    el.textContent = '⭐ ' + Number(p).toLocaleString('fr-FR') + ' pts';
+  }
+  function refresh() { var u = window.NexusUX.user(); if (!u) return; readPoints(u).then(renderPill); }
+  window.addEventListener('nexus:set-user', function () { setTimeout(refresh, 800); });
+  window.addEventListener('nexus:order-created', function () {
+    setTimeout(function () {
+      var u = window.NexusUX.user();
+      readPoints(u).then(function (p) { renderPill(p); window.NexusUX.toast('🎉 Merci pour votre commande !' + (p != null ? ' Solde fidélité : ' + p + ' pts' : ''), { bg: '#00853E', duration: 5000 }); });
+    }, 2500);
+  });
+})();
+
+/* ── 3. Coach-marks (bulles d'aide première visite) sur les FAB ─────────── */
+(function () {
+  'use strict';
+  if (window.__NEXUS_COACH_LOADED__) return; window.__NEXUS_COACH_LOADED__ = true;
+  var KEY = 'nexus_coach_v1';
+  try { if (localStorage.getItem(KEY)) return; } catch (e) {}
+  var TIPS = [
+    { id: 'nexus-courier-fab', text: '🛵 Commandez un coursier à la demande' },
+    { id: 'nexus-courier-dash-fab', text: '📦 Vos courses de livreur' },
+    { id: 'nexus-public-chat-fab', text: '💬 Discutez avec la communauté' }
+  ];
+  var tries = 0;
+  var iv = setInterval(function () {
+    tries++;
+    var anchored = false;
+    TIPS.forEach(function (tip) {
+      var fab = document.getElementById(tip.id);
+      if (!fab || fab.__coached || fab.offsetParent === null) return;
+      fab.__coached = true; anchored = true;
+      var r = fab.getBoundingClientRect();
+      var b = document.createElement('div');
+      b.textContent = tip.text;
+      b.style.cssText = 'position:fixed;left:' + Math.max(8, r.left) + 'px;bottom:' + (window.innerHeight - r.top + 8) + 'px;max-width:200px;background:#111;color:#fff;padding:8px 12px;border-radius:10px;font:600 12px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;z-index:9990;box-shadow:0 6px 18px rgba(0,0,0,.3);animation:nxCoachIn .3s ease';
+      document.body.appendChild(b);
+      fab.style.boxShadow = '0 0 0 4px rgba(0,133,62,.35), 0 4px 14px rgba(0,0,0,.35)';
+      setTimeout(function () { try { document.body.removeChild(b); } catch (e) {} fab.style.boxShadow = ''; }, 6000);
+    });
+    if (anchored || tries > 25) { clearInterval(iv); try { localStorage.setItem(KEY, '1'); } catch (e) {} }
+  }, 600);
+  var st = document.createElement('style'); st.textContent = '@keyframes nxCoachIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}'; document.head.appendChild(st);
+})();
+
+/* ── 4. « Coursiers en ligne » : badge live sur le FAB Coursier ─────────── */
+(function () {
+  'use strict';
+  if (window.__NEXUS_PULSE_LOADED__) return; window.__NEXUS_PULSE_LOADED__ = true;
+  // Centre de Dakar par défaut (le badge montre l'offre globale de la zone).
+  var DAKAR = { lat: 14.6928, lng: -17.4467 };
+  function update() {
+    var fab = document.getElementById('nexus-courier-fab');
+    if (!fab || fab.offsetParent === null) return;
+    if (!window.DataService || !DataService.nearbyCouriers) return;
+    DataService.nearbyCouriers(DAKAR.lat, DAKAR.lng, 30000, 50).then(function (list) {
+      var n = (list && list.length) || 0;
+      var dot = fab.querySelector('.nx-online-dot');
+      if (n > 0) {
+        if (!dot) { dot = document.createElement('span'); dot.className = 'nx-online-dot'; dot.style.cssText = 'margin-left:6px;background:#25D366;color:#06310f;border-radius:20px;padding:1px 7px;font-size:11px;font-weight:800;vertical-align:middle'; fab.appendChild(dot); }
+        dot.textContent = '🟢 ' + n;
+        dot.title = n + ' coursier(s) en ligne';
+      } else if (dot) { dot.remove(); }
+    }).catch(function () {});
+  }
+  // Premier essai après montage des FAB, puis rafraîchissement périodique.
+  setTimeout(update, 3000);
+  setInterval(update, 60000);
+})();
+
+/* ── 5. Partage produit WhatsApp (enhancer DOM des .product-card) ───────── */
+(function () {
+  'use strict';
+  if (window.__NEXUS_SHAREPROD_LOADED__) return; window.__NEXUS_SHAREPROD_LOADED__ = true;
+  function titleOf(card) {
+    var el = card.querySelector('.product-title,.product-name,[class*="title"],[class*="name"],h3,h4');
+    var t = el && (el.textContent || '').trim();
+    return t || 'ce produit';
+  }
+  function enhance() {
+    var cards = document.querySelectorAll('.product-card:not([data-nx-share])');
+    Array.prototype.forEach.call(cards, function (card) {
+      card.setAttribute('data-nx-share', '1');
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.setAttribute('aria-label', 'Partager sur WhatsApp'); btn.innerHTML = '📤';
+      btn.style.cssText = 'position:absolute;top:8px;left:8px;z-index:5;width:30px;height:30px;border-radius:50%;border:none;background:rgba(37,211,102,.92);color:#fff;font-size:14px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.2);display:flex;align-items:center;justify-content:center';
+      btn.addEventListener('click', function (ev) {
+        ev.stopPropagation(); ev.preventDefault();
+        var url = (window.location && window.location.href) || 'https://nexus.sn';
+        var msg = '🛍️ Découvrez « ' + titleOf(card) + ' » sur NEXUS Market\n👉 ' + url;
+        if (navigator.share) { navigator.share({ title: 'NEXUS Market', text: msg }).catch(function () {}); }
+        else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
+      });
+      try { card.appendChild(btn); } catch (e) {}
+    });
+  }
+  setInterval(enhance, 1500); enhance();
+})();
+</script>
+<!-- ============== FIN MODULES UX ============== -->
 
 </body>
 </html>
