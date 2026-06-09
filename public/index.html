@@ -30872,6 +30872,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                   const isBoosted = product.is_boosted || catalogBoostsPub.includes(product.id);
                   const card = React.createElement('article', {
                     key: product.id,
+                    // Lien profond partageable (lu par l'enhancer de partage WhatsApp).
+                    'data-share-url': (window.location.origin) + (isExpress ? '/annonce/' : '/produit/') + product.id,
+                    'data-share-title': product.name || '',
                     className: 'product-card' + (isExpress ? ' product-card-express' : '') + (isBoosted ? ' product-card-boosted' : '') + (product._isSponsored ? ' product-card-sponsored' : ''),
                     role: 'listitem',
                     style: isExpress
@@ -40281,12 +40284,21 @@ window.addEventListener('unhandledrejection', function(event) {
   'use strict';
   if (window.__NEXUS_SHAREPROD_LOADED__) return; window.__NEXUS_SHAREPROD_LOADED__ = true;
   function titleOf(card) {
-    var el = card.querySelector('.product-title,.product-name,[class*="title"],[class*="name"],h3,h4');
-    var t = el && (el.textContent || '').trim();
-    return t || 'ce produit';
+    var t = card.getAttribute('data-share-title');
+    if (t && t.trim()) return t.trim();
+    var el = card.querySelector('.product-name,.product-title,h3,h4');
+    return (el && (el.textContent || '').trim()) || 'ce produit';
+  }
+  // Lien profond vers le produit/annonce (data-share-url posé par la carte React).
+  function urlOf(card) {
+    var u = card.getAttribute('data-share-url');
+    if (u) return u;
+    return (window.NEXUS_CONFIG && NEXUS_CONFIG.siteUrl) || (window.location && window.location.origin) || 'https://nexus-market-asb.pages.dev';
   }
   function enhance() {
-    var cards = document.querySelectorAll('.product-card:not([data-nx-share])');
+    // On n'ajoute le bouton QUE si la carte expose un lien profond (sinon le partage
+    // pointerait vers la home — bug). Les cartes sans data-share-url sont ignorées.
+    var cards = document.querySelectorAll('.product-card[data-share-url]:not([data-nx-share])');
     Array.prototype.forEach.call(cards, function (card) {
       card.setAttribute('data-nx-share', '1');
       var btn = document.createElement('button');
@@ -40294,9 +40306,9 @@ window.addEventListener('unhandledrejection', function(event) {
       btn.style.cssText = 'position:absolute;top:8px;left:8px;z-index:5;width:30px;height:30px;border-radius:50%;border:none;background:rgba(37,211,102,.92);color:#fff;font-size:14px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.2);display:flex;align-items:center;justify-content:center';
       btn.addEventListener('click', function (ev) {
         ev.stopPropagation(); ev.preventDefault();
-        var url = (window.location && window.location.href) || (window.NEXUS_CONFIG && NEXUS_CONFIG.siteUrl) || 'https://nexus-market-asb.pages.dev';
+        var url = urlOf(card);
         var msg = '🛍️ Découvrez « ' + titleOf(card) + ' » sur NEXUS Market\n👉 ' + url;
-        if (navigator.share) { navigator.share({ title: 'NEXUS Market', text: msg }).catch(function () {}); }
+        if (navigator.share) { navigator.share({ title: 'NEXUS Market', text: msg, url: url }).catch(function () {}); }
         else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
       });
       try { card.appendChild(btn); } catch (e) {}
