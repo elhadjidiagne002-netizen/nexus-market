@@ -2,8 +2,9 @@ name: Cron Jobs NEXUS Market
 
 on:
   schedule:
-    - cron: '0 * * * *'
-    - cron: '0 3 * * 0'
+    - cron: '0 * * * *'      # expire — horaire
+    - cron: '0 3 * * 0'      # cleanup — dimanche 3h
+    - cron: '*/5 * * * *'    # dispatch — toutes les 5 min (puis boucle interne → ~1/min)
   workflow_dispatch:
     inputs:
       job:
@@ -11,7 +12,7 @@ on:
         required: true
         default: 'both'
         type: choice
-        options: [expire, cleanup, both]
+        options: [expire, cleanup, dispatch, both]
 
 env:
   SITE_URL: https://nexus-market-asb.pages.dev
@@ -20,7 +21,7 @@ jobs:
   cron-expire:
     name: Expiration annonces & boosts (horaire)
     # Schedule horaire uniquement (ou déclenchement manuel expire/both)
-    if: github.event.schedule == '0 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'cleanup')
+    if: github.event.schedule == '0 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'cleanup' && github.event.inputs.job != 'dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/expire
@@ -35,7 +36,7 @@ jobs:
   cron-cleanup:
     name: Nettoyage base de données (hebdomadaire)
     # Schedule hebdomadaire uniquement (ou déclenchement manuel cleanup/both)
-    if: github.event.schedule == '0 3 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'expire')
+    if: github.event.schedule == '0 3 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'expire' && github.event.inputs.job != 'dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/cleanup
@@ -46,3 +47,25 @@ jobs:
           echo "$BODY" | sed '$d'
           echo "HTTP Status: $STATUS"
           test "$STATUS" = "200"
+
+  cron-dispatch:
+    name: Dispatch coursier — avance la cascade (~1/min)
+    # GitHub limite le schedule à 5 min → on boucle en interne (sleep 60) pour ~1 ping/min.
+    if: github.event.schedule == '*/5 * * * *' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.job == 'dispatch' || github.event.inputs.job == 'both'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    concurrency:
+      group: cron-dispatch
+      cancel-in-progress: false
+    steps:
+      - name: Ping /cron/dispatch toutes les 60 s (~5 fois)
+        run: |
+          set -u
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /tmp/dispatch.json -w "%{http_code}" --max-time 30 \
+              "$SITE_URL/cron/dispatch?token=${{ secrets.NEXUS_CRON_TOKEN }}" || echo "000")
+            echo "Ping $i/5 → HTTP $CODE"
+            if [ "$CODE" = "200" ]; then cat /tmp/dispatch.json 2>/dev/null || true; echo; fi
+            if [ "$i" -lt 5 ]; then sleep 60; fi
+          done
+          echo "Cycle dispatch terminé."
