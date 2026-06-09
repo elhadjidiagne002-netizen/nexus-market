@@ -22273,8 +22273,9 @@ const AdminLivraisonPanel = ({ addToast }) => {
     setPayingId(null); load();
   };
 
+  // courierId = couriers.user_id (= deliveries.courier_id attendu par la FK/RLS)
   const assignCourier = async (deliveryId, courierId) => {
-    const co = couriers.find(c=>c.id===courierId);
+    const co = couriers.find(c=>c.user_id===courierId);
     if (!co) return;
     // Attribution MANUELLE via RPC (force) — fallback update direct si RPC absent.
     let ok = false;
@@ -22301,7 +22302,7 @@ const AdminLivraisonPanel = ({ addToast }) => {
     let list = [];
     try { list = await DataService.nearbyCouriers(lat, lng, 15000, 10); } catch(_){}
     if (!list || !list.length) { addToast('Aucun coursier en ligne à proximité.','warning'); return; }
-    await assignCourier(deliveryId, list[0].courier_id);
+    await assignCourier(deliveryId, list[0].user_id);
     addToast('🤖 Dispatch auto : '+(list[0].name||'coursier')+' ('+(list[0].distance_km!=null?list[0].distance_km+' km':'')+')','success');
   };
 
@@ -22346,7 +22347,7 @@ const AdminLivraisonPanel = ({ addToast }) => {
           E('tbody',null,
             deliveries.slice(0,15).map(d=>{
               const st = DR_STATUS[d.status]||DR_STATUS.pending;
-              const co = couriers.find(c=>c.id===d.courier_id);
+              const co = couriers.find(c=>c.user_id===d.courier_id);
               return E('tr',{key:d.id},
                 E('td',null,E('code',null,'#'+(d.order_id||'').slice(0,8).toUpperCase())),
                 E('td',null,d.buyer_name||'—'),
@@ -22368,7 +22369,7 @@ const AdminLivraisonPanel = ({ addToast }) => {
         E('tbody',null,
           deliveries.map(d=>{
             const st = DR_STATUS[d.status]||DR_STATUS.pending;
-            const co = couriers.find(c=>c.id===d.courier_id);
+            const co = couriers.find(c=>c.user_id===d.courier_id);
             const avail = couriers.filter(c=>(c.status==='active'||c.courier_status==='available')&&(!c.zones||!c.zones.length||c.zones.includes(d.delivery_city)));
             return E('tr',{key:d.id},
               E('td',null,E('code',{style:{fontSize:'.75rem'}},'#'+(d.order_id||'').slice(0,8).toUpperCase())),
@@ -22385,7 +22386,7 @@ const AdminLivraisonPanel = ({ addToast }) => {
                     onChange:e=>e.target.value&&assignCourier(d.id,e.target.value),defaultValue:''
                   },
                     E('option',{value:''},'Assigner…'),
-                    avail.map(c=>E('option',{key:c.id,value:c.id},c.name))
+                    avail.map(c=>E('option',{key:c.id,value:c.user_id},c.name))
                   ),
                   (d.pickup_lat!=null)&&E('button',{
                     title:'Attribuer automatiquement au plus proche',
@@ -37742,11 +37743,29 @@ window.addEventListener('unhandledrejection', function(event) {
       } catch (e) { return null; }
     },
 
-    // Attribution manuelle par l'admin.
+    // Attribution manuelle par l'admin. courierId = couriers.user_id (= auth.uid).
     async adminAssignDelivery(deliveryId, courierId) {
       if (!this._sb) return { ok: false, reason: 'offline' };
       try {
         var r = await this._sb.rpc('admin_assign_delivery', { p_delivery_id: deliveryId, p_courier_id: courierId });
+        return (!r.error && r.data) ? r.data : { ok: false, reason: r.error && r.error.message };
+      } catch (e) { return { ok: false, reason: e.message }; }
+    },
+
+    // Courses OUVERTES que le livreur peut consulter (« voir si intéressé »).
+    async openDeliveries(lat, lng, radiusM, limit) {
+      if (!this._sb) return [];
+      try {
+        var r = await this._sb.rpc('open_deliveries', { p_lat: (lat != null ? lat : null), p_lng: (lng != null ? lng : null), p_radius_m: radiusM || 20000, p_limit: limit || 40 });
+        return (!r.error && r.data) ? r.data : [];
+      } catch (e) { console.warn('[Coursier] openDeliveries:', e.message); return []; }
+    },
+
+    // Le livreur saisit lui-même une course ouverte (1er arrivé). userId = auth.uid.
+    async acceptOpenDelivery(deliveryId, userId) {
+      if (!this._sb) return { ok: false, reason: 'offline' };
+      try {
+        var r = await this._sb.rpc('accept_open_delivery', { p_delivery_id: deliveryId, p_user_id: userId });
         return (!r.error && r.data) ? r.data : { ok: false, reason: r.error && r.error.message };
       } catch (e) { return { ok: false, reason: e.message }; }
     },
@@ -38137,10 +38156,12 @@ window.addEventListener('unhandledrejection', function(event) {
     var _l = React.useState(true), loading = _l[0], setLoading = _l[1];
     var _b = React.useState(false), busy = _b[0], setBusy = _b[1];
     var _pos = React.useState(null), pos = _pos[0], setPos = _pos[1];
+    var _op = React.useState([]), openJobs = _op[0], setOpenJobs = _op[1]; // courses ouvertes à saisir
 
     var user = props.user || {};
-    var userId = user.id;                                   // = profiles.id (position/statut)
-    var _cr = React.useState(null), courierRowId = _cr[0], setCourierRowId = _cr[1]; // = couriers.id
+    var userId = user.id;                                   // = profiles.id = auth.uid()
+    // deliveries.courier_id / delivery_offers.courier_id = ID UTILISATEUR (RLS/FK).
+    var courierRowId = userId;
 
     function refresh(cid) {
       var id = cid || courierRowId;
@@ -38154,14 +38175,31 @@ window.addEventListener('unhandledrejection', function(event) {
         setActive(res[1] || []);
         setLoading(false);
       }).catch(function () { setLoading(false); });
+      loadOpen();
+    }
+
+    function loadOpen() {
+      var p = pos || {};
+      DataService.openDeliveries(p.lat, p.lng, 25000, 40).then(function (list) { setOpenJobs(list || []); });
+    }
+
+    // Le livreur saisit lui-même une course ouverte (1er arrivé).
+    function grab(job) {
+      setBusy(true);
+      DataService.acceptOpenDelivery(job.delivery_id, userId).then(function (r) {
+        setBusy(false);
+        if (r && r.ok) {
+          var who = (r.buyer_name ? r.buyer_name : 'Mandataire') + (r.buyer_phone ? (' · ' + r.buyer_phone) : '');
+          alert('✅ Course saisie !\n📞 ' + who + '\nAppelez-le pour convenir du retrait.');
+          setOpenJobs(function (l) { return l.filter(function (x) { return x.delivery_id !== job.delivery_id; }); });
+          refresh();
+        } else if (r && r.reason === 'already_taken') { alert('Course déjà prise.'); loadOpen(); }
+        else { alert('Impossible : ' + ((r && r.reason) || 'erreur')); }
+      });
     }
 
     React.useEffect(function () {
-      // Résout couriers.id (clé des courses/offres) puis charge.
-      DataService.getCourierRowId(userId).then(function (cid) {
-        setCourierRowId(cid);
-        refresh(cid);
-      });
+      refresh(userId);
       // Statut initial déduit du profil
       if (user.courier_status === 'available' || user.courier_status === 'busy') setOnline(true);
     }, []);
@@ -38313,6 +38351,24 @@ window.addEventListener('unhandledrejection', function(event) {
               E('div', { style: { display: 'flex', gap: 8 } },
                 E('button', { onClick: function () { decline(of); }, disabled: busy, style: { flex: '0 0 38%', padding: '.7rem', borderRadius: 10, border: '1.5px solid #dc2626', background: '#fff', color: '#dc2626', fontWeight: 700, fontSize: '.82rem', cursor: busy ? 'default' : 'pointer' } }, '✖ Refuser'),
                 E('button', { onClick: function () { accept(of); }, disabled: busy, style: { flex: 1, padding: '.7rem', borderRadius: 10, border: 'none', background: busy ? '#9ca3af' : '#00853E', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: busy ? 'default' : 'pointer' } }, '✓ Accepter')));
+          })
+        ),
+
+        // ── Courses disponibles : le livreur peut en saisir une lui-même ──────
+        E('div', { style: Object.assign({}, sect, { paddingBottom: '1.5rem' }) },
+          E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.6rem' } },
+            E('div', { style: { fontSize: '.7rem', fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '.04em' } }, '🟢 Courses disponibles' + (openJobs.length ? ' (' + openJobs.length + ')' : '')),
+            E('button', { onClick: function () { loadOpen(); }, style: { background: 'none', border: 'none', color: '#00853E', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600 } }, '↻ Rafraîchir')),
+          openJobs.length === 0 && E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1rem 0' } }, 'Aucune course ouverte pour le moment.'),
+          openJobs.map(function (j) {
+            return E('div', { key: j.delivery_id, style: { border: '1px solid #bbf7d0', borderRadius: 12, padding: '.9rem', marginBottom: '.6rem', background: '#f7fef9' } },
+              E('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '.3rem' } },
+                E('span', { style: { fontSize: '.72rem', background: '#f0fdf4', color: '#16a34a', padding: '.15rem .5rem', borderRadius: 6, fontWeight: 600 } }, (j.dist_to_pickup_km != null ? j.dist_to_pickup_km + ' km' : '—') + ' du retrait'),
+                E('span', { style: { fontWeight: 700, color: '#16a34a' } }, fcfa(j.courier_payout))),
+              E('div', { style: { fontSize: '.78rem', color: '#555' } }, '📍 ', j.pickup_label || '—'),
+              E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.2rem' } }, '🏁 ', j.dropoff_label || '—'),
+              j.items_desc && E('div', { style: { fontSize: '.72rem', color: '#888', fontStyle: 'italic', marginBottom: '.4rem' } }, j.items_desc),
+              E('button', { onClick: function () { grab(j); }, disabled: busy, style: { width: '100%', padding: '.7rem', borderRadius: 10, border: 'none', background: busy ? '#9ca3af' : '#00853E', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: busy ? 'default' : 'pointer' } }, '🙋 Je prends cette course'));
           })
         )
       )
