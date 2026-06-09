@@ -15,6 +15,7 @@ export const CATEGORIES = [
   { slug: 'sport',        label: 'Sport & Loisirs',   aliases: ['Sport & Loisirs', 'Sport', 'Loisirs'],               google: 'Sporting Goods' },
   { slug: 'services',     label: 'Services',          aliases: ['Services'],                                          google: 'Shopping' },
   { slug: 'auto',         label: 'Auto & Moto',       aliases: ['Auto & Moto', 'Auto', 'Moto', 'Véhicules'],          google: 'Vehicles & Parts' },
+  { slug: 'animaux',      label: 'Animaux & Élevage', aliases: ['Animaux & Élevage', 'Animaux', 'Élevage', 'Elevage', 'Bétail', 'Agriculture & Élevage', 'Animaux de compagnie'], google: 'Animals & Pet Supplies' },
 ];
 
 // slug générique (minuscules, sans accent, tirets) — pour libellés hors référentiel.

@@ -4290,6 +4290,10 @@ const DataService = {
             images:        product.images         || [],
             originalPrice: product.originalPrice  || product.original_price || null,
             active:        product.active         !== false,
+            isLocal:       product.isLocal === true || product.is_local === true,
+            localRegion:   product.localRegion    || product.local_region || null,
+            isAnimal:      product.isAnimal === true || product.is_animal === true,
+            animalSpecs:   product.animalSpecs    || product.animal_specs || null,
           }),
         }).catch(() => null);
         if (res && res.ok) {
@@ -4322,6 +4326,10 @@ const DataService = {
         vendor_id: product.vendor || product.vendor_id || null,
         vendor_name: product.vendorName || product.vendor_name || null,
         active: product.active !== false,
+        is_local: product.isLocal === true || product.is_local === true,
+        local_region: product.localRegion || product.local_region || null,
+        is_animal: product.isAnimal === true || product.is_animal === true,
+        animal_specs: product.animalSpecs || product.animal_specs || null,
       };
       if (product.id) row.id = product.id;
       const { data, error } = await this._sb.from("products").upsert(row).select().single();
@@ -9712,7 +9720,9 @@ Champs requis : name (string, en français), category (exactement l'une de : Él
     if (!form.name || !form.price) { addToast("Nom et prix requis", "error"); return; }
     setSaving(true);
     try {
-      await DataService.saveProduct({ name: form.name, category: form.category || "Autres", price: parseFloat(form.price), originalPrice: form.originalPrice ? parseFloat(form.originalPrice) : null, stock: parseInt(form.stock) || 0, description: form.description || null, imageUrl: form.imageUrl || null, vendorName: form.vendorName || null, vendor: currentUser2 && currentUser2.id, active: true, rating: (data && data.rating) || 0, reviewsCount: (data && data.reviews_count) || 0 });
+      await DataService.saveProduct({ name: form.name, category: form.category || "Autres", price: parseFloat(form.price), originalPrice: form.originalPrice ? parseFloat(form.originalPrice) : null, stock: parseInt(form.stock) || 0, description: form.description || null, imageUrl: form.imageUrl || null, vendorName: form.vendorName || null, vendor: currentUser2 && currentUser2.id, active: true, rating: (data && data.rating) || 0, reviewsCount: (data && data.reviews_count) || 0,
+        isLocal: !!form.isLocal, localRegion: form.isLocal ? (form.localRegion || null) : null,
+        isAnimal: !!form.isAnimal, animalSpecs: form.isAnimal ? { type: form.animalType || null, race: form.animalRace || null, poids_kg: form.animalPoids || null, age: form.animalAge || null, sexe: form.animalSexe || null } : null });
       addToast("Produit ajouté avec succès !", "success");
       onClose();
     } catch(err) { addToast("Erreur sauvegarde : " + err.message, "error"); } finally { setSaving(false); }
@@ -9797,6 +9807,29 @@ Champs requis : name (string, en français), category (exactement l'une de : Él
               /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "0.85rem" } },
                 /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Description"),
                 /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: form.description || "", onChange: e => upd("description", e.target.value) })
+              ),
+              // ── Label « Produit Local » 🇸🇳 + vertical « NEXUS Élevage » 🐏 ──
+              /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "0.85rem", padding: "0.75rem", border: "1px dashed var(--border)", borderRadius: 10, background: "var(--bg-light,#f8f8f8)" } },
+                /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 600, fontSize: ".88rem" } },
+                  /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !!form.isLocal, onChange: e => upd("isLocal", e.target.checked) }),
+                  "🇸🇳 Produit local du Sénégal"),
+                form.isLocal && /* @__PURE__ */ React.createElement("select", { className: "form-select", style: { marginTop: 6 }, value: form.localRegion || "", onChange: e => upd("localRegion", e.target.value) },
+                  /* @__PURE__ */ React.createElement("option", { value: "" }, "Région d'origine (optionnel)"),
+                  ...["Dakar", "Thiès", "Saint-Louis", "Kaolack", "Ziguinchor", "Tambacounda", "Louga", "Kolda", "Fatick", "Diourbel", "Matam", "Kaffrine", "Kédougou", "Sédhiou"].map(r => /* @__PURE__ */ React.createElement("option", { key: r, value: r }, r))),
+                /* @__PURE__ */ React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 600, fontSize: ".88rem", marginTop: 10 } },
+                  /* @__PURE__ */ React.createElement("input", { type: "checkbox", checked: !!form.isAnimal, onChange: e => upd("isAnimal", e.target.checked) }),
+                  "🐏 Animal / élevage (NEXUS Élevage)"),
+                form.isAnimal && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 6, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                  /* @__PURE__ */ React.createElement("select", { className: "form-select", value: form.animalType || "", onChange: e => upd("animalType", e.target.value) },
+                    /* @__PURE__ */ React.createElement("option", { value: "" }, "Type"),
+                    ...["Moutons (Tabaski)", "Volaille", "Bétail (bovins)", "Chèvres & Moutons", "Chevaux & Ânes", "Animaux de compagnie", "Autres"].map(t => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t))),
+                  /* @__PURE__ */ React.createElement("input", { className: "form-input", placeholder: "Race", value: form.animalRace || "", onChange: e => upd("animalRace", e.target.value) }),
+                  /* @__PURE__ */ React.createElement("input", { className: "form-input", type: "number", placeholder: "Poids (kg)", value: form.animalPoids || "", onChange: e => upd("animalPoids", e.target.value) }),
+                  /* @__PURE__ */ React.createElement("input", { className: "form-input", placeholder: "Âge", value: form.animalAge || "", onChange: e => upd("animalAge", e.target.value) }),
+                  /* @__PURE__ */ React.createElement("select", { className: "form-select", value: form.animalSexe || "", onChange: e => upd("animalSexe", e.target.value) },
+                    /* @__PURE__ */ React.createElement("option", { value: "" }, "Sexe"),
+                    /* @__PURE__ */ React.createElement("option", { value: "M" }, "Mâle"),
+                    /* @__PURE__ */ React.createElement("option", { value: "F" }, "Femelle")))
               )
             ),
             /* @__PURE__ */ React.createElement("div", null,
@@ -30819,7 +30852,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                     product._isSponsored && !product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#00853E', color: '#fff', fontSize: '0.65rem', fontWeight: 800, padding: '0.18rem 0.5rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '🏆 Sponsorisé'),
                     isBoosted && !product._isSponsored && !product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: 'linear-gradient(135deg,#FDEE42,#f5c800)', color: '#1a1a1a', fontSize: '0.65rem', fontWeight: 800, padding: '0.18rem 0.5rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '⚡ Boosté'),
                     product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#e74c3c', color: 'white', fontSize: '0.68rem', fontWeight: 800, padding: '0.18rem 0.42rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, `-${product.flashDiscount}%`),
-                    !product.flashDiscount && !isBoosted && product.createdAt && (Date.now() - new Date(product.createdAt).getTime()) < 14 * 86400000 && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#16a34a', color: 'white', fontSize: '0.68rem', fontWeight: 800, padding: '0.18rem 0.42rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.04em' } }, 'NEW')
+                    !product.flashDiscount && !isBoosted && product.createdAt && (Date.now() - new Date(product.createdAt).getTime()) < 14 * 86400000 && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#16a34a', color: 'white', fontSize: '0.68rem', fontWeight: 800, padding: '0.18rem 0.42rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.04em' } }, 'NEW'),
+                    (product.is_local || product.isLocal) && React.createElement('span', { title: 'Produit local du Sénégal', style: { position: 'absolute', bottom: '8px', left: '8px', background: '#ffffff', color: '#00853E', border: '1.5px solid #00853E', fontSize: '0.62rem', fontWeight: 800, padding: '0.15rem 0.45rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em', boxShadow: '0 1px 4px rgba(0,0,0,.15)' } }, '🇸🇳 Local'),
+                    (product.is_animal || product.isAnimal) && React.createElement('span', { title: 'NEXUS Élevage', style: { position: 'absolute', bottom: '8px', right: '8px', background: '#7c3f00', color: '#fff', fontSize: '0.62rem', fontWeight: 800, padding: '0.15rem 0.45rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '🐏 Élevage')
                   ),
                   React.createElement('div', { className: 'product-info' },
                     React.createElement('div', { className: 'product-category' }, product.category),
@@ -40089,6 +40124,223 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULES UX ============== -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS — LABEL « PRODUIT LOCAL SÉNÉGAL » 🇸🇳 + ESPACE « NEXUS ÉLEVAGE » 🐏
+     Module autonome (vanilla) : banderole/FAB + overlay 2 onglets.
+       · Local   : vitrine des produits is_local (fierté nationale).
+       · Élevage : compte à rebours Tabaski + filtres + éleveurs sur carte.
+     Dégrade gracieusement si la migration n'est pas encore exécutée.
+     ════════════════════════════════════════════════════════════════════════ -->
+<style>
+  #nx-le-fab{position:fixed;right:1.25rem;bottom:5rem;z-index:9977;padding:10px 14px;border-radius:30px;
+    background:linear-gradient(135deg,#00853E,#0aa05a);color:#fff;border:none;cursor:pointer;font:600 13px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    box-shadow:0 4px 14px rgba(0,133,62,.4)}
+  #nx-le-ov{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10040;display:none;align-items:flex-start;justify-content:center;padding:1rem;overflow:auto;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #nx-le-ov.open{display:flex}
+  .nx-le-card{background:#fff;border-radius:18px;max-width:760px;width:100%;margin:2vh 0;overflow:hidden}
+  .nx-le-head{display:flex;align-items:center;gap:10px;padding:1rem 1.25rem;background:#00853E;color:#fff}
+  .nx-le-tabs{display:flex;border-bottom:1px solid #eee}
+  .nx-le-tab{flex:1;padding:.8rem;border:none;background:none;cursor:pointer;font-weight:700;font-size:.9rem;color:#666}
+  .nx-le-tab.on{color:#00853E;box-shadow:inset 0 -3px 0 #00853E}
+  .nx-le-body{padding:1rem 1.25rem;min-height:160px}
+  .nx-le-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.8rem}
+  .nx-le-tile{border:1px solid #eee;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+  .nx-le-tile img{width:100%;height:110px;object-fit:cover;background:#f3f3f3}
+  .nx-le-tile .p{padding:.5rem .6rem;font-size:.8rem}
+  .nx-le-chip{display:inline-block;padding:3px 10px;border-radius:99px;border:1px solid #ddd;background:#fff;font-size:.75rem;cursor:pointer;margin:0 6px 6px 0}
+  .nx-le-chip.on{background:#00853E;color:#fff;border-color:#00853E}
+  .nx-le-tab-pane{display:none}.nx-le-tab-pane.on{display:block}
+</style>
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_LOCAL_ELEVAGE__) return; window.__NEXUS_LOCAL_ELEVAGE__ = true;
+  var UX = window.NexusUX || { sb: function () { try { return (window.DataService && DataService._sb) || null; } catch (e) { return null; } }, user: function () { return null; }, toast: function (m) { try { alert(m); } catch (e) {} } };
+  function sb() { return UX.sb(); }
+  function fcfa(n) { return (Number(n) || 0).toLocaleString('fr-FR') + ' FCFA'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function imgOf(p) { return p.image_url || (Array.isArray(p.images) && p.images[0]) || p.imageUrl || ''; }
+
+  // ── Compte à rebours Tabaski (Aïd al-Adha) — dates approximatives, surclassables
+  var TAB_DATES = ['2026-05-27', '2027-05-17', '2028-05-05', '2029-04-24', '2030-04-13'];
+  function nextTabaski() {
+    var d = window.__NEXUS_TABASKI_DATE;
+    if (d) return d;
+    var now = Date.now();
+    for (var i = 0; i < TAB_DATES.length; i++) { if (new Date(TAB_DATES[i] + 'T00:00:00').getTime() > now) return TAB_DATES[i]; }
+    return TAB_DATES[TAB_DATES.length - 1];
+  }
+  function daysTo(d) { return Math.max(0, Math.ceil((new Date(d + 'T00:00:00').getTime() - Date.now()) / 86400000)); }
+
+  // ── Data ───────────────────────────────────────────────────────────────────
+  function loadProducts(kind, animalType) {
+    var c = sb(); if (!c) return Promise.resolve([]);
+    try {
+      var q = c.from('products').select('*').eq('active', true).order('created_at', { ascending: false }).limit(60);
+      q = (kind === 'local') ? q.eq('is_local', true) : q.eq('is_animal', true);
+      return q.then(function (r) {
+        var list = (r && r.data) || [];
+        if (animalType) list = list.filter(function (p) { return p.animal_specs && p.animal_specs.type === animalType; });
+        return list;
+      }).catch(function () { return []; });
+    } catch (e) { return Promise.resolve([]); }
+  }
+  function loadPhones(ids) {
+    var c = sb(); if (!c || !ids.length) return Promise.resolve({});
+    try {
+      return c.from('profiles').select('id,phone,shop_name').in('id', ids).then(function (r) {
+        var m = {}; ((r && r.data) || []).forEach(function (p) { m[p.id] = p; }); return m;
+      }).catch(function () { return {}; });
+    } catch (e) { return Promise.resolve({}); }
+  }
+
+  // ── Rendu d'une grille de produits + contact WhatsApp vendeur ───────────────
+  function renderGrid(host, products, opts) {
+    opts = opts || {};
+    if (!products.length) { host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem .5rem">' + (opts.empty || 'Aucun produit pour le moment.') + '</div>'; return; }
+    var ids = products.map(function (p) { return p.vendor_id; }).filter(Boolean);
+    loadPhones(ids).then(function (phones) {
+      var grid = document.createElement('div'); grid.className = 'nx-le-grid';
+      products.forEach(function (p) {
+        var ph = phones[p.vendor_id] || {};
+        var specs = p.animal_specs || {};
+        var specLine = opts.animal && (specs.type || specs.poids_kg)
+          ? '<div style="color:#7c3f00;font-size:.7rem;margin-top:2px">' + esc([specs.type, specs.race, specs.poids_kg ? (specs.poids_kg + ' kg') : '', specs.age, specs.sexe === 'M' ? '♂' : specs.sexe === 'F' ? '♀' : ''].filter(Boolean).join(' · ')) + '</div>' : '';
+        var regLine = (!opts.animal && p.local_region) ? '<div style="color:#00853E;font-size:.7rem;margin-top:2px">📍 ' + esc(p.local_region) + '</div>' : '';
+        var t = document.createElement('div'); t.className = 'nx-le-tile';
+        t.innerHTML =
+          (imgOf(p) ? '<img src="' + esc(imgOf(p)) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '<div style="height:110px;background:#f3f3f3;display:flex;align-items:center;justify-content:center;font-size:1.6rem">' + (opts.animal ? '🐏' : '🇸🇳') + '</div>')
+          + '<div class="p"><div style="font-weight:700;line-height:1.2">' + esc(p.name || '') + '</div>'
+          + '<div style="color:#00853E;font-weight:800;margin-top:2px">' + fcfa(p.price) + '</div>'
+          + specLine + regLine
+          + '<div style="font-size:.68rem;color:#888;margin-top:3px">🏪 ' + esc(p.vendor_name || (ph.shop_name) || 'Boutique') + '</div></div>';
+        var btnWrap = document.createElement('div'); btnWrap.style.cssText = 'padding:0 .6rem .6rem';
+        var b = document.createElement('button');
+        b.textContent = '💬 Contacter';
+        b.style.cssText = 'width:100%;padding:.45rem;border:none;border-radius:8px;background:#25D366;color:#fff;font-weight:700;font-size:.75rem;cursor:pointer';
+        b.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          var phone = (ph.phone || '').replace(/\D/g, '');
+          var msg = 'Bonjour, je suis intéressé(e) par « ' + (p.name || '') + ' » (' + fcfa(p.price) + ') vu sur NEXUS Market.';
+          if (phone) { if (phone.length === 9 && phone[0] === '7') phone = '221' + phone; window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(msg), '_blank'); }
+          else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
+        });
+        btnWrap.appendChild(b); t.appendChild(btnWrap);
+        grid.appendChild(t);
+      });
+      host.innerHTML = ''; host.appendChild(grid);
+    });
+  }
+
+  // ── Éleveurs près de moi (carte + liste) ────────────────────────────────────
+  function showBreeders(host) {
+    host.innerHTML = '<div style="text-align:center;color:#666;padding:1rem">📍 Localisation…</div>';
+    if (!window.NexusMap || !NexusMap.locateMe) { host.innerHTML = '<div style="color:#999;padding:1rem">Carte indisponible.</div>'; return; }
+    NexusMap.locateMe({ enableHighAccuracy: false, timeout: 8000 }).then(function (pos) {
+      var c = sb();
+      var rpc = c ? c.rpc('nearby_breeders', { p_lat: pos.lat, p_lng: pos.lng, p_radius_m: 50000, p_limit: 40 }) : Promise.resolve({ data: [] });
+      return Promise.resolve(rpc).then(function (r) {
+        var list = (r && r.data) || [];
+        host.innerHTML = '';
+        var mapEl = document.createElement('div'); mapEl.className = 'nexus-map'; mapEl.style.height = '240px'; mapEl.style.marginBottom = '.7rem'; host.appendChild(mapEl);
+        var couriers = list.map(function (b) { return { lat: b.lat, lng: b.lng, name: '🐏 ' + (b.shop_name || 'Éleveur'), distance_km: b.distance_km }; });
+        NexusMap.nearby(mapEl, { lat: pos.lat, lng: pos.lng, label: 'Vous' }, couriers);
+        if (!list.length) { var e = document.createElement('div'); e.style.cssText = 'color:#999;text-align:center;padding:.5rem'; e.textContent = 'Aucun éleveur géolocalisé à proximité pour l’instant.'; host.appendChild(e); return; }
+        list.forEach(function (b) {
+          var row = document.createElement('div'); row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:.5rem 0;border-bottom:1px solid #f0f0f0;font-size:.85rem';
+          row.innerHTML = '<span>🐏 <b>' + esc(b.shop_name || 'Éleveur') + '</b> · ' + (b.distance_km != null ? b.distance_km + ' km' : '') + '</span>';
+          var nav = document.createElement('button'); nav.textContent = '🧭 Y aller'; nav.style.cssText = 'border:1px solid #1d4ed8;background:#fff;color:#1d4ed8;border-radius:8px;padding:.3rem .6rem;font-weight:700;font-size:.72rem;cursor:pointer';
+          nav.addEventListener('click', function () { NexusMap.openDirections(b.lat, b.lng, b.shop_name || 'Éleveur'); });
+          row.appendChild(nav); host.appendChild(row);
+        });
+      });
+    }).catch(function () { host.innerHTML = '<div style="color:#b45309;padding:1rem">Position indisponible (refus GPS). Activez la localisation pour voir les éleveurs proches.</div>'; });
+  }
+
+  // ── Devenir éleveur (is_breeder + position) ─────────────────────────────────
+  function becomeBreeder() {
+    var u = UX.user(); if (!u || !u.id) { UX.toast('Connectez-vous pour devenir éleveur NEXUS.'); return; }
+    var c = sb(); if (!c) { UX.toast('Service indisponible.'); return; }
+    NexusMap.locateMe({ enableHighAccuracy: false, timeout: 8000 }).then(function (pos) {
+      return c.from('profiles').update({ is_breeder: true, current_lat: pos.lat, current_lng: pos.lng, location_updated_at: new Date().toISOString() }).eq('id', u.id);
+    }).then(function () { UX.toast('🐏 Vous êtes éleveur NEXUS — votre boutique apparaît sur la carte !', { bg: '#00853E', duration: 5000 }); })
+      .catch(function () { UX.toast('Impossible d’activer le profil éleveur (position requise).', { bg: '#b45309' }); });
+  }
+
+  // ── Overlay ─────────────────────────────────────────────────────────────────
+  var ov = null;
+  function buildOverlay() {
+    if (ov) return ov;
+    ov = document.createElement('div'); ov.id = 'nx-le-ov';
+    var tab = nextTabaski(), dleft = daysTo(tab), tyear = tab.slice(0, 4);
+    ov.innerHTML =
+      '<div class="nx-le-card" id="nx-le-card">'
+      + '<div class="nx-le-head"><span style="font-size:1.4rem">🇸🇳</span><b style="flex:1">Local & Élevage NEXUS</b><button id="nx-le-x" aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div>'
+      + '<div class="nx-le-tabs"><button class="nx-le-tab on" data-t="local">🇸🇳 Produits locaux</button><button class="nx-le-tab" data-t="elevage">🐏 NEXUS Élevage</button></div>'
+      + '<div class="nx-le-body">'
+      + '<div class="nx-le-tab-pane on" id="nx-pane-local">'
+      + '<div style="background:linear-gradient(135deg,#00853E,#0aa05a);color:#fff;border-radius:12px;padding:.8rem 1rem;margin-bottom:.9rem"><b>Consommons local 🇸🇳</b><div style="font-size:.8rem;opacity:.92">Soutenez les producteurs, artisans et marques du Sénégal.</div></div>'
+      + '<div id="nx-local-grid"><div style="text-align:center;color:#999;padding:2rem">Chargement…</div></div></div>'
+      + '<div class="nx-le-tab-pane" id="nx-pane-elevage">'
+      + '<div style="background:linear-gradient(135deg,#7c3f00,#a85a18);color:#fff;border-radius:12px;padding:.8rem 1rem;margin-bottom:.8rem;display:flex;align-items:center;gap:12px">'
+      + '<div style="font-size:2rem">🐏</div><div style="flex:1"><b>Tabaski ' + tyear + '</b><div style="font-size:.82rem;opacity:.95">' + (dleft > 0 ? ('dans <b>' + dleft + ' jours</b> — préparez vos moutons !') : 'C’est aujourd’hui — Dewenati !') + '</div></div></div>'
+      + '<div id="nx-animal-chips" style="margin-bottom:.7rem"></div>'
+      + '<div style="display:flex;gap:8px;margin-bottom:.8rem;flex-wrap:wrap">'
+      + '<button id="nx-breeders-btn" style="flex:1;min-width:150px;padding:.6rem;border:1.5px solid #00853E;background:#fff;color:#00853E;border-radius:10px;font-weight:700;cursor:pointer">📍 Éleveurs près de moi</button>'
+      + '<button id="nx-become-btn" style="flex:1;min-width:150px;padding:.6rem;border:none;background:#7c3f00;color:#fff;border-radius:10px;font-weight:700;cursor:pointer">🐏 Devenir éleveur</button></div>'
+      + '<div id="nx-breeders-host"></div>'
+      + '<div id="nx-animal-grid"><div style="text-align:center;color:#999;padding:2rem">Chargement…</div></div></div>'
+      + '</div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('#nx-le-x').addEventListener('click', close);
+    // tabs
+    Array.prototype.forEach.call(ov.querySelectorAll('.nx-le-tab'), function (b) {
+      b.addEventListener('click', function () {
+        Array.prototype.forEach.call(ov.querySelectorAll('.nx-le-tab'), function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        ov.querySelector('#nx-pane-local').classList.toggle('on', b.dataset.t === 'local');
+        ov.querySelector('#nx-pane-elevage').classList.toggle('on', b.dataset.t === 'elevage');
+      });
+    });
+    // animal chips
+    var CHIPS = ['Moutons (Tabaski)', 'Volaille', 'Bétail (bovins)', 'Chèvres & Moutons', 'Chevaux & Ânes', 'Animaux de compagnie'];
+    var chipHost = ov.querySelector('#nx-animal-chips'); var cur = '';
+    function paintAnimals() { renderGrid(ov.querySelector('#nx-animal-grid'), [], {}); loadProducts('animal', cur).then(function (list) { renderGrid(ov.querySelector('#nx-animal-grid'), list, { animal: true, empty: 'Aucun animal listé ' + (cur ? 'dans cette catégorie ' : '') + 'pour l’instant.' }); }); }
+    var allChip = document.createElement('span'); allChip.className = 'nx-le-chip on'; allChip.textContent = 'Tous'; chipHost.appendChild(allChip);
+    var chipEls = [allChip];
+    allChip.addEventListener('click', function () { cur = ''; chipEls.forEach(function (x) { x.classList.remove('on'); }); allChip.classList.add('on'); paintAnimals(); });
+    CHIPS.forEach(function (label) {
+      var ch = document.createElement('span'); ch.className = 'nx-le-chip'; ch.textContent = label; chipHost.appendChild(ch); chipEls.push(ch);
+      ch.addEventListener('click', function () { cur = label; chipEls.forEach(function (x) { x.classList.remove('on'); }); ch.classList.add('on'); paintAnimals(); });
+    });
+    ov.querySelector('#nx-breeders-btn').addEventListener('click', function () { showBreeders(ov.querySelector('#nx-breeders-host')); });
+    ov.querySelector('#nx-become-btn').addEventListener('click', becomeBreeder);
+    ov.__paintAnimals = paintAnimals;
+    return ov;
+  }
+  function open() {
+    buildOverlay(); ov.classList.add('open');
+    renderGrid(ov.querySelector('#nx-local-grid'), [], {});
+    loadProducts('local').then(function (list) { renderGrid(ov.querySelector('#nx-local-grid'), list, { empty: 'Bientôt : les premiers produits 🇸🇳 locaux.' }); });
+    ov.__paintAnimals && ov.__paintAnimals();
+  }
+  function close() { if (ov) ov.classList.remove('open'); }
+
+  // ── FAB + ouverture par événement ───────────────────────────────────────────
+  function injectFab() {
+    if (document.getElementById('nx-le-fab') || !document.body) return;
+    var b = document.createElement('button'); b.id = 'nx-le-fab'; b.innerHTML = '🇸🇳 Local & Élevage';
+    b.setAttribute('aria-label', 'Découvrir les produits locaux et l’élevage');
+    b.addEventListener('click', open); document.body.appendChild(b);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectFab); else injectFab();
+  window.addEventListener('nexus:open-local-elevage', open);
+  console.info('[NEXUS] Module Local & Élevage chargé ✅');
+})();
+</script>
+<!-- ============== FIN MODULE LOCAL & ÉLEVAGE ============== -->
 
 </body>
 </html>
