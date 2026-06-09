@@ -22262,8 +22262,13 @@ const AdminLivraisonPanel = ({ addToast }) => {
   const assignCourier = async (deliveryId, courierId) => {
     const co = couriers.find(c=>c.id===courierId);
     if (!co) return;
-    // [UNIFICATION] Assignation sur la table `deliveries` (celle des coursiers).
-    await sb.from('deliveries').update({ courier_id:courierId, status:'accepted', assigned_at:new Date().toISOString() }).eq('id',deliveryId);
+    // Attribution MANUELLE via RPC (force) — fallback update direct si RPC absent.
+    let ok = false;
+    try {
+      const r = await DataService.adminAssignDelivery(deliveryId, courierId);
+      ok = r && r.ok;
+    } catch(_){}
+    if (!ok) await sb.from('deliveries').update({ courier_id:courierId, status:'accepted', assigned_at:new Date().toISOString() }).eq('id',deliveryId);
     addToast('Coursier assigné : '+co.name,'success');
     try {
       const _d = deliveries.find(x=>x.id===deliveryId) || {};
@@ -22272,6 +22277,18 @@ const AdminLivraisonPanel = ({ addToast }) => {
       if (_d.buyer_id) DataService.addNotification(_d.buyer_id, { type:'order', title:'Coursier assigné', message:'🛵 Un coursier a été assigné à votre livraison.', link: _d.order_id ? ('/?order='+_d.order_id) : undefined });
     } catch(_){}
     load();
+  };
+
+  // Attribution AUTOMATIQUE : assigne le coursier disponible le plus proche du retrait.
+  const autoAssign = async (deliveryId) => {
+    const d = deliveries.find(x=>x.id===deliveryId) || {};
+    const lat = d.pickup_lat, lng = d.pickup_lng;
+    if (lat==null || lng==null) { addToast('Pas de position de retrait pour ce dispatch auto.','warning'); return; }
+    let list = [];
+    try { list = await DataService.nearbyCouriers(lat, lng, 15000, 10); } catch(_){}
+    if (!list || !list.length) { addToast('Aucun coursier en ligne à proximité.','warning'); return; }
+    await assignCourier(deliveryId, list[0].courier_id);
+    addToast('🤖 Dispatch auto : '+(list[0].name||'coursier')+' ('+(list[0].distance_km!=null?list[0].distance_km+' km':'')+')','success');
   };
 
   const _pendingCouriers = couriers.filter(c => c.status === 'pending').length;
@@ -22348,12 +22365,19 @@ const AdminLivraisonPanel = ({ addToast }) => {
               E('td',{style:{fontWeight:600}},FCFA(d.fee_fcfa||0)),
               E('td',{style:{fontWeight:600,color:'var(--primary)'}},FCFA(d.nexus_cut||0)),
               E('td',null,
-                (!d.courier_id&&['pending','searching'].includes(d.status))&&avail.length>0&&E('select',{
-                  style:{fontSize:'.75rem',padding:'.2rem .4rem',borderRadius:6,border:'1px solid var(--border)'},
-                  onChange:e=>e.target.value&&assignCourier(d.id,e.target.value),defaultValue:''
-                },
-                  E('option',{value:''},'Assigner…'),
-                  avail.map(c=>E('option',{key:c.id,value:c.id},c.name))
+                (!d.courier_id&&['pending','searching','no_courier'].includes(d.status))&&E('div',{style:{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}},
+                  avail.length>0&&E('select',{
+                    style:{fontSize:'.75rem',padding:'.2rem .4rem',borderRadius:6,border:'1px solid var(--border)'},
+                    onChange:e=>e.target.value&&assignCourier(d.id,e.target.value),defaultValue:''
+                  },
+                    E('option',{value:''},'Assigner…'),
+                    avail.map(c=>E('option',{key:c.id,value:c.id},c.name))
+                  ),
+                  (d.pickup_lat!=null)&&E('button',{
+                    title:'Attribuer automatiquement au plus proche',
+                    style:{fontSize:'.72rem',padding:'.25rem .5rem',borderRadius:6,border:'none',background:'var(--primary)',color:'#fff',cursor:'pointer',fontWeight:700},
+                    onClick:()=>autoAssign(d.id)
+                  },'🤖 Auto')
                 )
               )
             );
@@ -37677,6 +37701,42 @@ window.addEventListener('unhandledrejection', function(event) {
       } catch (e) { return { ok: false, reason: e.message }; }
     },
 
+    // Refus du coursier actif → cascade vers le suivant le plus proche.
+    async declineDelivery(deliveryId, courierId) {
+      if (!this._sb) return { ok: false, reason: 'offline' };
+      try {
+        var r = await this._sb.rpc('decline_delivery', { p_delivery_id: deliveryId, p_courier_id: courierId });
+        var res = (!r.error && r.data) ? r.data : { ok: false, reason: r.error && r.error.message };
+        // Notifier (WhatsApp) le coursier suivant, comme à la création.
+        if (res && res.ok && res.next_courier && window.__nexusNotifyCouriersWA) {
+          try { window.__nexusNotifyCouriersWA(res); } catch (e) {}
+        }
+        return res;
+      } catch (e) { return { ok: false, reason: e.message }; }
+    },
+
+    // Avance la cascade si l'offre active a expiré (appelé par le mandataire en attente).
+    async dispatchTick(deliveryId) {
+      if (!this._sb) return null;
+      try {
+        var r = await this._sb.rpc('dispatch_tick', { p_delivery_id: deliveryId });
+        var res = (!r.error && r.data) ? r.data : null;
+        if (res && res.state === 'advanced' && res.next_courier && window.__nexusNotifyCouriersWA) {
+          try { window.__nexusNotifyCouriersWA(res); } catch (e) {}
+        }
+        return res;
+      } catch (e) { return null; }
+    },
+
+    // Attribution manuelle par l'admin.
+    async adminAssignDelivery(deliveryId, courierId) {
+      if (!this._sb) return { ok: false, reason: 'offline' };
+      try {
+        var r = await this._sb.rpc('admin_assign_delivery', { p_delivery_id: deliveryId, p_courier_id: courierId });
+        return (!r.error && r.data) ? r.data : { ok: false, reason: r.error && r.error.message };
+      } catch (e) { return { ok: false, reason: e.message }; }
+    },
+
     // Transition de statut (picked_up / in_transit / delivered)
     async advanceDelivery(deliveryId, status) {
       var patch = { status: status };
@@ -37722,6 +37782,7 @@ window.addEventListener('unhandledrejection', function(event) {
     var _p = React.useState(''), pickup = _p[0], setPickup = _p[1];
     var _d = React.useState(''), dropoff = _d[0], setDropoff = _d[1];
     var _i = React.useState(''), items = _i[0], setItems = _i[1];
+    var _ph = React.useState((props.user && (props.user.phone || props.user.telephone)) || ''), phone = _ph[0], setPhone = _ph[1];
     var _pm = React.useState('wave'), pay = _pm[0], setPay = _pm[1];
     var _q = React.useState(null), quote = _q[0], setQuote = _q[1];
     var _b = React.useState(false), busy = _b[0], setBusy = _b[1];
@@ -37730,6 +37791,23 @@ window.addEventListener('unhandledrejection', function(event) {
     var _dg = React.useState(null), dGeo = _dg[0], setDGeo = _dg[1];   // {lat,lng} livraison GPS
     var _loc = React.useState(''), locating = _loc[0], setLocating = _loc[1]; // 'pickup'|'dropoff'|''
     var _nb = React.useState(null), nearby = _nb[0], setNearby = _nb[1];      // coursiers proches du retrait
+    var _live = React.useState(null), live = _live[0], setLive = _live[1];    // état live de la course créée
+
+    // Suivi temps réel : tant que la course cherche un coursier, on fait avancer
+    // la cascade (timeouts) et on détecte l'attribution.
+    React.useEffect(function () {
+      if (!result || !result.id) return;
+      var stop = false;
+      function poll() {
+        if (stop) return;
+        DataService.getDelivery(result.id).then(function (d) {
+          if (!d) return; setLive(d);
+          if (d.status === 'searching') DataService.dispatchTick(result.id);
+        });
+      }
+      poll(); var iv = setInterval(poll, 12000);
+      return function () { stop = true; clearInterval(iv); };
+    }, [result && result.id]);
 
     // ETA indicatif (min) : ~22 km/h moyenne moto Dakar + 4 min de prise en charge
     function etaMin(km) { return Math.max(5, Math.round((km / 22) * 60) + 4); }
@@ -37795,12 +37873,15 @@ window.addEventListener('unhandledrejection', function(event) {
       if (!quote) { alert('Choisissez le retrait et la livraison (quartier ou 📍 position).'); return; }
       var pc = coordsOf('pickup'), dc = coordsOf('dropoff');
       if (!pc || !dc) { alert('Précisez le retrait et la livraison.'); return; }
+      var ph = String(phone || '').replace(/\D/g, '');
+      if (ph.length < 9) { alert('📞 Entrez votre numéro de téléphone — le coursier en a besoin pour vous joindre.'); return; }
       setBusy(true);
       var buyer = (props.user && props.user.id) || null;
       var pLabel = pGeo ? '📍 Ma position (GPS)' : pickup;
       var dLabel = dGeo ? '📍 Position GPS' : dropoff;
       DataService.createDelivery({
         buyer_id: buyer, order_id: (function(){ var o = props.prefill && props.prefill.orderId; return (o && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o)) ? o : null; })(),
+        buyer_phone: phone, buyer_name: (props.user && props.user.name) || null,
         type: type, pickup_zone: pGeo ? null : pickup, pickup_label: pLabel,
         pickup_lat: pc.lat, pickup_lng: pc.lng,
         dropoff_zone: dGeo ? null : dropoff, dropoff_label: dLabel,
@@ -37842,9 +37923,14 @@ window.addEventListener('unhandledrejection', function(event) {
         E('div', { style: card, onClick: function (e) { e.stopPropagation(); } },
           E('div', { style: { padding: '1.5rem 1.5rem 1.25rem', textAlign: 'center' } },
             E('div', { style: { fontSize: '2.6rem', marginBottom: '.3rem' } }, '🛵'),
-            E('h3', { style: { margin: '0 0 .4rem' } }, 'Recherche d\'un coursier…'),
+            E('h3', { style: { margin: '0 0 .4rem' } },
+              (live && live.courier_id) ? '✅ Coursier en route !'
+                : (live && live.status === 'no_courier') ? '😕 Aucun coursier disponible'
+                : 'Recherche d\'un coursier…'),
             E('p', { style: { color: '#666', fontSize: '.83rem', margin: '0 0 .9rem' } },
-              'Le coursier disponible le plus proche est sollicité. Suivez-le en direct ci-dessous dès qu\'il accepte.'),
+              (live && live.courier_id) ? 'Votre coursier a accepté. Suivez-le en direct sur la carte.'
+                : (live && live.status === 'no_courier') ? 'Aucun coursier en ligne pour le moment. Réessayez dans quelques minutes ou contactez le support.'
+                : 'Le coursier le plus proche est sollicité. S\'il refuse, on passe automatiquement au suivant.'),
             // Carte de suivi temps réel (Leaflet/OSM, gratuit)
             E('div', { ref: mapMount, className: 'nexus-map', style: { height: 240, marginBottom: '.9rem' } }),
             E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', fontSize: '.8rem', textAlign: 'left', marginBottom: '.9rem' } },
@@ -37899,6 +37985,8 @@ window.addEventListener('unhandledrejection', function(event) {
           ),
           E('p', { style: lbl }, type === 'errand' ? 'À acheter / détails' : 'Détails (optionnel)'),
           E('textarea', { value: items, onChange: function (e) { setItems(e.target.value); }, rows: 2, placeholder: 'Ex : 2 kg de poisson, légumes, pain…', style: Object.assign({}, inp, { resize: 'vertical' }) }),
+          E('p', { style: lbl }, '📞 Votre téléphone (le coursier vous appellera)'),
+          E('input', { type: 'tel', value: phone, onChange: function (e) { setPhone(e.target.value); }, placeholder: '77 123 45 67', style: inp }),
           quote && E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', marginBottom: '.8rem' } },
             E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' } },
               E('span', { style: { fontSize: '.75rem', color: '#666' } }, 'Tarif estimé'),
@@ -38107,9 +38195,23 @@ window.addEventListener('unhandledrejection', function(event) {
       setBusy(true);
       DataService.acceptDelivery(offer.delivery_id, courierRowId).then(function (r) {
         setBusy(false);
-        if (r && r.ok) { refresh(); }
-        else if (r && r.reason === 'already_taken') { alert('Course déjà prise par un autre coursier.'); refresh(); }
+        if (r && r.ok) {
+          var who = (r.buyer_name ? r.buyer_name : 'Mandataire') + (r.buyer_phone ? (' · ' + r.buyer_phone) : '');
+          alert('✅ Course acceptée !\n📞 ' + who + '\nAppelez-le pour convenir du retrait.');
+          refresh();
+        }
+        else if (r && (r.reason === 'already_taken' || r.reason === 'not_your_turn')) { alert('Course déjà prise / plus disponible.'); refresh(); }
         else { alert('Impossible d\'accepter : ' + ((r && r.reason) || 'erreur')); refresh(); }
+      });
+    }
+
+    function decline(offer) {
+      setBusy(true);
+      DataService.declineDelivery(offer.delivery_id, courierRowId).then(function (r) {
+        setBusy(false);
+        // L'offre quitte la liste du coursier ; la cascade passe au suivant.
+        setOffers(function (l) { return l.filter(function (x) { return x.delivery_id !== offer.delivery_id; }); });
+        refresh();
       });
     }
 
@@ -38163,6 +38265,12 @@ window.addEventListener('unhandledrejection', function(event) {
               E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.2rem' } }, '📍 ', dl.pickup_label || dl.pickup_zone),
               E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.5rem' } }, '🏁 ', dl.dropoff_label || dl.dropoff_zone),
               dl.items_desc && E('div', { style: { fontSize: '.72rem', color: '#888', marginBottom: '.5rem', fontStyle: 'italic' } }, dl.items_desc),
+              // Coordonnées du MANDATAIRE (obligatoire pour le coursier qui a accepté)
+              (dl.buyer_phone || dl.buyer_name) && E('div', { style: { background: '#eff6ff', borderRadius: 8, padding: '.5rem .6rem', marginBottom: '.5rem', fontSize: '.78rem' } },
+                E('div', { style: { fontWeight: 700 } }, '👤 Mandataire : ', dl.buyer_name || '—'),
+                dl.buyer_phone && E('div', { style: { display: 'flex', gap: 6, marginTop: 5 } },
+                  E('a', { href: 'tel:' + dl.buyer_phone, style: { flex: 1, textAlign: 'center', background: '#1d4ed8', color: '#fff', borderRadius: 6, padding: '.4rem', textDecoration: 'none', fontWeight: 700 } }, '📞 Appeler'),
+                  E('a', { href: 'https://wa.me/' + String(dl.buyer_phone).replace(/\D/g, ''), target: '_blank', rel: 'noopener', style: { flex: 1, textAlign: 'center', background: '#25D366', color: '#fff', borderRadius: 6, padding: '.4rem', textDecoration: 'none', fontWeight: 700 } }, '💬 WhatsApp'))),
               // Carte du trajet retrait → livraison (Leaflet/OSM, gratuit)
               (dl.pickup_lat != null || dl.dropoff_lat != null) && E('div', { ref: mapMount, className: 'nexus-map', style: { height: 180, marginBottom: '.5rem' } }),
               (navLat != null) && E('button', { onClick: function () { NexusMap.openDirections(navLat, navLng, navLabel); }, style: { width: '100%', padding: '.6rem', borderRadius: 10, border: '1.5px solid #1d4ed8', background: '#fff', color: '#1d4ed8', fontWeight: 700, fontSize: '.8rem', cursor: 'pointer', marginBottom: '.5rem' } }, '🧭 M\'y rendre — ' + (toPickup ? 'retrait' : 'livraison')),
@@ -38187,7 +38295,9 @@ window.addEventListener('unhandledrejection', function(event) {
                 E('span', { style: { fontWeight: 700, color: '#16a34a' } }, fcfa(dl.courier_payout))),
               E('div', { style: { fontSize: '.78rem', color: '#555' } }, '📍 ', dl.pickup_label || dl.pickup_zone || '—'),
               E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.5rem' } }, '🏁 ', dl.dropoff_label || dl.dropoff_zone || '—'),
-              E('button', { onClick: function () { accept(of); }, disabled: busy, style: { width: '100%', padding: '.7rem', borderRadius: 10, border: 'none', background: busy ? '#9ca3af' : '#00853E', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: busy ? 'default' : 'pointer' } }, 'Accepter la course'));
+              E('div', { style: { display: 'flex', gap: 8 } },
+                E('button', { onClick: function () { decline(of); }, disabled: busy, style: { flex: '0 0 38%', padding: '.7rem', borderRadius: 10, border: '1.5px solid #dc2626', background: '#fff', color: '#dc2626', fontWeight: 700, fontSize: '.82rem', cursor: busy ? 'default' : 'pointer' } }, '✖ Refuser'),
+                E('button', { onClick: function () { accept(of); }, disabled: busy, style: { flex: 1, padding: '.7rem', borderRadius: 10, border: 'none', background: busy ? '#9ca3af' : '#00853E', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: busy ? 'default' : 'pointer' } }, '✓ Accepter')));
           })
         )
       )
