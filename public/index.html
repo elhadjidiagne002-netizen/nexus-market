@@ -40471,6 +40471,7 @@ window.addEventListener('unhandledrejection', function(event) {
       '<button class="nx-vox-item' + (voxMode ? ' on' : '') + '" data-a="mode"><span class="e">🔊</span><span>Mode écoute</span></button>'
       + '<button class="nx-vox-item" data-a="voice"><span class="e">🎤</span><span>Recherche vocale</span></button>'
       + '<button class="nx-vox-item" data-a="guide"><span class="e">📢</span><span>Guide audio</span></button>'
+      + '<button class="nx-vox-item" data-a="learn"><span class="e">🎓</span><span>Apprendre (tutos)</span></button>'
       + '<button class="nx-vox-item' + (get(LS.big) ? ' on' : '') + '" data-a="big"><span class="e">🔠</span><span>Gros texte</span></button>';
     document.body.appendChild(p);
     p.addEventListener('click', function (e) {
@@ -40482,6 +40483,7 @@ window.addEventListener('unhandledrejection', function(event) {
         else { removeCardBtns(); speak('Mode écoute désactivé.'); }
       } else if (a === 'voice') { voiceSearch(); }
       else if (a === 'guide') { guide(); }
+      else if (a === 'learn') { try { window.dispatchEvent(new CustomEvent('nexus:open-tutorials')); } catch (e) {} }
       else if (a === 'big') { var on = !document.body.classList.contains('nx-bigtext'); document.body.classList.toggle('nx-bigtext', on); set(LS.big, on); btn.classList.toggle('on', on); speak(on ? 'Texte agrandi.' : 'Texte normal.'); }
     });
     return p;
@@ -40526,6 +40528,140 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULE NEXUSVOX ============== -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS — TUTORIELS « Apprendre » (vidéo + picto-slideshow narré)
+     Pour public analphabète : chaque tuto se regarde ET s'écoute.
+       · Picto-slideshow narré (emoji géant + voix) : marche SANS vidéo produite.
+       · Section « Vidéos » : récupère les Stories dont le titre commence par TUTO
+         (l'admin uploade des vidéos tutos via NEXUS Stories) → lecture sur /stories/:id.
+     Accès : panneau NexusVox « 🎓 Apprendre » ou event nexus:open-tutorials.
+     ════════════════════════════════════════════════════════════════════════ -->
+<style>
+  #nx-tuto-ov{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10045;display:none;align-items:flex-start;justify-content:center;padding:1rem;overflow:auto;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #nx-tuto-ov.open{display:flex}
+  .nx-tuto-card{background:#fff;border-radius:18px;max-width:480px;width:100%;margin:3vh 0;overflow:hidden}
+  .nx-tuto-head{display:flex;align-items:center;gap:10px;padding:1rem 1.25rem;background:#1d4ed8;color:#fff}
+  .nx-tuto-body{padding:1rem 1.25rem}
+  .nx-tuto-item{display:flex;align-items:center;gap:12px;width:100%;padding:.9rem;border:1px solid #eee;border-radius:14px;margin-bottom:.6rem;cursor:pointer;background:#fff;text-align:left}
+  .nx-tuto-item:hover{background:#f5f8ff}
+  .nx-tuto-item .e{font-size:2rem;width:44px;text-align:center}
+  .nx-tuto-item .t{font-weight:700;font-size:1rem}
+  .nx-step{text-align:center;padding:1rem .5rem}
+  .nx-step .big{font-size:5rem;line-height:1;margin:.3rem 0 .8rem}
+  .nx-step .txt{font-size:1.15rem;font-weight:600;color:#1f2937;min-height:3em}
+  .nx-step-dots{display:flex;gap:6px;justify-content:center;margin:.8rem 0}
+  .nx-step-dots i{width:9px;height:9px;border-radius:50%;background:#cbd5e1;display:inline-block}
+  .nx-step-dots i.on{background:#1d4ed8}
+  .nx-tuto-btn{padding:.85rem 1rem;border:none;border-radius:12px;font-weight:800;font-size:1rem;cursor:pointer}
+</style>
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_TUTOS_LOADED__) return; window.__NEXUS_TUTOS_LOADED__ = true;
+  function sb() { try { return (window.DataService && DataService._sb) || window.__nexusSupabaseClient || null; } catch (e) { return null; } }
+  function speak(t) { try { if (window.NexusVox && NexusVox.speak) return NexusVox.speak(t); if ('speechSynthesis' in window) { window.speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(t); u.lang = 'fr-FR'; u.rate = .95; window.speechSynthesis.speak(u); } } catch (e) {} }
+  function stop() { try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {} }
+
+  var TUTOS = [
+    { id: 'buy', icon: '🛒', title: 'Comment acheter', steps: [
+      { e: '🔍', t: 'Cherchez ce que vous voulez, ou parlez avec le micro bleu.' },
+      { e: '👆', t: 'Touchez le produit qui vous plaît pour voir les détails.' },
+      { e: '🛒', t: 'Appuyez sur le panier pour l’ajouter.' },
+      { e: '💳', t: 'Payez avec Wave ou Orange Money, simple et sûr.' },
+      { e: '🛵', t: 'Un livreur vous apporte le colis. Vous le suivez sur la carte.' } ] },
+    { id: 'sell', icon: '🏪', title: 'Comment vendre', steps: [
+      { e: '🟡', t: 'Appuyez sur le bouton jaune pour vendre une chose.' },
+      { e: '📷', t: 'Prenez une belle photo de votre produit.' },
+      { e: '💰', t: 'Dites ou écrivez le prix en francs.' },
+      { e: '✅', t: 'Publiez. Les acheteurs vous contactent par WhatsApp.' } ] },
+    { id: 'courier', icon: '🛵', title: 'Appeler un livreur', steps: [
+      { e: '📍', t: 'Partagez votre position avec le bouton GPS.' },
+      { e: '🛵', t: 'Appuyez sur la moto verte pour demander un livreur.' },
+      { e: '👀', t: 'Suivez le livreur en direct sur la carte jusqu’à vous.' } ] },
+    { id: 'pay', icon: '💳', title: 'Payer avec Wave / Orange Money', steps: [
+      { e: '🌊', t: 'Choisissez Wave, ou le rond orange pour Orange Money.' },
+      { e: '📱', t: 'Entrez votre numéro de téléphone.' },
+      { e: '✅', t: 'Validez sur votre téléphone. C’est payé !' } ] },
+    { id: 'local', icon: '🇸🇳', title: 'Local & Élevage', steps: [
+      { e: '🇸🇳', t: 'Le drapeau montre les produits faits au Sénégal.' },
+      { e: '🐑', t: 'Trouvez des moutons pour la Tabaski et des animaux.' },
+      { e: '📍', t: 'Voyez les éleveurs proches de vous sur la carte.' } ] }
+  ];
+
+  var ov = null;
+  function build() {
+    if (ov) return ov;
+    ov = document.createElement('div'); ov.id = 'nx-tuto-ov';
+    ov.innerHTML = '<div class="nx-tuto-card"><div class="nx-tuto-head"><span style="font-size:1.5rem">🎓</span><b style="flex:1">Apprendre à utiliser NEXUS</b><button id="nx-tuto-x" aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.5rem;cursor:pointer">×</button></div><div class="nx-tuto-body" id="nx-tuto-body"></div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('#nx-tuto-x').addEventListener('click', close);
+    return ov;
+  }
+  function listView() {
+    build(); var body = ov.querySelector('#nx-tuto-body'); body.innerHTML = '';
+    var intro = document.createElement('div'); intro.style.cssText = 'font-size:.9rem;color:#555;margin-bottom:.8rem'; intro.textContent = 'Choisissez un sujet. Vous pouvez tout écouter 🔊.';
+    body.appendChild(intro);
+    // Vidéos Stories tutos (si présentes)
+    var vids = document.createElement('div'); vids.id = 'nx-tuto-vids'; body.appendChild(vids);
+    loadVideoTutos(vids);
+    // Tutos narrés intégrés
+    TUTOS.forEach(function (tu) {
+      var it = document.createElement('button'); it.className = 'nx-tuto-item';
+      it.innerHTML = '<span class="e">' + tu.icon + '</span><span class="t">' + tu.title + '</span><span style="margin-left:auto;font-size:1.3rem">▶️</span>';
+      it.addEventListener('click', function () { stepView(tu, 0); });
+      body.appendChild(it);
+    });
+    speak('Choisissez ce que vous voulez apprendre.');
+  }
+  function loadVideoTutos(host) {
+    var c = sb(); if (!c) return;
+    try {
+      c.from('stories').select('id,title,mux_playback_id').ilike('title', 'tuto%').eq('status', 'active').limit(12)
+        .then(function (r) {
+          var list = (r && r.data) || []; if (!list.length) return;
+          var h = document.createElement('div'); h.style.cssText = 'font-weight:800;margin:.2rem 0 .5rem;color:#1d4ed8'; h.textContent = '🎬 Vidéos'; host.appendChild(h);
+          var row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;overflow-x:auto;padding-bottom:.5rem;margin-bottom:.6rem';
+          list.forEach(function (s) {
+            var a = document.createElement('a'); a.href = '/stories/' + s.id; a.target = '_blank'; a.rel = 'noopener'; a.style.cssText = 'flex:0 0 auto;width:84px;text-decoration:none;color:#333';
+            a.innerHTML = (s.mux_playback_id ? '<img src="https://image.mux.com/' + s.mux_playback_id + '/thumbnail.jpg?width=120&height=180&fit_mode=crop" style="width:84px;height:120px;object-fit:cover;border-radius:10px" alt="" loading="lazy">' : '<div style="width:84px;height:120px;background:#eee;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.6rem">🎬</div>')
+              + '<div style="font-size:.66rem;margin-top:3px;line-height:1.1">' + String(s.title || '').replace(/^tuto[:\s-]*/i, '') + '</div>';
+            row.appendChild(a);
+          });
+          host.appendChild(row);
+        }).catch(function () {});
+    } catch (e) {}
+  }
+  function stepView(tu, i) {
+    build(); var body = ov.querySelector('#nx-tuto-body');
+    var st = tu.steps[i];
+    var dots = tu.steps.map(function (_, k) { return '<i class="' + (k === i ? 'on' : '') + '"></i>'; }).join('');
+    body.innerHTML =
+      '<div class="nx-step"><div style="font-weight:800;color:#1d4ed8">' + tu.icon + ' ' + tu.title + ' — étape ' + (i + 1) + '/' + tu.steps.length + '</div>'
+      + '<div class="big">' + st.e + '</div><div class="txt">' + st.t + '</div><div class="nx-step-dots">' + dots + '</div></div>'
+      + '<div style="display:flex;gap:8px;margin-top:.5rem">'
+      + (i > 0 ? '<button class="nx-tuto-btn" id="nx-prev" style="background:#e5e7eb;color:#333;flex:1">◀️ Avant</button>' : '')
+      + '<button class="nx-tuto-btn" id="nx-replay" style="background:#1d4ed8;color:#fff;flex:1">🔊 Réécouter</button>'
+      + (i < tu.steps.length - 1 ? '<button class="nx-tuto-btn" id="nx-next" style="background:#00853E;color:#fff;flex:1">Suivant ▶️</button>' : '<button class="nx-tuto-btn" id="nx-done" style="background:#00853E;color:#fff;flex:1">✅ Terminé</button>')
+      + '</div><button class="nx-tuto-btn" id="nx-back" style="background:none;color:#888;width:100%;margin-top:.4rem">↩︎ Liste des tutos</button>';
+    speak(st.t);
+    var q = function (id) { return body.querySelector(id); };
+    if (q('#nx-prev')) q('#nx-prev').addEventListener('click', function () { stepView(tu, i - 1); });
+    if (q('#nx-next')) q('#nx-next').addEventListener('click', function () { stepView(tu, i + 1); });
+    if (q('#nx-replay')) q('#nx-replay').addEventListener('click', function () { speak(st.t); });
+    if (q('#nx-done')) q('#nx-done').addEventListener('click', function () { speak('Bravo ! Vous savez faire.'); listView(); });
+    if (q('#nx-back')) q('#nx-back').addEventListener('click', listView);
+  }
+  function open() { build(); ov.classList.add('open'); listView(); }
+  function close() { stop(); if (ov) ov.classList.remove('open'); }
+
+  window.addEventListener('nexus:open-tutorials', open);
+  window.NexusTutoriels = { open: open };
+  console.info('[NEXUS] Tutoriels (Apprendre) chargés ✅');
+})();
+</script>
+<!-- ============== FIN MODULE TUTORIELS ============== -->
 
 </body>
 </html>
