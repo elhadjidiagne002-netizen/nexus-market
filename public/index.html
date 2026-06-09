@@ -37669,6 +37669,9 @@ window.addEventListener('unhandledrejection', function(event) {
     var _q = React.useState(null), quote = _q[0], setQuote = _q[1];
     var _b = React.useState(false), busy = _b[0], setBusy = _b[1];
     var _r = React.useState(null), result = _r[0], setResult = _r[1];
+    var _pg = React.useState(null), pGeo = _pg[0], setPGeo = _pg[1];   // {lat,lng} retrait GPS
+    var _dg = React.useState(null), dGeo = _dg[0], setDGeo = _dg[1];   // {lat,lng} livraison GPS
+    var _loc = React.useState(''), locating = _loc[0], setLocating = _loc[1]; // 'pickup'|'dropoff'|''
 
     React.useEffect(function () {
       DataService.getDeliveryZones().then(setZones);
@@ -37679,24 +37682,57 @@ window.addEventListener('unhandledrejection', function(event) {
       }
     }, []);
 
+    // Détection GPS du navigateur (gratuit). Fallback : menu déroulant quartier.
+    function detect(which) {
+      if (!window.NexusMap || !NexusMap.locateMe) { alert('Carte indisponible — choisissez un quartier.'); return; }
+      setLocating(which);
+      NexusMap.locateMe({ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }).then(function (p) {
+        setLocating('');
+        if (which === 'pickup') { setPGeo({ lat: p.lat, lng: p.lng }); setPickup('__gps__'); }
+        else { setDGeo({ lat: p.lat, lng: p.lng }); setDropoff('__gps__'); }
+      }).catch(function () {
+        setLocating('');
+        alert('Position GPS indisponible (refus ou délai). Choisissez votre quartier dans la liste.');
+      });
+    }
+
+    // Coordonnées effectives (GPS prioritaire sur centroïde de quartier)
+    function coordsOf(which) {
+      var geo = which === 'pickup' ? pGeo : dGeo;
+      if (geo) return geo;
+      var name = which === 'pickup' ? pickup : dropoff;
+      var z = (zones || []).find(function (x) { return x.name === name; });
+      return z ? { lat: z.lat, lng: z.lng } : null;
+    }
+
     React.useEffect(function () {
-      if (pickup && dropoff && zones) setQuote(DataService.quoteDelivery(pickup, dropoff));
-      else setQuote(null);
-    }, [pickup, dropoff, zones]);
+      var pc = coordsOf('pickup'), dc = coordsOf('dropoff');
+      if (pc && dc) {
+        // Devis sur distance réelle (GPS si dispo, sinon centroïdes de quartier)
+        var km = DataService._haversineKm(pc.lat, pc.lng, dc.lat, dc.lng);
+        var h = new Date().getHours(), isNight = (h >= 22 || h < 6);
+        var fee = TARIF.base + Math.round(km * TARIF.perKm);
+        if (isNight) fee = Math.round(fee * (1 + TARIF.nightSurchargePct / 100));
+        fee = Math.max(fee, TARIF.min);
+        var commission = Math.round(fee * TARIF.commissionPct / 100);
+        setQuote({ distanceKm: km, fee: fee, commission: commission, payout: fee - commission, isNight: isNight });
+      } else setQuote(null);
+    }, [pickup, dropoff, zones, pGeo, dGeo]);
 
     function submit() {
-      if (!pickup || !dropoff || !quote) { alert('Choisissez le retrait et la livraison.'); return; }
+      if (!quote) { alert('Choisissez le retrait et la livraison (quartier ou 📍 position).'); return; }
+      var pc = coordsOf('pickup'), dc = coordsOf('dropoff');
+      if (!pc || !dc) { alert('Précisez le retrait et la livraison.'); return; }
       setBusy(true);
-      var z = zones || [];
-      var pz = z.find(function (x) { return x.name === pickup; }) || {};
-      var dz = z.find(function (x) { return x.name === dropoff; }) || {};
       var buyer = (props.user && props.user.id) || null;
+      var pLabel = pGeo ? '📍 Ma position (GPS)' : pickup;
+      var dLabel = dGeo ? '📍 Position GPS' : dropoff;
       DataService.createDelivery({
         buyer_id: buyer, order_id: (function(){ var o = props.prefill && props.prefill.orderId; return (o && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o)) ? o : null; })(),
-        type: type, pickup_zone: pickup, pickup_label: pickup,
-        pickup_lat: pz.lat, pickup_lng: pz.lng,
-        dropoff_zone: dropoff, dropoff_label: dropoff,
-        dropoff_lat: dz.lat, dropoff_lng: dz.lng,
+        type: type, pickup_zone: pGeo ? null : pickup, pickup_label: pLabel,
+        pickup_lat: pc.lat, pickup_lng: pc.lng,
+        dropoff_zone: dGeo ? null : dropoff, dropoff_label: dLabel,
+        dropoff_lat: dc.lat, dropoff_lng: dc.lng,
         items_desc: items, distance_km: quote.distanceKm,
         fee_fcfa: quote.fee, courier_payout: quote.payout,
         commission_fcfa: quote.commission, payment_method: pay
@@ -37712,18 +37748,29 @@ window.addEventListener('unhandledrejection', function(event) {
     var inp = { width: '100%', padding: '.6rem .7rem', border: '1.5px solid #e5e7eb', borderRadius: 10, fontSize: '.85rem', marginBottom: '.7rem', boxSizing: 'border-box' };
     var zOpts = (zones || []).map(function (z) { return E('option', { key: z.name, value: z.name }, z.name); });
 
-    // Écran résultat (course créée)
+    // Écran résultat (course créée) — carte de suivi live + navigation
     if (result) {
+      var pLab = pGeo ? '📍 Ma position' : pickup;
+      var dLab = dGeo ? '📍 Position GPS' : dropoff;
+      var dRoute = coordsOf('dropoff');
+      var mapMount = function (el) {
+        if (!el || el.__nexusTracked || !window.NexusMap) return;
+        el.__nexusTracked = true;
+        NexusMap.track(el, result);
+      };
       return E('div', { style: overlay, onClick: props.onClose },
         E('div', { style: card, onClick: function (e) { e.stopPropagation(); } },
-          E('div', { style: { padding: '2rem 1.5rem', textAlign: 'center' } },
-            E('div', { style: { fontSize: '3rem', marginBottom: '.5rem' } }, '🛵'),
-            E('h3', { style: { margin: '0 0 .5rem' } }, 'Recherche d\'un coursier…'),
-            E('p', { style: { color: '#666', fontSize: '.85rem', margin: '0 0 1rem' } },
-              'Nous attribuons automatiquement le coursier disponible le plus proche du point de retrait. Vous serez notifié dès qu\'un coursier accepte.'),
-            E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', fontSize: '.8rem', textAlign: 'left', marginBottom: '1rem' } },
-              E('div', null, '📍 ', pickup, ' → 🏁 ', dropoff),
+          E('div', { style: { padding: '1.5rem 1.5rem 1.25rem', textAlign: 'center' } },
+            E('div', { style: { fontSize: '2.6rem', marginBottom: '.3rem' } }, '🛵'),
+            E('h3', { style: { margin: '0 0 .4rem' } }, 'Recherche d\'un coursier…'),
+            E('p', { style: { color: '#666', fontSize: '.83rem', margin: '0 0 .9rem' } },
+              'Le coursier disponible le plus proche est sollicité. Suivez-le en direct ci-dessous dès qu\'il accepte.'),
+            // Carte de suivi temps réel (Leaflet/OSM, gratuit)
+            E('div', { ref: mapMount, className: 'nexus-map', style: { height: 240, marginBottom: '.9rem' } }),
+            E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', fontSize: '.8rem', textAlign: 'left', marginBottom: '.9rem' } },
+              E('div', null, '📍 ', pLab, ' → 🏁 ', dLab),
               E('div', { style: { marginTop: '.3rem', fontWeight: 700, color: '#00853E' } }, quote.fee + ' FCFA · ' + quote.distanceKm + ' km')),
+            dRoute && E('button', { onClick: function () { NexusMap.openDirections(dRoute.lat, dRoute.lng, dLab); }, style: { width: '100%', padding: '.75rem', background: '#fff', color: '#1d4ed8', border: '1.5px solid #1d4ed8', borderRadius: 10, fontWeight: 700, cursor: 'pointer', marginBottom: '.6rem' } }, '🧭 M\'y rendre (itinéraire)'),
             E('button', { onClick: props.onClose, style: { width: '100%', padding: '.8rem', background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer' } }, 'Suivre ma course')
           )
         )
@@ -37744,11 +37791,23 @@ window.addEventListener('unhandledrejection', function(event) {
               return E('button', { key: t[0], onClick: function () { setType(t[0]); }, style: { flex: 1, padding: '.5rem', fontSize: '.72rem', border: '1.5px solid ' + (on ? '#00853E' : '#e5e7eb'), background: on ? 'rgba(0,133,62,.08)' : '#fff', color: on ? '#00853E' : '#666', borderRadius: 8, cursor: 'pointer', fontWeight: 600 } }, t[1]);
             })),
           E('p', { style: lbl }, 'Point de retrait'),
-          E('select', { value: pickup, onChange: function (e) { setPickup(e.target.value); }, style: inp },
-            E('option', { value: '' }, '— Choisir une zone —'), zOpts),
+          pGeo
+            ? E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(0,133,62,.08)', border: '1.5px solid #00853E', borderRadius: 10, padding: '.55rem .7rem', marginBottom: '.7rem' } },
+                E('span', { style: { fontSize: '.82rem', color: '#00853E', fontWeight: 600, flex: 1 } }, '📍 Ma position détectée (GPS)'),
+                E('button', { onClick: function () { setPGeo(null); setPickup(''); }, style: { background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: '1.1rem' }, 'aria-label': 'Annuler la position' }, '×'))
+            : E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
+                E('select', { value: pickup, onChange: function (e) { setPickup(e.target.value); }, style: Object.assign({}, inp, { marginBottom: 0, flex: 1 }) },
+                  E('option', { value: '' }, '— Choisir un quartier —'), zOpts),
+                E('button', { onClick: function () { detect('pickup'); }, disabled: locating === 'pickup', title: 'Utiliser ma position GPS', style: { padding: '0 .8rem', borderRadius: 10, border: '1.5px solid #00853E', background: '#fff', color: '#00853E', fontWeight: 700, fontSize: '.78rem', cursor: 'pointer', whiteSpace: 'nowrap' } }, locating === 'pickup' ? '…' : '📍 Moi')),
           E('p', { style: lbl }, 'Livraison'),
-          E('select', { value: dropoff, onChange: function (e) { setDropoff(e.target.value); }, style: inp },
-            E('option', { value: '' }, '— Choisir une zone —'), zOpts),
+          dGeo
+            ? E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(230,57,70,.07)', border: '1.5px solid #E63946', borderRadius: 10, padding: '.55rem .7rem', marginBottom: '.7rem' } },
+                E('span', { style: { fontSize: '.82rem', color: '#E63946', fontWeight: 600, flex: 1 } }, '📍 Position GPS de livraison'),
+                E('button', { onClick: function () { setDGeo(null); setDropoff(''); }, style: { background: 'none', border: 'none', color: '#999', cursor: 'pointer', fontSize: '1.1rem' }, 'aria-label': 'Annuler la position' }, '×'))
+            : E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
+                E('select', { value: dropoff, onChange: function (e) { setDropoff(e.target.value); }, style: Object.assign({}, inp, { marginBottom: 0, flex: 1 }) },
+                  E('option', { value: '' }, '— Choisir un quartier —'), zOpts),
+                E('button', { onClick: function () { detect('dropoff'); }, disabled: locating === 'dropoff', title: 'Utiliser ma position GPS', style: { padding: '0 .8rem', borderRadius: 10, border: '1.5px solid #E63946', background: '#fff', color: '#E63946', fontWeight: 700, fontSize: '.78rem', cursor: 'pointer', whiteSpace: 'nowrap' } }, locating === 'dropoff' ? '…' : '📍 Ici')),
           E('p', { style: lbl }, type === 'errand' ? 'À acheter / détails' : 'Détails (optionnel)'),
           E('textarea', { value: items, onChange: function (e) { setItems(e.target.value); }, rows: 2, placeholder: 'Ex : 2 kg de poisson, légumes, pain…', style: Object.assign({}, inp, { resize: 'vertical' }) }),
           quote && E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', marginBottom: '.8rem' } },
@@ -37836,6 +37895,20 @@ window.addEventListener('unhandledrejection', function(event) {
 
   // ── Méthode données : courses en cours du coursier ────────────────────────
   Object.assign(DataService, {
+    // Résout couriers.id depuis l'id utilisateur (auth). Les tables deliveries /
+    // delivery_offers référencent couriers.id, pas l'id utilisateur.
+    _courierRowCache: {},
+    async getCourierRowId(userId) {
+      if (!userId) return null;
+      if (this._courierRowCache[userId]) return this._courierRowCache[userId];
+      if (this._sb) {
+        try {
+          var r = await this._sb.from('couriers').select('id').eq('user_id', userId).maybeSingle();
+          if (!r.error && r.data && r.data.id) { this._courierRowCache[userId] = r.data.id; return r.data.id; }
+        } catch (e) { console.warn('[Coursier-Dash] getCourierRowId:', e.message); }
+      }
+      return null;
+    },
     async getMyCourierDeliveries(courierId) {
       if (this._sb) {
         try {
@@ -37874,14 +37947,16 @@ window.addEventListener('unhandledrejection', function(event) {
     var _pos = React.useState(null), pos = _pos[0], setPos = _pos[1];
 
     var user = props.user || {};
-    var courierId = user.id;
+    var userId = user.id;                                   // = profiles.id (position/statut)
+    var _cr = React.useState(null), courierRowId = _cr[0], setCourierRowId = _cr[1]; // = couriers.id
 
-    function refresh() {
-      if (!courierId) { setLoading(false); return; }
+    function refresh(cid) {
+      var id = cid || courierRowId;
+      if (!id) { setLoading(false); return; }
       setLoading(true);
       Promise.all([
-        DataService.getCourierOffers(courierId),
-        DataService.getMyCourierDeliveries(courierId)
+        DataService.getCourierOffers(id),
+        DataService.getMyCourierDeliveries(id)
       ]).then(function (res) {
         setOffers(res[0] || []);
         setActive(res[1] || []);
@@ -37890,7 +37965,11 @@ window.addEventListener('unhandledrejection', function(event) {
     }
 
     React.useEffect(function () {
-      refresh();
+      // Résout couriers.id (clé des courses/offres) puis charge.
+      DataService.getCourierRowId(userId).then(function (cid) {
+        setCourierRowId(cid);
+        refresh(cid);
+      });
       // Statut initial déduit du profil
       if (user.courier_status === 'available' || user.courier_status === 'busy') setOnline(true);
     }, []);
@@ -37900,7 +37979,8 @@ window.addEventListener('unhandledrejection', function(event) {
       setBusy(true);
       function apply(lat, lng) {
         setPos({ lat: lat, lng: lng });
-        DataService.setCourierStatus(courierId, 'available', lat, lng).then(function () {
+        DataService.setCourierStatus(userId, 'available', lat, lng).then(function () {
+          // Active le ping GPS continu (watchPosition → RPC courier_ping)
           try { window.__NEXUS_COURIER_ONLINE__ = true; } catch(e){}
           setOnline(true); setBusy(false); refresh();
         });
@@ -37927,7 +38007,7 @@ window.addEventListener('unhandledrejection', function(event) {
 
     function goOffline() {
       setBusy(true);
-      DataService.setCourierStatus(courierId, 'offline').then(function () {
+      DataService.setCourierStatus(userId, 'offline').then(function () {
         try { window.__NEXUS_COURIER_ONLINE__ = false; } catch(e){}
         setOnline(false); setBusy(false); setOffers([]);
       });
@@ -37935,7 +38015,7 @@ window.addEventListener('unhandledrejection', function(event) {
 
     function accept(offer) {
       setBusy(true);
-      DataService.acceptDelivery(offer.delivery_id, courierId).then(function (r) {
+      DataService.acceptDelivery(offer.delivery_id, courierRowId).then(function (r) {
         setBusy(false);
         if (r && r.ok) { refresh(); }
         else if (r && r.reason === 'already_taken') { alert('Course déjà prise par un autre coursier.'); refresh(); }
@@ -37977,6 +38057,15 @@ window.addEventListener('unhandledrejection', function(event) {
         active.length > 0 && E('div', { style: { padding: '1rem 1.25rem', background: '#f0fdf4' } },
           E('div', { style: { fontSize: '.7rem', fontWeight: 700, color: '#16a34a', marginBottom: '.5rem', textTransform: 'uppercase', letterSpacing: '.04em' } }, 'Course en cours'),
           active.map(function (dl) {
+            // Étape de navigation : avant récupération → retrait ; après → livraison
+            var toPickup = (dl.status === 'accepted');
+            var navLat = toPickup ? dl.pickup_lat : dl.dropoff_lat;
+            var navLng = toPickup ? dl.pickup_lng : dl.dropoff_lng;
+            var navLabel = toPickup ? (dl.pickup_label || dl.pickup_zone || 'Retrait') : (dl.dropoff_label || dl.dropoff_zone || 'Livraison');
+            var mapMount = function (el) {
+              if (!el || el.__nexusTracked || !window.NexusMap) return;
+              el.__nexusTracked = true; NexusMap.track(el, dl);
+            };
             return E('div', { key: dl.id, style: { background: '#fff', borderRadius: 12, padding: '.9rem', marginBottom: '.6rem', border: '1px solid #bbf7d0' } },
               E('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '.4rem' } },
                 E('span', { style: { fontWeight: 700, fontSize: '.85rem' } }, STATUS_LABEL[dl.status] || dl.status),
@@ -37984,6 +38073,9 @@ window.addEventListener('unhandledrejection', function(event) {
               E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.2rem' } }, '📍 ', dl.pickup_label || dl.pickup_zone),
               E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.5rem' } }, '🏁 ', dl.dropoff_label || dl.dropoff_zone),
               dl.items_desc && E('div', { style: { fontSize: '.72rem', color: '#888', marginBottom: '.5rem', fontStyle: 'italic' } }, dl.items_desc),
+              // Carte du trajet retrait → livraison (Leaflet/OSM, gratuit)
+              (dl.pickup_lat != null || dl.dropoff_lat != null) && E('div', { ref: mapMount, className: 'nexus-map', style: { height: 180, marginBottom: '.5rem' } }),
+              (navLat != null) && E('button', { onClick: function () { NexusMap.openDirections(navLat, navLng, navLabel); }, style: { width: '100%', padding: '.6rem', borderRadius: 10, border: '1.5px solid #1d4ed8', background: '#fff', color: '#1d4ed8', fontWeight: 700, fontSize: '.8rem', cursor: 'pointer', marginBottom: '.5rem' } }, '🧭 M\'y rendre — ' + (toPickup ? 'retrait' : 'livraison')),
               NEXT[dl.status] && E('button', { onClick: function () { advance(dl); }, disabled: busy, style: { width: '100%', padding: '.7rem', borderRadius: 10, border: 'none', background: '#00853E', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' } }, NEXT_LABEL[dl.status]));
           })),
 
@@ -37991,7 +38083,7 @@ window.addEventListener('unhandledrejection', function(event) {
         E('div', { style: Object.assign({}, sect, { paddingTop: '1rem', paddingBottom: '1.25rem' }) },
           E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.6rem' } },
             E('div', { style: { fontSize: '.7rem', fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '.04em' } }, 'Offres reçues' + (offers.length ? ' (' + offers.length + ')' : '')),
-            E('button', { onClick: refresh, disabled: loading, style: { background: 'none', border: 'none', color: '#00853E', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600 } }, loading ? '…' : '↻ Rafraîchir')),
+            E('button', { onClick: function () { refresh(); }, disabled: loading, style: { background: 'none', border: 'none', color: '#00853E', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600 } }, loading ? '…' : '↻ Rafraîchir')),
 
           !online && E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1.5rem 0' } }, 'Passez en ligne pour recevoir des offres.'),
           online && !loading && offers.length === 0 && E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1.5rem 0' } }, 'Aucune offre pour le moment. Rafraîchissez dans un instant.'),
@@ -39470,15 +39562,28 @@ window.addEventListener('unhandledrejection', function(event) {
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
       var pts=[];
       if(lat!=null){ L.marker([lat,lng],{icon:pin(L,COLORS.pickup)}).addTo(map).bindPopup(point.label||'Point de retrait'); pts.push([lat,lng]); }
-      (couriers||[]).forEach(function(c){
-        var clat=num(c.lat!=null?c.lat:c.current_lat), clng=num(c.lng!=null?c.lng:c.current_lng);
-        if(clat==null) return;
-        var d=(c.distance_km!=null)?(' — '+c.distance_km.toFixed(1)+' km'):'';
-        L.marker([clat,clng],{icon:dot(L,COLORS.courier)}).addTo(map).bindPopup((c.name||'Coursier')+d);
-        pts.push([clat,clng]);
-      });
-      if(pts.length>1) map.fitBounds(pts,{padding:[40,40]});
-      setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} },250);
+      var list=(couriers||[]);
+      // Au-delà de ~40 marqueurs, on regroupe (clustering) pour garder l'UI fluide.
+      var useCluster = list.length > 40;
+      function addCourierMarkers(layer){
+        list.forEach(function(c){
+          var clat=num(c.lat!=null?c.lat:c.current_lat), clng=num(c.lng!=null?c.lng:c.current_lng);
+          if(clat==null) return;
+          var d=(c.distance_km!=null)?(' — '+Number(c.distance_km).toFixed(1)+' km'):'';
+          var m=L.marker([clat,clng],{icon:dot(L,COLORS.courier)}).bindPopup((c.name||'Coursier')+d);
+          layer.addLayer ? layer.addLayer(m) : m.addTo(layer);
+          pts.push([clat,clng]);
+        });
+      }
+      function finish(){ if(pts.length>1) map.fitBounds(pts,{padding:[40,40]}); setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} },250); }
+      if(useCluster){
+        return ensureCluster(L).then(function(){
+          if(L.markerClusterGroup){ var cg=L.markerClusterGroup(); addCourierMarkers(cg); map.addLayer(cg); }
+          else addCourierMarkers(map);
+          finish(); return map;
+        });
+      }
+      addCourierMarkers(map); finish();
       return map;
     }).catch(function(){ return null; });
   }
@@ -39492,6 +39597,88 @@ window.addEventListener('unhandledrejection', function(event) {
         function(err){ reject(err); },
         Object.assign({ enableHighAccuracy:true, timeout:10000, maximumAge:30000 }, opts||{})
       );
+    });
+  }
+
+  // ── Navigation native « M'y rendre » (Google Maps / Waze / Plans) ──────────
+  //    Zéro API, zéro coût : simple URL ouverte vers l'app de navigation du tel.
+  function openDirections(lat, lng, label){
+    lat=num(lat); lng=num(lng);
+    if(lat==null||lng==null){ return false; }
+    var ua = navigator.userAgent || '';
+    var name = encodeURIComponent(label||'Destination');
+    var url;
+    if(/iPad|iPhone|iPod/.test(ua)){
+      // iOS : Plans (fallback navigateur vers Google Maps si Plans absent)
+      url = 'maps://maps.apple.com/?daddr='+lat+','+lng+'&q='+name;
+    } else {
+      // Android & desktop : schéma geo: universel (Google Maps, Waze, OSMAnd…)
+      url = 'geo:'+lat+','+lng+'?q='+lat+','+lng+'('+name+')';
+    }
+    try { window.open(url, '_blank'); }
+    catch(e){ window.open('https://www.google.com/maps/dir/?api=1&destination='+lat+','+lng, '_blank'); }
+    return true;
+  }
+
+  // ── Flou de confidentialité (~50 m) pour positions non vérifiées ───────────
+  //    Décalage pseudo-aléatoire déterministe par clé (ex. id vendeur) afin que
+  //    le point ne « saute » pas à chaque rendu.
+  function fuzz(lat, lng, key){
+    lat=num(lat); lng=num(lng);
+    if(lat==null||lng==null) return null;
+    var seed=0, s=String(key||(lat+','+lng));
+    for(var i=0;i<s.length;i++){ seed=(seed*31 + s.charCodeAt(i)) & 0xffffffff; }
+    function rnd(){ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; }
+    var dLat=(rnd()-0.5)*0.001;   // ±0.0005° ≈ ±55 m
+    var dLng=(rnd()-0.5)*0.001;
+    return { lat: lat+dLat, lng: lng+dLng };
+  }
+
+  // ── Clustering (plugin Leaflet.markercluster, lazy-load ~15 KB) ─────────────
+  var CLUSTER_CSS=['https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css',
+                   'https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css'];
+  var CLUSTER_JS='https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js';
+  var _clusterLoading=null;
+  function ensureCluster(L){
+    if(L && L.markerClusterGroup) return Promise.resolve(L);
+    if(_clusterLoading) return _clusterLoading;
+    _clusterLoading=new Promise(function(resolve){
+      CLUSTER_CSS.forEach(function(href){
+        if(!document.querySelector('link[data-nexus-cluster="'+href+'"]')){
+          var l=document.createElement('link'); l.rel='stylesheet'; l.href=href;
+          l.setAttribute('data-nexus-cluster',href); document.head.appendChild(l);
+        }
+      });
+      var s=document.createElement('script'); s.src=CLUSTER_JS; s.async=true;
+      s.onload=function(){ resolve(L); };
+      s.onerror=function(){ resolve(L); }; // dégradation : sans cluster, marqueurs simples
+      document.head.appendChild(s);
+    });
+    return _clusterLoading;
+  }
+
+  // ── Sélecteur de position pin-drop (onboarding vendeur / retrait précis) ────
+  //    Renvoie une API { get:()=>({lat,lng}), set:(lat,lng), map }.
+  function pickLocation(el, opts){
+    opts=opts||{};
+    return ensureLeaflet().then(function(L){
+      el.classList.add('nexus-map');
+      if(el.__map){ try{ el.__map.remove(); }catch(e){} el.__map=null; }
+      var lat=num(opts.lat), lng=num(opts.lng);
+      var c=[lat!=null?lat:14.6928, lng!=null?lng:-17.4467];
+      var map=L.map(el).setView(c, lat!=null?16:13);
+      el.__map=map;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+      var mk=L.marker(c,{icon:pin(L,opts.color||COLORS.pickup),draggable:true}).addTo(map);
+      function emit(){ if(typeof opts.onChange==='function'){ var p=mk.getLatLng(); opts.onChange(p.lat,p.lng); } }
+      mk.on('dragend', emit);
+      map.on('click', function(e){ mk.setLatLng(e.latlng); emit(); });
+      setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} }, 200);
+      return {
+        map: map,
+        get: function(){ var p=mk.getLatLng(); return { lat:p.lat, lng:p.lng }; },
+        set: function(la, ln){ mk.setLatLng([la,ln]); map.setView([la,ln], 16); }
+      };
     });
   }
 
@@ -39534,7 +39721,8 @@ window.addEventListener('unhandledrejection', function(event) {
   }, 2000);
 
   window.NexusMap = { track:track, nearby:nearby, locateMe:locateMe, autoMount:autoMount,
-                      ensureLeaflet:ensureLeaflet, startCourierPing:startCourierPing, stopCourierPing:stopCourierPing };
+                      ensureLeaflet:ensureLeaflet, startCourierPing:startCourierPing, stopCourierPing:stopCourierPing,
+                      openDirections:openDirections, fuzz:fuzz, pickLocation:pickLocation, ensureCluster:ensureCluster };
   console.info("[NEXUS] Module carte (Leaflet/OSM) prêt ✅");
 })();
 </script>
