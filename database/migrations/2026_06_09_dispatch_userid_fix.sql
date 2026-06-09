@@ -85,7 +85,10 @@ $$;
 
 -- ════════════════════════════════════════════════════════════════════════════
 --  _free_courier_offers : keyé sur l'ID UTILISATEUR.
+--  (param renommé p_courier_id → p_user_id : CREATE OR REPLACE ne peut pas
+--   renommer un paramètre → on supprime d'abord l'ancienne version.)
 -- ════════════════════════════════════════════════════════════════════════════
+DROP FUNCTION IF EXISTS public._free_courier_offers(uuid, uuid);
 CREATE OR REPLACE FUNCTION public._free_courier_offers(p_user_id uuid, p_except uuid)
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions
