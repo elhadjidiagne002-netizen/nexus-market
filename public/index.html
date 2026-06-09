@@ -2449,6 +2449,18 @@ const NEXUS_CONFIG = {
   // La confirmation Supabase redirige vers cette URL avec le token dans le hash #access_token=...
   // Le SDK Supabase JS le lit automatiquement si on pointe vers la même page (index.html).
   get confirmUrl() { return window.location.origin + window.location.pathname; },
+  // ── SOURCE DE VÉRITÉ UNIQUE de l'URL publique du site ───────────────────────
+  // Par défaut = origine réellement servie (nexus-market-asb.pages.dev aujourd'hui,
+  // et automatiquement nexus.sn le jour où le domaine personnalisé sera mappé).
+  // Pour forcer une valeur fixe, renseigner siteUrlOverride (ex. 'https://nexus.sn').
+  // NB : ne concerne PAS les adresses e-mail @nexus.sn (gérées séparément).
+  siteUrlOverride: "",
+  get siteUrl() {
+    if (this.siteUrlOverride) return this.siteUrlOverride.replace(/\/+$/, "");
+    try { if (window.location && /^https?:/.test(window.location.origin)) return window.location.origin; } catch (e) {}
+    return "https://nexus-market-asb.pages.dev";
+  },
+  get siteHost() { return this.siteUrl.replace(/^https?:\/\//, ""); },
   supabase: {
     url: "https://pqcqbstbdujzaclsiosv.supabase.co",
     anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE"
@@ -2881,7 +2893,7 @@ const NexusAPISubscribeForm = ({ onClose }) => {
       ),
       E('div',{style:{background:'#f0fdf4',borderRadius:10,padding:'0.85rem 1rem',fontSize:'0.84rem',marginBottom:'1.25rem'}},
         E('strong',null,'Endpoint : '),
-        E('span',{style:{fontFamily:'monospace',fontSize:'0.8rem'}},'GET https://nexus.sn/api/products-feed?key=VOTRE_CLE&format=xml|json'),
+        E('span',{style:{fontFamily:'monospace',fontSize:'0.8rem'}},'GET ' + NEXUS_CONFIG.siteUrl + '/api/products-feed?key=VOTRE_CLE&format=xml|json'),
         E('br',null),E('span',{style:{color:'#555'}},'Documentation complète envoyée par email.')
       ),
       E('button',{className:'btn btn-primary',onClick:onClose},'Fermer')
@@ -3273,7 +3285,7 @@ Votre *1ère vente sur NEXUS Market* vient d\'être livrée ! 🛍️
 📦 Commande : #${String(orderId).slice(0, 8).toUpperCase()}
 
 ✨ *Tip* : Parrainez un vendeur → votre commission passe de 15% à 8% !
-👉 nexus.sn → Tableau de bord → Parrainage`;
+👉 ${NEXUS_CONFIG.siteHost} → Tableau de bord → Parrainage`;
     return this.send(vendorPhone, msg, 'first_sale');
   },
 
@@ -3291,7 +3303,7 @@ Commande #${String(orderId).slice(0, 8).toUpperCase()} · *${Math.round(orderTot
 Commande #${String(orderId).slice(0, 8).toUpperCase()}
 💰 *${Math.round(orderTotal)} FCFA* — Client : ${buyerName || 'Acheteur NEXUS'}
 
-⚡ Confirmez l'expédition sur nexus.sn`;
+⚡ Confirmez l'expédition sur ${NEXUS_CONFIG.siteHost}`;
     return this.send(vendorPhone, msg, 'new_order');
   },
 
@@ -3303,7 +3315,7 @@ Commande #${String(orderId).slice(0, 8).toUpperCase()}
 ⏰ Fin : ${end}
 
 📈 Les ventes flash génèrent en moyenne *3× plus de vues* sur NEXUS.
-👉 nexus.sn pour suivre vos ventes`;
+👉 ${NEXUS_CONFIG.siteHost} pour suivre vos ventes`;
     return this.send(vendorPhone, msg, 'flash_sale');
   },
 
@@ -3314,7 +3326,7 @@ Bonjour ${name || 'Ambassadeur'} !
 Votre niveau actuel : *${(level||'bronze').charAt(0).toUpperCase()+(level||'bronze').slice(1)}*
 Commissions gagnées : *${Math.round(totalEarned || 0).toLocaleString('fr-FR')} FCFA*
 
-🔗 Votre lien : https://nexus.sn/?ref=${code}
+🔗 Votre lien : ${NEXUS_CONFIG.siteUrl}/?ref=${code}
 Chaque filleul qui vend vous rapporte 5% de sa commission.
 
 *Astuce* : Publiez votre lien dans les groupes WhatsApp de commerçants !`;
@@ -3329,7 +3341,7 @@ Chaque filleul qui vend vous rapporte 5% de sa commission.
 👥 Filleuls actifs : ${referrals}
 
 💳 Reversement dans les 5 jours ouvrés (Wave/Orange Money).
-🔗 https://nexus.sn/?ref=${code}`;
+🔗 ${NEXUS_CONFIG.siteUrl}/?ref=${code}`;
     return this.send(phone, msg, 'commission_report');
   },
 };
@@ -7262,7 +7274,7 @@ const NexusSmsService = {
       delivered:
         `NEXUS Market\nCommande #${shortId} livrée !\n` +
         `Montant réglé : ${priceFcfa.toLocaleString('fr-FR')} FCFA\n` +
-        `Laissez un avis sur nexus.sn`,
+        `Laissez un avis sur ${NEXUS_CONFIG.siteHost}`,
       cancelled:
         `NEXUS Market\nCommande #${shortId} annulée.\n` +
         `Remboursement sous 3-5 jours ouvrés.\n` +
@@ -9884,7 +9896,7 @@ const ReferralWidget = ({ currentUser: currentUser2, compact = false }) => {
     setTimeout(() => setCopied(false), 2500);
   };
   const shareWhatsApp = () => {
-    const msg = encodeURIComponent(`\u{1F6CD}\uFE0F D\xE9couvrez NEXUS Market S\xE9n\xE9gal \u2014 la meilleure place de march\xE9 ! Utilisez mon code parrain *${code}* pour obtenir 5% de r\xE9duction sur votre premi\xE8re commande. \u{1F449} nexus.sn`);
+    const msg = encodeURIComponent(`\u{1F6CD}\uFE0F D\xE9couvrez NEXUS Market S\xE9n\xE9gal \u2014 la meilleure place de march\xE9 ! Utilisez mon code parrain *${code}* pour obtenir 5% de r\xE9duction sur votre premi\xE8re commande. \u{1F449} ${NEXUS_CONFIG.siteUrl}/?ref=${code}`);
     window.open(`https://wa.me/?text=${msg}`, "_blank");
   };
   if (compact) return /* @__PURE__ */ React.createElement("div", { style: { padding: "0.6rem 0.85rem", background: "rgba(0,133,62,0.07)", borderRadius: "10px", fontSize: "0.82rem" } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, marginBottom: "0.2rem" } }, "\u{1F381} Votre code parrain"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.4rem" } }, /* @__PURE__ */ React.createElement("code", { style: { fontFamily: "monospace", letterSpacing: "0.05rem", color: "var(--primary)", fontWeight: 700 } }, code), /* @__PURE__ */ React.createElement("button", { onClick: copyCode, style: { background: "none", border: "none", cursor: "pointer", color: copied ? "var(--success)" : "var(--primary)", fontSize: "0.8rem" } }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-${copied ? "check" : "copy"}` }))));
@@ -14279,7 +14291,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
                 '<p>Bonjour <strong>' + (form.name||form.email) + '</strong>,</p>' +
                 '<p>Votre candidature vendeur a bien été enregistrée. Notre équipe la vérifiera sous <strong>48h</strong>.</p>' +
                 '<p>Vous recevrez un email dès validation de votre boutique.</p>' +
-                '<p style="color:#888;font-size:13px">NEXUS Market · nexus.sn</p></div>'
+                '<p style="color:#888;font-size:13px">NEXUS Market · ' + NEXUS_CONFIG.siteHost + '</p></div>'
             })
           }).catch(() => {});
           setDone(true); setLoading(false); return;
@@ -16218,7 +16230,7 @@ const generateBuyerInvoicePDF = async (order) => {
   [
     "\u2022 Droit de r\u00e9tractation : 30 jours \u00e0 compter de la r\u00e9ception (produit non ouvert, en \u00e9tat d'origine).",
     "\u2022 Garantie l\u00e9gale : 2 ans pour les vices cach\u00e9s. Contactez contact@nexus.sn ou le vendeur.",
-    "\u2022 Litige : NEXUS Market agit comme m\u00e9diateur neutre. Voir nexus.sn/cgv pour les d\u00e9tails complets.",
+    "\u2022 Litige : NEXUS Market agit comme m\u00e9diateur neutre. Voir " + NEXUS_CONFIG.siteHost + "/cgv pour les d\u00e9tails complets.",
     "\u2022 Ce document fait foi de paiement pour les articles list\u00e9s ci-dessus. Conservez-le pr\u00e9cieusement.",
     "\u2022 En cas de non-livraison, contactez-nous sous 15 jours : contact@nexus.sn \u00b7 +221 33 123 45 67.",
   ].forEach((line, i) => doc.text(line, margin + 4, y + 12 + i * 4.2));
@@ -18055,7 +18067,7 @@ const AdminInsuranceLeads = ({ addToast }) => {
       'Ville : '+lead.city+'\nVéhicule : '+(lead.product_name||'N/A')+
       ' ('+(lead.product_price||0).toLocaleString('fr-FR')+' FCFA)\n' +
       'Couverture souhaitée : '+lead.coverage_type+'\nUsage : '+(lead.vehicle_usage||'personnel')+'\n\n' +
-      'Cordialement,\nNEXUS Market — nexus.sn'
+      'Cordialement,\nNEXUS Market — ' + NEXUS_CONFIG.siteHost
     );
     window.open('mailto:'+insurer+'?subject='+subject+'&body='+body, '_blank');
     setStatus(lead.id, 'contacted');
@@ -19508,7 +19520,7 @@ const WhatsAppAdminPanel = ({ addToast }) => {
   const testWA = async () => {
     if (!_waTest || _waTest.replace(/\D/g,'').length < 8) { addToast('Saisissez un num\u00e9ro valide', 'warning'); return; }
     _setWaTesting(true);
-    const r = await NexusWA.send(_waTest.replace(/\D/g,''), '\u2705 *Test NEXUS Market*\nInt\u00e9gration WhatsApp Green API op\u00e9rationnelle\u00a0! \uD83C\uDF89\nnexus.sn', 'test');
+    const r = await NexusWA.send(_waTest.replace(/\D/g,''), '\u2705 *Test NEXUS Market*\nInt\u00e9gration WhatsApp Green API op\u00e9rationnelle\u00a0! \uD83C\uDF89\n'+NEXUS_CONFIG.siteHost, 'test');
     addToast(r.ok ? '\u2705 Message envoy\u00e9\u00a0!' : '\u274C \u00c9chec\u00a0: ' + (r.error||'V\u00e9rifiez les credentials'), r.ok?'success':'error');
     _setWaTesting(false);
   };
@@ -19584,7 +19596,7 @@ const WhatsAppAdminPanel = ({ addToast }) => {
         WE('button',{className:'btn btn-secondary',onClick:async()=>{
           const _wa=NEXUS_CONFIG.admin.whatsapp;
           if(!_wa||_wa==='77XXXXXXX'){addToast('Configurez le n\u00b0 WhatsApp admin','warning');return;}
-          const r=await NexusWA.send(_wa,'\u26A1 *Ventes Flash du vendredi \u2014 NEXUS Market*\n\nDes promotions exceptionnelles vous attendent ce weekend\u00a0!\n\uD83D\uDED2 Connectez-vous sur nexus.sn','flash_broadcast');
+          const r=await NexusWA.send(_wa,'\u26A1 *Ventes Flash du vendredi \u2014 NEXUS Market*\n\nDes promotions exceptionnelles vous attendent ce weekend\u00a0!\n\uD83D\uDED2 Connectez-vous sur '+NEXUS_CONFIG.siteHost,'flash_broadcast');
           addToast(r.ok||r.skipped?'Broadcast envoy\u00e9':'Erreur\u00a0:'+(r.error||''),r.ok||r.skipped?'success':'error');
         }},
           WE('i',{className:'fas fa-bolt'}),' Broadcast ventes flash')
@@ -19993,7 +20005,7 @@ const _defaultHtmlBody = (def) => {
     </div>
   </div>
   <div style="background:#1f2937;color:#9ca3af;padding:14px;text-align:center;font-size:12px">
-    ${siteName} — Dakar, Sénégal &nbsp;|&nbsp; <a href="{{site_url}}" style="color:#6ee7b7">nexus.sn</a>
+    ${siteName} — Dakar, Sénégal &nbsp;|&nbsp; <a href="{{site_url}}" style="color:#6ee7b7">${(window.NEXUS_CONFIG&&NEXUS_CONFIG.siteHost)||'nexus.sn'}</a>
   </div>
 </div>`;
 };
@@ -20491,8 +20503,8 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
         '<tr><td style="padding:6px 0;color:#666">Période</td><td style="padding:6px 0">' + starts + ' → ' + ends + '</td></tr>',
         '<tr><td style="padding:6px 0;color:#666">Montant réglé</td><td style="padding:6px 0;font-weight:700;color:#00853E">' + (row.price_fcfa||0).toLocaleString('fr-FR') + ' FCFA</td></tr>',
         '</table></div>',
-        '<p style="color:#555;font-size:14px">Votre annonce est désormais visible par des milliers d\'acheteurs sur nexus.sn.</p>',
-        '<p style="color:#888;font-size:13px;text-align:center;margin-top:24px">NEXUS Market · nexus.sn</p>',
+        '<p style="color:#555;font-size:14px">Votre annonce est désormais visible par des milliers d\'acheteurs sur ' + NEXUS_CONFIG.siteHost + '.</p>',
+        '<p style="color:#888;font-size:13px;text-align:center;margin-top:24px">NEXUS Market · ' + NEXUS_CONFIG.siteHost + '</p>',
         '</div></div>',
       ].join('');
 
@@ -20537,11 +20549,11 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
         '<p style="color:#555">Votre abonnement NEXUS Pro API est activé. Voici votre clé d\'accès :</p>',
         '<div style="background:#1a1a2e;color:#4FC3F7;border-radius:8px;padding:16px;font-family:monospace;font-size:14px;word-break:break-all;margin:16px 0">' + (row.api_key||'—') + '</div>',
         '<div style="background:white;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin:16px 0;font-size:14px">',
-        '<strong>Endpoint :</strong><br><code>GET https://nexus.sn/api/products-feed?key=VOTRE_CLE&format=xml|json</code><br><br>',
+        '<strong>Endpoint :</strong><br><code>GET ' + NEXUS_CONFIG.siteUrl + '/api/products-feed?key=VOTRE_CLE&format=xml|json</code><br><br>',
         '<strong>Quota :</strong> ' + (row.daily_limit||1000) + ' appels/jour<br>',
         '<strong>Expiration :</strong> ' + (row.ends_at ? new Date(row.ends_at).toLocaleDateString('fr-FR') : '—'),
         '</div>',
-        '<p style="color:#888;font-size:13px;text-align:center;margin-top:24px">NEXUS Market · nexus.sn</p>',
+        '<p style="color:#888;font-size:13px;text-align:center;margin-top:24px">NEXUS Market · ' + NEXUS_CONFIG.siteHost + '</p>',
         '</div></div>',
       ].join('');
 
@@ -22062,7 +22074,7 @@ const AdminValidationPanel = ({ addToast }) => {
       body: JSON.stringify({ to: user.email,
         subject: '\u2705 Votre compte NEXUS Market est activ\u00e9 !',
         html: '<p>Bonjour <strong>' + (user.name||user.email) + '</strong>,</p>'
-          + '<p>Votre compte a \u00e9t\u00e9 valid\u00e9 par l\u2019\u00e9quipe NEXUS. <a href="https://nexus.sn">Se connecter</a></p>'
+          + '<p>Votre compte a \u00e9t\u00e9 valid\u00e9 par l\u2019\u00e9quipe NEXUS. <a href="' + NEXUS_CONFIG.siteUrl + '">Se connecter</a></p>'
       })
     }).catch(()=>{});
     addToast('\u2705 ' + (user.name||user.email) + ' approuv\u00e9', 'success');
@@ -22987,7 +22999,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       var _lines = ['Commande confirmee NEXUS Market',
         'Commande #' + String(_ordId2).slice(0,8).toUpperCase(),
         'Montant : ' + _total2.toLocaleString('fr-FR') + ' FCFA',
-        'Suivi : nexus.sn/?order=' + _ordId2];
+        'Suivi : ' + NEXUS_CONFIG.siteUrl + '/?order=' + _ordId2];
       NexusWA.send(customerInfo.phone, _lines.join(LF2), 'wa_order_confirm').catch(function(){});
     }
     // ── NexusWA : notifications WhatsApp automatiques ──────────────────────
@@ -24086,7 +24098,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           /* @__PURE__ */ React.createElement("div", { style: { padding: "1rem", fontSize: "0.85rem" } },
             [
               { step: '1', text: 'Aller sur search.google.com/search-console et se connecter avec votre compte Google' },
-              { step: '2', text: 'Cliquer Ajouter une propriete → Prefixe URL → entrer https://nexus.sn' },
+              { step: '2', text: 'Cliquer Ajouter une propriete → Prefixe URL → entrer ' + NEXUS_CONFIG.siteUrl },
               { step: '3', text: 'Choisir Balise HTML comme methode de verification → copier le code (ex: abc123def456)' },
               { step: '4', text: 'Dans index.html ligne 220 : remplacer VOTRE_CODE_VERIFICATION_ICI par votre code → deployer' },
               { step: '5', text: 'Revenir sur Search Console → cliquer Verifier → Sitemaps → soumettre URL du sitemap.xml' },
@@ -24162,8 +24174,8 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
                 ];
                 prods.forEach(p => {
                   const price = FCFA(p.price);
-                  const BASE_URL = 'https://nexus.sn';
-                const pUrl  = BASE_URL + '?product=' + p.id;
+                  const BASE_URL = NEXUS_CONFIG.siteUrl;
+                const pUrl  = BASE_URL + '/?product=' + p.id;
                   const img   = p.imageUrl || p.image || '';
                   const brand = p.vendorName || 'NEXUS Market';
                   const cat   = p.category || 'Autre';
@@ -34892,7 +34904,7 @@ const WhatsAppButton = ({ product, size = "sm", style = {} }) => {
   const fcfa = Math.round((product.price || 0) * EUR_TO_FCFA);
   const share = () => {
     const msg = encodeURIComponent(
-      `🛍️ *${product.name}* sur NEXUS Market\n💰 ${fcfa.toLocaleString("fr-FR")} FCFA\n🔗 https://nexus.sn\n\nCommandé via NEXUS Market Sénégal`
+      `🛍️ *${product.name}* sur NEXUS Market\n💰 ${fcfa.toLocaleString("fr-FR")} FCFA\n🔗 ${NEXUS_CONFIG.siteUrl}\n\nCommandé via NEXUS Market Sénégal`
     );
     window.open(`https://wa.me/?text=${msg}`, "_blank");
   };
@@ -37914,7 +37926,7 @@ window.addEventListener('unhandledrejection', function(event) {
         NexusMap.track(el, result);
       };
       var shareTrack = function () {
-        var origin = (window.location && window.location.origin) || 'https://nexus.sn';
+        var origin = (window.location && window.location.origin) || (window.NEXUS_CONFIG && NEXUS_CONFIG.siteUrl) || 'https://nexus-market-asb.pages.dev';
         var msg = '🛵 Suivez ma livraison NEXUS\n📍 ' + pLab + ' → 🏁 ' + dLab
           + '\n⏱️ ~' + etaMin(quote.distanceKm) + ' min · ' + quote.fee + ' FCFA'
           + '\n👉 ' + origin + (result && result.id ? ('/?track=' + result.id) : '');
@@ -39943,8 +39955,9 @@ window.addEventListener('unhandledrejection', function(event) {
   window.__NEXUS_WA_COURIER_LOADED__ = true;
 
   function siteUrl(){
-    try { return (window.location && window.location.origin) ? window.location.origin + "/" : "https://nexus.sn/"; }
-    catch(e){ return "https://nexus.sn/"; }
+    try { if (window.NEXUS_CONFIG && NEXUS_CONFIG.siteUrl) return NEXUS_CONFIG.siteUrl + "/"; } catch(e){}
+    try { return (window.location && window.location.origin) ? window.location.origin + "/" : "https://nexus-market-asb.pages.dev/"; }
+    catch(e){ return "https://nexus-market-asb.pages.dev/"; }
   }
 
   // Numéro au format international chiffres-seuls pour Green API (ex. 221771234567)
@@ -40224,7 +40237,7 @@ window.addEventListener('unhandledrejection', function(event) {
       btn.style.cssText = 'position:absolute;top:8px;left:8px;z-index:5;width:30px;height:30px;border-radius:50%;border:none;background:rgba(37,211,102,.92);color:#fff;font-size:14px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.2);display:flex;align-items:center;justify-content:center';
       btn.addEventListener('click', function (ev) {
         ev.stopPropagation(); ev.preventDefault();
-        var url = (window.location && window.location.href) || 'https://nexus.sn';
+        var url = (window.location && window.location.href) || (window.NEXUS_CONFIG && NEXUS_CONFIG.siteUrl) || 'https://nexus-market-asb.pages.dev';
         var msg = '🛍️ Découvrez « ' + titleOf(card) + ' » sur NEXUS Market\n👉 ' + url;
         if (navigator.share) { navigator.share({ title: 'NEXUS Market', text: msg }).catch(function () {}); }
         else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
