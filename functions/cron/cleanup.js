@@ -196,6 +196,13 @@ async function runCleanup(env) {
     if (!r.ok) report.errors['vendor_trust_recompute'] = await r.text().catch(() => '');
   } catch (e) { report.errors['vendor_trust_recompute'] = e.message; }
 
+  // ── 9ter. Expiration des abonnements Boutique Pro échus ──────────────────
+  try {
+    const r = await fetch(`${SB}/rest/v1/rpc/expire_vendor_pro`, { method: 'POST', headers: H, body: '{}' });
+    report.deleted['vendor_pro_expire'] = r.ok ? 'ok' : `HTTP ${r.status}`;
+    if (!r.ok) report.errors['vendor_pro_expire'] = await r.text().catch(() => '');
+  } catch (e) { report.errors['vendor_pro_expire'] = e.message; }
+
   // ── 10. Log dans maintenance_log ─────────────────────────────────────────
   try {
     await fetch(`${SB}/rest/v1/maintenance_log`, {

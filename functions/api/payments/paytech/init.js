@@ -8,7 +8,7 @@
 //   SUPABASE_URL / SUPABASE_SERVICE_KEY
 // ============================================================
 
-import { requireAuth, validatePaymentAmount, validateBoostAmount } from '../../_lib/utils.js';
+import { requireAuth, validatePaymentAmount, validateBoostAmount, validateProSubscription } from '../../_lib/utils.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -47,12 +47,16 @@ export async function onRequest({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
 
-  const { order_id, amount, item_name, success_url, cancel_url, order_ids, kind, boost_id } = body;
+  const { order_id, amount, item_name, success_url, cancel_url, order_ids, kind, boost_id, sub_id } = body;
   if (!order_id || !amount || !success_url || !cancel_url)
     return jsonR({ error: 'order_id, amount, success_url, cancel_url requis' }, 400);
 
   // [SEC #1] Validation du montant côté serveur — selon le TYPE de paiement.
-  if (kind === 'boost') {
+  if (kind === 'pro') {
+    // Abonnement Boutique Pro : montant == tarif canonique du plan.
+    const chk = await validateProSubscription(env, { subId: sub_id, uid, amountXof: Number(amount) });
+    if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
+  } else if (kind === 'boost') {
     // Boost vendeur (libre-service) : le montant doit égaler le tarif en base.
     const chk = await validateBoostAmount(env, { boostId: boost_id, uid, amountXof: Number(amount) });
     if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);

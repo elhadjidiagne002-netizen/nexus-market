@@ -218,6 +218,38 @@ export async function validateBoostAmount(env, { boostId, uid, amountXof }) {
   return { ok: true, boost: row };
 }
 
+// [BOUTIQUE PRO] Valide le montant d'un abonnement vendeur contre le tarif
+// CANONIQUE (app_config → nexus_monetization_cfg), pas le price_fcfa client.
+const PRO_PRICE_KEYS = { pro_mensuel: 'pro_mensuel_price', pro_annuel: 'pro_annuel_price' };
+const PRO_PRICE_DEFAULTS = { pro_mensuel_price: 8000, pro_annuel_price: 80000 };
+
+export async function validateProSubscription(env, { subId, uid, amountXof }) {
+  if (!subId) return { ok: false, status: 400, error: 'sub_id requis' };
+  const sb = supabase(env);
+  let row;
+  try {
+    const rows = await sb.from('vendor_subscriptions').select(
+      'id,vendor_id,plan,price_fcfa,payment_status', `id=eq.${encodeURIComponent(subId)}`);
+    row = Array.isArray(rows) ? rows[0] : null;
+  } catch (e) { return { ok: false, status: 502, error: 'Lecture abonnement impossible' }; }
+  if (!row) return { ok: false, status: 404, error: 'Abonnement introuvable' };
+  if (row.vendor_id && uid && row.vendor_id !== uid) return { ok: false, status: 403, error: 'Abonnement non autorisé' };
+  if (row.payment_status === 'paid') return { ok: false, status: 409, error: 'Abonnement déjà payé' };
+
+  let cfg = {};
+  try {
+    const c = await sb.from('app_config').select('value', `key=eq.nexus_monetization_cfg`);
+    cfg = (Array.isArray(c) && c[0] && c[0].value) || {};
+  } catch (_) {}
+  const key = PRO_PRICE_KEYS[row.plan];
+  const canonical = key ? (cfg[key] != null ? Number(cfg[key]) : PRO_PRICE_DEFAULTS[key]) : null;
+  if (!(canonical > 0)) return { ok: false, status: 400, error: 'Plan Pro inconnu' };
+  if (Math.round(Number(amountXof)) !== canonical) {
+    return { ok: false, status: 400, error: 'Montant ne correspond pas au tarif de l’abonnement' };
+  }
+  return { ok: true, sub: row };
+}
+
 export function paginate(url) {
   const u = new URL(url);
   const page  = parseInt(u.searchParams.get('page')  || '1');

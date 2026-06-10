@@ -65,15 +65,39 @@ export async function onRequest({ request, env }) {
     return jsonR({ error: 'Hash invalide' }, 401);
   }
 
-  // 2. Extraire l'identifiant depuis custom_field (commande OU boost vendeur)
-  let order_id = null, boostId = null;
+  // 2. Extraire l'identifiant depuis custom_field (commande / boost / abo Pro)
+  let order_id = null, boostId = null, subId = null;
   try {
     const cf = typeof custom_field === 'string' ? JSON.parse(custom_field) : custom_field;
     order_id = cf?.order_id;
     boostId  = cf?.boostId || cf?.boost_id;
+    subId    = cf?.subId   || cf?.sub_id;
   } catch { /* ignore */ }
 
   const isPaid = type_event === 'sale_complete';
+
+  // 2ter. Abonnement BOUTIQUE PRO : activé côté serveur (durée canonique).
+  if (subId && !order_id) {
+    if (isPaid) {
+      const PRO_DAYS = { pro_mensuel: 30, pro_annuel: 365 };
+      const subs = await sbGet(env, `vendor_subscriptions?id=eq.${encodeURIComponent(subId)}&select=vendor_id,plan,started_at`);
+      const s = subs?.[0];
+      const days = (s && PRO_DAYS[s.plan]) || 30;
+      const start = s?.started_at ? new Date(s.started_at) : new Date();
+      const endsAt = new Date(start.getTime() + days * 86400000).toISOString();
+      await sbUpdate(env, 'vendor_subscriptions', `id=eq.${encodeURIComponent(subId)}`, {
+        payment_status: 'paid', active: true, payment_method: 'mobile', payment_ref: ref_command || null, ends_at: endsAt,
+      });
+      if (s?.vendor_id) {
+        await sbUpdate(env, 'profiles', `id=eq.${encodeURIComponent(s.vendor_id)}`, {
+          is_pro: true, pro_until: endsAt, pro_plan: s.plan,
+        });
+      }
+    } else {
+      await sbUpdate(env, 'vendor_subscriptions', `id=eq.${encodeURIComponent(subId)}`, { payment_status: 'failed', active: false });
+    }
+    return jsonR({ ok: true, kind: 'pro', activated: isPaid });
+  }
 
   // 2bis. Paiement de BOOST vendeur (libre-service) : on l'ACTIVE côté serveur
   // (signal de confiance) au lieu de se fier au retour navigateur (qui pouvait

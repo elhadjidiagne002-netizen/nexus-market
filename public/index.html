@@ -861,6 +861,8 @@
         /* Badge « Vendeur de confiance » (calcul auto) */
         .trust-badge { display: inline-flex; align-items: center; gap: 0.2rem; margin-left: 0.4rem; background: rgba(0,133,62,0.12); color: var(--primary); border: 1px solid rgba(0,133,62,0.35); border-radius: 20px; padding: 0.05rem 0.4rem; font-size: 0.62rem; font-weight: 800; vertical-align: middle; white-space: nowrap; }
         .trust-badge i { font-size: 0.6rem; }
+        /* Badge « Boutique Pro » (abonnement vendeur) */
+        .pro-badge { display: inline-flex; align-items: center; gap: 0.2rem; margin-left: 0.4rem; background: linear-gradient(135deg,#6a1b9a,#9c27b0); color: #fff; border-radius: 20px; padding: 0.05rem 0.45rem; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.04em; vertical-align: middle; white-space: nowrap; }
         /* [UX #11] Pulse sur le badge message non lu dans le sidebar */
         @keyframes badgePulse {
             0%, 100% { transform: scale(1); }
@@ -21612,6 +21614,8 @@ const MonetizationConfigPanel = ({ addToast }) => {
     boost_semaine_price:    1200,
     boost_mensuel_price:    8000,
     boost_cat_price:        2000,  // tête de gondole catégorie / 7j
+    pro_mensuel_price:      8000,  // Boutique Pro — abonnement mensuel
+    pro_annuel_price:       80000, // Boutique Pro — abonnement annuel (2 mois offerts)
 
     // Flash sponsorisées
     flash_12h_price:        1500,
@@ -27248,6 +27252,65 @@ const BOOST_PLANS = [
   },
 ];
 
+// ── Boutique Pro — abonnement vendeur (mensuel/annuel) via PayTech ───────────
+const PRO_PLANS = [
+  { plan: 'pro_mensuel', label: 'Mensuel', price: 8000,  days: 30,  sub: 'Renouvelable chaque mois' },
+  { plan: 'pro_annuel',  label: 'Annuel',  price: 80000, days: 365, sub: '2 mois offerts', best: true },
+];
+const BoutiqueProCard = ({ currentUser: currentUser2, addToast }) => {
+  const E = React.createElement;
+  const [pro, setPro] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    if (!DataService._sb || !currentUser2) return;
+    DataService._sb.from('profiles').select('is_pro,pro_until,pro_plan').eq('id', currentUser2.id).maybeSingle()
+      .then(({ data }) => { if (data) setPro(data); }).catch(() => {});
+  }, [currentUser2 && currentUser2.id]);
+  const active = pro && pro.is_pro && pro.pro_until && new Date(pro.pro_until) > new Date();
+  const subscribe = async (pl) => {
+    if (!currentUser2) return;
+    setBusy(true);
+    try {
+      const subId = crypto.randomUUID();
+      const row = { id: subId, vendor_id: currentUser2.id, plan: pl.plan, price_fcfa: pl.price, started_at: new Date().toISOString(), active: false, payment_status: 'pending' };
+      if (DataService._sb) { const { error } = await DataService._sb.from('vendor_subscriptions').insert(row); if (error) { addToast('Erreur : ' + error.message, 'error'); setBusy(false); return; } }
+      const origin = window.location.origin;
+      const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: 'pro', sub_id: subId,
+          order_id: 'PRO-' + subId.slice(0, 12).toUpperCase(),
+          amount: pl.price, item_name: 'Boutique Pro ' + pl.label + ' — NEXUS',
+          success_url: origin + '/?pro_return=success&subId=' + subId,
+          cancel_url:  origin + '/?pro_return=cancel&subId='  + subId,
+          custom_field: JSON.stringify({ subId, vendorId: currentUser2.id, plan: pl.plan }),
+        }),
+      }).catch(e => ({ __err: e.message }));
+      if (initRes && initRes.__err) { if (DataService._sb) DataService._sb.from('vendor_subscriptions').delete().eq('id', subId); addToast('PayTech indisponible — réessayez.', 'warning', 8000); setBusy(false); return; }
+      if (initRes && initRes.redirect_url) { addToast('Redirection vers PayTech…', 'info', 3000); setTimeout(() => { window.location.href = initRes.redirect_url; }, 600); return; }
+      if (DataService._sb) DataService._sb.from('vendor_subscriptions').delete().eq('id', subId);
+      addToast('Erreur PayTech : ' + ((initRes && initRes.error) || 'réponse invalide'), 'error'); setBusy(false);
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); setBusy(false); }
+  };
+  return E('div', { style: { background: 'linear-gradient(135deg,#4a148c,#6a1b9a)', borderRadius: 16, padding: '1.25rem 1.5rem', marginBottom: '1.5rem', color: '#fff' } },
+    E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 } },
+      E('span', { style: { fontSize: '1.3rem' } }, '⭐'),
+      E('strong', { style: { fontSize: '1.05rem' } }, 'Boutique Pro'),
+      active && E('span', { className: 'pro-badge', style: { marginLeft: 'auto' } }, 'PRO actif')),
+    active
+      ? E('div', { style: { fontSize: '.88rem', color: 'rgba(255,255,255,.85)' } }, 'Abonnement ' + (pro.pro_plan === 'pro_annuel' ? 'annuel' : 'mensuel') + ' actif jusqu’au ' + new Date(pro.pro_until).toLocaleDateString('fr-FR') + '. Merci !')
+      : E(React.Fragment, null,
+          E('div', { style: { fontSize: '.85rem', color: 'rgba(255,255,255,.8)', marginBottom: '.8rem' } }, 'Badge PRO, mise en avant de vos produits et de votre boutique, vitrine premium.'),
+          E('div', { style: { display: 'flex', gap: '.75rem', flexWrap: 'wrap' } },
+            PRO_PLANS.map(pl => E('button', { key: pl.plan, disabled: busy, onClick: () => subscribe(pl),
+              style: { flex: '1 1 160px', textAlign: 'left', background: 'rgba(255,255,255,.1)', border: pl.best ? '2px solid #FDEE42' : '1px solid rgba(255,255,255,.25)', borderRadius: 12, padding: '.8rem 1rem', color: '#fff', cursor: busy ? 'wait' : 'pointer' } },
+              E('div', { style: { fontWeight: 800, color: '#FDEE42' } }, pl.label, pl.best ? ' ★' : ''),
+              E('div', { style: { fontWeight: 800, fontSize: '1.15rem' } }, pl.price.toLocaleString('fr-FR') + ' FCFA'),
+              E('div', { style: { fontSize: '.76rem', color: 'rgba(255,255,255,.75)' } }, '/' + (pl.days === 365 ? 'an' : 'mois') + ' · ' + pl.sub))))
+        )
+  );
+};
+
 const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast, onBoostSuccess, onClose }) => {
   const [selectedPlan, setSelectedPlan] = React.useState(null);
   const [step,         setStep]         = React.useState(1); // 1=choix, 2=paiement, 3=confirmé
@@ -29028,6 +29091,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
   " ",
   activBoosts.some(b => b.product_id === p.id && b.active) ? "Boosté ⚡" : "Booster"
 ))))); })()), view === "boost" && React.createElement(React.Fragment, null,
+  React.createElement(BoutiqueProCard, { currentUser: currentUser2, addToast }),
   /* En-tête boost */
   React.createElement("div", { className: "card-header", style: { marginBottom: "1.5rem" } },
     React.createElement("h2", { className: "section-title" },
@@ -30402,6 +30466,14 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       .then(({ data }) => { if (data) setTrustedVendors(new Set(data.map(p => p.id))); })
       .catch(() => {});
   }, []);
+  // [BOUTIQUE PRO] Vendeurs Pro actifs (badge PRO sur cartes/boutique).
+  const [proVendors, setProVendors] = React.useState(() => new Set());
+  React.useEffect(() => {
+    if (!isSupabaseConfigured() || !DataService._sb) return;
+    DataService._sb.from('profiles').select('id').eq('is_pro', true).gt('pro_until', new Date().toISOString())
+      .then(({ data }) => { if (data) setProVendors(new Set(data.map(p => p.id))); })
+      .catch(() => {});
+  }, []);
   // [STORIES SHOPPABLES] Ouvre la fiche produit (sans rechargement) sur demande
   // d'un autre module (ex. bouton « Voir » d'une story). detail = product_id.
   React.useEffect(() => {
@@ -31367,6 +31439,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                     React.createElement('h3', { className: 'product-name' }, product.name),
                     React.createElement('div', { className: 'product-vendor vendor-link', title: 'Voir la boutique de ' + product.vendorName, role: 'button', tabIndex: 0, onClick: (e) => { e.stopPropagation(); setShowVendorPagePub({ id: product.vendor||null, name: product.vendorName||'Boutique' }); }, onKeyDown: (e) => { if (e.key==='Enter') { e.stopPropagation(); setShowVendorPagePub({ id: product.vendor||null, name: product.vendorName||'Boutique' }); } } },
                       React.createElement('i', { className: 'fas fa-store' }), ' ', product.vendorName,
+                      product.vendor && proVendors.has(product.vendor) && React.createElement('span', { className: 'pro-badge', title: 'Boutique Pro' }, '⭐ PRO'),
                       product.vendor && trustedVendors.has(product.vendor) && React.createElement('span', { className: 'trust-badge', title: 'Vendeur de confiance — fiabilité vérifiée par NEXUS' }, React.createElement('i', { className: 'fas fa-shield-alt' }), ' Confiance')
                     ),
                     React.createElement('div', { className: 'product-rating' },
@@ -33745,14 +33818,15 @@ const OrderCancelModal = ({ order, onConfirm, onClose, addToast }) => {
 const VendorPublicPage = ({ vendorId, vendorName: vendorNameProp="", products, onClose, onAddToCart, onViewProduct, wishlist, onToggleWishlist, addToast, currentUser: currentUser2 }) => {
   const [vendorProfile, setVendorProfile] = React.useState(null);
   const [_profileLoading, _setProfileLoading] = React.useState(true);
-  // [BADGE CONFIANCE] is_trusted calculé côté serveur (cron recompute_vendor_trust).
+  // [BADGE CONFIANCE/PRO] calculés côté serveur (cron / abonnement).
   const [vendorTrusted, setVendorTrusted] = React.useState(false);
+  const [vendorPro, setVendorPro] = React.useState(false);
   React.useEffect(() => {
     const sb = (typeof DataService !== "undefined" && DataService._sb) || null;
     const vid = vendorId || (vendorProfile && vendorProfile.id);
     if (!sb || !vid) return;
-    sb.from("profiles").select("is_trusted").eq("id", vid).maybeSingle()
-      .then(({ data }) => { if (data) setVendorTrusted(!!data.is_trusted); }).catch(() => {});
+    sb.from("profiles").select("is_trusted,is_pro,pro_until").eq("id", vid).maybeSingle()
+      .then(({ data }) => { if (data) { setVendorTrusted(!!data.is_trusted); setVendorPro(!!data.is_pro && data.pro_until && new Date(data.pro_until) > new Date()); } }).catch(() => {});
   }, [vendorId, vendorProfile && vendorProfile.id]);
   React.useEffect(() => {
     let cancelled = false;
@@ -33828,7 +33902,7 @@ const VendorPublicPage = ({ vendorId, vendorName: vendorNameProp="", products, o
   const vendor = { id: vendorId || (vendorProfile&&vendorProfile.id) || null, name: _resolvedName || 'Boutique' };
   const avgRating = allProducts.length > 0 ? (allProducts.reduce((s, p) => s + (p.rating || 0), 0) / allProducts.length).toFixed(1) : "\u2014";
   const allReviews = (storage.getArray("reviews")).filter((r) => allProducts.some((p) => p.id === r.productId));
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", style: { maxHeight: "90vh", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store text-primary" }), " ", vendor.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("div", { style: { overflowY: "auto", flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "1.25rem", background: "linear-gradient(135deg, rgba(0,133,62,0.06), rgba(253,239,66,0.06))", borderRadius: "14px", marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1.25rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "64px", height: "64px", borderRadius: "50%", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.6rem", fontWeight: 700, flexShrink: 0, overflow: "hidden" } }, vendorProfile && (vendorProfile.logo || vendorProfile.avatar) ? React.createElement("img", { src: vendorProfile.logo||vendorProfile.avatar, alt: vendor.name, style: { width:"100%",height:"100%",objectFit:"cover" } }) : (vendor.name||"B")[0]), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.2rem", marginBottom: "0.2rem" } }, vendor.name), /* @__PURE__ */ React.createElement(VendorBadge, { vendor, products: allProducts }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "1.5rem", flexWrap: "wrap", fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.4rem" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box text-primary" }), " ", allProducts.length, " produit", allProducts.length !== 1 ? "s" : ""), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star text-primary" }), " ", avgRating, "/5 (", allReviews.length, " avis)"), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle text-success" }), " Vendeur v\xE9rifi\xE9"), vendorTrusted && /* @__PURE__ */ React.createElement("span", { className: "trust-badge", title: "Vendeur de confiance — fiabilit\xE9 v\xE9rifi\xE9e par NEXUS (note, taux de livraison, litiges, anciennet\xE9)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt" }), " Vendeur de confiance")), vendorProfile && vendorProfile.bio && /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.83rem", color: "var(--text-secondary)", marginTop: "0.4rem", fontStyle: "italic" } }, vendorProfile.bio), (vendorProfile && (vendorProfile.shopCategory || vendorProfile.shop_category)) && /* @__PURE__ */ React.createElement("span", { className: "badge badge-primary", style: { marginTop: "0.3rem", display: "inline-block" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-tag" }), " ", vendorProfile.shopCategory || vendorProfile.shop_category), (vendorProfile && (vendorProfile.phone || vendorProfile.whatsapp_number)) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-phone text-primary" }), " ", vendorProfile.phone || vendorProfile.whatsapp_number), vendorProfile && vendorProfile.opening_hours && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-clock text-primary" }), " ", vendorProfile.opening_hours), vendorProfile && vendorProfile.return_policy && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo text-primary" }), " ", vendorProfile.return_policy)), /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: handleContact, title: currentUser2 ? "Envoyer un message \xE0 ce vendeur" : "Connectez-vous pour contacter" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Contacter"))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.25rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", color: "var(--primary)" } }, "Produits (", allProducts.length, ")"), allProducts.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, allProducts.map((p) => /* @__PURE__ */ React.createElement("article", { key: p.id, className: "product-card", style: { cursor: "pointer" }, onClick: () => {
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal modal-wide", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", style: { maxHeight: "90vh", display: "flex", flexDirection: "column" } }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-store text-primary" }), " ", vendor.name), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("div", { style: { overflowY: "auto", flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { padding: "1.25rem", background: "linear-gradient(135deg, rgba(0,133,62,0.06), rgba(253,239,66,0.06))", borderRadius: "14px", marginBottom: "1.5rem", display: "flex", alignItems: "center", gap: "1.25rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("div", { style: { width: "64px", height: "64px", borderRadius: "50%", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.6rem", fontWeight: 700, flexShrink: 0, overflow: "hidden" } }, vendorProfile && (vendorProfile.logo || vendorProfile.avatar) ? React.createElement("img", { src: vendorProfile.logo||vendorProfile.avatar, alt: vendor.name, style: { width:"100%",height:"100%",objectFit:"cover" } }) : (vendor.name||"B")[0]), /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "1.2rem", marginBottom: "0.2rem" } }, vendor.name), /* @__PURE__ */ React.createElement(VendorBadge, { vendor, products: allProducts }), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "1.5rem", flexWrap: "wrap", fontSize: "0.85rem", color: "var(--text-secondary)", marginTop: "0.4rem" } }, /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box text-primary" }), " ", allProducts.length, " produit", allProducts.length !== 1 ? "s" : ""), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-star text-primary" }), " ", avgRating, "/5 (", allReviews.length, " avis)"), /* @__PURE__ */ React.createElement("span", null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check-circle text-success" }), " Vendeur v\xE9rifi\xE9"), vendorPro && /* @__PURE__ */ React.createElement("span", { className: "pro-badge", title: "Boutique Pro" }, "⭐ PRO"), vendorTrusted && /* @__PURE__ */ React.createElement("span", { className: "trust-badge", title: "Vendeur de confiance — fiabilit\xE9 v\xE9rifi\xE9e par NEXUS (note, taux de livraison, litiges, anciennet\xE9)" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-shield-alt" }), " Vendeur de confiance")), vendorProfile && vendorProfile.bio && /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.83rem", color: "var(--text-secondary)", marginTop: "0.4rem", fontStyle: "italic" } }, vendorProfile.bio), (vendorProfile && (vendorProfile.shopCategory || vendorProfile.shop_category)) && /* @__PURE__ */ React.createElement("span", { className: "badge badge-primary", style: { marginTop: "0.3rem", display: "inline-block" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-tag" }), " ", vendorProfile.shopCategory || vendorProfile.shop_category), (vendorProfile && (vendorProfile.phone || vendorProfile.whatsapp_number)) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-phone text-primary" }), " ", vendorProfile.phone || vendorProfile.whatsapp_number), vendorProfile && vendorProfile.opening_hours && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-clock text-primary" }), " ", vendorProfile.opening_hours), vendorProfile && vendorProfile.return_policy && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: "0.3rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo text-primary" }), " ", vendorProfile.return_policy)), /* @__PURE__ */ React.createElement("div", { style: { alignSelf: "flex-start", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: handleContact, title: currentUser2 ? "Envoyer un message \xE0 ce vendeur" : "Connectez-vous pour contacter" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Contacter"))), /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "1.25rem" } }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", color: "var(--primary)" } }, "Produits (", allProducts.length, ")"), allProducts.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-box-open" }), /* @__PURE__ */ React.createElement("h3", null, "Aucun produit")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, allProducts.map((p) => /* @__PURE__ */ React.createElement("article", { key: p.id, className: "product-card", style: { cursor: "pointer" }, onClick: () => {
     onViewProduct(p);
     onClose();
   } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product: p }), /* @__PURE__ */ React.createElement("div", { className: `wishlist-heart ${wishlist.includes(p.id) ? "active" : ""}`, onClick: (e) => {
@@ -34745,6 +34819,31 @@ const Root = () => {
         window.dispatchEvent(new CustomEvent('nexus:toast', {
           detail: { message: 'Paiement annulé — boost non activé.', type: 'warning', duration: 5000 }
         }));
+      }
+    }
+
+    // Retour PayTech Boutique Pro — ?pro_return=success|cancel&subId=xxx
+    // [SEC] Activation CÔTÉ SERVEUR via l'IPN ; ici on informe puis on relit le statut.
+    const _pRet = _sp.get('pro_return');
+    const _pSub = _sp.get('subId');
+    if (_pRet && _pSub) {
+      window.history?.replaceState(null, "", window.location.pathname);
+      if (_pRet === 'success') {
+        window.dispatchEvent(new CustomEvent('nexus:toast', { detail: { message: '⏳ Paiement reçu — activation de votre Boutique Pro en cours…', type: 'info', duration: 6000 } }));
+        if (DataService._sb) {
+          let _pt = 0;
+          const _pc = setInterval(() => {
+            _pt++;
+            DataService._sb.from('vendor_subscriptions').select('payment_status').eq('id', _pSub).single()
+              .then(({ data }) => {
+                if (data && data.payment_status === 'paid') { clearInterval(_pc); window.dispatchEvent(new CustomEvent('nexus:toast', { detail: { message: '⭐ Boutique Pro activée ! Votre badge PRO est en ligne.', type: 'success', duration: 8000 } })); }
+                else if (_pt >= 6) { clearInterval(_pc); window.dispatchEvent(new CustomEvent('nexus:toast', { detail: { message: 'Paiement en cours de validation. Votre abonnement s’activera sous peu (< 1 min).', type: 'info', duration: 8000 } })); }
+              }).catch(() => { if (_pt >= 6) clearInterval(_pc); });
+          }, 5000);
+        }
+      } else {
+        if (DataService._sb) DataService._sb.from('vendor_subscriptions').delete().eq('id', _pSub);
+        window.dispatchEvent(new CustomEvent('nexus:toast', { detail: { message: 'Paiement annulé — abonnement non activé.', type: 'warning', duration: 5000 } }));
       }
     }
 
