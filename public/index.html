@@ -38314,7 +38314,8 @@ window.addEventListener('unhandledrejection', function(event) {
               return E('button', { key: m[0], onClick: function () { setPay(m[0]); }, style: { flex: 1, padding: '.55rem', fontSize: '.7rem', border: on ? '2px solid #00853E' : '1.5px solid #e5e7eb', background: m[2], color: m[3], borderRadius: 8, cursor: 'pointer', fontWeight: 600 } }, m[1]);
             })),
           E('button', { onClick: submit, disabled: busy || !quote, style: { width: '100%', padding: '.85rem', background: (busy || !quote) ? '#9ca3af' : '#00853E', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.9rem', cursor: (busy || !quote) ? 'default' : 'pointer' } },
-            busy ? 'Recherche…' : 'Commander le coursier')
+            busy ? 'Recherche…' : 'Commander le coursier'),
+          E('button', { onClick: function () { try { props.onClose && props.onClose(); } catch (e) {} try { window.dispatchEvent(new CustomEvent('nexus:open-my-deliveries')); } catch (e) {} }, style: { width: '100%', marginTop: '.6rem', padding: '.6rem', background: 'none', border: 'none', color: '#00853E', fontWeight: 600, fontSize: '.85rem', cursor: 'pointer' } }, '📦 Suivre mes livraisons')
         )
       )
     );
@@ -41359,6 +41360,106 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULES SESSION & NOTIFS COURSIER ============== -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS — « MES LIVRAISONS » (suivi mandataire réouvrable)
+     Liste des courses du mandataire + suivi live (carte, statut, coursier assigné).
+     Ouverture : event nexus:open-my-deliveries (ou window.NexusMyDeliveries.open()).
+     ════════════════════════════════════════════════════════════════════════ -->
+<style>
+  #nx-myd-ov{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10042;display:none;align-items:flex-start;justify-content:center;padding:1rem;overflow:auto;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #nx-myd-ov.open{display:flex}
+  .nx-myd-card{background:#fff;border-radius:16px;max-width:460px;width:100%;margin:2vh 0;overflow:hidden}
+  .nx-myd-head{display:flex;align-items:center;gap:10px;padding:1rem 1.25rem;background:#00853E;color:#fff}
+  .nx-myd-row{border:1px solid #eee;border-radius:12px;padding:.8rem;margin-bottom:.6rem;cursor:pointer}
+  .nx-myd-row:hover{background:#f5fbf7}
+</style>
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_MYDLV_LOADED__) return; window.__NEXUS_MYDLV_LOADED__ = true;
+  function sb() { try { return (window.DataService && DataService._sb) || window.__nexusSupabaseClient || null; } catch (e) { return null; } }
+  var user = null;
+  window.addEventListener('nexus:set-user', function (e) { user = e.detail || null; });
+  function fcfa(n) { return (Number(n) || 0).toLocaleString('fr-FR') + ' FCFA'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  var ST = { searching: '🔍 Recherche coursier', no_courier: '😕 Aucun coursier', accepted: '✅ Accepté — en route', picked_up: '📦 Colis récupéré', in_transit: '🚚 En livraison', delivered: '🎉 Livré', cancelled: '❌ Annulé' };
+
+  var ov, pollIv;
+  function build() {
+    if (ov) return ov;
+    ov = document.createElement('div'); ov.id = 'nx-myd-ov';
+    ov.innerHTML = '<div class="nx-myd-card"><div class="nx-myd-head"><span style="font-size:1.3rem">📦</span><b style="flex:1">Mes livraisons</b><button id="nx-myd-x" aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div><div id="nx-myd-body" style="padding:1rem 1.25rem"></div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('#nx-myd-x').addEventListener('click', close);
+    return ov;
+  }
+  function close() { if (pollIv) { clearInterval(pollIv); pollIv = null; } if (ov) ov.classList.remove('open'); }
+
+  function listView() {
+    build(); ov.classList.add('open'); if (pollIv) { clearInterval(pollIv); pollIv = null; }
+    var body = ov.querySelector('#nx-myd-body');
+    body.innerHTML = '<div style="text-align:center;color:#999;padding:1.5rem">Chargement…</div>';
+    if (!user || !user.id || !window.DataService || !DataService.getMyDeliveries) { body.innerHTML = '<div style="color:#999;text-align:center;padding:1.5rem">Connectez-vous pour voir vos livraisons.</div>'; return; }
+    DataService.getMyDeliveries(user.id).then(function (list) {
+      list = list || [];
+      if (!list.length) { body.innerHTML = '<div style="color:#999;text-align:center;padding:1.5rem">Aucune livraison pour le moment.</div>'; return; }
+      body.innerHTML = '';
+      list.forEach(function (d) {
+        var row = document.createElement('div'); row.className = 'nx-myd-row';
+        row.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:.2rem"><b style="font-size:.82rem">' + esc(ST[d.status] || d.status) + '</b><span style="font-weight:700;color:#00853E">' + fcfa(d.fee_fcfa) + '</span></div>'
+          + '<div style="font-size:.78rem;color:#555">📍 ' + esc(d.pickup_label || d.pickup_zone || '') + ' → 🏁 ' + esc(d.dropoff_label || d.dropoff_zone || '') + '</div>'
+          + '<div style="font-size:.7rem;color:#999;margin-top:.2rem">' + new Date(d.created_at).toLocaleString('fr-FR') + '</div>';
+        row.addEventListener('click', function () { detailView(d); });
+        body.appendChild(row);
+      });
+    }).catch(function () { body.innerHTML = '<div style="color:#b45309;text-align:center;padding:1.5rem">Erreur de chargement.</div>'; });
+  }
+
+  function detailView(d) {
+    build(); var body = ov.querySelector('#nx-myd-body');
+    body.innerHTML = '<button id="nx-myd-back" style="background:none;border:none;color:#00853E;cursor:pointer;font-weight:600;font-size:.82rem;margin-bottom:.5rem">↩︎ Mes livraisons</button>'
+      + '<div id="nx-myd-status" style="font-weight:700;margin-bottom:.5rem">' + esc(ST[d.status] || d.status) + '</div>'
+      + '<div id="nx-myd-map" class="nexus-map" style="height:240px;margin-bottom:.7rem"></div>'
+      + '<div id="nx-myd-courier"></div>'
+      + '<div style="background:#f5f5f5;border-radius:10px;padding:.7rem;font-size:.8rem"><div>📍 ' + esc(d.pickup_label || d.pickup_zone || '') + ' → 🏁 ' + esc(d.dropoff_label || d.dropoff_zone || '') + '</div><div style="margin-top:.3rem;font-weight:700;color:#00853E">' + fcfa(d.fee_fcfa) + (d.distance_km ? (' · ' + d.distance_km + ' km') : '') + '</div></div>'
+      + (d.dropoff_lat ? '<button id="nx-myd-nav" style="width:100%;margin-top:.6rem;padding:.7rem;border:1.5px solid #1d4ed8;background:#fff;color:#1d4ed8;border-radius:10px;font-weight:700;cursor:pointer">🧭 M\'y rendre</button>' : '');
+    body.querySelector('#nx-myd-back').addEventListener('click', listView);
+    var navBtn = body.querySelector('#nx-myd-nav'); if (navBtn) navBtn.addEventListener('click', function () { try { NexusMap.openDirections(d.dropoff_lat, d.dropoff_lng, d.dropoff_label || 'Livraison'); } catch (e) {} });
+    var mapEl = body.querySelector('#nx-myd-map');
+    try { if (window.NexusMap) NexusMap.track(mapEl, d); } catch (e) {}
+    loadCourier(d.id);
+    if (pollIv) clearInterval(pollIv);
+    pollIv = setInterval(function () {
+      var c = sb(); if (!c) return;
+      c.from('deliveries').select('*').eq('id', d.id).maybeSingle().then(function (r) {
+        var nd = r && r.data; if (!nd) return;
+        var stEl = ov.querySelector('#nx-myd-status'); if (stEl) stEl.textContent = ST[nd.status] || nd.status;
+        if (nd.status === 'delivered' || nd.status === 'cancelled') { if (pollIv) { clearInterval(pollIv); pollIv = null; } }
+      }).catch(function () {});
+    }, 12000);
+  }
+
+  function loadCourier(id) {
+    var c = sb(); if (!c) return;
+    c.rpc('delivery_courier_card', { p_delivery_id: id }).then(function (r) {
+      var cc = r && r.data; var host = ov && ov.querySelector('#nx-myd-courier'); if (!host) return;
+      if (!cc || !cc.assigned) { host.innerHTML = ''; return; }
+      host.innerHTML = '<div style="display:flex;align-items:center;gap:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:.6rem .8rem;margin-bottom:.7rem">'
+        + '<div style="width:38px;height:38px;border-radius:50%;background:#00853E;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700">' + esc((cc.name || '?')[0]).toUpperCase() + '</div>'
+        + '<div style="flex:1"><div style="font-weight:700;font-size:.88rem">🛵 ' + esc(cc.name || 'Coursier') + '</div><div style="font-size:.74rem;color:#666">⭐ ' + Number(cc.rating_avg || 5).toFixed(1) + ' · ' + (cc.deliveries_done || 0) + ' livraisons</div></div>'
+        + (cc.phone ? ('<a href="tel:' + esc(cc.phone) + '" style="text-decoration:none;background:#00853E;color:#fff;border-radius:8px;padding:.35rem .6rem;font-weight:700">📞</a><a href="https://wa.me/' + esc(String(cc.phone).replace(/\D/g, '')) + '" target="_blank" rel="noopener" style="text-decoration:none;background:#25D366;color:#fff;border-radius:8px;padding:.35rem .6rem;font-weight:700">💬</a>') : '') + '</div>';
+    }).catch(function () {});
+  }
+
+  function open() { listView(); }
+  window.addEventListener('nexus:open-my-deliveries', open);
+  window.NexusMyDeliveries = { open: open };
+  console.info('[NEXUS] Mes livraisons prêt ✅');
+})();
+</script>
+<!-- ============== FIN MODULE MES LIVRAISONS ============== -->
 
 </body>
 </html>
