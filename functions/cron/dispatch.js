@@ -100,14 +100,21 @@ async function runDispatchTick(env, request) {
 }
 
 function buildMessage(n) {
-  const parts = ['🛵 *NEXUS — Nouvelle course disponible !*'];
-  if (n.distance_km != null) parts.push('📍 À ~' + Number(n.distance_km).toFixed(1) + ' km de vous');
+  // En mode attribution directe (n.assigned), la course EST déjà attribuée à ce
+  // coursier — pas de « premier qui accepte ». Sinon (legacy offre), invitation.
+  const assigned = n && n.assigned;
+  const parts = [assigned
+    ? '🛵 *NEXUS — Une course vous a été attribuée !*'
+    : '🛵 *NEXUS — Nouvelle course disponible !*'];
+  if (n.distance_km != null) parts.push('📍 Retrait à ~' + Number(n.distance_km).toFixed(1) + ' km de vous');
   if (n.pickup_label)  parts.push('📦 Retrait : ' + n.pickup_label);
   if (n.dropoff_label) parts.push('🎯 Livraison : ' + n.dropoff_label);
   if (n.course_km != null) parts.push('🛣️ Distance : ' + Number(n.course_km).toFixed(1) + ' km');
   if (n.courier_payout != null) parts.push('💰 Votre gain : ' + fcfa(n.courier_payout));
   else if (n.fee_fcfa != null)  parts.push('💰 Montant : ' + fcfa(n.fee_fcfa));
-  parts.push('', '⚡ *Premier qui accepte remporte la course.*', '👉 Connectez-vous pour valider.');
+  parts.push('', assigned
+    ? '👉 Ouvrez l\'app NEXUS → « Mes courses » pour démarrer et appeler le client.'
+    : '⚡ *Premier qui accepte remporte la course.*\n👉 Connectez-vous pour valider.');
   return parts.join('\n');
 }
 
