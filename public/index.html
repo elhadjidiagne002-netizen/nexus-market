@@ -38007,14 +38007,21 @@ window.addEventListener('unhandledrejection', function(event) {
 
     // Transition de statut (picked_up / in_transit / delivered)
     async advanceDelivery(deliveryId, status) {
-      var patch = { status: status };
-      if (status === 'picked_up') patch.picked_up_at = new Date().toISOString();
-      if (status === 'delivered') patch.delivered_at = new Date().toISOString();
       if (this._sb) {
         try {
-          await this._sb.from('deliveries').update(patch).eq('id', deliveryId);
+          if (status === 'delivered') {
+            // RPC complete_delivery : statut + GAIN coursier (courier_earnings,
+            // total_earned, deliveries_done) + coursier remis disponible.
+            var rc = await this._sb.rpc('complete_delivery', { p_delivery_id: deliveryId });
+            if (rc && rc.error) { // fallback si RPC absent
+              await this._sb.from('deliveries').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', deliveryId);
+            }
+          } else {
+            var patch = { status: status };
+            if (status === 'picked_up') patch.picked_up_at = new Date().toISOString();
+            await this._sb.from('deliveries').update(patch).eq('id', deliveryId);
+          }
           var dl = await this.getDelivery(deliveryId);
-          if (status === 'delivered' && dl && dl.courier_id) await this.setCourierStatus(dl.courier_id, 'available');
           // [NOTIF LIVRAISON] Informer l'acheteur de l'étape (in-app)
           if (dl && dl.buyer_id) {
             var _msgs = { picked_up:'📦 Votre colis a été récupéré par le coursier.', in_transit:'🚚 Votre coursier est en route !', delivered:'✅ Votre commande a été livrée. Merci !' };
@@ -38392,6 +38399,7 @@ window.addEventListener('unhandledrejection', function(event) {
     var _b = React.useState(false), busy = _b[0], setBusy = _b[1];
     var _pos = React.useState(null), pos = _pos[0], setPos = _pos[1];
     var _op = React.useState([]), openJobs = _op[0], setOpenJobs = _op[1]; // courses ouvertes à saisir
+    var _ea = React.useState(null), earned = _ea[0], setEarned = _ea[1];   // {total_earned, deliveries_done}
 
     var user = props.user || {};
     var userId = user.id;                                   // = profiles.id = auth.uid()
@@ -38433,8 +38441,13 @@ window.addEventListener('unhandledrejection', function(event) {
       });
     }
 
+    function loadEarnings() {
+      try { if (DataService._sb) DataService._sb.from('couriers').select('total_earned,deliveries_done,rating_avg').eq('user_id', userId).maybeSingle().then(function (r) { if (r && r.data) setEarned(r.data); }); } catch (e) {}
+    }
+
     React.useEffect(function () {
       refresh(userId);
+      loadEarnings();
       // [EN LIGNE PAR DÉFAUT] Le coursier est en ligne dès la connexion, sauf s'il
       // s'est explicitement mis hors ligne (préférence mémorisée). Le passage en
       // ligne effectif (géoloc + is_available) est assuré par le module global.
@@ -38528,7 +38541,7 @@ window.addEventListener('unhandledrejection', function(event) {
       var next = NEXT[dl.status];
       if (!next) return;
       setBusy(true);
-      DataService.advanceDelivery(dl.id, next).then(function () { setBusy(false); refresh(); });
+      DataService.advanceDelivery(dl.id, next).then(function () { setBusy(false); refresh(); if (next === 'delivered') loadEarnings(); });
     }
 
     var overlay = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 10000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' };
@@ -38542,7 +38555,8 @@ window.addEventListener('unhandledrejection', function(event) {
           E('span', { style: { fontSize: '1.3rem' } }, '🛵'),
           E('div', null,
             E('div', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem' } }, 'Espace Coursier'),
-            E('div', { style: { color: '#9ca3af', fontSize: '.72rem' } }, user.name || 'Coursier')),
+            E('div', { style: { color: '#9ca3af', fontSize: '.72rem' } }, user.name || 'Coursier'),
+            earned && E('div', { style: { color: '#FDEE42', fontSize: '.74rem', fontWeight: 700, marginTop: 2 } }, '💰 ' + Math.round(earned.total_earned || 0).toLocaleString('fr-FR') + ' F · ' + (earned.deliveries_done || 0) + ' livr. · ⭐ ' + Number(earned.rating_avg || 5).toFixed(1))),
           E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer' } }, '×')),
 
         // Bandeau disponibilité
