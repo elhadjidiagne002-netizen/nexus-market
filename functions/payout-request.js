@@ -162,6 +162,12 @@ export async function onRequestPost(context) {
     .single();
 
   if (insertErr) {
+    // [SEC #10] Violation de l'index unique partiel (un seul retrait en vol par
+    // vendeur) → une demande concurrente a déjà été créée. On rejette proprement
+    // au lieu de permettre un double-retrait (race TOCTOU sur le contrôle de solde).
+    if (insertErr.code === "23505" || /duplicate key|unique/i.test(insertErr.message || "")) {
+      return json(409, { error: "Une demande de retrait est déjà en cours. Attendez son traitement avant d'en créer une autre." });
+    }
     console.error("[payout-request] insert error:", insertErr.message);
     return json(500, { error: "Erreur création demande" });
   }

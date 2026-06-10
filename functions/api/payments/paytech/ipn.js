@@ -82,7 +82,7 @@ export async function onRequest({ request, env }) {
   // 3. Mettre à jour la commande
   // [FIX] status ∈ {pending_payment,processing,in_transit,delivered,cancelled} :
   // 'payment_failed' n'est pas une valeur valide → 'cancelled' en cas d'échec.
-  await sbUpdate(env, 'orders', `id=eq.${order_id}`, {
+  await sbUpdate(env, 'orders', `id=eq.${encodeURIComponent(order_id)}`, {
     status:         isPaid ? 'processing' : 'cancelled',
     payment_status: isPaid ? 'paid' : 'failed',
     payment_method: 'mobile',
@@ -90,14 +90,14 @@ export async function onRequest({ request, env }) {
   });
 
   // 4. Mettre à jour la session PayTech
-  await sbUpdate(env, 'stripe_sessions', `session_id=eq.${ref_command}`, {
+  await sbUpdate(env, 'stripe_sessions', `session_id=eq.${encodeURIComponent(ref_command || '')}`, {
     status:     isPaid ? 'paid' : 'failed',
     updated_at: new Date().toISOString(),
   });
 
   // 5. Créer une notification in-app
   if (isPaid) {
-    const orders = await sbGet(env, `orders?id=eq.${order_id}&select=buyer_id,total,buyer_email,buyer_name`);
+    const orders = await sbGet(env, `orders?id=eq.${encodeURIComponent(order_id)}&select=buyer_id,total,buyer_email,buyer_name`);
     const order = orders?.[0];
     if (order?.buyer_id) {
       await fetch(`${env.SUPABASE_URL}/rest/v1/notifications`, {

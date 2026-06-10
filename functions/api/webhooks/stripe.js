@@ -107,8 +107,8 @@ export async function onRequestPost(context) {
               // Push notification
               const origin = new URL(request.url).origin;
               await fetch(`${origin}/push-send`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId: buyerId, eventType: "payment_confirmed", payload: { title: "✅ Paiement confirmé", body: `${amountFcfa.toLocaleString('fr-FR')} FCFA reçu — commande #${orderId.slice(-6)}`, icon: "/assets/Gemini_Generated_Image_51w43151w43151w4.png", data: { url: `/?order=${orderId}` } } }),
+                method: "POST", headers: { "Content-Type": "application/json", "X-Internal-Secret": env.INTERNAL_API_SECRET || env.CRON_SECRET || "" },
+                body: JSON.stringify({ userId: buyerId, title: "✅ Paiement confirmé", body: `${amountFcfa.toLocaleString('fr-FR')} FCFA reçu — commande #${orderId.slice(-6)}`, url: `/?order=${orderId}` }),
               });
               // Email acheteur : paiement reçu (centre de notifications)
               if (order.buyer_email) {

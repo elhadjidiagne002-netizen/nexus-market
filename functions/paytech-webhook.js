@@ -121,16 +121,12 @@ export async function onRequestPost(context) {
             context.waitUntil(
               fetch(new URL("/push-send", request.url).origin + "/push-send", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "X-Internal-Secret": env.INTERNAL_API_SECRET || env.CRON_SECRET || "" },
                 body: JSON.stringify({
                   userId: order.buyer_id,
-                  eventType: "payment_confirmed",
-                  payload: {
-                    title: "✅ Paiement confirmé",
-                    body: `Votre paiement de ${Number(item_price).toLocaleString("fr-FR")} FCFA est reçu.`,
-                    icon: "/assets/Gemini_Generated_Image_51w43151w43151w4.png",
-                    data: { url: `/?order=${ref_command}` },
-                  },
+                  title: "✅ Paiement confirmé",
+                  body: `Votre paiement de ${Number(item_price).toLocaleString("fr-FR")} FCFA est reçu.`,
+                  url: `/?order=${ref_command}`,
                 }),
               }).catch(e => console.warn("[PayTech IPN] push error:", e.message))
             );

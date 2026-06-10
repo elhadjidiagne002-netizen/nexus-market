@@ -2,7 +2,7 @@
 // POST /api/email/send — envoi d'email côté SERVEUR via Resend.
 // Évite l'envoi client-side (Brevo) qui échoue sur restriction d'IP et expose
 // la clé API. Auth Supabase requise + rate limit (anti-spam).
-import { options, json, err, requireAuth, sendEmail, CORS } from '../_lib/utils.js';
+import { options, json, err, requireAuth, isInternalCall, sendEmail, CORS } from '../_lib/utils.js';
 import { rateLimit, clientIp, tooManyRequests } from '../_lib/ratelimit.js';
 import { getEventConfig, logEmail } from '../_lib/notify.js';
 
@@ -10,12 +10,17 @@ export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
   if (request.method !== 'POST') return err('POST requis', 405);
 
-  // Auth OPTIONNELLE : connecté → quota large ; invité (checkout guest) → quota
-  // strict. Un token invalide ne bloque pas (on retombe sur le quota invité).
-  let authed = false;
-  if (request.headers.get('Authorization')) {
-    const [user, authError] = await requireAuth(request, env);
-    if (!authError && user?.id) authed = true;
+  // [SEC #5] Authentification OBLIGATOIRE (ou appel serveur interne). L'ancien
+  // mode invité faisait de cet endpoint un RELAIS OUVERT : n'importe qui pouvait
+  // envoyer du HTML arbitraire à un destinataire arbitraire depuis le domaine de
+  // confiance NEXUS (phishing). Les emails invités légitimes (confirmation de
+  // commande) partent côté serveur via les webhooks (sendEventEmail).
+  const internal = isInternalCall(request, env);
+  let user = null;
+  if (!internal) {
+    const [u, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+    user = u;
   }
 
   if (!env.RESEND_API_KEY) return err('Service email non configuré (RESEND_API_KEY)', 503);
@@ -43,11 +48,12 @@ export async function onRequest({ request, env }) {
     }
   }
 
-  // ── Rate limiting (buckets séparés) : connecté 20/min, invité 5/min / IP ──
-  const max = authed ? 20 : 5;
-  const bucket = authed ? 'auth' : 'guest';
-  const rl = await rateLimit(env, `email:${bucket}:${clientIp(request)}`, max, 60);
-  if (!rl.allowed) return tooManyRequests(rl.resetAt, CORS);
+  // ── Rate limiting : 20/min par utilisateur (anti-spam même authentifié). ──
+  // Les appels internes (webhooks) ne sont pas limités.
+  if (!internal) {
+    const rl = await rateLimit(env, `email:auth:${user?.id || clientIp(request)}`, 20, 60);
+    if (!rl.allowed) return tooManyRequests(rl.resetAt, CORS);
+  }
 
   const logBase = { to_email: to, subject, template: event || null,
     user_id: userId || null, order_id: orderId || null };

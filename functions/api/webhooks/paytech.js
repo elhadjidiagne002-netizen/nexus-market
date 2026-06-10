@@ -65,7 +65,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   const orderRes = await fetch(
-    `${env.SUPABASE_URL}/rest/v1/orders?mobile_money_ref=eq.${token}&select=*`,
+    `${env.SUPABASE_URL}/rest/v1/orders?mobile_money_ref=eq.${encodeURIComponent(token)}&select=*`,
     { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
   );
   const orders = await orderRes.json();

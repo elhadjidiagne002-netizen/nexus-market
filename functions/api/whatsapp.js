@@ -15,6 +15,7 @@
 import { normalizePhone, isValidPhone, isValidMessage } from './_lib/validate.js';
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
 import { getEventConfig, logWhatsApp } from './_lib/notify.js';
+import { isInternalCall, requireAuth } from './_lib/utils.js';
 
 export async function onRequestPost(ctx) {
   const { request, env } = ctx;
@@ -30,11 +31,20 @@ export async function onRequestPost(ctx) {
   try { body = await request.json(); }
   catch { return json({ ok: false, error: 'JSON invalide' }, 400, corsHeaders); }
 
-  // Authentification par secret partagé — OBLIGATOIRE.
-  // [FIX] Auparavant `if (body.secret && ...)` : un secret ABSENT était accepté
-  // → endpoint ouvert. On exige désormais que le secret soit fourni ET correct.
-  const secret = env.NEXUS_WA_SECRET;
-  if (!secret || body.secret !== secret) {
+  // [SEC #7] Authentification. Cet endpoint est appelé UNIQUEMENT serveur→serveur
+  // (wa-tracking, cron) — le front parle directement à Green API. On exige donc :
+  //   1. l'en-tête X-Internal-Secret (secret serveur, JAMAIS dans le bundle) ; ou
+  //   2. un JWT Supabase valide (si un client authentifié venait à l'appeler).
+  // L'ancien `body.secret === NEXUS_WA_SECRET` reste accepté en repli DÉPRÉCIÉ
+  // (⚠️ NEXUS_WA_SECRET ne doit PAS être la valeur de config WhatsApp côté client,
+  //  sinon l'auth est publique). Migrer les appelants vers X-Internal-Secret.
+  let authed = isInternalCall(request, env);
+  if (!authed && request.headers.get('Authorization')) {
+    const [u, e] = await requireAuth(request, env);
+    if (!e && u) authed = true;
+  }
+  if (!authed && env.NEXUS_WA_SECRET && body.secret === env.NEXUS_WA_SECRET) authed = true;
+  if (!authed) {
     return json({ ok: false, error: 'Non autorisé' }, 401, corsHeaders);
   }
 

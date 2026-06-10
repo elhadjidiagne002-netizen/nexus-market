@@ -149,22 +149,24 @@ export async function onRequestPost(context) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  // [FIX] Vérification admin via la table profiles (server-side) plutôt que
-  // user_metadata.role qui peut être falsifié par l'utilisateur lui-même.
-  let isAdmin = false;
-  const auth = request.headers.get("Authorization") || "";
-  if (auth.startsWith("Bearer ")) {
-    // [FIX] fallback sûr pour éviter le crash de déstructuration
+  // [SEC #6] Identité de l'appelant :
+  //   · appel SERVEUR→SERVEUR (webhooks, cron) → en-tête X-Internal-Secret ;
+  //   · sinon JWT Supabase vérifié (signature) → on en déduit l'uid + le rôle.
+  // L'ancien code n'exigeait AUCUNE auth pour un envoi ciblé (userId) : n'importe
+  // qui pouvait pousser une notif « ✅ Paiement confirmé » avec une url malveillante.
+  const INTERNAL_SECRET = env.INTERNAL_API_SECRET || env.CRON_SECRET || "";
+  const isInternal = !!INTERNAL_SECRET && (request.headers.get("X-Internal-Secret") || "") === INTERNAL_SECRET;
+
+  let callerUid = null, isAdmin = false;
+  if (!isInternal) {
+    const auth = request.headers.get("Authorization") || "";
+    if (!auth.startsWith("Bearer ")) return json(401, { error: "Non authentifié" });
     const { data: { user } } = await sb.auth.getUser(auth.slice(7))
       .catch(() => ({ data: { user: null } }));
-    if (user) {
-      const { data: profile } = await sb
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-      isAdmin = profile?.role === "admin";
-    }
+    if (!user) return json(401, { error: "Token invalide" });
+    callerUid = user.id;
+    const { data: profile } = await sb.from("profiles").select("role").eq("id", user.id).maybeSingle();
+    isAdmin = profile?.role === "admin";
   }
 
   let body;
@@ -172,7 +174,13 @@ export async function onRequestPost(context) {
 
   const { userId, title, body: msgBody, url = "/", icon, badge, toAll = false } = body;
   if (!title || !msgBody) return json(400, { error: "title et body requis" });
-  if (toAll && !isAdmin) return json(403, { error: "Admin only" });
+
+  // [SEC #6] Autorisation : interne/admin peut tout ; un utilisateur normal ne
+  // peut notifier QUE lui-même (pas de spoofing vers un autre userId).
+  if (!isInternal && !isAdmin) {
+    if (toAll) return json(403, { error: "Admin only" });
+    if (!userId || String(userId) !== String(callerUid)) return json(403, { error: "Envoi autorisé vers soi-même uniquement" });
+  }
 
   let query = sb.from("push_subscriptions").select("endpoint, p256dh, auth");
   if (!toAll && userId) query = query.eq("user_id", userId);

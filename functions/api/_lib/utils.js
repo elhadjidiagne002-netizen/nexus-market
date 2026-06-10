@@ -75,6 +75,16 @@ export async function requireAuth(request, env) {
   }
 }
 
+// [SEC] Authentifie un appel SERVEUR→SERVEUR (webhooks, cron) par un secret
+// d'en-tête JAMAIS exposé au navigateur. À utiliser quand un endpoint doit
+// accepter à la fois des appels internes (sans JWT) et des appels client (JWT).
+// Secret : env.INTERNAL_API_SECRET (recommandé) ou repli sur env.CRON_SECRET.
+export function isInternalCall(request, env) {
+  const provided = request.headers.get('X-Internal-Secret') || '';
+  const expected = env.INTERNAL_API_SECRET || env.CRON_SECRET || '';
+  return !!expected && provided === expected;
+}
+
 export async function requireAdmin(request, env) {
   const [user, errResp] = await requireAuth(request, env);
   if (errResp) return [null, errResp];
