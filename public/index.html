@@ -37846,6 +37846,13 @@ window.addEventListener('unhandledrejection', function(event) {
       if (this._sb) {
         try { await this._sb.from('profiles').update(patch).eq('id', courierId); }
         catch (e) { console.warn('[Coursier] setCourierStatus:', e.message); }
+        // [FIX OFFRES] nearby_couriers exige couriers.is_available = true. On le
+        // synchronise avec l'état en ligne (sinon un coursier « en ligne » ne reçoit
+        // jamais d'offre). 'busy' garde is_available=false (déjà en course).
+        try {
+          var avail = (status === 'available');
+          if (status !== 'busy') await this._sb.from('couriers').update({ is_available: avail }).eq('user_id', courierId);
+        } catch (e2) { console.warn('[Coursier] is_available:', e2.message); }
       }
     },
 
@@ -38351,12 +38358,32 @@ window.addEventListener('unhandledrejection', function(event) {
 
     React.useEffect(function () {
       refresh(userId);
-      // Statut initial déduit du profil
-      if (user.courier_status === 'available' || user.courier_status === 'busy') setOnline(true);
+      // [EN LIGNE PAR DÉFAUT] Le coursier est en ligne dès la connexion, sauf s'il
+      // s'est explicitement mis hors ligne (préférence mémorisée). Le passage en
+      // ligne effectif (géoloc + is_available) est assuré par le module global.
+      var off = false; try { off = localStorage.getItem('nexus_courier_offline') === '1'; } catch (e) {}
+      if (off) setOnline(false);
+      else { setOnline(true); if (!window.__NEXUS_COURIER_ONLINE__) goOnline(); }
     }, []);
+
+    function _setOfflinePref(v) { try { localStorage.setItem('nexus_courier_offline', v ? '1' : '0'); } catch (e) {} }
+
+    // Activer les notifications (permission + abonnement Web Push)
+    function enableNotifs() {
+      try { if (window.Notification) Notification.requestPermission(); } catch (e) {}
+      try {
+        var _t = null; try { _t = localStorage.getItem('nexus_jwt'); } catch (e) {}
+        if (window.nexusPush && nexusPush.subscribe) {
+          nexusPush.subscribe(_t).then(function (ok) {
+            alert(ok ? '🔔 Notifications activées ! Vous serez alerté des nouvelles courses.' : 'Notifications non activées (autorisez-les dans les réglages du téléphone).');
+          });
+        }
+      } catch (e) {}
+    }
 
     // Passer en ligne : tente la géoloc, sinon utilise la zone du profil
     function goOnline() {
+      _setOfflinePref(false);
       setBusy(true);
       function apply(lat, lng) {
         setPos({ lat: lat, lng: lng });
@@ -38387,6 +38414,7 @@ window.addEventListener('unhandledrejection', function(event) {
     }
 
     function goOffline() {
+      _setOfflinePref(true);
       setBusy(true);
       DataService.setCourierStatus(userId, 'offline').then(function () {
         try { window.__NEXUS_COURIER_ONLINE__ = false; } catch(e){}
@@ -38447,7 +38475,8 @@ window.addEventListener('unhandledrejection', function(event) {
             E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, online ? 'En ligne — disponible' : 'Hors ligne'),
             E('div', { style: { fontSize: '.7rem', color: '#999' } }, online ? (pos ? 'Position partagée' : 'Position : zone du profil') : 'Vous ne recevez pas d\'offres')),
           E('button', { onClick: online ? goOffline : goOnline, disabled: busy, style: { padding: '.5rem 1rem', borderRadius: 20, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '.8rem', background: online ? '#fee2e2' : '#16a34a', color: online ? '#b91c1c' : '#fff' } },
-            busy ? '…' : (online ? 'Passer hors ligne' : 'Passer en ligne'))),
+            busy ? '…' : (online ? 'Passer hors ligne' : 'Passer en ligne')),
+          E('button', { onClick: enableNotifs, title: 'Activer les notifications', 'aria-label': 'Activer les notifications', style: { marginLeft: 8, width: 38, height: 38, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#1d4ed8', color: '#fff', fontSize: '1.05rem' } }, '🔔')),
 
         // Course active
         active.length > 0 && E('div', { style: { padding: '1rem 1.25rem', background: '#f0fdf4' } },
@@ -41109,9 +41138,28 @@ window.addEventListener('unhandledrejection', function(event) {
     try { Promise.resolve(nexusPush.subscribe(_tok)).then(function (ok) { if (ok) subbed = true; }).catch(function () {}); }
     catch (e) {}
   }
+  // [EN LIGNE PAR DÉFAUT] Dès qu'un coursier est connecté, on le met en ligne
+  // (statut available + is_available=true + ping GPS), sauf préférence hors-ligne.
+  var autoOnlined = false;
+  function autoOnline() {
+    if (autoOnlined || !user || !user.id) return;
+    var off = false; try { off = localStorage.getItem('nexus_courier_offline') === '1'; } catch (e) {}
+    if (off) return;
+    autoOnlined = true;
+    try { window.__NEXUS_COURIER_ONLINE__ = true; } catch (e) {}   // démarre le ping GPS
+    function apply(lat, lng) { try { if (window.DataService && DataService.setCourierStatus) DataService.setCourierStatus(user.id, 'available', lat, lng); } catch (e) {} }
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        function (p) { apply(p.coords.latitude, p.coords.longitude); },
+        function () { apply(null, null); },
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
+      );
+    } else { apply(null, null); }
+  }
   function start() {
     if (iv) return;
     try { if (window.Notification && Notification.permission === 'default' && !asked) { asked = true; Notification.requestPermission(); } } catch (e) {}
+    autoOnline();
     primed = false; seen = {}; trySubscribe(); poll(); iv = setInterval(function () { trySubscribe(); poll(); }, 12000);
   }
   function stop() { if (iv) { clearInterval(iv); iv = null; } }
