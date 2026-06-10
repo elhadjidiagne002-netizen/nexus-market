@@ -121,7 +121,7 @@ export async function onRequestPost(context) {
             context.waitUntil(
               fetch(new URL("/push-send", request.url).origin + "/push-send", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "X-Internal-Secret": env.INTERNAL_API_SECRET || env.CRON_SECRET || "" },
+                headers: { "Content-Type": "application/json", "X-Internal-Secret": env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || "" },
                 body: JSON.stringify({
                   userId: order.buyer_id,
                   title: "✅ Paiement confirmé",

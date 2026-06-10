@@ -81,8 +81,17 @@ export async function requireAuth(request, env) {
 // Secret : env.INTERNAL_API_SECRET (recommandé) ou repli sur env.CRON_SECRET.
 export function isInternalCall(request, env) {
   const provided = request.headers.get('X-Internal-Secret') || '';
-  const expected = env.INTERNAL_API_SECRET || env.CRON_SECRET || '';
+  // Repli robuste sur SUPABASE_SERVICE_KEY : TOUJOURS configurée côté serveur
+  // (ces functions en ont besoin) et JAMAIS exposée au client (seul l'anon key
+  // est dans le bundle). Évite que le push/WhatsApp interne casse quand ni
+  // INTERNAL_API_SECRET ni CRON_SECRET ne sont définis.
+  const expected = env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || '';
   return !!expected && provided === expected;
+}
+
+// Valeur à envoyer dans l'en-tête X-Internal-Secret par les appelants internes.
+export function internalSecret(env) {
+  return env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || '';
 }
 
 export async function requireAdmin(request, env) {

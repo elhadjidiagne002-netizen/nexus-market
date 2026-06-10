@@ -107,7 +107,7 @@ export async function onRequestPost(context) {
               // Push notification
               const origin = new URL(request.url).origin;
               await fetch(`${origin}/push-send`, {
-                method: "POST", headers: { "Content-Type": "application/json", "X-Internal-Secret": env.INTERNAL_API_SECRET || env.CRON_SECRET || "" },
+                method: "POST", headers: { "Content-Type": "application/json", "X-Internal-Secret": env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || "" },
                 body: JSON.stringify({ userId: buyerId, title: "✅ Paiement confirmé", body: `${amountFcfa.toLocaleString('fr-FR')} FCFA reçu — commande #${orderId.slice(-6)}`, url: `/?order=${orderId}` }),
               });
               // Email acheteur : paiement reçu (centre de notifications)

@@ -70,7 +70,7 @@ async function runDispatchTick(env, request) {
         try {
           const res = await fetch(`${origin}/api/whatsapp`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': env.INTERNAL_API_SECRET || env.CRON_SECRET || '' },
+            headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || '' },
             body: JSON.stringify({ secret: env.NEXUS_WA_SECRET, phone, message: buildMessage(n), event: 'courier_new_delivery' }),
           });
           if (res.ok) out.notified++;
@@ -80,7 +80,7 @@ async function runDispatchTick(env, request) {
       if (n.user_id) {
         try {
           await fetch(`${origin}/push-send`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': env.INTERNAL_API_SECRET || env.CRON_SECRET || '' },
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || '' },
             body: JSON.stringify({
               userId: n.user_id,
               title:  '🛵 Nouvelle course NEXUS !',

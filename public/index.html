@@ -38303,6 +38303,19 @@ window.addEventListener('unhandledrejection', function(event) {
       }).then(function (res) {
         setBusy(false); setResult(res);
         window.dispatchEvent(new CustomEvent('nexus:delivery-created', { detail: res }));
+        // [PUSH] Course attribuée DIRECTEMENT à la création → notifier le coursier
+        // par Web Push (côté serveur ; le navigateur ne peut pas pousser autrui).
+        try {
+          var _assigned = res && (res.assigned_courier || res.courier_id);
+          if (_assigned && res.id) {
+            var _tok = (DataService && DataService._token) || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+            var _hh = { 'Content-Type': 'application/json' };
+            if (_tok) _hh['Authorization'] = 'Bearer ' + _tok;
+            fetch((NEXUS_CONFIG.apiUrl || '') + '/api/courier/notify-assignment', {
+              method: 'POST', headers: _hh, body: JSON.stringify({ delivery_id: res.id })
+            }).catch(function () {});
+          }
+        } catch (_) {}
       }).catch(function (e) { setBusy(false); alert('Erreur : ' + e.message); });
     }
 

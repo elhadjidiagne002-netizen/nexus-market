@@ -154,7 +154,8 @@ export async function onRequestPost(context) {
   //   · sinon JWT Supabase vérifié (signature) → on en déduit l'uid + le rôle.
   // L'ancien code n'exigeait AUCUNE auth pour un envoi ciblé (userId) : n'importe
   // qui pouvait pousser une notif « ✅ Paiement confirmé » avec une url malveillante.
-  const INTERNAL_SECRET = env.INTERNAL_API_SECRET || env.CRON_SECRET || "";
+  // Repli robuste sur SUPABASE_SERVICE_KEY (toujours côté serveur, jamais client).
+  const INTERNAL_SECRET = env.INTERNAL_API_SECRET || env.CRON_SECRET || SUPABASE_SERVICE_KEY || "";
   const isInternal = !!INTERNAL_SECRET && (request.headers.get("X-Internal-Secret") || "") === INTERNAL_SECRET;
 
   let callerUid = null, isAdmin = false;

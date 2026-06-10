@@ -59,7 +59,7 @@ export async function onRequest(context) {
   try {
     const wr = await fetch(`${origin}/api/whatsapp`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': env.INTERNAL_API_SECRET || env.CRON_SECRET || '' },
+      headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || '' },
       body: JSON.stringify({ to: phone, phone, message: MESSAGES[status](order), template: 'order_tracking' }),
     });
     sent = wr.ok;
