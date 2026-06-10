@@ -22677,6 +22677,24 @@ const AdminLivraisonPanel = ({ addToast }) => {
 };
 
 const LoumaAdminMount = ({ addToast }) => {  const ref = React.useRef(null);  React.useEffect(() => {    try { window.__nexusToast = addToast; } catch (e) {}    const mount = () => { try { if (window.NexusLouma && ref.current) { window.NexusLouma.reload(); window.NexusLouma.renderAdmin(ref.current); if (window.NexusLouma.sync) window.NexusLouma.sync(); } } catch (e) {} };    mount();    const onChange = () => mount();    window.addEventListener("nexus:louma-changed", onChange);    const t = setTimeout(mount, 400);    return () => { window.removeEventListener("nexus:louma-changed", onChange); clearTimeout(t); };  }, []);  return /* @__PURE__ */ React.createElement("div", { ref: ref, id: "nexus-louma-admin-mount" },    /* @__PURE__ */ React.createElement("div", { style: { color: "var(--text-secondary)", padding: "1rem" } }, "Chargement du Louma\u2026"));};
+// Actions disponibles pour les bannières/promos de la page d'accueil.
+// `value` = événement CustomEvent écouté ailleurs dans l'app (CTA → ouvre la
+// fonctionnalité). '' = comportement par défaut (connexion acheteur).
+// ⚠️ N'inclure que des événements qui ONT un listener actif (sinon CTA mort).
+const HP_ACTIONS = [
+  { value: '', label: '— Par défaut (connexion acheteur) —' },
+  { value: 'nexus:open-courier', label: '🛵 Coursier à la demande' },
+  { value: 'nexus:open-local-elevage', label: '🐑 Local & Élevage' },
+  { value: 'nexus:open-stories', label: '🎬 NEXUS Stories' },
+  { value: 'nexus:open-troc', label: '🔄 NEXUS Troc' },
+  { value: 'nexus:open-louma', label: '🏪 Louma (marché)' },
+  { value: 'nexus:open-tutorials', label: '🎓 Tutoriels' },
+  { value: 'nexus:open-my-deliveries', label: '📦 Mes livraisons' },
+  { value: 'nexus:open-messaging', label: '💬 Messagerie' },
+  { value: 'nexus:open-wishlist', label: '❤️ Liste d’envies' },
+  { value: 'nexus:open-register', label: '✍️ Inscription vendeur/acheteur' },
+];
+
 const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -25153,11 +25171,18 @@ CREATE POLICY "Service role only" ON invoice_sequences
             React.createElement("div", { className: "form-group" },
               React.createElement("label", { className: "form-label" }, "Texte bouton CTA"),
               React.createElement("input", { className: "form-input", value: newBannerForm.cta || "Explorer maintenant", onChange: function(e) { setNewBannerForm(Object.assign({}, newBannerForm, {cta: e.target.value})); } })
+            ),
+            React.createElement("div", { className: "form-group" },
+              React.createElement("label", { className: "form-label" }, "Action du bouton (fonctionnalit\xe9 ouverte)"),
+              React.createElement("select", { className: "form-select", value: newBannerForm.action || "", onChange: function(e) { setNewBannerForm(Object.assign({}, newBannerForm, {action: e.target.value})); } },
+                HP_ACTIONS.map(function(o){ return React.createElement("option", { key: o.value, value: o.value }, o.label); })
+              )
             )
           ),
           React.createElement("button", { className: "btn btn-primary", disabled: !newBannerForm.title.trim(),
             onClick: function() {
               var nb = Object.assign({}, newBannerForm);
+              if (!nb.action) delete nb.action;
               var updated = adminBanners.concat([nb]);
               setAdminBanners(updated); saveS("nexus_admin_banners", updated);
               setShowNewBanner(false); setNewBannerForm({ badge: "\ud83c\udd95 Nouveau", title: "Titre\nBanni\xe8re", sub: "Sous-titre", deco: "\u2728", cls: "slide-0", active: true });
@@ -25237,8 +25262,15 @@ CREATE POLICY "Service role only" ON invoice_sequences
                   React.createElement("input", { className: "form-input", placeholder: "ex: 89 990 F", value: editBanner.newPrice||"", onChange: function(e){setEditBanner(Object.assign({},editBanner,{newPrice:e.target.value}));} })
                 )
               ),
+              React.createElement("div", { className: "form-group" },
+                React.createElement("label", { className: "form-label" }, "Action du bouton (fonctionnalit\xe9 ouverte)"),
+                React.createElement("select", { className: "form-select", value: editBanner.action||"", onChange: function(e){setEditBanner(Object.assign({},editBanner,{action:e.target.value}));} },
+                  HP_ACTIONS.map(function(o){ return React.createElement("option", { key: o.value, value: o.value }, o.label); })
+                )
+              ),
               React.createElement("button", { className: "btn btn-primary", onClick: function() {
-                var u = adminBanners.map(function(x,j){return j===i?Object.assign({},editBanner):x;});
+                var nb = Object.assign({}, editBanner); if (!nb.action) delete nb.action; delete nb.idx;
+                var u = adminBanners.map(function(x,j){return j===i?nb:x;});
                 setAdminBanners(u); saveS("nexus_admin_banners", u);
                 setEditBanner(null); addToast("Banni\xe8re mise \xe0 jour !","success");
               } }, React.createElement("i", {className:"fas fa-save"}), " Sauvegarder")
@@ -25349,9 +25381,16 @@ CREATE POLICY "Service role only" ON invoice_sequences
           ),
           React.createElement("div", {className:"form-group"}, React.createElement("label", {className:"form-label"}, "Titre"), React.createElement("textarea", {className:"form-input",rows:2,value:newPromoForm.title,style:{resize:"vertical"},onChange:function(e){setNewPromoForm(Object.assign({},newPromoForm,{title:e.target.value}));}})),
           React.createElement("div", {className:"form-group"}, React.createElement("label", {className:"form-label"}, "Texte CTA"), React.createElement("input", {className:"form-input",value:newPromoForm.cta,onChange:function(e){setNewPromoForm(Object.assign({},newPromoForm,{cta:e.target.value}));}})),
+          React.createElement("div", {className:"form-group"},
+            React.createElement("label", {className:"form-label"}, "Action du bouton (fonctionnalit\xe9 ouverte)"),
+            React.createElement("select", {className:"form-select",value:newPromoForm.action||"",onChange:function(e){setNewPromoForm(Object.assign({},newPromoForm,{action:e.target.value}));}},
+              HP_ACTIONS.map(function(o){ return React.createElement("option", { key: o.value, value: o.value }, o.label); })
+            )
+          ),
           React.createElement("button", {className:"btn btn-primary",disabled:!newPromoForm.title.trim(),
             onClick:function(){
-              var u=adminPromos.concat([Object.assign({},newPromoForm)]);
+              var np=Object.assign({},newPromoForm); if(!np.action) delete np.action;
+              var u=adminPromos.concat([np]);
               setAdminPromos(u);saveS("nexus_admin_promos",u);
               setShowNewPromo(false);setNewPromoForm({label:"Promotion",title:"Titre\nPromo",cta:"D\xe9couvrir",deco:"\ud83c\udf81",cls:"green",active:true});
               addToast("Banner cr\xe9\xe9 !","success");
@@ -25392,8 +25431,16 @@ CREATE POLICY "Service role only" ON invoice_sequences
               ),
               React.createElement("div", {className:"form-group"}, React.createElement("label",{className:"form-label"},"Titre"), React.createElement("textarea",{className:"form-input",rows:2,value:editPromo.title,style:{resize:"vertical"},onChange:function(e){setEditPromo(Object.assign({},editPromo,{title:e.target.value}));}})),
               React.createElement("div", {className:"form-group"}, React.createElement("label",{className:"form-label"},"Texte CTA"), React.createElement("input",{className:"form-input",value:editPromo.cta,onChange:function(e){setEditPromo(Object.assign({},editPromo,{cta:e.target.value}));}})),
+              React.createElement("div", {className:"form-group"},
+                React.createElement("label",{className:"form-label"},"Action du bouton (fonctionnalit\xe9 ouverte)"),
+                React.createElement("select",{className:"form-select",value:editPromo.action||"",onChange:function(e){setEditPromo(Object.assign({},editPromo,{action:e.target.value}));}},
+                  HP_ACTIONS.map(function(o){ return React.createElement("option", { key: o.value, value: o.value }, o.label); })
+                )
+              ),
               React.createElement("button", {className:"btn btn-primary",onClick:function(){
-                var u=adminPromos.map(function(x,j){return j===i?Object.assign({},editPromo):x;});
+                var np=Object.assign({},editPromo); delete np.idx;
+                if(!np.action){ delete np.action; } else { delete np.nav; }
+                var u=adminPromos.map(function(x,j){return j===i?np:x;});
                 setAdminPromos(u);saveS("nexus_admin_promos",u);setEditPromo(null);addToast("Banner mis \xe0 jour !","success");
               }}, React.createElement("i",{className:"fas fa-save"}), " Sauvegarder")
             )
