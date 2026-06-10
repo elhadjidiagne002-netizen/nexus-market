@@ -38046,6 +38046,21 @@ window.addEventListener('unhandledrejection', function(event) {
       return (storage.getArray('deliveries').find(function (d) { return d.id === id; })) || null;
     },
 
+    // Suivi PUBLIC d'une course (lien /?track=) — RPC SECURITY DEFINER (champs
+    // publics seulement), avec repli sur la lecture directe (propriétaire/RLS).
+    async trackDelivery(id) {
+      if (!id || !this._sb) return null;
+      try {
+        var r = await this._sb.rpc('track_delivery', { p_id: id });
+        if (!r.error && r.data) return Array.isArray(r.data) ? r.data[0] : r.data;
+      } catch (e) { /* repli ci-dessous */ }
+      try {
+        var g = await this._sb.from('deliveries').select('*').eq('id', id).maybeSingle();
+        if (!g.error && g.data) return g.data;
+      } catch (e) {}
+      return null;
+    },
+
     async getMyDeliveries(buyerId) {
       if (this._sb) {
         try {
@@ -38497,6 +38512,149 @@ window.addEventListener('unhandledrejection', function(event) {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectFab);
   else injectFab();
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  4. SUIVI PUBLIC D'UNE COURSE — page /?track=<delivery_id>
+  //     Ouvrable par l'acheteur OU toute personne à qui il partage le lien.
+  //     Carte live (NexusMap.track) + fiche coursier + ETA recalculé en direct.
+  // ════════════════════════════════════════════════════════════════════════
+  var TRK_STATUS = {
+    searching:  { e: '🔎', t: 'Recherche d\'un coursier…', c: '#d97706' },
+    no_courier: { e: '😕', t: 'Aucun coursier disponible', c: '#b45309' },
+    accepted:   { e: '🛵', t: 'Coursier en route vers le retrait', c: '#00853E' },
+    picked_up:  { e: '📦', t: 'Colis récupéré — en route', c: '#0277BD' },
+    in_transit: { e: '🚚', t: 'En cours de livraison', c: '#0277BD' },
+    delivered:  { e: '✅', t: 'Course livrée', c: '#059669' },
+    cancelled:  { e: '✖️', t: 'Course annulée', c: '#6b7280' },
+  };
+
+  function DeliveryTrackingModal(props) {
+    var _d = React.useState(null), d = _d[0], setD = _d[1];
+    var _t = React.useState(0), tries = _t[0], setTries = _t[1];
+    var _c = React.useState(null), card = _c[0], setCard = _c[1];
+    var mapElRef = React.useRef(null);
+    var id = props.deliveryId;
+
+    React.useEffect(function () {
+      var stop = false;
+      function load() {
+        if (stop) return;
+        DataService.trackDelivery(id).then(function (row) {
+          if (stop) return;
+          setTries(function (n) { return n + 1; });
+          if (!row) return;
+          setD(row);
+          // Déplace le marqueur coursier sur la carte déjà montée (polling).
+          try { if (mapElRef.current && mapElRef.current.__setCourier) mapElRef.current.__setCourier(row.courier_lat, row.courier_lng); } catch (e) {}
+          if (row.courier_id && !card && DataService._sb) {
+            DataService._sb.rpc('delivery_courier_card', { p_delivery_id: id })
+              .then(function (r) { if (r && r.data && r.data.assigned) setCard(r.data); }).catch(function () {});
+          }
+        });
+      }
+      load();
+      var iv = setInterval(load, 9000);
+      return function () { stop = true; clearInterval(iv); };
+    }, [id]);
+
+    var mapMount = function (el) {
+      mapElRef.current = el;
+      if (!el || el.__nexusTracked || !window.NexusMap || !d) return;
+      el.__nexusTracked = true;
+      NexusMap.track(el, d);
+    };
+
+    function hav(aLat, aLng, bLat, bLng) {
+      if (aLat == null || bLat == null) return 0;
+      try { return DataService._haversineKm(aLat, aLng, bLat, bLng) || 0; } catch (e) { return 0; }
+    }
+    // ETA live : selon l'étape, distance restante coursier→retrait→dépôt à ~22 km/h.
+    function liveEta() {
+      if (!d) return null;
+      var km;
+      if (d.courier_lat != null && (d.status === 'accepted')) {
+        km = hav(d.courier_lat, d.courier_lng, d.pickup_lat, d.pickup_lng) + hav(d.pickup_lat, d.pickup_lng, d.dropoff_lat, d.dropoff_lng);
+      } else if (d.courier_lat != null && (d.status === 'picked_up' || d.status === 'in_transit')) {
+        km = hav(d.courier_lat, d.courier_lng, d.dropoff_lat, d.dropoff_lng);
+      } else {
+        km = Number(d.distance_km) || 0;
+      }
+      if (!km) return null;
+      return Math.max(3, Math.round(km / 22 * 60) + 3);
+    }
+
+    var overlay = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 10060, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' };
+    var cardS = { background: '#fff', borderRadius: 16, maxWidth: 460, width: '100%', maxHeight: '92vh', overflowY: 'auto' };
+
+    var st = d ? (TRK_STATUS[d.status] || TRK_STATUS.searching) : null;
+    var eta = liveEta();
+    var done = d && (d.status === 'delivered' || d.status === 'cancelled');
+
+    function share() {
+      var origin = (window.location && window.location.origin) || 'https://nexus-market-asb.pages.dev';
+      var url = origin + '/?track=' + id;
+      var msg = '🛵 Suivez la livraison NEXUS en direct\n👉 ' + url;
+      if (navigator.share) { navigator.share({ title: 'Suivi livraison NEXUS', text: msg, url: url }).catch(function () {}); }
+      else { try { navigator.clipboard.writeText(url); } catch (e) {} window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
+    }
+
+    return E('div', { style: overlay, onClick: props.onClose },
+      E('div', { style: cardS, onClick: function (e) { e.stopPropagation(); } },
+        E('div', { style: { padding: '1.4rem 1.4rem 1.1rem' } },
+          E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '.6rem' } },
+            E('div', { style: { fontWeight: 800, fontSize: '1.02rem' } }, '🛵 Suivi de livraison'),
+            E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { background: 'transparent', border: 'none', fontSize: '1.3rem', cursor: 'pointer', color: '#666' } }, '✕')),
+
+          !d && tries < 2 && E('div', { style: { textAlign: 'center', padding: '2rem', color: '#888' } }, E('i', { className: 'fas fa-spinner fa-spin', style: { fontSize: '1.6rem' } }), E('div', { style: { marginTop: '.6rem', fontSize: '.85rem' } }, 'Chargement du suivi…')),
+          !d && tries >= 2 && E('div', { style: { textAlign: 'center', padding: '2rem', color: '#b45309' } }, E('div', { style: { fontSize: '2rem' } }, '🔍'), E('div', { style: { marginTop: '.5rem', fontWeight: 600 } }, 'Course introuvable'), E('div', { style: { fontSize: '.8rem', color: '#888', marginTop: '.3rem' } }, 'Le lien est peut-être expiré.')),
+
+          d && E(React.Fragment, null,
+            E('div', { style: { textAlign: 'center', marginBottom: '.8rem' } },
+              E('div', { style: { fontSize: '2.2rem', lineHeight: 1 } }, st.e),
+              E('div', { style: { fontWeight: 700, color: st.c, marginTop: '.25rem' } }, st.t),
+              eta != null && !done && E('div', { style: { fontSize: '.85rem', color: '#666', marginTop: '.15rem' } }, '⏱️ Arrivée estimée ~', eta, ' min')),
+
+            E('div', { ref: mapMount, className: 'nexus-map', style: { height: 260, borderRadius: 12, marginBottom: '.85rem' } }),
+
+            card && card.assigned && E('div', { style: { background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '.7rem .85rem', marginBottom: '.85rem', display: 'flex', alignItems: 'center', gap: 10 } },
+              E('div', { style: { width: 40, height: 40, borderRadius: '50%', background: '#00853E', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 } }, (card.name || '?')[0].toUpperCase()),
+              E('div', { style: { flex: 1, minWidth: 0 } },
+                E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🛵 ', card.name || 'Coursier'),
+                E('div', { style: { fontSize: '.76rem', color: '#666' } }, '⭐ ', Number(card.rating_avg || 5).toFixed(1), ' · ', (card.deliveries_done || 0), ' livraisons')),
+              (card.phone || d.courier_phone) && E('a', { href: 'tel:' + (card.phone || d.courier_phone), className: 'btn btn-sm', style: { background: '#00853E', color: '#fff' } }, '📞'),
+              (card.phone || d.courier_phone) && E('a', { href: 'https://wa.me/' + String(card.phone || d.courier_phone).replace(/\D/g, ''), target: '_blank', rel: 'noopener', className: 'btn btn-sm', style: { background: '#25D366', color: '#fff' } }, '💬')),
+
+            E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.75rem .85rem', fontSize: '.82rem', marginBottom: '.85rem' } },
+              E('div', null, '📍 ', d.pickup_label || 'Retrait', ' → 🏁 ', d.dropoff_label || 'Livraison'),
+              E('div', { style: { marginTop: '.3rem', fontWeight: 700, color: '#00853E' } }, (d.fee_fcfa != null ? Number(d.fee_fcfa).toLocaleString('fr-FR') + ' FCFA' : ''), d.distance_km != null ? ' · ' + d.distance_km + ' km' : '')),
+
+            E('div', { style: { display: 'flex', gap: 8 } },
+              E('button', { onClick: share, style: { flex: 1, padding: '.7rem', background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, cursor: 'pointer' } }, '📤 Partager'),
+              (d.dropoff_lat != null) && E('button', { onClick: function () { try { NexusMap.openDirections(d.dropoff_lat, d.dropoff_lng, d.dropoff_label || 'Livraison'); } catch (e) {} }, style: { flex: 1, padding: '.7rem', background: '#fff', color: '#1d4ed8', border: '1.5px solid #1d4ed8', borderRadius: 10, fontWeight: 700, cursor: 'pointer' } }, '🧭 Itinéraire'))
+          )
+        )
+      )
+    );
+  }
+
+  var _trkRoot = null, _trkMount = null;
+  function openTracking(deliveryId) {
+    if (!deliveryId || !window.ReactDOM) return;
+    if (!_trkMount) { _trkMount = document.createElement('div'); _trkMount.id = 'nexus-track-root'; document.body.appendChild(_trkMount); }
+    if (!_trkRoot && ReactDOM.createRoot) _trkRoot = ReactDOM.createRoot(_trkMount);
+    var close = function () {
+      if (_trkRoot) _trkRoot.render(null); else ReactDOM.unmountComponentAtNode(_trkMount);
+      // Nettoie ?track= de l'URL (sans recharger).
+      try { var u = new URL(window.location.href); u.searchParams.delete('track'); window.history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) {}
+    };
+    var el = E(DeliveryTrackingModal, { deliveryId: deliveryId, onClose: close });
+    if (_trkRoot) _trkRoot.render(el); else ReactDOM.render(el, _trkMount);
+  }
+  // Ouverture par lien partagé /?track=<id>
+  try { var _tid = new URLSearchParams(location.search).get('track'); if (_tid) openTracking(_tid); } catch (e) {}
+  // Ouverture programmatique depuis l'app (ex. « Mes livraisons »)
+  window.addEventListener('nexus:track-delivery', function (e) { openTracking(e && e.detail); });
+  window.__nexusOpenTracking = openTracking;
 
   console.info('[NEXUS] Module Coursier chargé ✅');
 })();
@@ -40261,6 +40419,9 @@ window.addEventListener('unhandledrejection', function(event) {
         else courierMarker=L.marker([lat,lng],{icon:dot(L,COLORS.courier)}).addTo(map).bindPopup('Coursier');
       }
       if(cLat!=null){ setCourier(cLat,cLng); pts.push([cLat,cLng]); }
+      // Exposé pour les vues qui rafraîchissent par POLLING (suivi public sans
+      // Realtime) : el.__setCourier(lat,lng) déplace le marqueur coursier.
+      el.__setCourier = setCourier;
 
       // trait retrait → dépôt
       if(pLat!=null && dLat!=null){
