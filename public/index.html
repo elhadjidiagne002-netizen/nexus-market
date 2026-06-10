@@ -6197,6 +6197,7 @@ async signOut() {
             id: r.id, productId: r.product_id, userId: r.user_id,
             userName: r.user_name, rating: r.rating, comment: r.comment,
             vendorReply: r.vendor_reply, date: r.created_at,
+            verified: r.verified, images: r.images || [], videoUrl: r.video_url,
           }));
           if (!filters.productId && !filters.vendorId) storage.set('reviews', mapped);
           return mapped;
@@ -6215,6 +6216,7 @@ async signOut() {
           id: r.id, productId: r.product_id, userId: r.user_id,
           userName: r.user_name, rating: r.rating, comment: r.comment,
           vendorReply: r.vendor_reply, date: r.created_at,
+          verified: r.verified, images: r.images || [], videoUrl: r.video_url,
         }));
         if (!filters.productId && !filters.vendorId) storage.set('reviews', mapped);
         return mapped;
@@ -11879,6 +11881,28 @@ const ReviewModal = ({ product, currentUser: currentUser2, onClose, addToast, on
   const [rating, setRating] = useState(5);
   const [comment, setComment] = useState("");
   const [loading, setLoading] = useState(false);
+  const [images, setImages] = useState([]);
+  const [videoUrl, setVideoUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = React.useRef(null);
+  const uploadFiles = async (files) => {
+    if (!files || !files.length || !DataService._sb || !currentUser2) return;
+    setUploading(true);
+    const urls = [];
+    const slots = Math.max(0, 4 - images.length);
+    for (const file of Array.from(files).slice(0, slots)) {
+      if (!/^image\//.test(file.type || "")) continue;
+      if (file.size > 6 * 1024 * 1024) { addToast("Image trop lourde (max 6 Mo)", "warning"); continue; }
+      try {
+        const fn = "reviews/" + currentUser2.id + "_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+        const { data: up, error } = await DataService._sb.storage.from("nexus-images")
+          .upload(fn, file, { contentType: file.type || "image/jpeg", upsert: true });
+        if (!error && up) urls.push(DataService._sb.storage.from("nexus-images").getPublicUrl(up.path).data.publicUrl);
+      } catch (_) {}
+    }
+    setImages(prev => [...prev, ...urls].slice(0, 4));
+    setUploading(false);
+  };
   const submitReview = async () => {
     if (!currentUser2) {
       addToast("Connectez-vous pour laisser un avis", "info");
@@ -11886,59 +11910,48 @@ const ReviewModal = ({ product, currentUser: currentUser2, onClose, addToast, on
     }
     if (rating < 1 || rating > 5) return;
     setLoading(true);
+    let verified = false;
     try {
-      // [FIX] Appeler POST /api/reviews — génère UUID réel, recalcule la note moyenne côté serveur
-      if (NEXUS_CONFIG.apiUrl) {
-        const res = await DataService.apiFetch("/api/reviews", {
-          method: "POST",
-          body: JSON.stringify({ productId: product.id, rating, comment }),
-        }).catch(() => null);
-        if (res && res.status === 409) {
-          addToast("Vous avez déjà noté ce produit.", "info");
-          setLoading(false); return;
-        }
-        if (res && res.ok) {
-          const data = await res.json();
-          // Mettre à jour le cache localStorage avec le vrai UUID retourné
-          const reviews = storage.getArray("reviews");
-          reviews.push({ id: data.id, productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment, date: data.created_at || new Date().toISOString() });
-          storage.set("reviews", reviews);
-          setLoading(false);
-          addToast("Avis publié ! Merci.", "success");
-          onReviewSubmitted(); onClose(); return;
-        }
-      }
-      // Fallback Supabase direct
       if (DataService._sb) {
-        const { data, error } = await DataService._sb.from("reviews").insert({ product_id: product.id, user_id: currentUser2.id, user_name: currentUser2.name, rating, comment: comment || null }).select().single();
-        if (error?.code === "23505") { addToast("Vous avez déjà noté ce produit.", "info"); setLoading(false); return; }
-        if (!error && data) {
-          const reviews = storage.getArray("reviews");
-          reviews.push({ id: data.id, productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment, date: data.created_at || new Date().toISOString() });
-          storage.set("reviews", reviews);
-        }
-      } else {
-        // Fallback localStorage pur — id temporaire, date non envoyée à Supabase
-        const reviews = storage.getArray("reviews");
-        reviews.push({ _localId: "rev_" + Date.now(), productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment });
-        storage.set("reviews", reviews);
-        const products = storage.getArray("products");
-        const prodIdx = products.findIndex((p) => p.id === product.id);
-        if (prodIdx !== -1) {
-          const prodReviews = storage.getArray("reviews").filter((r) => r.productId === product.id);
-          products[prodIdx].rating = Math.round((prodReviews.reduce((a, r) => a + r.rating, 0) / prodReviews.length) * 10) / 10;
-          products[prodIdx].reviewsCount = prodReviews.length;
-          storage.set("products", products);
-        }
+        // RPC : insère/maj l'avis + calcule `verified` (achat livré) CÔTÉ SERVEUR.
+        const { data, error } = await DataService._sb.rpc("submit_review", {
+          p_product_id: product.id, p_rating: rating, p_comment: comment || null,
+          p_images: images, p_video: videoUrl || null,
+        });
+        if (error) {
+          // Repli : upsert direct (sans vérification serveur).
+          await DataService._sb.from("reviews").upsert(
+            { product_id: product.id, user_id: currentUser2.id, user_name: currentUser2.name, rating, comment: comment || null, images, video_url: videoUrl || null },
+            { onConflict: "product_id,user_id" }
+          ).catch(() => {});
+        } else if (data) { verified = !!data.verified; }
       }
+      try {
+        const reviews = storage.getArray("reviews");
+        reviews.push({ productId: product.id, userId: currentUser2.id, userName: currentUser2.name, rating, comment, images, video_url: videoUrl, verified, date: new Date().toISOString() });
+        storage.set("reviews", reviews);
+      } catch (_) {}
     } catch (e) {
       console.warn("[ReviewModal]", e);
     }
     setLoading(false);
-    addToast("Avis publié ! Merci.", "success");
+    addToast(verified ? "✅ Avis vérifié publié — merci !" : "Avis publié ! Merci.", "success");
     onReviewSubmitted(); onClose();
   };
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, "Donnez votre avis"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("p", null, /* @__PURE__ */ React.createElement("strong", null, product.name)), /* @__PURE__ */ React.createElement("div", { className: "star-rating mb-2" }, [1, 2, 3, 4, 5].map((star) => /* @__PURE__ */ React.createElement("button", { key: star, className: `star-btn ${star <= rating ? "active" : ""}`, onClick: () => setRating(star), "aria-label": `${star} \xE9toile${star > 1 ? "s" : ""}` }, "\u2605"))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Votre commentaire"), /* @__PURE__ */ React.createElement("textarea", { className: "form-textarea", rows: "4", value: comment, onChange: (e) => setComment(e.target.value), placeholder: "Partagez votre exp\xE9rience..." })), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${loading ? "btn-loading" : ""}`, onClick: submitReview, disabled: loading }, loading ? "Publication..." : "Publier l'avis")));
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onClose }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, "Donnez votre avis"), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onClose }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }))), /* @__PURE__ */ React.createElement("p", null, /* @__PURE__ */ React.createElement("strong", null, product.name)), /* @__PURE__ */ React.createElement("div", { className: "star-rating mb-2" }, [1, 2, 3, 4, 5].map((star) => /* @__PURE__ */ React.createElement("button", { key: star, className: `star-btn ${star <= rating ? "active" : ""}`, onClick: () => setRating(star), "aria-label": `${star} \xE9toile${star > 1 ? "s" : ""}` }, "\u2605"))), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Votre commentaire"), /* @__PURE__ */ React.createElement("textarea", { className: "form-textarea", rows: "4", value: comment, onChange: (e) => setComment(e.target.value), placeholder: "Partagez votre exp\xE9rience..." })),
+    /* Photos preuve (jusqu'à 4) + vidéo */
+    React.createElement("div", { className: "form-group" },
+      React.createElement("label", { className: "form-label" }, "📷 Photos (optionnel, jusqu'\xE0 4)"),
+      React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+        images.map((u, i) => React.createElement("div", { key: i, style: { position: "relative" } },
+          React.createElement("img", { src: u, alt: "photo", style: { width: 56, height: 56, objectFit: "cover", borderRadius: 8 } }),
+          React.createElement("button", { onClick: () => setImages(images.filter((_, j) => j !== i)), "aria-label": "Retirer", style: { position: "absolute", top: -6, right: -6, background: "#e11b22", color: "#fff", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 11, cursor: "pointer", lineHeight: 1 } }, "\xD7"))),
+        images.length < 4 && React.createElement("button", { onClick: () => fileRef.current && fileRef.current.click(), disabled: uploading, style: { width: 56, height: 56, border: "1.5px dashed var(--border)", borderRadius: 8, background: "var(--bg-light)", cursor: "pointer", fontSize: 20, color: "var(--text-secondary)" } }, uploading ? "⏳" : "＋")),
+      React.createElement("input", { ref: fileRef, type: "file", accept: "image/*", multiple: true, style: { display: "none" }, onChange: (e) => uploadFiles(e.target.files) })),
+    React.createElement("div", { className: "form-group" },
+      React.createElement("label", { className: "form-label" }, "🎥 Lien vid\xE9o (optionnel)"),
+      React.createElement("input", { className: "form-input", type: "url", value: videoUrl, onChange: (e) => setVideoUrl(e.target.value), placeholder: "https://… (YouTube, etc.)" })),
+    /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${loading ? "btn-loading" : ""}`, onClick: submitReview, disabled: loading || uploading }, loading ? "Publication..." : "Publier l'avis")));
 };
 // ── LocalPaymentModal — Sélection opérateur Mobile Money pour PayTech ──────
 // Flux : sélectionner opérateur + numéro → onSuccess({provider, phone})
@@ -31584,10 +31597,17 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             : reviews.filter(r => r.productId === selectedProduct.id).map(rev =>
                 React.createElement('div', { key: rev.id, style: { padding: '0.75rem 0', borderBottom: '1px solid var(--border)' } },
                   React.createElement('div', { className: 'flex-between' },
-                    React.createElement('div', null, React.createElement('strong', null, rev.userName), ' ', React.createElement(Stars, { rating: rev.rating })),
+                    React.createElement('div', null,
+                      React.createElement('strong', null, rev.userName), ' ', React.createElement(Stars, { rating: rev.rating }),
+                      rev.verified && React.createElement('span', { className: 'trust-badge', title: 'Avis d’un acheteur dont la commande a été livrée', style: { marginLeft: '0.4rem' } }, React.createElement('i', { className: 'fas fa-check-circle' }), ' Achat vérifié')
+                    ),
                     React.createElement('div', { style: { fontSize: '0.78rem', color: 'var(--text-secondary)' } }, new Date(rev.date).toLocaleDateString('fr-FR'))
                   ),
-                  React.createElement('p', { style: { marginTop: '0.3rem', fontSize: '0.9rem' } }, rev.comment)
+                  rev.comment && React.createElement('p', { style: { marginTop: '0.3rem', fontSize: '0.9rem' } }, rev.comment),
+                  Array.isArray(rev.images) && rev.images.length > 0 && React.createElement('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: '0.4rem' } },
+                    rev.images.map((u, i) => React.createElement('a', { key: i, href: u, target: '_blank', rel: 'noopener' },
+                      React.createElement('img', { src: u, alt: 'photo avis', loading: 'lazy', style: { width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' } })))),
+                  rev.videoUrl && React.createElement('a', { href: rev.videoUrl, target: '_blank', rel: 'noopener', style: { display: 'inline-block', marginTop: '0.35rem', fontSize: '0.82rem', color: 'var(--primary)', fontWeight: 600 } }, '🎥 Voir la vidéo')
                 )
               ),
           React.createElement(RelatedProducts, {
