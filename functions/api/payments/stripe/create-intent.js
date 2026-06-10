@@ -7,6 +7,8 @@
 //   SUPABASE_URL / SUPABASE_SERVICE_KEY
 // ============================================================
 
+import { requireAuth, validatePaymentAmount } from '../../_lib/utils.js';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -15,30 +17,35 @@ const CORS = {
 const jsonR = (d, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
-function extractUid(authHeader) {
-  try {
-    const token = authHeader?.replace('Bearer ', '');
-    if (!token) return null;
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return payload.sub || null;
-  } catch { return null; }
-}
-
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'POST') return jsonR({ error: 'POST uniquement' }, 405);
 
   if (!env.STRIPE_SECRET_KEY) return jsonR({ error: 'STRIPE_SECRET_KEY non configurée' }, 503);
 
-  const uid = extractUid(request.headers.get('Authorization'));
-  if (!uid) return jsonR({ error: 'Non authentifié' }, 401);
+  // [SEC #2] Authentification RÉELLE : le JWT est vérifié côté Supabase
+  // (signature comprise), au lieu d'être décodé en aveugle (forgeable).
+  const [user, authErr] = await requireAuth(request, env);
+  if (authErr) return authErr;
+  const uid = user.id;
 
   let body;
   try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
 
-  const { amount, currency = 'eur', paymentMethodId, orderId } = body;
+  const { amount, currency = 'eur', paymentMethodId, orderId, order_ids } = body;
   if (!amount || !paymentMethodId) return jsonR({ error: 'amount et paymentMethodId requis' }, 400);
   if (amount < 50) return jsonR({ error: 'Montant minimum : 50 centimes' }, 400);
+
+  // [SEC #1] Pour la carte, la commande est créée APRÈS le paiement (flux
+  // « payment-first ») : il n'y a donc pas encore de commande à comparer ici.
+  // La validation du montant (amount_received == orders.total) est faite dans
+  // le webhook Stripe, une fois la commande créée. On borne tout de même le
+  // montant si des order_ids existants sont fournis (compat. futurs flux).
+  const ids = Array.isArray(order_ids) && order_ids.length ? order_ids : (orderId ? [orderId] : []);
+  if (ids.length) {
+    const chk = await validatePaymentAmount(env, { orderIds: ids, uid, amountEur: Number(amount) / 100 });
+    if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
+  }
 
   try {
     // 1. Créer un PaymentIntent Stripe
@@ -54,7 +61,7 @@ export async function onRequest({ request, env }) {
       'automatic_payment_methods[allow_redirects]': 'never',
       description: 'Commande NEXUS Market',
       'metadata[user_id]': uid,
-      ...(orderId ? { 'metadata[order_id]': String(orderId) } : {}),
+      ...(ids[0] ? { 'metadata[order_id]': String(ids[0]) } : {}),
     });
 
     const res = await fetch('https://api.stripe.com/v1/payment_intents', {

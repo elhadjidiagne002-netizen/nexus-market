@@ -19,6 +19,7 @@
 
 import { isValidPhone, isValidMessage } from './_lib/validate.js';
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
+import { requireAuth } from './_lib/utils.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -124,6 +125,12 @@ async function sendSms(to, message, env) {
 export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'POST') return json({ error: 'POST uniquement' }, 405);
+
+  // [SEC #3] Authentification OBLIGATOIRE : l'envoi de SMS coûte de l'argent
+  // (Africa's Talking / Orange / Twilio). Sans auth, l'endpoint était une
+  // passerelle SMS ouverte (drainage de crédit / spam). On exige un JWT valide.
+  const [, authErr] = await requireAuth(request, env);
+  if (authErr) return authErr;
 
   let body;
   try { body = await request.json(); } catch { return json({ error: 'JSON invalide' }, 400); }

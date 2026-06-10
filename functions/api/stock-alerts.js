@@ -16,6 +16,8 @@
 // ============================================================
 
 import { sendEventEmail } from './_lib/notify.js';
+// [SEC #2] JWT vérifié côté Supabase (signature) plutôt que décodé en aveugle.
+import { requireAuth } from './_lib/utils.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -43,16 +45,6 @@ async function sb(env, path, method = 'GET', body = null, extra = {}) {
   if (!r.ok) return { data: [], ok: false };
   const data = await r.json().catch(() => []);
   return { data, ok: true };
-}
-
-// ── Extraire user_id depuis JWT ─────────────────────────────
-function extractUid(authHeader) {
-  try {
-    const token = authHeader?.replace('Bearer ', '');
-    if (!token) return null;
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return payload.sub || null;
-  } catch { return null; }
 }
 
 // ── VAPID push (réutilise la logique de push.js) ─────────────
@@ -114,7 +106,12 @@ export async function onRequest({ request, env, params }) {
   const pathParts = url.pathname.split('/').filter(Boolean);
   // pathParts = ['api', 'stock-alerts', ...rest]
   const rest = pathParts.slice(2); // ex: ['notify', ':productId'] ou [':productId']
-  const uid = extractUid(request.headers.get('Authorization'));
+  // [SEC #2] Résolution vérifiée du user_id (signature JWT contrôlée par
+  // Supabase). uid reste null si le token est absent/invalide → les routes
+  // protégées renvoient alors 401 comme avant.
+  let uid = null;
+  const [authUser] = await requireAuth(request, env);
+  if (authUser && authUser.id) uid = authUser.id;
 
   // POST /api/stock-alerts/notify/:productId — déclencher les notifications
   if (method === 'POST' && rest[0] === 'notify' && rest[1]) {

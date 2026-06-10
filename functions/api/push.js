@@ -4,9 +4,10 @@
 // Chiffrement RFC 8291 (aes128gcm) via Web Crypto natif
 //
 // Variables Cloudflare Pages → Settings → Environment Variables :
-//   VAPID_PUBLIC_KEY   BOwSdy9yss_MkDp70vKoHbqyEBclOVkdM3K9UyV_GvHJujUxvsdpPRKcQJTZmp8kwnMgKsR0xGT1BSren7m6oF0
-//   VAPID_PRIVATE_KEY  c_sPmJ7KJzVW4ZGIheVHPiCF8fq5lBF09-tH96vRSH0
+//   VAPID_PUBLIC_KEY   <clé publique VAPID>
+//   VAPID_PRIVATE_KEY  <clé privée VAPID — SECRET, variable chiffrée>
 //   VAPID_SUBJECT      mailto:admin@nexus.sn
+//   ⚠️ Ne JAMAIS écrire la clé privée en clair ici (le fichier est versionné).
 //   SUPABASE_URL       https://xxxx.supabase.co
 //   SUPABASE_SERVICE_KEY  <clé service_role>
 //
@@ -169,16 +170,10 @@ async function sb(env, path, method = 'GET', body = null) {
   return { ok: r.ok, status: r.status };
 }
 
-// ── Extraire user_id depuis JWT Supabase ──────────────────────
-
-function extractUid(authHeader) {
-  try {
-    const token   = authHeader?.replace('Bearer ', '');
-    if (!token) return null;
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return payload.sub || null;
-  } catch (_) { return null; }
-}
+// [SEC #2] Authentification : on vérifie réellement le JWT via Supabase
+// (requireAuth/requireAdmin), au lieu de décoder le token sans vérifier sa
+// signature (forgeable → usurpation de n'importe quel user_id).
+import { requireAuth, requireAdmin } from './_lib/utils.js';
 
 // ── Handler principal ─────────────────────────────────────────
 
@@ -210,8 +205,9 @@ export async function onRequest({ request, env }) {
 
   // ── subscribe ─────────────────────────────────────────────
   if (action === 'subscribe') {
-    const uid = extractUid(request.headers.get('Authorization'));
-    if (!uid) return err('Non authentifié', 401);
+    const [user, authErr] = await requireAuth(request, env);
+    if (authErr) return authErr;
+    const uid = user.id;
 
     const sub = body.subscription;
     if (!sub?.endpoint) return err('subscription.endpoint manquant');
@@ -247,7 +243,16 @@ export async function onRequest({ request, env }) {
     const { userId, title, message, url, type } = body;
     if (!userId || !title) return err('userId et title requis');
 
-    const subs = await sb(env, `push_subscriptions?user_id=eq.${userId}&select=subscription`);
+    // [SEC #2/#6] Empêche le spoofing de push : seul l'admin peut notifier un
+    // autre utilisateur ; un utilisateur normal ne peut viser que lui-même.
+    const [user, authErr] = await requireAuth(request, env);
+    if (authErr) return authErr;
+    if (String(userId) !== String(user.id)) {
+      const [, adminErr] = await requireAdmin(request, env);
+      if (adminErr) return adminErr;
+    }
+
+    const subs = await sb(env, `push_subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=subscription`);
     if (!Array.isArray(subs) || subs.length === 0) return ok({ ok: true, sent: 0 });
 
     // Format aligné sur sw.js : data.message || data.body

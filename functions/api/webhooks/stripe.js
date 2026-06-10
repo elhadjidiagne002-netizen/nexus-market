@@ -66,7 +66,22 @@ export async function onRequestPost(context) {
   // ── Dispatcher les événements ─────────────────────────────────────────────
   if (SB_URL && SB_KEY) {
     switch (type) {
-      case "payment_intent.succeeded":
+      case "payment_intent.succeeded": {
+        // [SEC #1] Anti sous-paiement : on vérifie que le montant réellement
+        // encaissé correspond au total de la commande (source : base). Pour la
+        // carte, la commande est créée juste après le paiement → si elle n'est
+        // pas encore visible, on ne peut pas comparer : on laisse passer (le
+        // total sera réconcilié), mais un montant TROP FAIBLE pour une commande
+        // existante bloque la confirmation et déclenche une revue manuelle.
+        const amountReceivedEur = (pi.amount_received || pi.amount || 0) / 100;
+        const amtChk = await verifyStripePaidAmount(SB_URL, SB_KEY, env, {
+          orderId, paymentIntentId: pi.id, amountReceivedEur,
+        });
+        if (!amtChk.ok) {
+          console.error(`[Stripe webhook] ⚠️ Sous-paiement détecté : reçu ${amountReceivedEur}€ < attendu ${amtChk.expected}€ (order=${orderId || pi.id}) — confirmation BLOQUÉE`);
+          await flagStripeUnderpayment(SB_URL, SB_KEY, { orderId, paymentIntentId: pi.id, expected: amtChk.expected, received: amountReceivedEur });
+          break;
+        }
         await updateOrderByStripe(SB_URL, SB_KEY, {
           paymentIntentId: pi.id,
           orderId,
@@ -106,6 +121,7 @@ export async function onRequestPost(context) {
           })());
         }
         break;
+      }
 
       case "payment_intent.payment_failed":
         await updateOrderByStripe(SB_URL, SB_KEY, {
@@ -155,6 +171,46 @@ export async function onRequestPost(context) {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [SEC #1] Vérifie que le montant encaissé couvre le total de la commande.
+// orders.total est en EUR ; amountReceivedEur aussi. Tolère les remises
+// légitimes jusqu'à PAY_MAX_DISCOUNT (défaut 60 %). Si la commande n'est pas
+// (encore) trouvée ou que son total est inconnu, on ne peut pas comparer →
+// ok:true (réconciliation ultérieure), pour ne pas bloquer un flux légitime.
+// ─────────────────────────────────────────────────────────────────────────────
+async function verifyStripePaidAmount(sbUrl, sbKey, env, { orderId, paymentIntentId, amountReceivedEur }) {
+  const hdrs = { apikey: sbKey, Authorization: `Bearer ${sbKey}` };
+  let order = null;
+  try {
+    if (orderId) {
+      const r = await fetch(`${sbUrl}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=total`, { headers: hdrs });
+      order = (await r.json())?.[0] || null;
+    }
+    if (!order && paymentIntentId) {
+      const r = await fetch(`${sbUrl}/rest/v1/orders?stripe_payment_id=eq.${encodeURIComponent(paymentIntentId)}&select=total`, { headers: hdrs });
+      order = (await r.json())?.[0] || null;
+    }
+  } catch (e) {
+    console.warn("[Stripe webhook] lecture total commande KO:", e.message);
+    return { ok: true, expected: null }; // ne pas bloquer sur erreur de lecture
+  }
+  const expected = order ? Number(order.total) || 0 : 0;
+  if (expected <= 0) return { ok: true, expected }; // commande absente/total inconnu
+  const maxDisc = Math.min(0.95, Math.max(0, parseFloat(env.PAY_MAX_DISCOUNT || "0.6")));
+  const floor = expected * (1 - maxDisc);
+  return { ok: amountReceivedEur >= floor, expected };
+}
+
+// Signale un sous-paiement : laisse payment_status à 'pending' et journalise
+// dans admin_notes pour revue manuelle (au lieu de confirmer automatiquement).
+async function flagStripeUnderpayment(sbUrl, sbKey, { orderId, paymentIntentId, expected, received }) {
+  const headers = { "Content-Type": "application/json", apikey: sbKey, Authorization: `Bearer ${sbKey}`, Prefer: "return=minimal" };
+  const note = `⚠️ Sous-paiement Stripe: reçu ${received}€ < attendu ${expected}€ — à vérifier (${new Date().toISOString()})`;
+  const body = JSON.stringify({ admin_notes: note, updated_at: new Date().toISOString() });
+  const filter = orderId ? `id=eq.${encodeURIComponent(orderId)}` : `stripe_payment_id=eq.${encodeURIComponent(paymentIntentId)}`;
+  await fetch(`${sbUrl}/rest/v1/orders?${filter}`, { method: "PATCH", headers, body }).catch(() => {});
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

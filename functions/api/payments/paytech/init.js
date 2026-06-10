@@ -8,6 +8,8 @@
 //   SUPABASE_URL / SUPABASE_SERVICE_KEY
 // ============================================================
 
+import { requireAuth, validatePaymentAmount } from '../../_lib/utils.js';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -15,15 +17,6 @@ const CORS = {
 };
 const jsonR = (d, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
-
-function extractUid(authHeader) {
-  try {
-    const token = authHeader?.replace('Bearer ', '');
-    if (!token) return null;
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return payload.sub || null;
-  } catch { return null; }
-}
 
 async function sbSet(env, path, body) {
   return fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
@@ -45,15 +38,25 @@ export async function onRequest({ request, env }) {
   if (!env.PAYTECH_API_KEY || !env.PAYTECH_API_SECRET)
     return jsonR({ error: 'PAYTECH_API_KEY / PAYTECH_API_SECRET non configurées' }, 503);
 
-  const uid = extractUid(request.headers.get('Authorization'));
-  if (!uid) return jsonR({ error: 'Non authentifié' }, 401);
+  // [SEC #2] Authentification RÉELLE : JWT vérifié côté Supabase (signature),
+  // au lieu d'un décodage en aveugle (forgeable).
+  const [user, authErr] = await requireAuth(request, env);
+  if (authErr) return authErr;
+  const uid = user.id;
 
   let body;
   try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
 
-  const { order_id, amount, item_name, success_url, cancel_url } = body;
+  const { order_id, amount, item_name, success_url, cancel_url, order_ids } = body;
   if (!order_id || !amount || !success_url || !cancel_url)
     return jsonR({ error: 'order_id, amount, success_url, cancel_url requis' }, 400);
+
+  // [SEC #1] Montant client borné au total réel des commandes (base). amount est
+  // en XOF (entier) → conversion EUR pour comparer à orders.total (stocké en EUR).
+  const EUR_TO_XOF = parseFloat(env.EUR_TO_XOF || '655.957');
+  const ids = Array.isArray(order_ids) && order_ids.length ? order_ids : (order_id ? [order_id] : []);
+  const chk = await validatePaymentAmount(env, { orderIds: ids, uid, amountEur: Number(amount) / EUR_TO_XOF });
+  if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
 
   const ref_command = `NEXUS-${order_id.slice(-12).toUpperCase()}-${Date.now()}`;
 

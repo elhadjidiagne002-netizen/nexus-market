@@ -91,6 +91,57 @@ export async function requireAdmin(request, env) {
   }
 }
 
+// ── Anti-fraude paiement ─────────────────────────────────────────────────────
+// Borne le montant envoyé par le client au total RÉEL des commandes lues en base
+// (source autoritaire). Bloque le sous-paiement (ex : payer 1 000 FCFA pour une
+// commande de 500 000) tout en tolérant les remises légitimes (coupon, points,
+// cashback…) jusqu'à PAY_MAX_DISCOUNT (défaut 60 %). Vérifie aussi que les
+// commandes appartiennent à l'acheteur authentifié et ne sont pas déjà payées.
+//   amountEur : montant demandé par le client, converti en EUR (devise de orders.total).
+// Retour : { ok:true, expectedEur } | { ok:false, status, error }
+export async function validatePaymentAmount(env, { orderIds, uid, amountEur }) {
+  const ids = Array.from(new Set((orderIds || []).filter(Boolean).map(String)));
+  if (!ids.length) return { ok: false, status: 400, error: 'order_id(s) requis' };
+
+  let rows;
+  try {
+    const sb = supabase(env);
+    const inList = ids.map(encodeURIComponent).join(',');
+    rows = await sb.from('orders').select('id,total,buyer_id,payment_status', `id=in.(${inList})`);
+  } catch (e) {
+    return { ok: false, status: 502, error: 'Lecture des commandes impossible' };
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { ok: false, status: 404, error: 'Commande introuvable' };
+  }
+
+  for (const o of rows) {
+    // Ownership : si buyer_id est renseigné, il doit correspondre à l'utilisateur.
+    if (o.buyer_id && uid && o.buyer_id !== uid) {
+      return { ok: false, status: 403, error: 'Commande non autorisée' };
+    }
+    // Anti-rejeu : on ne ré-initie pas un paiement sur une commande déjà payée.
+    if (o.payment_status === 'paid') {
+      return { ok: false, status: 409, error: 'Commande déjà payée' };
+    }
+  }
+
+  const expectedEur = rows.reduce((s, o) => s + (Number(o.total) || 0), 0);
+  if (expectedEur <= 0) {
+    // Total inconnu/0 en base → impossible de borner. On journalise plutôt que de
+    // bloquer un checkout légitime, mais c'est un signal à investiguer.
+    console.warn('[pay] total commande nul/inconnu — montant non borné', ids);
+    return { ok: true, expectedEur: 0 };
+  }
+
+  const maxDisc = Math.min(0.95, Math.max(0, parseFloat(env.PAY_MAX_DISCOUNT || '0.6')));
+  const floor = expectedEur * (1 - maxDisc);
+  const ceil  = expectedEur * 1.005; // +0,5 % de tolérance (arrondis / taux de change)
+  if (amountEur > ceil)  return { ok: false, status: 400, error: 'Montant supérieur au total de la commande' };
+  if (amountEur < floor) return { ok: false, status: 400, error: 'Montant inférieur au total dû' };
+  return { ok: true, expectedEur };
+}
+
 export function paginate(url) {
   const u = new URL(url);
   const page  = parseInt(u.searchParams.get('page')  || '1');
