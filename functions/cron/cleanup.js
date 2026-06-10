@@ -120,6 +120,9 @@ async function runCleanup(env) {
   // ── 3. Logs de recherche de plus de 90 jours ─────────────────────────────
   await del('search_logs', `created_at=lt.${ago(90)}`, 'search_logs_90d');
 
+  // ── 3bis. Logs serveur de plus de 14 jours (croissance rapide) ───────────
+  await del('server_logs', `created_at=lt.${ago(14)}`, 'server_logs_14d');
+
   // ── 4. Logs d'audit de plus de 90 jours ──────────────────────────────────
   await del('audit_logs', `created_at=lt.${ago(90)}`, 'audit_logs_90d');
 
