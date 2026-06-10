@@ -22316,7 +22316,31 @@ const AdminLivraisonPanel = ({ addToast }) => {
   const [stats, setStats]     = React.useState({ total:0, delivered:0, pending:0, revenue:0, couriersActive:0 });
   const [loading, setLoading] = React.useState(true);
   const [payingId, setPayingId] = React.useState(null);
+  const [onlineCo, setOnlineCo] = React.useState([]);      // livreurs en ligne géolocalisés
+  const mapRef = React.useRef(null);
   const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
+
+  // Charge les livreurs en ligne avec leur position (RPC admin online_couriers_geo).
+  const loadOnline = React.useCallback(async () => {
+    if (!sb) return;
+    try { const { data, error } = await sb.rpc('online_couriers_geo'); if (!error) setOnlineCo(data || []); }
+    catch (e) { console.warn('[Livraison] online_couriers_geo:', e.message); }
+  }, [sb]);
+
+  // Quand l'onglet Carte est actif : charge + rafraîchit toutes les 15 s.
+  React.useEffect(() => {
+    if (tab !== 'map') return;
+    loadOnline();
+    const iv = setInterval(loadOnline, 15000);
+    return () => clearInterval(iv);
+  }, [tab, loadOnline]);
+
+  // (Re)dessine la carte quand la liste des livreurs en ligne change.
+  React.useEffect(() => {
+    if (tab !== 'map' || !mapRef.current || !window.NexusMap) return;
+    const pts = onlineCo.map(c => ({ lat: c.lat, lng: c.lng, name: '🛵 ' + (c.name || 'Livreur') + (c.phone ? (' · ' + c.phone) : '') }));
+    NexusMap.nearby(mapRef.current, { lat: 14.6928, lng: -17.4467, label: 'Dakar' }, pts);
+  }, [onlineCo, tab]);
   const waveNum = NEXUS_CONFIG?.payments?.wave?.number || '77XXXXXXX';
   const omNum   = NEXUS_CONFIG?.payments?.om?.number   || '77XXXXXXX';
 
@@ -22437,6 +22461,7 @@ const AdminLivraisonPanel = ({ addToast }) => {
     { id:'deliveries', label:'📦 Livraisons' },
     { id:'couriers',   label:'🛵 Coursiers' + (_pendingCouriers > 0 ? ' (' + _pendingCouriers + ' en attente)' : '') },
     { id:'pay',        label:'💰 Payer coursiers' },
+    { id:'map',        label:'🗺️ Carte live' },
     { id:'settings',   label:'⚙️ Réglages' },
   ];
 
@@ -22572,7 +22597,31 @@ const AdminLivraisonPanel = ({ addToast }) => {
       })
     ),
 
-    tab==='settings' && E(CourierSettingsPanel, { addToast })
+    tab==='settings' && E(CourierSettingsPanel, { addToast }),
+
+    // ── Carte live des livreurs en ligne ──────────────────────────────────
+    tab==='map' && E('div',null,
+      E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.75rem',flexWrap:'wrap',gap:'.5rem'}},
+        E('div',null,
+          E('h3',{style:{fontWeight:700,fontSize:'1rem',margin:0}},'🗺️ Livreurs en ligne'),
+          E('div',{style:{fontSize:'.8rem',color:'var(--text-secondary)'}},onlineCo.length+' livreur(s) en ligne · actualisé toutes les 15 s')),
+        E('button',{className:'btn btn-secondary btn-sm',onClick:loadOnline},E('i',{className:'fas fa-sync-alt'}),' Actualiser')),
+      E('div',{ref:mapRef,className:'nexus-map tall',style:{marginBottom:'1rem'}}),
+      onlineCo.length===0
+        ? E('div',{className:'empty-state'},E('i',{className:'fas fa-motorcycle'}),E('p',null,'Aucun livreur en ligne géolocalisé pour le moment.'))
+        : E('div',{style:{display:'flex',flexDirection:'column',gap:'.5rem'}},
+            onlineCo.map(c=>{
+              const mins = c.location_updated_at ? Math.round((Date.now()-new Date(c.location_updated_at).getTime())/60000) : null;
+              return E('div',{key:c.courier_id,style:{display:'flex',justifyContent:'space-between',alignItems:'center',border:'0.5px solid var(--border)',borderRadius:10,padding:'.6rem .8rem',flexWrap:'wrap',gap:'.4rem'}},
+                E('div',null,
+                  E('div',{style:{fontWeight:700,fontSize:'.88rem'}},'🛵 ',c.name||'Livreur',c.courier_status==='busy'?E('span',{style:{marginLeft:6,fontSize:'.7rem',color:'#d97706'}},'(en course)'):E('span',{style:{marginLeft:6,fontSize:'.7rem',color:'#16a34a'}},'(libre)')),
+                  E('div',{style:{fontSize:'.76rem',color:'var(--text-secondary)'}},c.phone||'—',' · ⭐ ',Number(c.rating_avg||5).toFixed(1),' · ',(c.deliveries_done||0),' livr.',mins!=null?(' · 📍 il y a '+mins+' min'):'')),
+                E('div',{style:{display:'flex',gap:6}},
+                  c.phone&&E('a',{href:'tel:'+c.phone,className:'btn btn-secondary btn-sm'},'📞'),
+                  c.phone&&E('a',{href:'https://wa.me/'+String(c.phone).replace(/\D/g,''),target:'_blank',rel:'noopener',className:'btn btn-sm',style:{background:'#25D366',color:'#fff'}},'💬'),
+                  E('button',{className:'btn btn-sm btn-secondary',title:'Itinéraire',onClick:()=>{ try{ NexusMap.openDirections(c.lat,c.lng,c.name||'Livreur'); }catch(e){} }},'🧭')));
+            }))
+    )
   );
 };
 
