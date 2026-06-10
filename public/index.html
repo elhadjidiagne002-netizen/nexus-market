@@ -41099,18 +41099,20 @@ window.addEventListener('unhandledrejection', function(event) {
         }).catch(function () {});
     } catch (e) {}
   }
+  // Abonnement Web Push (arrière-plan) — réessayé jusqu'au succès (le SW peut
+  // n'être prêt qu'après quelques secondes dans l'APK). subbed=true seulement si OK.
+  function trySubscribe() {
+    if (subbed || !window.nexusPush || !nexusPush.subscribe) return;
+    if (!window.__nexusSWReg) return;                 // SW pas encore enregistré → on retentera
+    if (window.Notification && Notification.permission === 'denied') return;
+    var _tok = null; try { _tok = localStorage.getItem('nexus_jwt'); } catch (e) {}
+    try { Promise.resolve(nexusPush.subscribe(_tok)).then(function (ok) { if (ok) subbed = true; }).catch(function () {}); }
+    catch (e) {}
+  }
   function start() {
     if (iv) return;
-    // Permission notifications + abonnement push (arrière-plan) une seule fois.
     try { if (window.Notification && Notification.permission === 'default' && !asked) { asked = true; Notification.requestPermission(); } } catch (e) {}
-    try {
-      if (!subbed && window.nexusPush && nexusPush.subscribe) {
-        subbed = true;
-        var _tok = null; try { _tok = localStorage.getItem('nexus_jwt'); } catch (e) {}
-        nexusPush.subscribe(_tok);   // token requis par /api/push (auth)
-      }
-    } catch (e) {}
-    primed = false; seen = {}; poll(); iv = setInterval(poll, 12000);
+    primed = false; seen = {}; trySubscribe(); poll(); iv = setInterval(function () { trySubscribe(); poll(); }, 12000);
   }
   function stop() { if (iv) { clearInterval(iv); iv = null; } }
   function setUser(u) { user = u; if (isCourier(u)) start(); else stop(); }
