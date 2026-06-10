@@ -60,25 +60,37 @@ async function runDispatchTick(env, request) {
     return { ...out, error: e.message };
   }
 
-  // 2) Notifier le nouveau coursier de chaque course (WhatsApp, best-effort)
-  if (notify.length && env.NEXUS_WA_SECRET && request) {
+  // 2) Notifier le nouveau coursier de chaque course (WhatsApp + Web Push, best-effort)
+  if (notify.length && request) {
     const origin = new URL(request.url).origin;
     for (const n of notify) {
+      // a) WhatsApp
       const phone = normPhone(n.phone);
-      if (!phone) continue;
-      try {
-        const res = await fetch(`${origin}/api/whatsapp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            secret:  env.NEXUS_WA_SECRET,
-            phone,
-            message: buildMessage(n),
-            event:   'courier_new_delivery',
-          }),
-        });
-        if (res.ok) out.notified++;
-      } catch (_) { /* best-effort */ }
+      if (phone && env.NEXUS_WA_SECRET) {
+        try {
+          const res = await fetch(`${origin}/api/whatsapp`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ secret: env.NEXUS_WA_SECRET, phone, message: buildMessage(n), event: 'courier_new_delivery' }),
+          });
+          if (res.ok) out.notified++;
+        } catch (_) { /* best-effort */ }
+      }
+      // b) Web Push (notif arrière-plan, app fermée) — ciblé par user_id du coursier
+      if (n.user_id) {
+        try {
+          await fetch(`${origin}/push-send`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: n.user_id,
+              title:  '🛵 Nouvelle course NEXUS !',
+              body:   (n.pickup_label || 'Retrait') + ' → ' + (n.dropoff_label || 'Livraison')
+                      + (n.courier_payout != null ? ' · ' + fcfa(n.courier_payout) : ''),
+              url:    '/',
+            }),
+          });
+          out.pushed = (out.pushed || 0) + 1;
+        } catch (_) { /* best-effort */ }
+      }
     }
   }
 

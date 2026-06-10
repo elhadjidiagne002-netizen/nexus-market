@@ -5856,11 +5856,45 @@ async signOut() {
           } catch (_) {}
 
         } else if (event === "SIGNED_OUT" || event === "USER_DELETED") {
-          callback(event, null);
-          if (!this._voluntarySignOut) {
-            window.dispatchEvent(new CustomEvent("nexus:session-expired"));
+          if (this._voluntarySignOut || event === "USER_DELETED") {
+            callback(event, null);
+            this._voluntarySignOut = false;
+          } else {
+            // [WEBVIEW FIX] Déconnexion INVOLONTAIRE (TWA/WebView perd souvent la
+            // session en arrière-plan) → tenter de la récupérer via le refresh token
+            // persisté AVANT de déconnecter réellement l'utilisateur.
+            const self = this;
+            let rt = null; try { rt = localStorage.getItem('nexus_refresh_token'); } catch (_) {}
+            if (rt && this._sb && this._sb.auth && this._sb.auth.setSession) {
+              this._sb.auth.setSession({ access_token: this._token || '', refresh_token: rt })
+                .then(function (res) {
+                  const s = res && res.data && res.data.session;
+                  if (s && s.access_token) {
+                    self._saveTokens(s.access_token, s.expires_in || 3600, s.refresh_token || rt, 30 * 24 * 3600);
+                    console.info('[Session] récupérée après SIGNED_OUT involontaire ✓');
+                  } else {
+                    callback('SIGNED_OUT', null);
+                    window.dispatchEvent(new CustomEvent('nexus:session-expired'));
+                  }
+                })
+                .catch(function () {
+                  callback('SIGNED_OUT', null);
+                  window.dispatchEvent(new CustomEvent('nexus:session-expired'));
+                });
+            } else {
+              callback(event, null);
+              window.dispatchEvent(new CustomEvent('nexus:session-expired'));
+            }
           }
-          this._voluntarySignOut = false;
+        } else if (event === "TOKEN_REFRESHED" && session) {
+          // [WEBVIEW FIX] Supabase a renouvelé l'access token → re-synchroniser la
+          // couche custom (nexus_jwt) pour qu'isSessionExpired ne déconnecte jamais.
+          try {
+            this._saveTokens(session.access_token, session.expires_in || 3600,
+                             session.refresh_token || this._refreshToken, 30 * 24 * 3600);
+            window.__nexusSbTokenCache = session.access_token;
+            window.__nexusSbTokenExpiry = Date.now() + (session.expires_in || 3600) * 1000;
+          } catch (_) {}
         } else if (event === "TOKEN_REFRESHED" && !session) {
           window.dispatchEvent(new CustomEvent("nexus:session-expired"));
         }
@@ -40970,6 +41004,116 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULE TUTORIELS ============== -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS — SESSION KEEP-ALIVE (connexion persistante, surtout en APK/WebView)
+     · Rafraîchit/restaure proactivement la session Supabase (au démarrage,
+       toutes les 4 min, à la reprise d'app et au retour réseau).
+     · Évite la déconnexion « trop rapide » des coursiers qui gardent l'app ouverte.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_KEEPALIVE__) return; window.__NEXUS_KEEPALIVE__ = true;
+  function sb() { try { return (window.DataService && DataService._sb) || window.__nexusSupabaseClient || null; } catch (e) { return null; } }
+  var _busy = false;
+  async function ensureSession() {
+    if (_busy) return; _busy = true;
+    try {
+      var c = sb(); if (!c || !c.auth) return;
+      var r = await c.auth.getSession();
+      var s = r && r.data && r.data.session;
+      if (!s) {
+        // Pas de session active → récupérer via le refresh token persisté (localStorage).
+        var rt = null, at = '';
+        try { rt = localStorage.getItem('nexus_refresh_token'); at = localStorage.getItem('nexus_jwt') || ''; } catch (e) {}
+        if (rt && c.auth.setSession) { try { await c.auth.setSession({ access_token: at, refresh_token: rt }); } catch (e) {} }
+      }
+    } catch (e) {} finally { _busy = false; }
+  }
+  // Démarrage différé (laisse le client s'initialiser) puis cadence régulière.
+  setTimeout(ensureSession, 1500);
+  setInterval(ensureSession, 4 * 60 * 1000);                 // TTL access token ~1h → marge large
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) ensureSession(); });
+  window.addEventListener('focus', ensureSession);
+  window.addEventListener('online', ensureSession);
+  console.info('[NEXUS] Keep-alive session prêt ✅');
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS — NOTIFICATIONS COURSIER (nouvelles courses)
+     · Sonne + vibre + notification système + toast dès qu'une offre 'pending'
+       arrive pour ce coursier (fonctionne app ouverte).
+     · S'abonne au Web Push (window.nexusPush.subscribe) pour les notifs en
+       arrière-plan (app fermée), envoyées par le cron /cron/dispatch.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_COURIER_NOTIFY__) return; window.__NEXUS_COURIER_NOTIFY__ = true;
+  var UX = window.NexusUX || { toast: function (m) { try { console.info(m); } catch (e) {} } };
+  function sb() { try { return (window.DataService && DataService._sb) || window.__nexusSupabaseClient || null; } catch (e) { return null; } }
+  var user = null, seen = {}, iv = null, primed = false, asked = false, subbed = false;
+  function isCourier(u) { return !!(u && (u.is_courier || u.role === 'courier')); }
+
+  function beep() {
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
+      var ctx = new Ctx(); var o = ctx.createOscillator(); var g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + 0.02);
+      o.start(); g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6); o.stop(ctx.currentTime + 0.6);
+      setTimeout(function () { try { ctx.close(); } catch (e) {} }, 900);
+    } catch (e) {}
+  }
+  function notify(of) {
+    var dl = of.deliveries || {};
+    var title = '🛵 Nouvelle course NEXUS !';
+    var body = (dl.pickup_label || 'Retrait') + ' → ' + (dl.dropoff_label || 'Livraison')
+      + (dl.courier_payout ? (' · ' + Number(dl.courier_payout).toLocaleString('fr-FR') + ' FCFA') : '');
+    beep(); try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {}
+    try {
+      if (window.Notification && Notification.permission === 'granted') {
+        if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+          navigator.serviceWorker.ready.then(function (reg) {
+            try { reg.showNotification(title, { body: body, tag: 'offer-' + of.id, icon: '/og-image.png', badge: '/og-image.png', vibrate: [200, 100, 200], renotify: true, data: { url: '/' } }); } catch (e) {}
+          });
+        } else { try { new Notification(title, { body: body }); } catch (e) {} }
+      }
+    } catch (e) {}
+    UX.toast(title + ' ' + body, { bg: '#00853E', duration: 8000 });
+    try { window.dispatchEvent(new CustomEvent('nexus:new-courier-offer', { detail: of })); } catch (e) {}
+  }
+  function poll() {
+    var c = sb(); if (!c || !user || !user.id) return;
+    try {
+      c.from('delivery_offers')
+        .select('id, delivery_id, deliveries(pickup_label,dropoff_label,courier_payout)')
+        .eq('courier_id', user.id).eq('status', 'pending')
+        .then(function (r) {
+          var list = (r && r.data) || [];
+          list.forEach(function (of) { if (!seen[of.id]) { seen[of.id] = true; if (primed) notify(of); } });
+          primed = true; // 1er passage : mémorise sans notifier (pas de spam au démarrage)
+        }).catch(function () {});
+    } catch (e) {}
+  }
+  function start() {
+    if (iv) return;
+    // Permission notifications + abonnement push (arrière-plan) une seule fois.
+    try { if (window.Notification && Notification.permission === 'default' && !asked) { asked = true; Notification.requestPermission(); } } catch (e) {}
+    try { if (!subbed && window.nexusPush && nexusPush.subscribe) { subbed = true; nexusPush.subscribe(); } } catch (e) {}
+    primed = false; seen = {}; poll(); iv = setInterval(poll, 12000);
+  }
+  function stop() { if (iv) { clearInterval(iv); iv = null; } }
+  function setUser(u) { user = u; if (isCourier(u)) start(); else stop(); }
+  window.addEventListener('nexus:set-user', function (e) { setUser(e.detail || null); });
+  window.addEventListener('nexus:logout', function () { stop(); user = null; });
+  console.info('[NEXUS] Notifications coursier prêtes ✅');
+})();
+</script>
+<!-- ============== FIN MODULES SESSION & NOTIFS COURSIER ============== -->
 
 </body>
 </html>
