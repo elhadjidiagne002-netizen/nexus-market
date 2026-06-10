@@ -96,7 +96,7 @@ async function encryptPayload(p256dhB64, authB64, plaintext) {
 
 async function sendNotification(sub, payload, publicKey, privateKey, email) {
   const jwt = await createVapidJWT(sub.endpoint, publicKey, privateKey, email);
-  const body = await encryptPayload(sub.p256dh, sub.auth_key, payload);
+  const body = await encryptPayload(sub.p256dh, sub.auth, payload);
 
   const res = await fetch(sub.endpoint, {
     method: "POST",
@@ -174,7 +174,7 @@ export async function onRequestPost(context) {
   if (!title || !msgBody) return json(400, { error: "title et body requis" });
   if (toAll && !isAdmin) return json(403, { error: "Admin only" });
 
-  let query = sb.from("push_subscriptions").select("endpoint, p256dh, auth_key");
+  let query = sb.from("push_subscriptions").select("endpoint, p256dh, auth");
   if (!toAll && userId) query = query.eq("user_id", userId);
   const { data: subs, error: dbErr } = await query;
 

@@ -58,13 +58,16 @@ export async function onRequest(context) {
     try { ({ subscription, preferences } = await request.json()); } catch {}
     if (!subscription?.endpoint) return json(400, { error: "subscription invalide" });
 
+    // [FIX] Colonnes réelles de push_subscriptions : endpoint, p256dh, auth,
+    // user_id, subscription (jsonb), user_agent. (auth_key/preferences/updated_at
+    // n'existent pas → l'upsert échouait silencieusement, aucun abonné enregistré.)
     const row = {
       endpoint: subscription.endpoint,
       p256dh: subscription.keys?.p256dh || null,
-      auth_key: subscription.keys?.auth || null,
+      auth: subscription.keys?.auth || null,
       user_id: userId,
-      preferences: preferences || {},
-      updated_at: new Date().toISOString(),
+      subscription: subscription || {},
+      user_agent: request.headers.get("user-agent") || null,
     };
 
     const { error } = await sb

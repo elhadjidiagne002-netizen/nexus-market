@@ -220,11 +220,15 @@ export async function onRequest({ request, env }) {
     const encoded = encodeURIComponent(sub.endpoint);
     await sb(env, `push_subscriptions?endpoint=eq.${encoded}`, 'DELETE');
 
+    // [FIX] Colonnes réelles : endpoint, p256dh, auth, user_id, subscription.
+    // (« preferences » n'existe pas → l'INSERT échouait → aucun abonné enregistré,
+    //  donc aucune notification push n'était jamais envoyée.)
     const result = await sb(env, 'push_subscriptions', 'POST', {
-      user_id:     uid,
+      user_id:      uid,
       subscription: sub,
-      endpoint:    sub.endpoint,
-      preferences: body.preferences || {},
+      endpoint:     sub.endpoint,
+      p256dh:       sub.keys?.p256dh || null,
+      auth:         sub.keys?.auth || null,
     });
 
     return ok({ ok: result.ok !== false });
