@@ -186,6 +186,16 @@ async function runCleanup(env) {
     }
   } catch(_) {}
 
+  // ── 9bis. Recalcul du badge « Vendeur de confiance » ─────────────────────
+  // (note moyenne, taux de livraison, litiges, ancienneté → profiles.is_trusted)
+  try {
+    const r = await fetch(`${SB}/rest/v1/rpc/recompute_vendor_trust`, {
+      method: 'POST', headers: H, body: '{}',
+    });
+    report.deleted['vendor_trust_recompute'] = r.ok ? 'ok' : `HTTP ${r.status}`;
+    if (!r.ok) report.errors['vendor_trust_recompute'] = await r.text().catch(() => '');
+  } catch (e) { report.errors['vendor_trust_recompute'] = e.message; }
+
   // ── 10. Log dans maintenance_log ─────────────────────────────────────────
   try {
     await fetch(`${SB}/rest/v1/maintenance_log`, {
