@@ -22316,15 +22316,22 @@ const AdminLivraisonPanel = ({ addToast }) => {
   const [stats, setStats]     = React.useState({ total:0, delivered:0, pending:0, revenue:0, couriersActive:0 });
   const [loading, setLoading] = React.useState(true);
   const [payingId, setPayingId] = React.useState(null);
-  const [onlineCo, setOnlineCo] = React.useState([]);      // livreurs en ligne géolocalisés
+  const [onlineCo, setOnlineCo] = React.useState([]);      // livreurs géolocalisés (en/hors ligne)
+  const [activeDlv, setActiveDlv] = React.useState([]);    // courses en cours (carte)
   const mapRef = React.useRef(null);
   const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
 
-  // Charge les livreurs en ligne avec leur position (RPC admin online_couriers_geo).
+  // Charge les livreurs (position live) + les courses en cours pour la carte admin.
   const loadOnline = React.useCallback(async () => {
     if (!sb) return;
     try { const { data, error } = await sb.rpc('online_couriers_geo'); if (!error) setOnlineCo(data || []); }
     catch (e) { console.warn('[Livraison] online_couriers_geo:', e.message); }
+    try {
+      const { data: dlv } = await sb.from('deliveries')
+        .select('id,status,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,pickup_label,dropoff_label,courier_lat,courier_lng')
+        .in('status', ['accepted','picked_up','in_transit']);
+      setActiveDlv(dlv || []);
+    } catch (e) {}
   }, [sb]);
 
   // Quand l'onglet Carte est actif : charge + rafraîchit toutes les 15 s.
@@ -22335,12 +22342,15 @@ const AdminLivraisonPanel = ({ addToast }) => {
     return () => clearInterval(iv);
   }, [tab, loadOnline]);
 
-  // (Re)dessine la carte quand la liste des livreurs en ligne change.
+  // (Re)dessine la carte « flotte » : livreurs (en/hors ligne) + courses en cours.
   React.useEffect(() => {
-    if (tab !== 'map' || !mapRef.current || !window.NexusMap) return;
-    const pts = onlineCo.map(c => ({ lat: c.lat, lng: c.lng, name: '🛵 ' + (c.name || 'Livreur') + (c.phone ? (' · ' + c.phone) : '') }));
-    NexusMap.nearby(mapRef.current, { lat: 14.6928, lng: -17.4467, label: 'Dakar' }, pts);
-  }, [onlineCo, tab]);
+    if (tab !== 'map' || !mapRef.current || !window.NexusMap || !NexusMap.fleet) return;
+    NexusMap.fleet(mapRef.current, {
+      center: { lat: 14.6928, lng: -17.4467 },
+      couriers: onlineCo.map(c => ({ lat: c.lat, lng: c.lng, name: (c.name || 'Livreur') + (c.phone ? (' · ' + c.phone) : ''), online: c.is_online })),
+      deliveries: activeDlv,
+    });
+  }, [onlineCo, activeDlv, tab]);
   const waveNum = NEXUS_CONFIG?.payments?.wave?.number || '77XXXXXXX';
   const omNum   = NEXUS_CONFIG?.payments?.om?.number   || '77XXXXXXX';
 
@@ -22600,12 +22610,14 @@ const AdminLivraisonPanel = ({ addToast }) => {
     tab==='settings' && E(CourierSettingsPanel, { addToast }),
 
     // ── Carte live des livreurs en ligne ──────────────────────────────────
-    tab==='map' && E('div',null,
-      E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.75rem',flexWrap:'wrap',gap:'.5rem'}},
+    tab==='map' && (() => { const _on = onlineCo.filter(c=>c.is_online).length; return E('div',null,
+      E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.5rem',flexWrap:'wrap',gap:'.5rem'}},
         E('div',null,
-          E('h3',{style:{fontWeight:700,fontSize:'1rem',margin:0}},'🗺️ Livreurs en ligne'),
-          E('div',{style:{fontSize:'.8rem',color:'var(--text-secondary)'}},onlineCo.length+' livreur(s) en ligne · actualisé toutes les 15 s')),
+          E('h3',{style:{fontWeight:700,fontSize:'1rem',margin:0}},'🗺️ Carte des livreurs'),
+          E('div',{style:{fontSize:'.8rem',color:'var(--text-secondary)'}},'🟢 '+_on+' en ligne · ⚪ '+(onlineCo.length-_on)+' hors ligne · 📦 '+activeDlv.length+' course(s) · maj 15 s')),
         E('button',{className:'btn btn-secondary btn-sm',onClick:loadOnline},E('i',{className:'fas fa-sync-alt'}),' Actualiser')),
+      E('div',{style:{display:'flex',gap:'1rem',flexWrap:'wrap',fontSize:'.72rem',color:'var(--text-secondary)',marginBottom:'.6rem'}},
+        E('span',null,'🔵 Livreur en ligne'),E('span',null,'⚪ Hors ligne'),E('span',null,'🟢 Retrait'),E('span',null,'🔴 Livraison')),
       E('div',{ref:mapRef,className:'nexus-map tall',style:{marginBottom:'1rem'}}),
       onlineCo.length===0
         ? E('div',{className:'empty-state'},E('i',{className:'fas fa-motorcycle'}),E('p',null,'Aucun livreur en ligne géolocalisé pour le moment.'))
@@ -22614,14 +22626,16 @@ const AdminLivraisonPanel = ({ addToast }) => {
               const mins = c.location_updated_at ? Math.round((Date.now()-new Date(c.location_updated_at).getTime())/60000) : null;
               return E('div',{key:c.courier_id,style:{display:'flex',justifyContent:'space-between',alignItems:'center',border:'0.5px solid var(--border)',borderRadius:10,padding:'.6rem .8rem',flexWrap:'wrap',gap:'.4rem'}},
                 E('div',null,
-                  E('div',{style:{fontWeight:700,fontSize:'.88rem'}},'🛵 ',c.name||'Livreur',c.courier_status==='busy'?E('span',{style:{marginLeft:6,fontSize:'.7rem',color:'#d97706'}},'(en course)'):E('span',{style:{marginLeft:6,fontSize:'.7rem',color:'#16a34a'}},'(libre)')),
+                  E('div',{style:{fontWeight:700,fontSize:'.88rem'}},'🛵 ',c.name||'Livreur',
+                    E('span',{style:{marginLeft:6,fontSize:'.7rem',color:!c.is_online?'#9ca3af':(c.courier_status==='busy'?'#d97706':'#16a34a')}},
+                      !c.is_online?'⚪ hors ligne':(c.courier_status==='busy'?'🟠 en course':'🟢 en ligne'))),
                   E('div',{style:{fontSize:'.76rem',color:'var(--text-secondary)'}},c.phone||'—',' · ⭐ ',Number(c.rating_avg||5).toFixed(1),' · ',(c.deliveries_done||0),' livr.',mins!=null?(' · 📍 il y a '+mins+' min'):'')),
                 E('div',{style:{display:'flex',gap:6}},
                   c.phone&&E('a',{href:'tel:'+c.phone,className:'btn btn-secondary btn-sm'},'📞'),
                   c.phone&&E('a',{href:'https://wa.me/'+String(c.phone).replace(/\D/g,''),target:'_blank',rel:'noopener',className:'btn btn-sm',style:{background:'#25D366',color:'#fff'}},'💬'),
                   E('button',{className:'btn btn-sm btn-secondary',title:'Itinéraire',onClick:()=>{ try{ NexusMap.openDirections(c.lat,c.lng,c.name||'Livreur'); }catch(e){} }},'🧭')));
             }))
-    )
+    ); })()
   );
 };
 
@@ -40090,6 +40104,39 @@ window.addEventListener('unhandledrejection', function(event) {
     }).catch(function(){ return null; });
   }
 
+  // ── Carte « flotte » (admin) : livreurs en ligne/hors-ligne + courses en cours ─
+  function fleet(el, opts){
+    if(!el) return Promise.resolve(null);
+    opts = opts || {};
+    return ensureLeaflet().then(function(L){
+      el.classList.add('nexus-map');
+      if(el.__map){ try{ el.__map.remove(); }catch(e){} el.__map=null; }
+      var c = opts.center || { lat:14.6928, lng:-17.4467 };
+      var map = L.map(el).setView([num(c.lat)!=null?num(c.lat):14.6928, num(c.lng)!=null?num(c.lng):-17.4467], 12);
+      el.__map = map;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+      var pts=[];
+      (opts.couriers||[]).forEach(function(co){
+        var la=num(co.lat), ln=num(co.lng); if(la==null) return;
+        L.marker([la,ln],{icon:dot(L, co.online ? COLORS.courier : '#9ca3af')}).addTo(map)
+          .bindPopup((co.online?'🟢 ':'⚪ ')+(co.name||'Livreur'));
+        pts.push([la,ln]);
+      });
+      (opts.deliveries||[]).forEach(function(d){
+        var pla=num(d.pickup_lat), pln=num(d.pickup_lng), dla=num(d.dropoff_lat), dln=num(d.dropoff_lng);
+        if(pla!=null){ L.marker([pla,pln],{icon:pin(L,COLORS.pickup)}).addTo(map).bindPopup('📦 Retrait : '+(d.pickup_label||'')); pts.push([pla,pln]); }
+        if(dla!=null){ L.marker([dla,dln],{icon:pin(L,COLORS.dropoff)}).addTo(map).bindPopup('🏁 Livraison : '+(d.dropoff_label||'')); pts.push([dla,dln]); }
+        if(pla!=null && dla!=null){ L.polyline([[pla,pln],[dla,dln]],{color:'#999',weight:2,dashArray:'5 7',opacity:.6}).addTo(map); }
+        var cla=num(d.courier_lat), cln=num(d.courier_lng);
+        if(cla!=null){ L.marker([cla,cln],{icon:dot(L,COLORS.courier)}).addTo(map).bindPopup('🛵 Coursier (en course)'); pts.push([cla,cln]); }
+      });
+      if(pts.length>1) map.fitBounds(pts,{padding:[40,40]});
+      else if(pts.length===1) map.setView(pts[0], 14);
+      setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} },250);
+      return map;
+    }).catch(function(){ return null; });
+  }
+
   // ── Position de l'appareil (GPS navigateur, gratuit) ────────────────────────
   function locateMe(opts){
     return new Promise(function(resolve, reject){
@@ -40224,7 +40271,7 @@ window.addEventListener('unhandledrejection', function(event) {
 
   window.NexusMap = { track:track, nearby:nearby, locateMe:locateMe, autoMount:autoMount,
                       ensureLeaflet:ensureLeaflet, startCourierPing:startCourierPing, stopCourierPing:stopCourierPing,
-                      openDirections:openDirections, fuzz:fuzz, pickLocation:pickLocation, ensureCluster:ensureCluster };
+                      openDirections:openDirections, fuzz:fuzz, pickLocation:pickLocation, ensureCluster:ensureCluster, fleet:fleet };
   console.info("[NEXUS] Module carte (Leaflet/OSM) prêt ✅");
 })();
 </script>
