@@ -13240,6 +13240,28 @@ const NexusStoriesWidget = ({ user }) => {
     if (v.play) v.play().catch(() => {});
   }, [open, idx, items]);
 
+  // [STORIES SHOPPABLES] Produit lié à la story courante (achat en 1 tap).
+  const [storyProd, setStoryProd] = React.useState(null);
+  React.useEffect(() => {
+    setStoryProd(null);
+    const c = items[idx];
+    if (!open || !c || !c.product_id || !DataService._sb) return;
+    let cancelled = false;
+    DataService._sb.from('products').select('id,name,price,image_url,stock')
+      .eq('id', c.product_id).maybeSingle()
+      .then(({ data }) => { if (!cancelled && data) setStoryProd(data); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open, idx, items]);
+  const openStoryProduct = () => {
+    if (!storyProd) return;
+    try { window.dispatchEvent(new CustomEvent('nexus:open-product', { detail: storyProd.id })); } catch (_) {}
+    setOpen(false);
+  };
+  const _storyPrice = (p) => {
+    try { if (typeof formatPrice === 'function') return formatPrice(p); } catch (_) {}
+    return Math.round((Number(p) || 0) * 655.957).toLocaleString('fr-FR') + ' FCFA';
+  };
+
   const go = (d) => setIdx(i => Math.max(0, Math.min(items.length - 1, i + d)));
 
   const startUpload = async (file) => {
@@ -13252,7 +13274,20 @@ const NexusStoriesWidget = ({ user }) => {
       let token = '';
       try { const { data } = await DataService._sb.auth.getSession(); token = (data && data.session && data.session.access_token) || ''; } catch (_) {}
       const title = (typeof prompt === 'function' ? prompt('Titre de votre story (ex. iPhone 11 — démo)') : '') || '';
-      const r = await fetch('/api/stories/upload', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ title }) });
+      // [STORIES SHOPPABLES] Associer un de SES produits → bouton « Acheter » dans la story.
+      let productId = null;
+      try {
+        const { data: myProds } = await DataService._sb.from('products')
+          .select('id,name').eq('vendor_id', user.id).eq('active', true)
+          .order('created_at', { ascending: false }).limit(30);
+        if (myProds && myProds.length && typeof prompt === 'function') {
+          const listStr = myProds.map((p, i) => (i + 1) + '. ' + p.name).join('\n');
+          const pick = prompt('Associer un produit à vendre dans cette story ?\nTapez le numéro (ou laissez vide pour aucun) :\n\n' + listStr);
+          const n = parseInt(pick, 10);
+          if (n >= 1 && n <= myProds.length) productId = myProds[n - 1].id;
+        }
+      } catch (_) {}
+      const r = await fetch('/api/stories/upload', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ title, productId }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.uploadUrl) { toast(j.error || 'Upload vidéo indisponible (Mux non configuré ?).', 'error'); setBusy(false); return; }
       const put = await fetch(j.uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
@@ -13285,7 +13320,20 @@ const NexusStoriesWidget = ({ user }) => {
               E('video', { ref: videoRef, controls: true, playsInline: true, autoPlay: true, loop: true, muted: false, style: { width: '100%', height: '100%', objectFit: 'contain', background: '#000' } }),
               E('div', { style: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: '16px', color: '#fff', background: 'linear-gradient(transparent,rgba(0,0,0,.7))' } },
                 E('div', { style: { fontWeight: 800 } }, cur.title || 'Vidéo produit'),
-                E('div', { style: { fontSize: '.85rem', opacity: .85 } }, (cur.category || '') + (cur.city ? ' · ' + cur.city : '') + (cur.vendor_name ? ' · ' + cur.vendor_name : ''))
+                E('div', { style: { fontSize: '.85rem', opacity: .85 } }, (cur.category || '') + (cur.city ? ' · ' + cur.city : '') + (cur.vendor_name ? ' · ' + cur.vendor_name : '')),
+                // [STORIES SHOPPABLES] Barre d'achat : produit lié → ouvre la fiche.
+                storyProd && E('div', {
+                  onClick: openStoryProduct, role: 'button', tabIndex: 0,
+                  onKeyDown: e => { if (e.key === 'Enter') openStoryProduct(); },
+                  style: { marginTop: 12, display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,.96)', color: '#111', borderRadius: 12, padding: '8px 10px', cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,0,0,.3)' }
+                },
+                  E('img', { src: storyProd.image_url || 'https://placehold.co/52x52/e8f5e9/00853E?text=NX', alt: storyProd.name, style: { width: 46, height: 46, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }, onError: e => { e.target.onerror = null; e.target.src = 'https://placehold.co/52x52/e8f5e9/00853E?text=NX'; } }),
+                  E('div', { style: { flex: 1, minWidth: 0 } },
+                    E('div', { style: { fontWeight: 700, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, storyProd.name),
+                    E('div', { style: { fontWeight: 800, fontSize: '.84rem', color: '#00853E' } }, _storyPrice(storyProd.price), storyProd.stock === 0 ? E('span', { style: { color: '#b91c1c', fontWeight: 700, marginLeft: 6 } }, '· Épuisé') : null)
+                  ),
+                  E('span', { style: { flexShrink: 0, background: '#00853E', color: '#fff', borderRadius: 10, padding: '.5rem .8rem', fontWeight: 800, fontSize: '.8rem', whiteSpace: 'nowrap' } }, '🛒 Voir')
+                )
               ),
               idx > 0 && navBtn('▲', () => go(-1), { top: 10 }),
               idx < items.length - 1 && navBtn('▼', () => go(1), { bottom: 92 })
@@ -30314,6 +30362,21 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       .then(({ data }) => { if (data) setTrustedVendors(new Set(data.map(p => p.id))); })
       .catch(() => {});
   }, []);
+  // [STORIES SHOPPABLES] Ouvre la fiche produit (sans rechargement) sur demande
+  // d'un autre module (ex. bouton « Voir » d'une story). detail = product_id.
+  React.useEffect(() => {
+    const h = (e) => {
+      const pid = e && e.detail; if (!pid) return;
+      const local = (products || []).find(p => String(p.id) === String(pid));
+      if (local) { setSelectedProduct(local); try { addViewedPub(local); } catch (_) {} return; }
+      if (DataService._sb) {
+        DataService._sb.from('products').select('*').eq('id', pid).maybeSingle()
+          .then(({ data }) => { if (data) setSelectedProduct(data); }).catch(() => {});
+      }
+    };
+    window.addEventListener('nexus:open-product', h);
+    return () => window.removeEventListener('nexus:open-product', h);
+  }, [products]);
   const [compareList, setCompareList] = useState([]);
   const [showCompare, setShowCompare] = useState(false);
   const [homePromo, setHomePromo] = useState(null);
