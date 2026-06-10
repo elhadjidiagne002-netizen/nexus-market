@@ -21068,7 +21068,10 @@ const SitePopupManager = ({ currentUser, currentPage = 'home' }) => {
         return true;
       });
 
-      setQueue(filtered);
+      // Anti-spam : au plus 2 pop-ups par chargement de page. Les autres (non
+      // « vus ») réapparaîtront lors des visites suivantes → les annonces de
+      // fonctionnalités s'étalent au lieu de défiler toutes d'un coup.
+      setQueue(filtered.slice(0, 2));
     });
     return () => { cancelled = true; };
   }, [currentUser?.id, currentPage]);
@@ -21096,9 +21099,19 @@ const SitePopupManager = ({ currentUser, currentPage = 'home' }) => {
 
   const handleCTA = (popup) => {
     try { Promise.resolve(DataService._sb?.rpc('popup_track', { p_id: popup.id, p_type: 'click' })).catch(() => {}); } catch (_) {}
-    if (popup.cta_url) {
-      if (popup.cta_url.startsWith('http')) window.open(popup.cta_url, '_blank');
-      else window.dispatchEvent(new CustomEvent('nexus:navigate', { detail: popup.cta_url }));
+    const u = popup.cta_url;
+    if (u) {
+      // [FEATURE POPUPS] Le CTA peut OUVRIR une fonctionnalité :
+      //   · 'nexus:open-courier' / 'nexus:open-stories'… → dispatch l'événement ;
+      //   · '#louma' → hash (le module Louma l'écoute) ;
+      //   · 'http…'  → nouvel onglet ;
+      //   · autre    → navigation interne (legacy nexus:navigate).
+      try {
+        if (u.startsWith('nexus:')) { window.dispatchEvent(new CustomEvent(u)); }
+        else if (u.startsWith('http')) { window.open(u, '_blank'); }
+        else if (u.startsWith('#')) { window.location.hash = u; }
+        else { window.dispatchEvent(new CustomEvent('nexus:navigate', { detail: u })); }
+      } catch (_) {}
     }
     dismiss(popup.id);
   };
