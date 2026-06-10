@@ -4291,6 +4291,22 @@ const DataService = {
     return [];
   },
   async saveProduct(product) {
+    // [ALERTES] Prix/stock AVANT modification → déclenchera les alertes
+    // « retour en stock » et « baisse de prix » (abonnés + favoris).
+    const _prev = product.id ? (storage.getArray('products').find(p => p.id === product.id)) : null;
+    const _prevPrice = _prev && _prev.price != null ? Number(_prev.price) : null;
+    const _prevStock = _prev ? (_prev.stock || 0) : 0;
+    const _fireAlerts = (id, newPrice, newStock) => {
+      if (!id) return;
+      try {
+        if (_prevStock === 0 && (newStock || 0) > 0) {
+          fetch('/api/stock-alerts/notify/' + encodeURIComponent(id), { method: 'POST' }).catch(() => {});
+        }
+        if (_prevPrice != null && newPrice != null && Number(newPrice) < _prevPrice) {
+          fetch('/api/stock-alerts/price-drop/' + encodeURIComponent(id), { method: 'POST' }).catch(() => {});
+        }
+      } catch (_) {}
+    };
     // [FIX D+F] API en priorité — upsert(product) camelCase échoue silencieusement + pas de vérif propriétaire
     if (NEXUS_CONFIG.apiUrl) {
       try {
@@ -4321,10 +4337,8 @@ const DataService = {
           const prevStock = idx >= 0 ? (all[idx].stock || 0) : 0;
           if (idx >= 0) all[idx] = normalized; else all.push(normalized);
           storage.set("products", all);
-          // ── Déclencher les alertes stock si réapprovisionnement ──────────
-          if (prevStock === 0 && normalized.stock > 0 && normalized.id) {
-            this.apiFetch(`/api/stock-alerts/notify/${normalized.id}`, { method: "POST" }).catch(() => {});
-          }
+          // ── Alertes : retour en stock + baisse de prix ───────────────────
+          _fireAlerts(normalized.id, normalized.price, normalized.stock);
           return normalized;
         }
         const err = await res?.json().catch(() => ({}));
@@ -4350,7 +4364,7 @@ const DataService = {
       };
       if (product.id) row.id = product.id;
       const { data, error } = await this._sb.from("products").upsert(row).select().single();
-      if (!error && data) { const all = storage.getArray("products"); const idx = all.findIndex(p => p.id === data.id); if (idx >= 0) all[idx] = data; else all.push(data); storage.set("products", all); return data; }
+      if (!error && data) { const all = storage.getArray("products"); const idx = all.findIndex(p => p.id === data.id); if (idx >= 0) all[idx] = data; else all.push(data); storage.set("products", all); _fireAlerts(data.id, data.price, data.stock); return data; }
     }
     const all = storage.getArray("products");
     const idx = all.findIndex((p) => p.id === product.id);
@@ -6681,6 +6695,10 @@ async signOut() {
         if (eWi) console.warn("[toggleWishlist insert]", eWi.message);
       }
     }
+    // [ALERTES PRIX] Mettre un produit en favori l'abonne aussi aux alertes
+    // « baisse de prix » (best-effort). Le retrait du favori ne supprime pas
+    // l'alerte (l'utilisateur la gère via la cloche si besoin).
+    if (!exists) { try { this.addStockAlert(userId, productId); } catch (_) {} }
     const newIds = exists ? currentIds.filter(id => id !== productId) : [...currentIds, productId];
     const ws = storage.get("wishlists") || {};
     ws[userId] = newIds; storage.set("wishlists", ws);
@@ -6721,8 +6739,13 @@ async signOut() {
       return;
     }
     if (this._sb) {
-      try { await this._sb.from("stock_alerts")
-        .upsert({ user_id: userId, product_id: productId, notified: false }); } catch(_) {}
+      try {
+        // [PRIX] Capture le prix de référence (base pour l'alerte baisse de prix).
+        let basePrice = null;
+        try { const { data: pr } = await this._sb.from('products').select('price').eq('id', productId).maybeSingle(); if (pr && pr.price != null) basePrice = Number(pr.price); } catch(_) {}
+        await this._sb.from("stock_alerts")
+          .upsert({ user_id: userId, product_id: productId, notified: false, price_at_subscribe: basePrice });
+      } catch(_) {}
     }
   },
   async removeStockAlert(userId, productId) {
@@ -20023,6 +20046,10 @@ const EMAIL_TPL_DEFS = [
     trigger:"Envoyé aux abonnés d'alerte stock quand le produit revient",
     defaultSubject:"🔔 {{product_name}} est de nouveau disponible",
     vars:[["buyer_name","Acheteur"],["product_name","Produit"],["product_url","Lien produit"]] },
+  { id:"price_drop", label:"Baisse de prix", icon:"tag", color:"#16A34A", category:"buyer",
+    trigger:"Envoyé aux abonnés / favoris quand le prix d'un produit baisse",
+    defaultSubject:"💸 {{product_name}} : nouveau prix {{new_price}}",
+    vars:[["buyer_name","Acheteur"],["product_name","Produit"],["new_price","Nouveau prix"],["discount_pct","% remise"],["product_url","Lien produit"]] },
   { id:"review_request", label:"Demande d'avis", icon:"star", color:"#EAB308", category:"buyer",
     trigger:"Envoyé après livraison pour solliciter un avis",
     defaultSubject:"Votre avis sur {{product_name}} ?",

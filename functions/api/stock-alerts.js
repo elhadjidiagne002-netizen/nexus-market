@@ -171,6 +171,52 @@ export async function onRequest({ request, env, params }) {
     return jsonR({ ok: true, notified });
   }
 
+  // POST /api/stock-alerts/price-drop/:productId — alerter d'une BAISSE DE PRIX
+  // Notifie les abonnés/favoris dont le prix de référence est SUPÉRIEUR au prix
+  // courant (et qu'on n'a pas déjà notifiés à ce niveau ou plus bas).
+  if (method === 'POST' && rest[0] === 'price-drop' && rest[1]) {
+    const productId = rest[1];
+    const { data: prods } = await sb(env, `products?id=eq.${encodeURIComponent(productId)}&select=id,name,price`);
+    const product = prods?.[0];
+    if (!product) return jsonR({ error: 'Produit introuvable' }, 404);
+    const newPrice = Number(product.price);
+    if (!(newPrice >= 0)) return jsonR({ ok: false, reason: 'prix invalide' });
+
+    // Abonnés dont la référence est plus haute que le nouveau prix, et pas déjà
+    // notifiés à ce niveau (last_notified_price null OU > newPrice).
+    const { data: alerts } = await sb(env, `stock_alerts?product_id=eq.${encodeURIComponent(productId)}&price_at_subscribe=gt.${newPrice}&select=id,user_id,user_email,price_at_subscribe,last_notified_price`);
+    const targets = (alerts || []).filter(a => a.last_notified_price == null || Number(a.last_notified_price) > newPrice);
+    if (!targets.length) return jsonR({ ok: true, notified: 0 });
+
+    const fcfa = (eur) => Math.round((Number(eur) || 0) * 655.957).toLocaleString('fr-FR') + ' FCFA';
+    let notified = 0;
+    for (const a of targets) {
+      const pct = a.price_at_subscribe > 0 ? Math.round((1 - newPrice / Number(a.price_at_subscribe)) * 100) : 0;
+      const payload = {
+        title: '💸 Baisse de prix !',
+        message: `${product.name} est passé à ${fcfa(newPrice)}` + (pct > 0 ? ` (−${pct}%)` : '') + '.',
+        url: `/?product=${productId}`,
+        type: 'price',
+      };
+      if (env.VAPID_PRIVATE_KEY && env.VAPID_PUBLIC_KEY) await sendPushToUser(a.user_id, payload, env);
+      await sb(env, 'notifications', 'POST', {
+        id: crypto.randomUUID(), user_id: a.user_id, type: 'system',
+        title: payload.title, message: payload.message, link: payload.url,
+        read: false, created_at: new Date().toISOString(),
+      });
+      if (env.RESEND_API_KEY && a.user_email) {
+        await sendEventEmail(env, 'price_drop', a.user_email, {
+          buyer_name: 'Client', product_name: product.name,
+          new_price: fcfa(newPrice), discount_pct: pct, product_url: payload.url, _userId: a.user_id || null,
+        }).catch(() => {});
+      }
+      // Mémorise le niveau notifié (anti-spam) ; on garde l'abonnement actif.
+      await sb(env, `stock_alerts?id=eq.${encodeURIComponent(a.id)}`, 'PATCH', { last_notified_price: newPrice });
+      notified++;
+    }
+    return jsonR({ ok: true, notified });
+  }
+
   // POST /api/stock-alerts/migrate — migrer localStorage → Supabase
   if (method === 'POST' && rest[0] === 'migrate') {
     if (!uid) return jsonR({ error: 'Non authentifié' }, 401);
@@ -208,10 +254,19 @@ export async function onRequest({ request, env, params }) {
     const { productId } = body;
     if (!productId) return jsonR({ error: 'productId requis' }, 400);
 
+    // [PRIX] Capture le prix de référence CÔTÉ SERVEUR (prix au moment de
+    // l'abonnement) → base de comparaison pour l'alerte baisse de prix.
+    let basePrice = null;
+    try {
+      const { data: pr } = await sb(env, `products?id=eq.${encodeURIComponent(productId)}&select=price`);
+      if (pr && pr[0] && pr[0].price != null) basePrice = Number(pr[0].price);
+    } catch (_) {}
+
     // Upsert — pas de doublon
-    await sb(env, `stock_alerts?user_id=eq.${uid}&product_id=eq.${productId}`, 'DELETE');
+    await sb(env, `stock_alerts?user_id=eq.${uid}&product_id=eq.${encodeURIComponent(productId)}`, 'DELETE');
     await sb(env, 'stock_alerts', 'POST', {
-      id: crypto.randomUUID(), user_id: uid, product_id: productId, notified: false, created_at: new Date().toISOString(),
+      id: crypto.randomUUID(), user_id: uid, product_id: productId, notified: false,
+      price_at_subscribe: basePrice, created_at: new Date().toISOString(),
     });
     return jsonR({ ok: true });
   }
