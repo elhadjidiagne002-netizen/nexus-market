@@ -22182,6 +22182,97 @@ const AdminValidationPanel = ({ addToast }) => {
   );
 };
 
+// ── Réglages coursier (tarif + Tabaski + zones) — gérés par l'admin ──────────
+const CourierSettingsPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const DEF = { base:500, perKm:150, min:1000, commissionPct:15, nightSurchargePct:20 };
+  const [tarif, setTarif] = React.useState(DEF);
+  const [tabaski, setTabaski] = React.useState('');
+  const [zones, setZones] = React.useState([]);
+  const [nz, setNz] = React.useState({ name:'', city:'Dakar', lat:'', lng:'' });
+  const [saving, setSaving] = React.useState(false);
+  const num = (v,d) => { const n = parseFloat(v); return isFinite(n) ? n : d; };
+
+  React.useEffect(() => {
+    if (!sb) return;
+    sb.from('app_config').select('value').eq('key','nexus_courier_config').maybeSingle().then(({ data }) => {
+      if (data && data.value) {
+        if (data.value.tariff) setTarif(t => ({ ...t, ...data.value.tariff }));
+        if (data.value.tabaski_date) setTabaski(data.value.tabaski_date);
+      }
+    }).catch(()=>{});
+    sb.from('delivery_zones').select('*').order('name').then(({ data }) => setZones(data || [])).catch(()=>{});
+  }, []);
+
+  const saveCfg = async () => {
+    setSaving(true);
+    const value = { tariff: {
+      base:num(tarif.base,500), perKm:num(tarif.perKm,150), min:num(tarif.min,1000),
+      commissionPct:num(tarif.commissionPct,15), nightSurchargePct:num(tarif.nightSurchargePct,20)
+    }, tabaski_date: tabaski || null };
+    const { error } = await sb.from('app_config').upsert({ key:'nexus_courier_config', value, updated_at:new Date().toISOString() }, { onConflict:'key' });
+    setSaving(false);
+    if (error) { addToast('❌ '+error.message,'error'); return; }
+    try { window.__nexusApplyCourierConfig && window.__nexusApplyCourierConfig(value); } catch(e){}
+    addToast('✅ Réglages coursier enregistrés (appliqués immédiatement)','success');
+  };
+
+  const saveZone = async (z) => {
+    const { error } = await sb.from('delivery_zones').update({ city:z.city, lat:num(z.lat,0), lng:num(z.lng,0) }).eq('name', z.name);
+    if (error) addToast('❌ '+error.message,'error'); else { addToast('Zone « '+z.name+' » mise à jour','success'); try{ DataService._zonesCache=null; }catch(e){} }
+  };
+  const delZone = async (name) => {
+    if (!window.confirm('Supprimer la zone « '+name+' » ?')) return;
+    const { error } = await sb.from('delivery_zones').delete().eq('name', name);
+    if (error) { addToast('❌ '+error.message,'error'); return; }
+    setZones(zs => zs.filter(z => z.name !== name)); try{ DataService._zonesCache=null; }catch(e){}
+  };
+  const addZone = async () => {
+    if (!nz.name || nz.lat==='' || nz.lng==='') { addToast('Nom, latitude et longitude requis','warning'); return; }
+    const row = { name:nz.name.trim(), city:nz.city||'Dakar', lat:num(nz.lat,0), lng:num(nz.lng,0) };
+    const { error } = await sb.from('delivery_zones').insert(row);
+    if (error) { addToast('❌ '+error.message,'error'); return; }
+    setZones(zs => [...zs, row].sort((a,b)=>String(a.name).localeCompare(b.name)));
+    setNz({ name:'', city:'Dakar', lat:'', lng:'' }); try{ DataService._zonesCache=null; }catch(e){}
+    addToast('Zone ajoutée','success');
+  };
+
+  const inp = { padding:'.4rem .55rem', border:'1px solid var(--border)', borderRadius:7, fontSize:'.8rem' };
+  const tField = (k,label,suffix) => E('div',{style:{flex:'1 1 120px'}},
+    E('label',{style:{fontSize:'.72rem',color:'var(--text-secondary)',fontWeight:600,display:'block',marginBottom:3}},label+(suffix?(' ('+suffix+')'):'')),
+    E('input',{type:'number',value:tarif[k],onChange:e=>setTarif(t=>({...t,[k]:e.target.value})),style:{ ...inp, width:'100%', boxSizing:'border-box' }}));
+
+  return E('div',null,
+    E('h3',{style:{fontWeight:700,fontSize:'1rem',margin:'0 0 .25rem'}},'⚙️ Réglages coursier'),
+    E('p',{style:{color:'var(--text-secondary)',fontSize:'.85rem',marginBottom:'1rem'}},'Tarification, date Tabaski et zones de livraison — appliqués immédiatement côté acheteur.'),
+    E('div',{style:{background:'var(--bg-light)',borderRadius:12,padding:'1rem',marginBottom:'1rem'}},
+      E('div',{style:{fontWeight:700,marginBottom:'.6rem'}},'💰 Tarification (FCFA)'),
+      E('div',{style:{display:'flex',gap:'.6rem',flexWrap:'wrap'}},
+        tField('base','Base'),tField('perKm','Par km'),tField('min','Minimum'),
+        tField('commissionPct','Commission','%'),tField('nightSurchargePct','Majoration nuit','%'))),
+    E('div',{style:{background:'var(--bg-light)',borderRadius:12,padding:'1rem',marginBottom:'1rem'}},
+      E('div',{style:{fontWeight:700,marginBottom:'.6rem'}},'🐏 Date Tabaski (compte à rebours Élevage)'),
+      E('input',{type:'date',value:tabaski,onChange:e=>setTabaski(e.target.value),style:inp})),
+    E('button',{className:'btn btn-primary',onClick:saveCfg,disabled:saving,style:{marginBottom:'1.5rem'}},saving?'Sauvegarde…':'💾 Enregistrer tarif & Tabaski'),
+    E('div',{style:{fontWeight:700,marginBottom:'.6rem'}},'📍 Zones de livraison ('+zones.length+')'),
+    E('div',{style:{display:'flex',flexDirection:'column',gap:'.5rem',marginBottom:'.75rem'}},
+      zones.map((z,i)=>E('div',{key:z.name,style:{display:'flex',gap:'.4rem',alignItems:'center',flexWrap:'wrap',border:'0.5px solid var(--border)',borderRadius:8,padding:'.5rem'}},
+        E('span',{style:{fontWeight:600,flex:'1 1 100px',fontSize:'.85rem'}},z.name),
+        E('input',{value:z.city||'',onChange:e=>setZones(zs=>zs.map((x,j)=>j===i?{...x,city:e.target.value}:x)),placeholder:'Ville',style:{...inp,width:84}}),
+        E('input',{value:z.lat,onChange:e=>setZones(zs=>zs.map((x,j)=>j===i?{...x,lat:e.target.value}:x)),placeholder:'lat',style:{...inp,width:78}}),
+        E('input',{value:z.lng,onChange:e=>setZones(zs=>zs.map((x,j)=>j===i?{...x,lng:e.target.value}:x)),placeholder:'lng',style:{...inp,width:78}}),
+        E('button',{onClick:()=>saveZone(zones[i]),style:{padding:'.3rem .55rem',border:'none',borderRadius:6,background:'var(--primary)',color:'#fff',cursor:'pointer',fontSize:'.75rem',fontWeight:700}},'💾'),
+        E('button',{onClick:()=>delZone(z.name),style:{padding:'.3rem .55rem',border:'1.5px solid #dc2626',borderRadius:6,background:'#fff',color:'#dc2626',cursor:'pointer',fontSize:'.75rem'}},'🗑️')))),
+    E('div',{style:{display:'flex',gap:'.4rem',alignItems:'center',flexWrap:'wrap',borderTop:'1px dashed var(--border)',paddingTop:'.6rem'}},
+      E('input',{value:nz.name,onChange:e=>setNz(n=>({...n,name:e.target.value})),placeholder:'Nom zone',style:{...inp,flex:'1 1 100px'}}),
+      E('input',{value:nz.city,onChange:e=>setNz(n=>({...n,city:e.target.value})),placeholder:'Ville',style:{...inp,width:84}}),
+      E('input',{value:nz.lat,onChange:e=>setNz(n=>({...n,lat:e.target.value})),placeholder:'lat',style:{...inp,width:78}}),
+      E('input',{value:nz.lng,onChange:e=>setNz(n=>({...n,lng:e.target.value})),placeholder:'lng',style:{...inp,width:78}}),
+      E('button',{onClick:addZone,style:{padding:'.4rem .8rem',border:'none',borderRadius:6,background:'var(--primary)',color:'#fff',cursor:'pointer',fontWeight:700,fontSize:'.8rem'}},'➕ Ajouter'))
+  );
+};
+
 const AdminLivraisonPanel = ({ addToast }) => {
   const E = React.createElement;
   const sb = DataService._sb;
@@ -22312,6 +22403,7 @@ const AdminLivraisonPanel = ({ addToast }) => {
     { id:'deliveries', label:'📦 Livraisons' },
     { id:'couriers',   label:'🛵 Coursiers' + (_pendingCouriers > 0 ? ' (' + _pendingCouriers + ' en attente)' : '') },
     { id:'pay',        label:'💰 Payer coursiers' },
+    { id:'settings',   label:'⚙️ Réglages' },
   ];
 
   if (loading) return E('div',{style:{textAlign:'center',padding:'3rem'}},E('i',{className:'fas fa-spinner fa-spin',style:{fontSize:'2rem'}}));
@@ -22444,7 +22536,9 @@ const AdminLivraisonPanel = ({ addToast }) => {
           )
         );
       })
-    )
+    ),
+
+    tab==='settings' && E(CourierSettingsPanel, { addToast })
   );
 };
 
@@ -37576,6 +37670,26 @@ window.addEventListener('unhandledrejection', function(event) {
   var TARIF = (NEXUS_CONFIG && NEXUS_CONFIG.courier) || {
     base: 500, perKm: 150, min: 1000, commissionPct: 15, nightSurchargePct: 20
   };
+
+  // ── Réglages éditables par l'admin (app_config.nexus_courier_config) ────────
+  // Applique tarif + date Tabaski à chaud (TARIF muté par référence → toutes les
+  // estimations en tiennent compte ; le module Élevage lit __NEXUS_TABASKI_DATE).
+  window.__nexusApplyCourierConfig = function (cfg) {
+    if (!cfg) return;
+    try { if (cfg.tariff) Object.assign(TARIF, cfg.tariff); } catch (e) {}
+    try { if (cfg.tabaski_date) window.__NEXUS_TABASKI_DATE = cfg.tabaski_date; } catch (e) {}
+  };
+  // Chargement au démarrage (puis re-tentatives tant que Supabase n'est pas prêt).
+  (function loadCourierCfg(tries) {
+    tries = tries || 0;
+    try {
+      var sb = DataService && DataService._sb;
+      if (!sb) { if (tries < 20) setTimeout(function () { loadCourierCfg(tries + 1); }, 800); return; }
+      sb.from('app_config').select('value').eq('key', 'nexus_courier_config').maybeSingle()
+        .then(function (r) { if (r && r.data && r.data.value) window.__nexusApplyCourierConfig(r.data.value); })
+        .catch(function () {});
+    } catch (e) {}
+  })();
 
   // ════════════════════════════════════════════════════════════════════════
   //  1. COUCHE DONNÉES — méthodes greffées sur DataService
