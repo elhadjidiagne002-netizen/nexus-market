@@ -4067,6 +4067,22 @@ const shippingCostByCity = (city) => {
   if (["Pikine", "Gu\xE9diawaye", "Rufisque"].includes(city)) return 750;
   return base;
 };
+// [DEVIS LIVRAISON] Estimation instantanée affichée sur la fiche produit, avant
+// l'ajout au panier (réduit la surprise au paiement). Tarif = shippingCostByCity.
+const DeliveryEstimate = ({ product }) => {
+  const E = React.createElement;
+  const CITIES = ["Dakar", "Pikine", "Gu\xE9diawaye", "Rufisque", "Autre ville"];
+  const [city, setCity] = React.useState(() => { try { return localStorage.getItem("nexus_ship_city") || "Dakar"; } catch (_) { return "Dakar"; } });
+  React.useEffect(() => { try { localStorage.setItem("nexus_ship_city", city); } catch (_) {} }, [city]);
+  const fcfa = shippingCostByCity(city === "Autre ville" ? "" : city);
+  const eta = city === "Dakar" ? "24h" : (["Pikine", "Gu\xE9diawaye", "Rufisque"].includes(city) ? "24–48h" : "2–4 jours");
+  return E("div", { style: { background: "var(--bg-light)", border: "1px solid var(--border)", borderRadius: 10, padding: ".7rem .85rem", marginBottom: "1rem", fontSize: ".85rem" } },
+    E("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+      E("span", null, "🚚 Livraison vers"),
+      E("select", { value: city, onChange: (e) => setCity(e.target.value), style: { padding: ".3rem .5rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-primary)" } }, CITIES.map((c) => E("option", { key: c, value: c }, c))),
+      E("strong", { style: { color: "var(--primary)", marginLeft: "auto" } }, fcfa.toLocaleString("fr-FR") + " FCFA")),
+    E("div", { style: { fontSize: ".74rem", color: "var(--text-secondary)", marginTop: ".3rem" } }, "⏱️ Estim\xE9 " + eta + " \xB7 payable \xE0 la livraison ou en ligne \xB7 ajust\xE9 au paiement"));
+};
 let supabaseClient = null;
 // [FIX] Singleton strict — stocké sur window pour éviter double instance entre renders React
 const initSupabase = () => {
@@ -31615,6 +31631,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                 selectedProduct.stock > 0 ? `${selectedProduct.stock} en stock` : 'Rupture de stock'
               )
             ),
+            // [DEVIS LIVRAISON] Estimation instantanée selon la ville
+            React.createElement(DeliveryEstimate, { product: selectedProduct }),
             // [UX #5] Sélecteur de quantité
             selectedProduct.stock > 0 && React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' } },
               React.createElement('span', { style: { fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-secondary)' } }, 'Quantité :'),
