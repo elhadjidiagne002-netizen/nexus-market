@@ -65,19 +65,50 @@ export async function onRequest({ request, env }) {
     return jsonR({ error: 'Hash invalide' }, 401);
   }
 
-  // 2. Extraire l'order_id depuis custom_field
-  let order_id = null;
+  // 2. Extraire l'identifiant depuis custom_field (commande OU boost vendeur)
+  let order_id = null, boostId = null;
   try {
     const cf = typeof custom_field === 'string' ? JSON.parse(custom_field) : custom_field;
     order_id = cf?.order_id;
+    boostId  = cf?.boostId || cf?.boost_id;
   } catch { /* ignore */ }
+
+  const isPaid = type_event === 'sale_complete';
+
+  // 2bis. Paiement de BOOST vendeur (libre-service) : on l'ACTIVE côté serveur
+  // (signal de confiance) au lieu de se fier au retour navigateur (qui pouvait
+  // être déclenché sans payer). On ne touche pas à la table orders.
+  if (boostId && !order_id) {
+    if (isPaid) {
+      // Durée CANONIQUE par type (le ends_at inséré côté client n'est pas fiable).
+      const BOOST_DAYS = { top_3j: 3, boost_semaine: 7, boost_mensuel: 30, pro_mensuel: 30, category_top: 7 };
+      const boosts = await sbGet(env, `product_boosts?id=eq.${encodeURIComponent(boostId)}&select=product_id,boost_type,started_at`);
+      const b = boosts?.[0];
+      const days = (b && BOOST_DAYS[b.boost_type]) || 7;
+      const start = b?.started_at ? new Date(b.started_at) : new Date();
+      const endsAt = new Date(start.getTime() + days * 86400000).toISOString();
+
+      await sbUpdate(env, 'product_boosts', `id=eq.${encodeURIComponent(boostId)}`, {
+        payment_status: 'paid', active: true, payment_method: 'mobile',
+        payment_ref: ref_command || null, ends_at: endsAt,
+      });
+      if (b?.product_id) {
+        await sbUpdate(env, 'products', `id=eq.${encodeURIComponent(b.product_id)}`, {
+          is_boosted: true, boost_ends_at: endsAt,
+        });
+      }
+    } else {
+      await sbUpdate(env, 'product_boosts', `id=eq.${encodeURIComponent(boostId)}`, {
+        payment_status: 'failed', active: false,
+      });
+    }
+    return jsonR({ ok: true, kind: 'boost', activated: isPaid });
+  }
 
   if (!order_id) {
     console.error('[PayTech IPN] order_id absent');
     return jsonR({ error: 'order_id manquant' }, 400);
   }
-
-  const isPaid = type_event === 'sale_complete';
 
   // 3. Mettre à jour la commande
   // [FIX] status ∈ {pending_payment,processing,in_transit,delivered,cancelled} :

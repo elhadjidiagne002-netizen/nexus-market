@@ -8,7 +8,7 @@
 //   SUPABASE_URL / SUPABASE_SERVICE_KEY
 // ============================================================
 
-import { requireAuth, validatePaymentAmount } from '../../_lib/utils.js';
+import { requireAuth, validatePaymentAmount, validateBoostAmount } from '../../_lib/utils.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -47,16 +47,22 @@ export async function onRequest({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
 
-  const { order_id, amount, item_name, success_url, cancel_url, order_ids } = body;
+  const { order_id, amount, item_name, success_url, cancel_url, order_ids, kind, boost_id } = body;
   if (!order_id || !amount || !success_url || !cancel_url)
     return jsonR({ error: 'order_id, amount, success_url, cancel_url requis' }, 400);
 
-  // [SEC #1] Montant client borné au total réel des commandes (base). amount est
-  // en XOF (entier) → conversion EUR pour comparer à orders.total (stocké en EUR).
-  const EUR_TO_XOF = parseFloat(env.EUR_TO_XOF || '655.957');
-  const ids = Array.isArray(order_ids) && order_ids.length ? order_ids : (order_id ? [order_id] : []);
-  const chk = await validatePaymentAmount(env, { orderIds: ids, uid, amountEur: Number(amount) / EUR_TO_XOF });
-  if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
+  // [SEC #1] Validation du montant côté serveur — selon le TYPE de paiement.
+  if (kind === 'boost') {
+    // Boost vendeur (libre-service) : le montant doit égaler le tarif en base.
+    const chk = await validateBoostAmount(env, { boostId: boost_id, uid, amountXof: Number(amount) });
+    if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
+  } else {
+    // Commande : montant borné au total réel des commandes (orders.total, EUR).
+    const EUR_TO_XOF = parseFloat(env.EUR_TO_XOF || '655.957');
+    const ids = Array.isArray(order_ids) && order_ids.length ? order_ids : (order_id ? [order_id] : []);
+    const chk = await validatePaymentAmount(env, { orderIds: ids, uid, amountEur: Number(amount) / EUR_TO_XOF });
+    if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
+  }
 
   const ref_command = `NEXUS-${order_id.slice(-12).toUpperCase()}-${Date.now()}`;
 

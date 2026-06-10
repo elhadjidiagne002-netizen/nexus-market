@@ -27209,6 +27209,8 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
         const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
           method: 'POST',
           body: JSON.stringify({
+            kind:         'boost',
+            boost_id:     boostId,
             order_id:     'BOOST-' + boostId.slice(0,12).toUpperCase(),
             amount:       selectedPlan.price,
             item_name:    'Boost "' + product.name + '" \u2014 ' + selectedPlan.label + ' (' + selectedPlan.days + 'j)',
@@ -34576,26 +34578,32 @@ const Root = () => {
     if (_bRet && _bId) {
       window.history?.replaceState(null, "", window.location.pathname);
       if (_bRet === 'success') {
+        // [SEC] L'ACTIVATION se fait CÔTÉ SERVEUR via l'IPN PayTech (signal de
+        // confiance) — surtout PAS ici : sinon n'importe qui ouvrant cette URL
+        // activerait un boost sans payer. On informe juste, puis on confirme en
+        // relisant le statut réel (mis à 'paid' par l'IPN) au bout de quelques s.
+        window.dispatchEvent(new CustomEvent('nexus:toast', {
+          detail: { message: '⏳ Paiement reçu — activation de votre boost en cours…', type: 'info', duration: 6000 }
+        }));
         if (typeof isSupabaseConfigured === 'function' && isSupabaseConfigured() && DataService._sb) {
-          DataService._sb.from('product_boosts')
-            .update({ payment_status: 'paid', active: true }).eq('id', _bId)
-            .then(({ error: _be }) => {
-              if (!_be) {
-                window.dispatchEvent(new CustomEvent('nexus:toast', {
-                  detail: { message: '⚡ Boost PayTech activé ! Votre annonce est maintenant en vedette.', type: 'success', duration: 8000 }
-                }));
-              }
-            });
-          // Mettre aussi is_boosted sur le produit
-          DataService._sb.from('product_boosts').select('product_id,ends_at').eq('id', _bId).single()
-            .then(({ data: _bd }) => {
-              if (_bd) DataService._sb.from('products')
-                .update({ is_boosted: true, boost_ends_at: _bd.ends_at }).eq('id', _bd.product_id);
-            });
-        } else {
-          window.dispatchEvent(new CustomEvent('nexus:toast', {
-            detail: { message: '⚡ Boost activé avec succès !', type: 'success', duration: 6000 }
-          }));
+          let _tries = 0;
+          const _chk = setInterval(() => {
+            _tries++;
+            DataService._sb.from('product_boosts').select('payment_status').eq('id', _bId).single()
+              .then(({ data: _bd }) => {
+                if (_bd && _bd.payment_status === 'paid') {
+                  clearInterval(_chk);
+                  window.dispatchEvent(new CustomEvent('nexus:toast', {
+                    detail: { message: '⚡ Boost activé ! Votre annonce est maintenant en vedette.', type: 'success', duration: 8000 }
+                  }));
+                } else if (_tries >= 6) {
+                  clearInterval(_chk);
+                  window.dispatchEvent(new CustomEvent('nexus:toast', {
+                    detail: { message: 'Paiement en cours de validation. Votre boost s’activera dès confirmation (< 1 min).', type: 'info', duration: 8000 }
+                  }));
+                }
+              }).catch(() => { if (_tries >= 6) clearInterval(_chk); });
+          }, 5000);
         }
       } else {
         // Annulation — supprimer le boost pending

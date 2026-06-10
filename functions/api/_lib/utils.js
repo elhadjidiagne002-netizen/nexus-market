@@ -161,6 +161,63 @@ export async function validatePaymentAmount(env, { orderIds, uid, amountEur }) {
   return { ok: true, expectedEur };
 }
 
+// [BOOST] Valide le montant d'un paiement de boost contre le tarif CANONIQUE
+// (app_config → nexus_monetization_cfg, éditable par l'admin), et non contre le
+// price_fcfa inséré côté client (qu'un vendeur pourrait falsifier à 1 FCFA).
+// amountXof : montant demandé (FCFA, entier). Retour { ok, status, error, boost }.
+const BOOST_PRICE_KEYS = {
+  top_3j:        'boost_top3j_price',
+  boost_semaine: 'boost_semaine_price',
+  boost_mensuel: 'boost_mensuel_price',
+  pro_mensuel:   'boost_mensuel_price',
+  category_top:  'boost_cat_price',
+};
+const BOOST_PRICE_DEFAULTS = {
+  boost_top3j_price: 500, boost_semaine_price: 1200, boost_mensuel_price: 8000, boost_cat_price: 2000,
+};
+
+export async function validateBoostAmount(env, { boostId, uid, amountXof }) {
+  if (!boostId) return { ok: false, status: 400, error: 'boost_id requis' };
+  const sb = supabase(env);
+  let row;
+  try {
+    const rows = await sb.from('product_boosts').select(
+      'id,vendor_id,price_fcfa,boost_type,payment_status',
+      `id=eq.${encodeURIComponent(boostId)}`
+    );
+    row = Array.isArray(rows) ? rows[0] : null;
+  } catch (e) {
+    return { ok: false, status: 502, error: 'Lecture du boost impossible' };
+  }
+  if (!row) return { ok: false, status: 404, error: 'Boost introuvable' };
+  if (row.vendor_id && uid && row.vendor_id !== uid) {
+    return { ok: false, status: 403, error: 'Boost non autorisé' };
+  }
+  if (row.payment_status === 'paid') return { ok: false, status: 409, error: 'Boost déjà payé' };
+
+  // Tarif canonique = config admin (sinon défaut). On NE fait PAS confiance au
+  // price_fcfa du client.
+  let cfg = {};
+  try {
+    const c = await sb.from('app_config').select('value', `key=eq.nexus_monetization_cfg`);
+    cfg = (Array.isArray(c) && c[0] && c[0].value) || {};
+  } catch (_) {}
+  const key = BOOST_PRICE_KEYS[row.boost_type];
+  const canonical = key
+    ? (cfg[key] != null ? Number(cfg[key]) : BOOST_PRICE_DEFAULTS[key])
+    : null;
+
+  const amt = Math.round(Number(amountXof));
+  if (canonical != null && canonical > 0) {
+    if (amt !== canonical) return { ok: false, status: 400, error: 'Montant ne correspond pas au tarif officiel du boost' };
+  } else {
+    // Type inconnu → repli prudent : montant = price_fcfa stocké, ≥ 100 FCFA.
+    const stored = Number(row.price_fcfa) || 0;
+    if (stored < 100 || amt !== stored) return { ok: false, status: 400, error: 'Montant de boost invalide' };
+  }
+  return { ok: true, boost: row };
+}
+
 export function paginate(url) {
   const u = new URL(url);
   const page  = parseInt(u.searchParams.get('page')  || '1');
