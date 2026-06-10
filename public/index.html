@@ -22318,7 +22318,14 @@ const AdminLivraisonPanel = ({ addToast }) => {
   const [payingId, setPayingId] = React.useState(null);
   const [onlineCo, setOnlineCo] = React.useState([]);      // livreurs géolocalisés (en/hors ligne)
   const [activeDlv, setActiveDlv] = React.useState([]);    // courses en cours (carte)
+  const [mapFilter, setMapFilter] = React.useState('all'); // all | online | busy | offline
   const mapRef = React.useRef(null);
+
+  // Filtrage commun carte + liste.
+  const _matchFilter = (c) => mapFilter === 'all' ? true
+    : mapFilter === 'online'  ? !!c.is_online
+    : mapFilter === 'busy'    ? c.courier_status === 'busy'
+    : mapFilter === 'offline' ? !c.is_online : true;
   const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
 
   // Charge les livreurs (position live) + les courses en cours pour la carte admin.
@@ -22345,12 +22352,15 @@ const AdminLivraisonPanel = ({ addToast }) => {
   // (Re)dessine la carte « flotte » : livreurs (en/hors ligne) + courses en cours.
   React.useEffect(() => {
     if (tab !== 'map' || !mapRef.current || !window.NexusMap || !NexusMap.fleet) return;
+    const co = onlineCo.filter(_matchFilter);
+    // Les courses ne s'affichent que pour « Tous » et « En course ».
+    const dlv = (mapFilter === 'all' || mapFilter === 'busy') ? activeDlv : [];
     NexusMap.fleet(mapRef.current, {
       center: { lat: 14.6928, lng: -17.4467 },
-      couriers: onlineCo.map(c => ({ lat: c.lat, lng: c.lng, name: (c.name || 'Livreur') + (c.phone ? (' · ' + c.phone) : ''), online: c.is_online })),
-      deliveries: activeDlv,
+      couriers: co.map(c => ({ lat: c.lat, lng: c.lng, name: (c.name || 'Livreur') + (c.phone ? (' · ' + c.phone) : ''), online: c.is_online })),
+      deliveries: dlv,
     });
-  }, [onlineCo, activeDlv, tab]);
+  }, [onlineCo, activeDlv, tab, mapFilter]);
   const waveNum = NEXUS_CONFIG?.payments?.wave?.number || '77XXXXXXX';
   const omNum   = NEXUS_CONFIG?.payments?.om?.number   || '77XXXXXXX';
 
@@ -22618,11 +22628,15 @@ const AdminLivraisonPanel = ({ addToast }) => {
         E('button',{className:'btn btn-secondary btn-sm',onClick:loadOnline},E('i',{className:'fas fa-sync-alt'}),' Actualiser')),
       E('div',{style:{display:'flex',gap:'1rem',flexWrap:'wrap',fontSize:'.72rem',color:'var(--text-secondary)',marginBottom:'.6rem'}},
         E('span',null,'🔵 Livreur en ligne'),E('span',null,'⚪ Hors ligne'),E('span',null,'🟢 Retrait'),E('span',null,'🔴 Livraison')),
+      // Filtre (carte + liste)
+      E('div',{style:{display:'flex',gap:'.4rem',flexWrap:'wrap',marginBottom:'.6rem'}},
+        [['all','Tous'],['online','🟢 En ligne'],['busy','🟠 En course'],['offline','⚪ Hors ligne']].map(f=>
+          E('button',{key:f[0],onClick:()=>setMapFilter(f[0]),style:{padding:'.3rem .7rem',borderRadius:99,border:'1px solid var(--border)',cursor:'pointer',fontSize:'.78rem',fontWeight:mapFilter===f[0]?700:400,background:mapFilter===f[0]?'var(--primary)':'#fff',color:mapFilter===f[0]?'#fff':'var(--text-primary)'}},f[1]))),
       E('div',{ref:mapRef,className:'nexus-map tall',style:{marginBottom:'1rem'}}),
-      onlineCo.length===0
-        ? E('div',{className:'empty-state'},E('i',{className:'fas fa-motorcycle'}),E('p',null,'Aucun livreur en ligne géolocalisé pour le moment.'))
+      onlineCo.filter(_matchFilter).length===0
+        ? E('div',{className:'empty-state'},E('i',{className:'fas fa-motorcycle'}),E('p',null,'Aucun livreur dans ce filtre.'))
         : E('div',{style:{display:'flex',flexDirection:'column',gap:'.5rem'}},
-            onlineCo.map(c=>{
+            onlineCo.filter(_matchFilter).map(c=>{
               const mins = c.location_updated_at ? Math.round((Date.now()-new Date(c.location_updated_at).getTime())/60000) : null;
               return E('div',{key:c.courier_id,style:{display:'flex',justifyContent:'space-between',alignItems:'center',border:'0.5px solid var(--border)',borderRadius:10,padding:'.6rem .8rem',flexWrap:'wrap',gap:'.4rem'}},
                 E('div',null,
