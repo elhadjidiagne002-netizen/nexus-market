@@ -22760,8 +22760,8 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     try { return storage.get('nexus_admin_promos') || [
       { cls: 'green', deco: '🛵', label: 'Nouveau', title: 'Coursier à\nla demande', cta: 'Commander', active: true, action: 'nexus:open-courier' },
       { cls: 'yellow', deco: '🐑', label: 'NEXUS Élevage', title: 'Moutons\n& Bétail', cta: 'Découvrir', active: true, action: 'nexus:open-local-elevage' },
-      { cls: 'red', deco: '🏪', label: 'Opportunité', title: 'Devenez\nVendeur', cta: 'Commencer', active: true },
-      { cls: 'blue', deco: '📱', label: 'Paiement Mobile', title: 'Orange Money\n& Wave', cta: 'En savoir plus', active: true },
+      { cls: 'red', deco: '🏪', label: 'Opportunité', title: 'Devenez\nVendeur', cta: 'Commencer', active: true, nav: 'register-vendor' },
+      { cls: 'blue', deco: '📱', label: 'Paiement Mobile', title: 'Orange Money\n& Wave', cta: 'En savoir plus', active: true, nav: 'login-buyer' },
     ]; } catch(e) { return []; }
   });
   const [adminHpTab, setAdminHpTab] = React.useState('banners');
@@ -30374,6 +30374,27 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     return _DEFAULT_BANNERS;
   })();
 
+  // Bannières promo (grille) : elles aussi mettent en avant les FONCTIONNALITÉS
+  // PHARE. `action` → ouvre la feature ; sinon `nav` → navigation interne.
+  // L'admin régule via « Page d'accueil » (override nexus_admin_promos).
+  const _DEFAULT_PROMOS = [
+    { cls: 'green',  deco: '🛵', label: 'Nouveau',         title: 'Coursier à\nla demande', cta: 'Commander',     action: 'nexus:open-courier' },
+    { cls: 'yellow', deco: '🐑', label: 'NEXUS Élevage',   title: 'Moutons\n& Bétail',      cta: 'Découvrir',     action: 'nexus:open-local-elevage' },
+    { cls: 'red',    deco: '🏪', label: 'Opportunité',     title: 'Devenez\nVendeur',       cta: 'Commencer',     nav: 'register-vendor' },
+    { cls: 'blue',   deco: '📱', label: 'Paiement Mobile', title: 'Orange Money\n& Wave',   cta: 'En savoir plus', nav: 'login-buyer' },
+  ];
+  const PROMOS = (function () {
+    try { var s = storage.get('nexus_admin_promos'); if (Array.isArray(s) && s.length) { var f = s.filter(function (p) { return p && p.active !== false; }); if (f.length) return f; } } catch (e) {}
+    return _DEFAULT_PROMOS;
+  })();
+  const onPromoClick = function (p) {
+    if (p.action) { try { window.dispatchEvent(new CustomEvent(p.action)); } catch (e) {} return; }
+    if (p.nav === 'register-vendor') { onRegisterClick('vendor'); return; }
+    if (p.nav === 'sort-price') { setFilterCategory('all'); setSortBy('price-asc'); return; }
+    if (p.nav === 'sort-rating') { setSortBy('rating'); setFilterCategory('all'); return; }
+    onLoginClick('buyer');
+  };
+
   const CAT_ICONS = {
     // Électronique
     'Téléphones': '📱', 'Ordinateurs': '💻', 'Électronique': '🔌', 'Appareils photo': '📸',
@@ -30845,30 +30866,12 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     // ── PROMO BANNERS ──
     React.createElement('div', { className: 'home-section' },
       React.createElement('div', { className: 'promo-banners' },
-        React.createElement('div', { className: 'promo-banner green', onClick: () => onRegisterClick('vendor') },
-          React.createElement('div', { className: 'promo-banner-deco' }, '🏪'),
-          React.createElement('div', { className: 'promo-banner-label' }, 'Opportunité'),
-          React.createElement('div', { className: 'promo-banner-title' }, 'Devenez\nVendeur'),
-          React.createElement('div', { className: 'promo-banner-cta' }, 'Commencer maintenant ', React.createElement('i', { className: 'fas fa-arrow-right' }))
-        ),
-        React.createElement('div', { className: 'promo-banner yellow', onClick: () => { setFilterCategory('all'); setSortBy('price-asc'); } },
-          React.createElement('div', { className: 'promo-banner-deco' }, '💰'),
-          React.createElement('div', { className: 'promo-banner-label' }, 'Bons Plans'),
-          React.createElement('div', { className: 'promo-banner-title' }, 'Prix\nImbattables'),
-          React.createElement('div', { className: 'promo-banner-cta' }, 'Voir les offres ', React.createElement('i', { className: 'fas fa-arrow-right' }))
-        ),
-        React.createElement('div', { className: 'promo-banner red', onClick: () => { setSortBy('rating'); setFilterCategory('all'); } },
-          React.createElement('div', { className: 'promo-banner-deco' }, '⭐'),
-          React.createElement('div', { className: 'promo-banner-label' }, 'Sélection'),
-          React.createElement('div', { className: 'promo-banner-title' }, 'Top Produits\nNotés'),
-          React.createElement('div', { className: 'promo-banner-cta' }, 'Découvrir ', React.createElement('i', { className: 'fas fa-arrow-right' }))
-        ),
-        React.createElement('div', { className: 'promo-banner blue', onClick: () => onLoginClick('buyer') },
-          React.createElement('div', { className: 'promo-banner-deco' }, '📱'),
-          React.createElement('div', { className: 'promo-banner-label' }, 'Paiement Mobile'),
-          React.createElement('div', { className: 'promo-banner-title' }, 'Orange Money\n& Wave'),
-          React.createElement('div', { className: 'promo-banner-cta' }, 'En savoir plus ', React.createElement('i', { className: 'fas fa-arrow-right' }))
-        )
+        PROMOS.map((p, i) => React.createElement('div', { key: i, className: `promo-banner ${p.cls || 'green'}`, onClick: () => onPromoClick(p) },
+          React.createElement('div', { className: 'promo-banner-deco' }, p.deco),
+          React.createElement('div', { className: 'promo-banner-label' }, p.label),
+          React.createElement('div', { className: 'promo-banner-title', style: { whiteSpace: 'pre-line' } }, p.title),
+          React.createElement('div', { className: 'promo-banner-cta' }, (p.cta || 'Découvrir') + ' ', React.createElement('i', { className: 'fas fa-arrow-right' }))
+        ))
       )
     ),
 
