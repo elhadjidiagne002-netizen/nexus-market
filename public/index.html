@@ -22511,6 +22511,29 @@ const AdminLivraisonPanel = ({ addToast }) => {
           E('div',{style:{fontWeight:700,fontSize:'1.05rem',marginTop:'.2rem'}}),s.v
         ))
       ),
+      (function(){
+        const _today = deliveries.filter(d=>d.created_at && new Date(d.created_at).toDateString()===new Date().toDateString());
+        const _done = deliveries.filter(d=>d.status==='delivered');
+        const _times = _done.filter(d=>d.assigned_at&&d.delivered_at).map(d=>(new Date(d.delivered_at)-new Date(d.assigned_at))/60000).filter(x=>x>0&&x<600);
+        const _avg = _times.length ? Math.round(_times.reduce((a,b)=>a+b,0)/_times.length) : null;
+        const _rate = deliveries.length ? Math.round(_done.length/deliveries.length*100) : 0;
+        const _top = couriers.slice().sort((a,b)=>(b.deliveries_done||0)-(a.deliveries_done||0)).filter(c=>(c.deliveries_done||0)>0).slice(0,3);
+        return E('div',null,
+          E('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'.65rem',marginBottom:'1.25rem'}},
+            [
+              {l:'Courses aujourd’hui',v:_today.length,c:'#0ea5e9'},
+              {l:'Temps moyen livraison',v:_avg!=null?(_avg+' min'):'—',c:'#f59e0b'},
+              {l:'Taux de livraison',v:_rate+'%',c:'#16a34a'},
+            ].map((s,i)=>E('div',{key:i,style:{background:'var(--bg-light)',borderRadius:10,padding:'.85rem 1rem',borderLeft:'3px solid '+s.c}},
+              E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)',textTransform:'uppercase'}}),s.l,
+              E('div',{style:{fontWeight:700,fontSize:'1.05rem',marginTop:'.2rem'}}),s.v))),
+          _top.length>0 && E('div',{style:{marginBottom:'1.25rem'}},
+            E('h4',{style:{fontWeight:600,marginBottom:'.5rem'}},'🏆 Top coursiers'),
+            E('div',{style:{display:'flex',flexDirection:'column',gap:'.35rem'}},
+              _top.map((co,i)=>E('div',{key:co.id,style:{display:'flex',justifyContent:'space-between',background:'var(--bg-light)',borderRadius:8,padding:'.5rem .8rem',fontSize:'.83rem'}},
+                E('span',null,(['🥇','🥈','🥉'][i]||'')+' ',co.name||'—'),
+                E('span',{style:{color:'var(--text-secondary)'}},(co.deliveries_done||0)+' livr. · '+FCFA(co.total_earned||0)+' · ⭐ '+Number(co.rating_avg||5).toFixed(1)))))));
+      })(),
       E('h4',{style:{fontWeight:600,marginBottom:'.75rem'}},'Livraisons récentes'),
       E('div',{className:'table-wrapper'},
         E('table',{className:'data-table'},
@@ -38067,17 +38090,24 @@ window.addEventListener('unhandledrejection', function(event) {
     var _loc = React.useState(''), locating = _loc[0], setLocating = _loc[1]; // 'pickup'|'dropoff'|''
     var _nb = React.useState(null), nearby = _nb[0], setNearby = _nb[1];      // coursiers proches du retrait
     var _live = React.useState(null), live = _live[0], setLive = _live[1];    // état live de la course créée
+    var _cc = React.useState(null), courierCard = _cc[0], setCourierCard = _cc[1]; // fiche coursier assigné
 
     // Suivi temps réel : tant que la course cherche un coursier, on fait avancer
     // la cascade (timeouts) et on détecte l'attribution.
     React.useEffect(function () {
       if (!result || !result.id) return;
-      var stop = false;
+      var stop = false, fetchedCard = false;
       function poll() {
         if (stop) return;
         DataService.getDelivery(result.id).then(function (d) {
           if (!d) return; setLive(d);
           if (d.status === 'searching') DataService.dispatchTick(result.id);
+          // Coursier attribué → récupérer sa fiche (nom + note) une fois.
+          if (d.courier_id && !fetchedCard && DataService._sb) {
+            fetchedCard = true;
+            DataService._sb.rpc('delivery_courier_card', { p_delivery_id: result.id })
+              .then(function (r) { if (r && r.data && r.data.assigned) setCourierCard(r.data); }).catch(function () {});
+          }
         });
       }
       poll(); var iv = setInterval(poll, 12000);
@@ -38208,6 +38238,14 @@ window.addEventListener('unhandledrejection', function(event) {
                 : 'Le coursier le plus proche est sollicité. S\'il refuse, on passe automatiquement au suivant.'),
             // Carte de suivi temps réel (Leaflet/OSM, gratuit)
             E('div', { ref: mapMount, className: 'nexus-map', style: { height: 240, marginBottom: '.9rem' } }),
+            // Fiche du coursier assigné (nom + réputation + contact)
+            courierCard && courierCard.assigned && E('div', { style: { background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '.7rem .85rem', marginBottom: '.9rem', display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left' } },
+              E('div', { style: { width: 40, height: 40, borderRadius: '50%', background: '#00853E', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 } }, (courierCard.name || '?')[0].toUpperCase()),
+              E('div', { style: { flex: 1 } },
+                E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🛵 ', courierCard.name || 'Coursier'),
+                E('div', { style: { fontSize: '.76rem', color: '#666' } }, '⭐ ', Number(courierCard.rating_avg || 5).toFixed(1), ' · ', (courierCard.deliveries_done || 0), ' livraisons · ', ({ moto: '🛵', 'vélo': '🚲', voiture: '🚗', pied: '🚶' }[courierCard.vehicle_type] || ''))),
+              courierCard.phone && E('a', { href: 'tel:' + courierCard.phone, className: 'btn btn-sm', style: { background: '#00853E', color: '#fff' } }, '📞'),
+              courierCard.phone && E('a', { href: 'https://wa.me/' + String(courierCard.phone).replace(/\D/g, ''), target: '_blank', rel: 'noopener', className: 'btn btn-sm', style: { background: '#25D366', color: '#fff' } }, '💬')),
             E('div', { style: { background: '#f5f5f5', borderRadius: 10, padding: '.8rem', fontSize: '.8rem', textAlign: 'left', marginBottom: '.9rem' } },
               E('div', null, '📍 ', pLab, ' → 🏁 ', dLab),
               E('div', { style: { marginTop: '.3rem', fontWeight: 700, color: '#00853E' } }, quote.fee + ' FCFA · ' + quote.distanceKm + ' km · ⏱️ ~' + etaMin(quote.distanceKm) + ' min')),
@@ -38399,7 +38437,9 @@ window.addEventListener('unhandledrejection', function(event) {
     var _b = React.useState(false), busy = _b[0], setBusy = _b[1];
     var _pos = React.useState(null), pos = _pos[0], setPos = _pos[1];
     var _op = React.useState([]), openJobs = _op[0], setOpenJobs = _op[1]; // courses ouvertes à saisir
-    var _ea = React.useState(null), earned = _ea[0], setEarned = _ea[1];   // {total_earned, deliveries_done}
+    var _ea = React.useState(null), earned = _ea[0], setEarned = _ea[1];   // {id,total_earned, deliveries_done}
+    var _eh = React.useState([]), earnHist = _eh[0], setEarnHist = _eh[1];  // historique courier_earnings
+    var _se = React.useState(false), showEarn = _se[0], setShowEarn = _se[1];
 
     var user = props.user || {};
     var userId = user.id;                                   // = profiles.id = auth.uid()
@@ -38442,7 +38482,15 @@ window.addEventListener('unhandledrejection', function(event) {
     }
 
     function loadEarnings() {
-      try { if (DataService._sb) DataService._sb.from('couriers').select('total_earned,deliveries_done,rating_avg').eq('user_id', userId).maybeSingle().then(function (r) { if (r && r.data) setEarned(r.data); }); } catch (e) {}
+      try {
+        if (!DataService._sb) return;
+        DataService._sb.from('couriers').select('id,total_earned,deliveries_done,rating_avg').eq('user_id', userId).maybeSingle().then(function (r) {
+          if (!r || !r.data) return;
+          setEarned(r.data);
+          DataService._sb.from('courier_earnings').select('id,amount,type,status,created_at,paid_at').eq('courier_id', r.data.id).order('created_at', { ascending: false }).limit(50)
+            .then(function (h) { if (h && h.data) setEarnHist(h.data); }).catch(function () {});
+        });
+      } catch (e) {}
     }
 
     React.useEffect(function () {
@@ -38556,7 +38604,7 @@ window.addEventListener('unhandledrejection', function(event) {
           E('div', null,
             E('div', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem' } }, 'Espace Coursier'),
             E('div', { style: { color: '#9ca3af', fontSize: '.72rem' } }, user.name || 'Coursier'),
-            earned && E('div', { style: { color: '#FDEE42', fontSize: '.74rem', fontWeight: 700, marginTop: 2 } }, '💰 ' + Math.round(earned.total_earned || 0).toLocaleString('fr-FR') + ' F · ' + (earned.deliveries_done || 0) + ' livr. · ⭐ ' + Number(earned.rating_avg || 5).toFixed(1))),
+            earned && E('div', { onClick: function () { setShowEarn(function (v) { return !v; }); }, title: 'Voir mes gains', style: { color: '#FDEE42', fontSize: '.74rem', fontWeight: 700, marginTop: 2, cursor: 'pointer' } }, '💰 ' + Math.round(earned.total_earned || 0).toLocaleString('fr-FR') + ' F · ' + (earned.deliveries_done || 0) + ' livr. · ⭐ ' + Number(earned.rating_avg || 5).toFixed(1) + ' ▾')),
           E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer' } }, '×')),
 
         // Bandeau disponibilité
@@ -38568,6 +38616,21 @@ window.addEventListener('unhandledrejection', function(event) {
           E('button', { onClick: online ? goOffline : goOnline, disabled: busy, style: { padding: '.5rem 1rem', borderRadius: 20, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '.8rem', background: online ? '#fee2e2' : '#16a34a', color: online ? '#b91c1c' : '#fff' } },
             busy ? '…' : (online ? 'Passer hors ligne' : 'Passer en ligne')),
           E('button', { onClick: enableNotifs, title: 'Activer les notifications', 'aria-label': 'Activer les notifications', style: { marginLeft: 8, width: 38, height: 38, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#1d4ed8', color: '#fff', fontSize: '1.05rem' } }, '🔔')),
+
+        // ── Mes gains (repliable) ─────────────────────────────────────────────
+        showEarn && E('div', { style: { padding: '.85rem 1.25rem', background: '#fffbea', borderBottom: '1px solid #f0f0f0' } },
+          E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.5rem' } },
+            E('div', { style: { fontWeight: 700, fontSize: '.85rem' } }, '💰 Mes gains'),
+            (function () { var pend = earnHist.filter(function (e) { return e.status !== 'paid'; }).reduce(function (s, e) { return s + (e.amount || 0); }, 0); return E('span', { style: { fontSize: '.78rem', color: '#b45309', fontWeight: 700 } }, 'En attente : ' + Math.round(pend).toLocaleString('fr-FR') + ' F'); })()),
+          earnHist.length === 0
+            ? E('div', { style: { fontSize: '.8rem', color: '#999' } }, 'Aucun gain pour le moment.')
+            : E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.2rem', maxHeight: 200, overflowY: 'auto' } },
+                earnHist.map(function (e) {
+                  return E('div', { key: e.id, style: { display: 'flex', justifyContent: 'space-between', fontSize: '.78rem', padding: '.3rem 0', borderBottom: '0.5px solid #f0f0f0' } },
+                    E('span', null, new Date(e.created_at).toLocaleDateString('fr-FR'), ' · ', (e.type === 'delivery' ? '🚚 Livraison' : e.type)),
+                    E('span', { style: { fontWeight: 700 } }, fcfa(e.amount), ' ', e.status === 'paid' ? '✅' : '⏳'));
+                })),
+          E('div', { style: { fontSize: '.7rem', color: '#999', marginTop: '.4rem' } }, 'L\'admin vous paie par Wave ou Orange Money.')),
 
         // Course active
         active.length > 0 && E('div', { style: { padding: '1rem 1.25rem', background: '#f0fdf4' } },
