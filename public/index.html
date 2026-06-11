@@ -25728,10 +25728,15 @@ CREATE POLICY "Service role only" ON invoice_sequences
             React.createElement("div", { style: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#c2c9d6", fontSize: "0.72rem", fontWeight: 700 } }, "Aper\xe7u live"),
             ['top-left', 'top-right', 'bottom-left', 'bottom-right'].map(function (corner) {
               return _byCorner[corner].map(function (w, i) {
+                var wc = cfg[w.key] || {};
+                var oy = (typeof wc.offY === "number") ? wc.offY : 0;
+                var ox = (typeof wc.offX === "number") ? wc.offX : 1;
                 var s = { position: "absolute", width: 28, height: 28, borderRadius: "50%", background: "#fff", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, boxShadow: "0 2px 6px rgba(0,0,0,.18)", zIndex: 2 };
-                var off = 10 + i * 34;
+                // échelle ~6 px / rem pour rester dans le mini-écran
+                var off = Math.min(238, 10 + i * 34 + oy * 6);
+                var edge = Math.min(110, 8 + (ox - 1) * 6);
                 if (corner.indexOf("bottom") === 0) s.bottom = off; else s.top = off + 6;
-                if (corner.indexOf("right") >= 0) s.right = 8; else s.left = 8;
+                if (corner.indexOf("right") >= 0) s.right = edge; else s.left = edge;
                 return React.createElement("div", { key: corner + i, title: w.label, style: s }, _emoji(w));
               });
             })
@@ -25747,7 +25752,13 @@ CREATE POLICY "Service role only" ON invoice_sequences
                   React.createElement("input", { type: "checkbox", checked: c.enabled !== false, onChange: function (e) { setW(w.key, { enabled: e.target.checked }); } }),
                   "Affich\u00e9"),
                 React.createElement("select", { className: "form-select", value: c.corner, disabled: c.enabled === false, style: { flex: "0 0 auto", padding: "0.35rem 0.5rem", fontSize: "0.82rem" }, onChange: function (e) { setW(w.key, { corner: e.target.value }); } },
-                  CORNERS.map(function (o) { return React.createElement("option", { key: o[0], value: o[0] }, o[1]); }))
+                  CORNERS.map(function (o) { return React.createElement("option", { key: o[0], value: o[0] }, o[1]); })),
+                React.createElement("label", { style: { display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--text-secondary)" }, title: "Décalage horizontal depuis le bord (rem)" },
+                  "↔",
+                  React.createElement("input", { type: "number", step: "0.5", min: "0", max: "20", value: (typeof c.offX === "number" ? c.offX : 1), disabled: c.enabled === false, style: { width: 52, padding: "0.25rem 0.35rem", fontSize: "0.78rem", border: "1px solid var(--border)", borderRadius: 6 }, onChange: function (e) { setW(w.key, { offX: parseFloat(e.target.value) || 0 }); } })),
+                React.createElement("label", { style: { display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--text-secondary)" }, title: "Décalage vertical additionnel (rem)" },
+                  "↕",
+                  React.createElement("input", { type: "number", step: "0.5", min: "0", max: "30", value: (typeof c.offY === "number" ? c.offY : 0), disabled: c.enabled === false, style: { width: 52, padding: "0.25rem 0.35rem", fontSize: "0.78rem", border: "1px solid var(--border)", borderRadius: 6 }, onChange: function (e) { setW(w.key, { offY: parseFloat(e.target.value) || 0 }); } }))
               );
             }),
             React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.4rem" } },
@@ -42144,7 +42155,7 @@ window.addEventListener('unhandledrejection', function(event) {
     { key: 'stories',     sel: '.floating-offer',          label: '🎬 Stories',     corner: 'bottom-right' },
   ];
   var LS_KEY = 'nexus_widget_layout';
-  function defaults() { var o = {}; REGISTRY.forEach(function (w) { o[w.key] = { enabled: true, corner: w.corner }; }); return o; }
+  function defaults() { var o = {}; REGISTRY.forEach(function (w) { o[w.key] = { enabled: true, corner: w.corner, offX: 1, offY: 0 }; }); return o; }
   function merged(cfg) { var d = defaults(); cfg = cfg || {}; Object.keys(d).forEach(function (k) { if (cfg[k]) d[k] = Object.assign({}, d[k], cfg[k]); }); return d; }
   function cached() { try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; } }
 
@@ -42160,10 +42171,14 @@ window.addEventListener('unhandledrejection', function(event) {
     var BASE = 5, STEP = 4.2; // rem (empilement dans un même coin)
     Object.keys(groups).forEach(function (corner) {
       groups[corner].forEach(function (w, i) {
-        var off = (BASE + i * STEP).toFixed(1) + 'rem';
+        var wc = cfg[w.key] || {};
+        var oy = (typeof wc.offY === 'number') ? wc.offY : 0;
+        var ox = (typeof wc.offX === 'number') ? wc.offX : 1;
+        var off = (BASE + i * STEP + oy).toFixed(2) + 'rem';
+        var edge = ox.toFixed(2) + 'rem';
         var r = 'position:fixed !important;z-index:9979 !important;';
         r += (corner.indexOf('bottom') === 0) ? ('bottom:' + off + ' !important;top:auto !important;') : ('top:' + off + ' !important;bottom:auto !important;');
-        r += (corner.indexOf('right') >= 0) ? 'right:1rem !important;left:auto !important;' : 'left:1rem !important;right:auto !important;';
+        r += (corner.indexOf('right') >= 0) ? ('right:' + edge + ' !important;left:auto !important;') : ('left:' + edge + ' !important;right:auto !important;');
         css += w.sel + '{' + r + '}';
       });
     });
