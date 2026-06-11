@@ -13413,7 +13413,7 @@ const NEXUS_MENU_CATS = [
   ['Mode & Vêtements', 'mode'], ['Maison & Déco', 'maison'], ['Beauté & Santé', 'beaute'],
   ['Sport & Loisirs', 'sport'], ['Alimentation', 'alimentation'], ['Auto & Moto', 'auto'], ['Services', 'services'],
 ];
-const NexusMegaMenu = ({ user }) => {
+const NexusMegaMenu = ({ user, inDashboard }) => {
   const [open, setOpen] = React.useState(false);
   const [q, setQ] = React.useState('');
   const [topPx, setTopPx] = React.useState(72);
@@ -13436,7 +13436,11 @@ const NexusMegaMenu = ({ user }) => {
     E('span', { style: { width: 20, textAlign: 'center', flexShrink: 0 } }, icon || '•'), label);
 
   return E(React.Fragment, null,
-    E('button', {
+    // [UI] Un SEUL hamburger : le fab du méga-menu n'apparaît PAS dans les
+    // tableaux de bord (qui ont déjà leur propre bouton menu/sidebar) → évite
+    // les 2-3 « ☰ » qui se chevauchaient sur mobile. Le tiroir reste ouvrable
+    // partout via l'événement nexus:open-menu.
+    !inDashboard && E('button', {
       onClick: () => setOpen(true), 'aria-label': 'Menu', title: 'Menu', className: 'nexus-menu-fab',
       style: { position: 'fixed', top: topPx, left: 10, zIndex: 9986, width: 46, height: 46, borderRadius: 12, background: 'var(--primary)', color: 'var(--white,#fff)', border: '2px solid var(--accent)', boxShadow: '0 6px 16px var(--shadow-lg,rgba(0,0,0,.22))', cursor: 'pointer', fontSize: 21, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }
     }, '☰'),
@@ -13456,9 +13460,13 @@ const NexusMegaMenu = ({ user }) => {
           item('Accueil', () => go('/'), '🏠'),
           item('Toutes les catégories', () => go('/#/'), '🗂️')
         )),
-        sec('Nouveautés NEXUS', E(React.Fragment, null,
+        sec('Services NEXUS', E(React.Fragment, null,
+          item('Coursier à la demande', () => emit('nexus:open-courier'), '🛵'),
+          item('NEXUS Élevage & produits locaux', () => emit('nexus:open-local-elevage'), '🐑'),
+          item('Louma — le marché en ligne', () => emit('nexus:open-louma'), '🏪'),
           item('NEXUS Troc — échanger sans argent', () => emit('nexus:open-troc'), '🔄'),
-          item('NEXUS Stories — vidéos produit', () => emit('nexus:open-stories'), '🎬')
+          item('NEXUS Stories — vidéos produit', () => emit('nexus:open-stories'), '🎬'),
+          item('Tutoriels', () => emit('nexus:open-tutorials'), '🎓')
         )),
         sec('Catégories', NEXUS_MENU_CATS.map(([label, slug]) => item(label, () => go('/categorie/' + slug), '›'))),
         sec('Vendre & gagner', E(React.Fragment, null,
@@ -13468,6 +13476,8 @@ const NexusMegaMenu = ({ user }) => {
         )),
         sec('Mon compte', E(React.Fragment, null,
           (user && user.id) ? item('Mon tableau de bord', () => go('/'), '📊') : item('Se connecter / S’inscrire', () => emit('nexus:open-login'), '👤'),
+          (user && user.id) && item('Mes livraisons', () => emit('nexus:open-my-deliveries'), '📦'),
+          (user && user.id) && item('Messagerie', () => emit('nexus:open-messaging'), '💬'),
           item('Mon panier', () => emit('nexus:open-cart'), '🛒'),
           item('Mes favoris', () => emit('nexus:open-wishlist'), '❤️'),
           (user && user.id) && item('Se déconnecter', () => emit('nexus:logout'), '🚪')
@@ -34743,7 +34753,7 @@ const App = ({ onUserChange }) => {
       sidebarOpen,
       onToggleSidebar: toggleSidebar
     }
-  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusMegaMenu, { user: currentUser2 }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusMegaMenu, { user: currentUser2, inDashboard: !!(currentUser2 && !showPublicHome) }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
