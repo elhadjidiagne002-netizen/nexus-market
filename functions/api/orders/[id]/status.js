@@ -38,10 +38,18 @@ async function handleUpdateStatus(context) {
     return json({ error: `Statut invalide. Valeurs : ${VALID.join(', ')}` }, 400);
   }
 
-  // [FIX] Seuls status et updated_at existent dans le schéma orders.
-  // Les colonnes delivered_at / cancelled_at / processing_at / in_transit_at
-  // n'existent pas → Supabase rejette avec 400 "column not found in schema cache".
-  const updates = { status, updated_at: new Date().toISOString() };
+  // [SCHÉMA] Les colonnes *_at existent bien (vérifié sur le backup 2026-06-10 :
+  // processing_at, in_transit_at, delivered_at, cancelled_at).
+  const now = new Date().toISOString();
+  const updates = { status, updated_at: now };
+  const _stampCol = { processing: 'processing_at', in_transit: 'in_transit_at', delivered: 'delivered_at', cancelled: 'cancelled_at' }[status];
+  if (_stampCol) updates[_stampCol] = now;
+
+  // [FIX PAIEMENT] Filet de sécurité : une commande LIVRÉE est forcément payée
+  // (paiement mobile money / carte encaissé, ou espèces remises à la livraison).
+  // Évite que des commandes livrées restent payment_status='pending' lorsque le
+  // webhook Stripe / IPN PayTech n'a pas marqué le paiement (mauvaise config, COD…).
+  if (status === 'delivered') updates.payment_status = 'paid';
 
   try {
     const ctrl = new AbortController();
