@@ -21967,7 +21967,7 @@ const CourierApp = ({ currentUser, addToast }) => {
   const E = React.createElement;
   const sb = DataService._sb;
   const [courier, setCourier]   = React.useState(null);
-  const [tab, setTab]           = React.useState('available');
+  const [tab, setTab]           = React.useState('dispatch');
   const [jobs, setJobs]         = React.useState([]);
   const [myJobs, setMyJobs]     = React.useState([]);
   const [earnings, setEarnings] = React.useState([]);
@@ -22110,6 +22110,7 @@ const CourierApp = ({ currentUser, addToast }) => {
     // Onglets
     E('div', { style:{ display:'flex', gap:'.35rem', marginBottom:'1rem', overflowX:'auto' } },
       [
+        { id:'dispatch',  label:'🛵 Mes courses' },
         { id:'available', label:'📋 Missions dispo', count:jobs.length },
         { id:'my',        label:'🚛 Mes livraisons',  count:myJobs.length },
         { id:'earnings',  label:'💰 Gains' },
@@ -22120,6 +22121,13 @@ const CourierApp = ({ currentUser, addToast }) => {
         color:tab===t.id?'#fff':'var(--text-secondary)'
       }}, t.label, t.count>0&&E('span',{style:{marginLeft:'.3rem',background:'rgba(255,255,255,.25)',borderRadius:99,padding:'0 5px',fontSize:'.7rem'}},t.count)))
     ),
+
+    // ── Mes courses (dispatch temps réel : offres + courses en cours) ─────
+    tab==='dispatch' && (window.NexusCourierDashboard
+      ? E(window.NexusCourierDashboard, { user: currentUser, embedded: true })
+      : E('div', { style:{ textAlign:'center', padding:'2rem', color:'var(--text-secondary)' } },
+          E('i', { className:'fas fa-spinner fa-spin', style:{ fontSize:'1.6rem' } }),
+          E('div', { style:{ marginTop:'.6rem', fontSize:'.85rem' } }, 'Chargement de l’espace courses…'))),
 
     // ── Missions disponibles ──────────────────────────────────────────────
     tab==='available' && (jobs.length===0
@@ -39278,11 +39286,14 @@ window.addEventListener('unhandledrejection', function(event) {
       DataService.advanceDelivery(dl.id, next).then(function () { setBusy(false); refresh(); if (next === 'delivered') loadEarnings(); });
     }
 
-    var overlay = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 10000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' };
-    var card = { background: '#fff', borderRadius: 16, maxWidth: 460, width: '100%', marginTop: '2vh', marginBottom: '2vh' };
+    // [UI] Mode « embedded » : rendu comme onglet du tableau de bord coursier
+    // (pas d'overlay plein écran, pas de bouton fermer).
+    var embedded = !!props.embedded;
+    var overlay = embedded ? {} : { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 10000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' };
+    var card = embedded ? { background: '#fff', borderRadius: 16, width: '100%', maxWidth: 560, margin: '0 auto' } : { background: '#fff', borderRadius: 16, maxWidth: 460, width: '100%', marginTop: '2vh', marginBottom: '2vh' };
     var sect = { padding: '0 1.25rem' };
 
-    return E('div', { style: overlay, onClick: props.onClose },
+    return E('div', { style: overlay, onClick: embedded ? undefined : props.onClose },
       E('div', { style: card, onClick: function (e) { e.stopPropagation(); } },
         // En-tête
         E('div', { style: { background: '#111', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 10, borderRadius: '16px 16px 0 0' } },
@@ -39291,7 +39302,7 @@ window.addEventListener('unhandledrejection', function(event) {
             E('div', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem' } }, 'Espace Coursier'),
             E('div', { style: { color: '#9ca3af', fontSize: '.72rem' } }, user.name || 'Coursier'),
             earned && E('div', { onClick: function () { setShowEarn(function (v) { return !v; }); }, title: 'Voir mes gains', style: { color: '#FDEE42', fontSize: '.74rem', fontWeight: 700, marginTop: 2, cursor: 'pointer' } }, '💰 ' + Math.round(earned.total_earned || 0).toLocaleString('fr-FR') + ' F · ' + (earned.deliveries_done || 0) + ' livr. · ⭐ ' + Number(earned.rating_avg || 5).toFixed(1) + ' ▾')),
-          E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer' } }, '×')),
+          !embedded && E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer' } }, '×')),
 
         // Bandeau disponibilité
         E('div', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '1rem 1.25rem', borderBottom: '1px solid #f0f0f0' } },
@@ -39421,32 +39432,21 @@ window.addEventListener('unhandledrejection', function(event) {
   });
   window.addEventListener('nexus:open-courier-dashboard', openDash);
 
-  // FAB coursier — visible uniquement si l'utilisateur est coursier
   function isCourier(u) { return !!(u && (u.is_courier || u.role === 'courier')); }
 
+  // [UI] « Mes courses » est désormais un ONGLET du tableau de bord coursier
+  // (composant exposé ci-dessous), plus un bouton flottant. toggleFab se contente
+  // de retirer l'ancien bouton flottant s'il existe et de gérer le FAB
+  // « Demander un coursier » (masqué pour les coursiers).
   function toggleFab() {
     var existing = document.getElementById('nexus-courier-dash-fab');
-    if (isCourier(currentUser)) {
-      if (!existing && document.body) {
-        var b = document.createElement('button');
-        b.id = 'nexus-courier-dash-fab';
-        b.innerHTML = '📦 Mes courses';
-        b.setAttribute('aria-label', 'Ouvrir l\'espace coursier');
-        // Placé AU-DESSUS du bouton accessibilité 🔊 (15rem) pour éviter le
-        // chevauchement avec le bouton « 🛵 Coursier » (10rem).
-        b.style.cssText = 'position:fixed;bottom:20rem;left:1.25rem;z-index:9978;padding:10px 16px;border-radius:30px;background:#111;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.3);font-family:inherit';
-        b.addEventListener('click', openDash);
-        document.body.appendChild(b);
-      }
-      // Cacher le FAB "Demander un coursier" pour un coursier (évite le chevauchement)
-      var ask = document.getElementById('nexus-courier-fab');
-      if (ask) ask.style.display = 'none';
-    } else if (existing) {
-      existing.remove();
-      var ask2 = document.getElementById('nexus-courier-fab');
-      if (ask2) ask2.style.display = '';
-    }
+    if (existing) existing.remove();
+    var ask = document.getElementById('nexus-courier-fab');
+    if (ask) ask.style.display = isCourier(currentUser) ? 'none' : '';
   }
+
+  // Exposé pour intégration en onglet dans CourierApp (rendu « embedded »).
+  try { window.NexusCourierDashboard = CourierDashboard; } catch (_) {}
 
   console.info('[NEXUS] Dashboard Coursier chargé ✅');
 })();
@@ -41293,7 +41293,6 @@ window.addEventListener('unhandledrejection', function(event) {
   try { if (localStorage.getItem(KEY)) return; } catch (e) {}
   var TIPS = [
     { id: 'nexus-courier-fab', text: '🛵 Commandez un coursier à la demande' },
-    { id: 'nexus-courier-dash-fab', text: '📦 Vos courses de livreur' },
     { id: 'nexus-public-chat-fab', text: '💬 Discutez avec la communauté' }
   ];
   var tries = 0;
@@ -42168,7 +42167,6 @@ window.addEventListener('unhandledrejection', function(event) {
   var REGISTRY = [
     { key: 'menu',        sel: '.nexus-menu-fab',          label: '☰ Menu',         corner: 'top-left' },
     { key: 'courier',     sel: '#nexus-courier-fab',       label: '🛵 Coursier',    corner: 'bottom-left' },
-    { key: 'courierDash', sel: '#nexus-courier-dash-fab',  label: '📦 Mes courses', corner: 'bottom-left' },
     { key: 'cart',        sel: '.floating-cart',           label: '🛒 Panier',      corner: 'bottom-right' },
     { key: 'troc',        sel: '.floating-wishlist',       label: '🔄 Troc',        corner: 'bottom-right' },
     { key: 'stories',     sel: '.floating-offer',          label: '🎬 Stories',     corner: 'bottom-right' },
