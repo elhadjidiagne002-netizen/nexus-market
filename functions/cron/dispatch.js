@@ -83,7 +83,7 @@ async function runDispatchTick(env, request) {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || '' },
             body: JSON.stringify({
               userId: n.user_id,
-              title:  '🛵 Nouvelle course NEXUS !',
+              title:  '🛵 Nouvelle course — 3 min pour accepter',
               body:   (n.pickup_label || 'Retrait') + ' → ' + (n.dropoff_label || 'Livraison')
                       + (n.courier_payout != null ? ' · ' + fcfa(n.courier_payout) : ''),
               url:    '/',
@@ -100,12 +100,12 @@ async function runDispatchTick(env, request) {
 }
 
 function buildMessage(n) {
-  // En mode attribution directe (n.assigned), la course EST déjà attribuée à ce
-  // coursier — pas de « premier qui accepte ». Sinon (legacy offre), invitation.
+  // Cascade 3 min : l'offre est réservée à CE coursier pendant 3 minutes puis
+  // passe au suivant le plus proche. (n.assigned = attribution manuelle admin.)
   const assigned = n && n.assigned;
   const parts = [assigned
     ? '🛵 *NEXUS — Une course vous a été attribuée !*'
-    : '🛵 *NEXUS — Nouvelle course disponible !*'];
+    : '🛵 *NEXUS — Nouvelle course pour vous !*'];
   if (n.distance_km != null) parts.push('📍 Retrait à ~' + Number(n.distance_km).toFixed(1) + ' km de vous');
   if (n.pickup_label)  parts.push('📦 Retrait : ' + n.pickup_label);
   if (n.dropoff_label) parts.push('🎯 Livraison : ' + n.dropoff_label);
@@ -114,7 +114,7 @@ function buildMessage(n) {
   else if (n.fee_fcfa != null)  parts.push('💰 Montant : ' + fcfa(n.fee_fcfa));
   parts.push('', assigned
     ? '👉 Ouvrez l\'app NEXUS → « Mes courses » pour démarrer et appeler le client.'
-    : '⚡ *Premier qui accepte remporte la course.*\n👉 Connectez-vous pour valider.');
+    : '⏱ *Vous avez 3 minutes pour accepter* — sinon la course passe au coursier suivant.\n👉 Connectez-vous pour valider.');
   return parts.join('\n');
 }
 

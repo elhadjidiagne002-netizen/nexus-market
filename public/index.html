@@ -5033,9 +5033,26 @@ const DataService = {
     // [FIX] id doit être un UUID valide pour Supabase (colonne uuid) — "notif_..." causait un 400
     const safeId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(16) + Math.random().toString(16).slice(2));
     const n = __spreadProps(__spreadValues({ id: safeId, user_id: userId }, notif), { read: false, created_at: (/* @__PURE__ */ new Date()).toISOString() });
-    // [FIX 403] Toujours passer par la CF Function /api/notifications (service_role contourne le RLS).
-    // L'URL relative fonctionne sur Cloudflare Pages même quand NEXUS_CONFIG.apiUrl est vide.
-    await this.apiFetch("/api/notifications", { method: "POST", body: JSON.stringify({ userId, ...notif }) }).catch(() => {});
+    // [FIX 404→PUSH] apiFetch() court-circuite (return null) quand apiUrl est vide
+    // (mode tout-Supabase verrouillé) → le POST ne partait JAMAIS. fetch RELATIF
+    // direct vers la CF Function /api/notifications : insert service_role (bypass
+    // RLS cross-user) + Web Push vers tous les appareils du destinataire.
+    try {
+      let _tk = null;
+      try { const { data: { session: _s } } = await this._sb.auth.getSession(); _tk = _s && _s.access_token; } catch (_) {}
+      const _res = await fetch("/api/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(_tk ? { Authorization: "Bearer " + _tk } : {}) },
+        body: JSON.stringify({ userId, ...notif }),
+      });
+      if (!_res.ok) throw new Error("HTTP " + _res.status);
+    } catch (_) {
+      // Repli localStorage (hors-ligne / non connecté) — visible sur cet appareil.
+      const all = storage.get("notifications") || {};
+      if (!all[userId]) all[userId] = [];
+      all[userId].unshift(n); all[userId] = all[userId].slice(0, 50);
+      storage.set("notifications", all);
+    }
     return n;
     if (this._sb) {
       // [FIX 401] Rafraîchir la session Supabase avant l'insert
@@ -39119,6 +39136,30 @@ window.addEventListener('unhandledrejection', function(event) {
 
   function fcfa(n) { return Math.round(n || 0).toLocaleString('fr-FR') + ' FCFA'; }
 
+  // ── Compte à rebours d'une offre (cascade 3 min) ──────────────────────────
+  // Affiche le temps restant avant que l'offre passe au coursier suivant.
+  function OfferCountdown(props) {
+    function calc() {
+      var ms = new Date(props.expiresAt).getTime() - Date.now();
+      return Math.max(0, Math.floor(ms / 1000));
+    }
+    var _t = React.useState(calc()), left = _t[0], setLeft = _t[1];
+    React.useEffect(function () {
+      if (!props.expiresAt) return;
+      var fired = false;
+      var iv = setInterval(function () {
+        var s = calc();
+        setLeft(s);
+        if (s <= 0 && !fired) { fired = true; clearInterval(iv); if (props.onExpire) props.onExpire(); }
+      }, 1000);
+      return function () { clearInterval(iv); };
+    }, [props.expiresAt]);
+    if (!props.expiresAt) return null;
+    var m = Math.floor(left / 60), s = left % 60;
+    return E('span', { style: { fontWeight: 800, fontSize: '.78rem', color: left <= 30 ? '#dc2626' : '#b45309' } },
+      '⏱ ' + m + ':' + (s < 10 ? '0' : '') + s);
+  }
+
   // ════════════════════════════════════════════════════════════════════════
   //  Dashboard coursier
   // ════════════════════════════════════════════════════════════════════════
@@ -39147,7 +39188,11 @@ window.addEventListener('unhandledrejection', function(event) {
         DataService.getCourierOffers(id),
         DataService.getMyCourierDeliveries(id)
       ]).then(function (res) {
-        setOffers(res[0] || []);
+        // Cascade 3 min : ne pas réafficher une offre déjà expirée (le cron ou
+        // dispatch_tick la fera passer au coursier suivant).
+        setOffers((res[0] || []).filter(function (o) {
+          return !o.expires_at || new Date(o.expires_at).getTime() > Date.now();
+        }));
         setActive(res[1] || []);
         setLoading(false);
       }).catch(function () { setLoading(false); });
@@ -39368,13 +39413,22 @@ window.addEventListener('unhandledrejection', function(event) {
 
           !online && E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1.5rem 0' } }, 'Passez en ligne pour recevoir des offres.'),
           online && !loading && offers.length === 0 && E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1.5rem 0' } }, 'Aucune offre pour le moment. Rafraîchissez dans un instant.'),
+          online && offers.length > 0 && E('div', { style: { fontSize: '.72rem', color: '#b45309', background: '#fffbeb', borderRadius: 8, padding: '.4rem .6rem', marginBottom: '.5rem' } },
+            '⏱ Vous avez 3 minutes pour accepter chaque offre — passé ce délai, elle est proposée au coursier suivant le plus proche.'),
 
           online && offers.map(function (of) {
             var dl = of.deliveries || {};
+            // Expiration (3 min sans réponse) : retire la carte et avance la
+            // cascade tout de suite (sans attendre le cron) vers le suivant.
+            var onExpire = function () {
+              setOffers(function (l) { return l.filter(function (x) { return x.id !== of.id; }); });
+              try { DataService.dispatchTick(of.delivery_id); } catch (e) {}
+            };
             return E('div', { key: of.id, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.9rem', marginBottom: '.6rem' } },
-              E('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '.3rem' } },
+              E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.3rem', gap: 8 } },
                 E('span', { style: { fontSize: '.72rem', background: '#eff6ff', color: '#1d4ed8', padding: '.15rem .5rem', borderRadius: 6, fontWeight: 600 } },
                   (of.distance_km != null ? of.distance_km + ' km' : '—') + ' du retrait'),
+                E(OfferCountdown, { expiresAt: of.expires_at, onExpire: onExpire }),
                 E('span', { style: { fontWeight: 700, color: '#16a34a' } }, fcfa(dl.courier_payout))),
               E('div', { style: { fontSize: '.78rem', color: '#555' } }, '📍 ', dl.pickup_label || dl.pickup_zone || '—'),
               E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.5rem' } }, '🏁 ', dl.dropoff_label || dl.dropoff_zone || '—'),
@@ -41092,12 +41146,14 @@ window.addEventListener('unhandledrejection', function(event) {
   }
 
   function buildMessage(dlv, courier){
-    // Attribution directe : la course EST déjà attribuée à ce coursier.
+    // Cascade 3 min : l'offre est réservée à CE coursier pendant 3 minutes,
+    // puis passe au suivant le plus proche. (assigned = attribution manuelle
+    // admin : la course est déjà à lui.)
     var assigned = (courier && courier.assigned) || (dlv && dlv.assigned_courier);
     var parts = [];
     parts.push(assigned
       ? "🛵 *NEXUS — Une course vous a été attribuée !*"
-      : "🛵 *NEXUS — Nouvelle course disponible !*");
+      : "🛵 *NEXUS — Nouvelle course pour vous !*");
     if(courier && courier.distance_km != null){
       parts.push("📍 Retrait à ~" + Number(courier.distance_km).toFixed(1) + " km de vous");
     }
@@ -41110,8 +41166,8 @@ window.addEventListener('unhandledrejection', function(event) {
     if(assigned){
       parts.push("👉 Ouvrez NEXUS → « Mes courses » pour démarrer et appeler le client : " + siteUrl());
     } else {
-      parts.push("⚡ *Premier qui accepte remporte la course.*");
-      parts.push("👉 Connectez-vous pour valider : " + siteUrl());
+      parts.push("⏱ *Vous avez 3 minutes pour accepter* — sinon la course passe au coursier suivant.");
+      parts.push("👉 Acceptez ici : " + siteUrl());
     }
     return parts.join("\n");
   }
@@ -41983,7 +42039,7 @@ window.addEventListener('unhandledrejection', function(event) {
   }
   function notify(of) {
     var dl = of.deliveries || {};
-    var title = '🛵 Nouvelle course NEXUS !';
+    var title = '🛵 Nouvelle course — 3 min pour accepter';
     var body = (dl.pickup_label || 'Retrait') + ' → ' + (dl.dropoff_label || 'Livraison')
       + (dl.courier_payout ? (' · ' + Number(dl.courier_payout).toLocaleString('fr-FR') + ' FCFA') : '');
     beep(); try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {}
@@ -42054,6 +42110,88 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULES SESSION & NOTIFS COURSIER ============== -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS — PUSH GLOBAL (tous les utilisateurs connectés, ordi + smartphone)
+     ──────────────────────────────────────────────────────────────────────────
+     Avant : seuls les coursiers s'abonnaient au Web Push. Désormais TOUT
+     utilisateur connecté est abonné → il reçoit commandes, messages, litiges,
+     livraisons… même app fermée (le SW affiche la notification).
+     · Permission déjà accordée → (re)abonnement silencieux (sync serveur,
+       l'abonnement est rattaché au user_id via /api/push).
+     · Permission jamais demandée → bannière discrète UNE fois ; le clic
+       « Activer » (geste utilisateur requis par les navigateurs) déclenche
+       requestPermission + abonnement.
+     · PUSH_NAVIGATE / PUSH_SUBSCRIPTION_RENEWED déjà gérés par le module SW.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_PUSH_GLOBAL__) return; window.__NEXUS_PUSH_GLOBAL__ = true;
+  var user = null, synced = false;
+  var KEY = 'nexus_push_prompted';
+
+  function getToken(cb) {
+    try {
+      var sb = (window.DataService && DataService._sb) || null;
+      if (sb && sb.auth && sb.auth.getSession) {
+        sb.auth.getSession().then(function (r) {
+          var t = r && r.data && r.data.session && r.data.session.access_token;
+          if (t) return cb(t);
+          cb(sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt') || null);
+        }).catch(function () { cb(null); });
+        return;
+      }
+    } catch (e) {}
+    try { cb(sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt') || null); } catch (e) { cb(null); }
+  }
+
+  function doSubscribe() {
+    if (!window.nexusPush || !nexusPush.subscribe) return;
+    getToken(function (tk) {
+      try { Promise.resolve(nexusPush.subscribe(tk)).then(function (ok) { if (ok) synced = true; }).catch(function () {}); } catch (e) {}
+    });
+  }
+
+  function banner() {
+    if (document.getElementById('nexus-push-banner')) return;
+    try { if (localStorage.getItem(KEY)) return; } catch (e) {}
+    var b = document.createElement('div');
+    b.id = 'nexus-push-banner';
+    b.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:1rem;z-index:10080;background:#111;color:#fff;border-radius:14px;padding:.8rem 1rem;display:flex;gap:10px;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,.35);max-width:92vw;font-size:.85rem;font-family:inherit';
+    var txt = document.createElement('span');
+    txt.textContent = '🔔 Activez les notifications : commandes, messages, livraisons — même app fermée.';
+    var ok = document.createElement('button');
+    ok.textContent = 'Activer';
+    ok.style.cssText = 'background:#00853E;color:#fff;border:none;border-radius:10px;padding:.5rem .9rem;font-weight:700;cursor:pointer;flex:none';
+    ok.addEventListener('click', function () {
+      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+      b.remove();
+      doSubscribe(); // geste utilisateur → requestPermission autorisé
+    });
+    var no = document.createElement('button');
+    no.textContent = 'Plus tard';
+    no.setAttribute('aria-label', 'Fermer');
+    no.style.cssText = 'background:none;color:#9ca3af;border:none;cursor:pointer;font-size:.8rem;flex:none';
+    no.addEventListener('click', function () { try { localStorage.setItem(KEY, '1'); } catch (e) {} b.remove(); });
+    b.appendChild(txt); b.appendChild(ok); b.appendChild(no);
+    document.body.appendChild(b);
+  }
+
+  function onUser() {
+    if (!user || !user.id || synced) return;
+    if (!('Notification' in window) || !('PushManager' in window)) return;
+    if (Notification.permission === 'granted') { doSubscribe(); return; }
+    if (Notification.permission === 'denied') return;
+    setTimeout(banner, 5000); // laisser l'app se charger avant de solliciter
+  }
+
+  window.addEventListener('nexus:set-user', function (e) { user = e.detail || null; onUser(); });
+  window.addEventListener('nexus:logout', function () { user = null; synced = false; });
+  console.info('[NEXUS] Push global prêt ✅');
+})();
+</script>
+<!-- ============== FIN MODULE PUSH GLOBAL ============== -->
 
 <!-- ════════════════════════════════════════════════════════════════════════
      NEXUS — « MES LIVRAISONS » (suivi mandataire réouvrable)
@@ -42163,14 +42301,19 @@ window.addEventListener('unhandledrejection', function(event) {
 (function () {
   if (typeof window === 'undefined' || !document) return;
   // Registre des widgets flottants gérables (sélecteur stable + coin par défaut).
+  // [FIX télescopage] La colonne bottom-left contient aussi DEUX FABs non gérés
+  // par ce moteur : « Déposer une annonce » (.ax-fab, bottom:5rem) et Accessibilité
+  // (#nx-vox-fab, bottom:15rem). Le coursier est seul dans son groupe → i=0 → il
+  // retombait à bottom:5rem et chevauchait .ax-fab. On lui donne un offY par défaut
+  // de 5rem pour qu'il se place à 10rem, pile entre les deux, sans chevauchement.
   var REGISTRY = [
-    { key: 'courier',     sel: '#nexus-courier-fab',       label: '🛵 Coursier',    corner: 'bottom-left' },
+    { key: 'courier',     sel: '#nexus-courier-fab',       label: '🛵 Coursier',    corner: 'bottom-left', offY: 5 },
     { key: 'cart',        sel: '.floating-cart',           label: '🛒 Panier',      corner: 'bottom-right' },
     { key: 'troc',        sel: '.floating-wishlist',       label: '🔄 Troc',        corner: 'bottom-right' },
     { key: 'stories',     sel: '.floating-offer',          label: '🎬 Stories',     corner: 'bottom-right' },
   ];
   var LS_KEY = 'nexus_widget_layout';
-  function defaults() { var o = {}; REGISTRY.forEach(function (w) { o[w.key] = { enabled: true, corner: w.corner, offX: 1, offY: 0 }; }); return o; }
+  function defaults() { var o = {}; REGISTRY.forEach(function (w) { o[w.key] = { enabled: true, corner: w.corner, offX: 1, offY: (typeof w.offY === 'number' ? w.offY : 0) }; }); return o; }
   function merged(cfg) { var d = defaults(); cfg = cfg || {}; Object.keys(d).forEach(function (k) { if (cfg[k]) d[k] = Object.assign({}, d[k], cfg[k]); }); return d; }
   function cached() { try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; } }
 
