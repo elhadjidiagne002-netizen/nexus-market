@@ -13250,6 +13250,7 @@ const NexusStoriesWidget = ({ user }) => {
   const [open, setOpen] = React.useState(false);
   const [items, setItems] = React.useState([]);
   const [idx, setIdx] = React.useState(0);
+  const [pendingCount, setPendingCount] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const videoRef = React.useRef(null);
@@ -13263,7 +13264,13 @@ const NexusStoriesWidget = ({ user }) => {
     try {
       if (DataService._sb) {
         const { data } = await DataService._sb.from('stories').select('*').eq('status', 'active').not('mux_playback_id', 'is', null).order('created_at', { ascending: false }).limit(50);
-        if (data) { setItems(data); setIdx(0); setLoading(false); return; }
+        if (data) { setItems(data); setIdx(0); setLoading(false); }
+        // Stories du vendeur encore en encodage → indicateur « bientôt visible ».
+        if (user && user.id) {
+          DataService._sb.from('stories').select('id').eq('vendor_id', user.id).eq('status', 'uploading')
+            .then(({ data: pend }) => setPendingCount((pend || []).length)).catch(() => {});
+        }
+        if (data) return;
       }
     } catch (_) {}
     setItems([]); setLoading(false);
@@ -13365,6 +13372,8 @@ const NexusStoriesWidget = ({ user }) => {
         )
       ),
       E('input', { ref: fileRef, type: 'file', accept: 'video/*', capture: 'environment', style: { display: 'none' }, onChange: e => startUpload(e.target.files && e.target.files[0]) }),
+      // Indicateur d'encodage en cours pour le vendeur (story pas encore active).
+      pendingCount > 0 && E('div', { style: { background: 'rgba(124,58,237,.9)', color: '#fff', textAlign: 'center', padding: '6px 12px', fontSize: '.8rem' } }, '⏳ ' + pendingCount + ' story' + (pendingCount > 1 ? 's' : '') + ' en cours d’encodage — visible' + (pendingCount > 1 ? 's' : '') + ' sous ~1 min.'),
       loading ? E('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' } }, 'Chargement…')
         : !cur ? E('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', justifyContent: 'center', color: '#fff', padding: 24, textAlign: 'center' } },
             E('div', { style: { fontSize: 44 } }, '🎬'),
