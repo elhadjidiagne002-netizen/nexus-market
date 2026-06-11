@@ -22952,6 +22952,24 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   const [editBanner, setEditBanner] = React.useState(null);
   const [editPromo, setEditPromo] = React.useState(null);
   const [newCatForm, setNewCatForm] = React.useState({ name: '', icon: '🛒' });
+  // [CONFIG PARTAGÉE] Charge la config page d'accueil depuis app_config (DB) au
+  // montage → un admin sur un autre appareil voit les bannières/promos publiées
+  // (avant : mémoire locale uniquement, non partagée). saveS y réécrit.
+  React.useEffect(() => {
+    if (typeof NexusAdminConfig === 'undefined') return;
+    let cancel = false;
+    Promise.all([
+      NexusAdminConfig.get('nexus_admin_banners'),
+      NexusAdminConfig.get('nexus_admin_promos'),
+      NexusAdminConfig.get('nexus_admin_categories'),
+    ]).then(([b, p, c]) => {
+      if (cancel) return;
+      if (Array.isArray(b) && b.length) { setAdminBanners(b); storage.set('nexus_admin_banners', b); }
+      if (Array.isArray(p) && p.length) { setAdminPromos(p); storage.set('nexus_admin_promos', p); }
+      if (Array.isArray(c) && c.length) { setAdminCategories(c); storage.set('nexus_admin_categories', c); }
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, []);
   const [view, setView] = useState("overview");
   useEffect(() => { const _gh = () => setView("overview"); window.addEventListener("nexus:go-home", _gh); return () => window.removeEventListener("nexus:go-home", _gh); }, []);
   const [stats, setStats] = useState({});
@@ -25258,7 +25276,13 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
     );
   })(), view === "health" && /* @__PURE__ */ React.createElement(PlatformHealth, null), view === "homepage_editor" && (() => {
-      const saveS = (key, val) => { storage.set(key, val); };  // Cache mémoire session (plus localStorage)
+      // Persiste en SESSION + en base (app_config via NexusAdminConfig) → la
+      // config page d'accueil (bannières/promos/catégories/sections) est ainsi
+      // PARTAGÉE entre admins et appareils (n'était qu'en mémoire locale avant).
+      const saveS = (key, val) => {
+        storage.set(key, val);
+        try { if (typeof NexusAdminConfig !== 'undefined') NexusAdminConfig.set(key, val, DataService?._user?.id).catch(() => {}); } catch (_) {}
+      };
       const moveItem = (arr, idx, dir) => { const a = [...arr]; const to = idx + dir; if (to < 0 || to >= a.length) return a; [a[idx], a[to]] = [a[to], a[idx]]; return a; };
       return React.createElement(React.Fragment, null,
 
@@ -30490,6 +30514,21 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       .then(({ data }) => { if (data) setProVendors(new Set(data.map(p => p.id))); })
       .catch(() => {});
   }, []);
+  // [CONFIG PARTAGÉE] Bannières/promos publiées par l'admin, chargées depuis
+  // app_config (DB) → visibles par TOUS les visiteurs (avant : mémoire locale de
+  // l'admin uniquement → le public ne voyait que les valeurs par défaut).
+  const [cfgBanners, setCfgBanners] = React.useState(() => { try { return storage.get('nexus_admin_banners'); } catch (_) { return null; } });
+  const [cfgPromos, setCfgPromos]   = React.useState(() => { try { return storage.get('nexus_admin_promos'); } catch (_) { return null; } });
+  React.useEffect(() => {
+    if (typeof NexusAdminConfig === 'undefined') return;
+    let cancel = false;
+    Promise.all([NexusAdminConfig.get('nexus_admin_banners'), NexusAdminConfig.get('nexus_admin_promos')]).then(([b, p]) => {
+      if (cancel) return;
+      if (Array.isArray(b) && b.length) { setCfgBanners(b); try { storage.set('nexus_admin_banners', b); } catch (_) {} }
+      if (Array.isArray(p) && p.length) { setCfgPromos(p); try { storage.set('nexus_admin_promos', p); } catch (_) {} }
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, []);
   // [STORIES SHOPPABLES] Ouvre la fiche produit (sans rechargement) sur demande
   // d'un autre module (ex. bouton « Voir » d'une story). detail = product_id.
   React.useEffect(() => {
@@ -30681,7 +30720,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     { cls: 'slide-0', badge: '🌿 Marketplace', title: 'Des milliers de\nProduits vérifiés', sub: 'Paiement Orange Money & Wave · Protection acheteur', deco: 'NX' },
   ];
   const BANNERS = (function () {
-    try { var s = storage.get('nexus_admin_banners'); if (Array.isArray(s) && s.length) { var f = s.filter(function (b) { return b && b.active !== false; }); if (f.length) return f; } } catch (e) {}
+    var s = cfgBanners; if (Array.isArray(s) && s.length) { var f = s.filter(function (b) { return b && b.active !== false; }); if (f.length) return f; }
     return _DEFAULT_BANNERS;
   })();
 
@@ -30695,7 +30734,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     { cls: 'blue',   deco: '📱', label: 'Paiement Mobile', title: 'Orange Money\n& Wave',   cta: 'En savoir plus', nav: 'login-buyer' },
   ];
   const PROMOS = (function () {
-    try { var s = storage.get('nexus_admin_promos'); if (Array.isArray(s) && s.length) { var f = s.filter(function (p) { return p && p.active !== false; }); if (f.length) return f; } } catch (e) {}
+    var s = cfgPromos; if (Array.isArray(s) && s.length) { var f = s.filter(function (p) { return p && p.active !== false; }); if (f.length) return f; }
     return _DEFAULT_PROMOS;
   })();
   const onPromoClick = function (p) {
