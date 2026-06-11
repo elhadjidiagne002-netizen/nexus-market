@@ -22961,6 +22961,10 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   const [editBanner, setEditBanner] = React.useState(null);
   const [editPromo, setEditPromo] = React.useState(null);
   const [newCatForm, setNewCatForm] = React.useState({ name: '', icon: '🛒' });
+  // [WIDGETS] Disposition des boutons flottants (gérée par l'admin, partagée).
+  const [adminWidgets, setAdminWidgets] = React.useState(() => {
+    try { return storage.get('nexus_widget_layout') || (window.NexusWidgets ? window.NexusWidgets.defaults() : {}); } catch (e) { return {}; }
+  });
   // [CONFIG PARTAGÉE] Charge la config page d'accueil depuis app_config (DB) au
   // montage → un admin sur un autre appareil voit les bannières/promos publiées
   // (avant : mémoire locale uniquement, non partagée). saveS y réécrit.
@@ -22971,11 +22975,13 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       NexusAdminConfig.get('nexus_admin_banners'),
       NexusAdminConfig.get('nexus_admin_promos'),
       NexusAdminConfig.get('nexus_admin_categories'),
-    ]).then(([b, p, c]) => {
+      NexusAdminConfig.get('nexus_widget_layout'),
+    ]).then(([b, p, c, w]) => {
       if (cancel) return;
       if (Array.isArray(b) && b.length) { setAdminBanners(b); storage.set('nexus_admin_banners', b); }
       if (Array.isArray(p) && p.length) { setAdminPromos(p); storage.set('nexus_admin_promos', p); }
       if (Array.isArray(c) && c.length) { setAdminCategories(c); storage.set('nexus_admin_categories', c); }
+      if (w && typeof w === 'object') { setAdminWidgets(w); storage.set('nexus_widget_layout', w); }
     }).catch(() => {});
     return () => { cancel = true; };
   }, []);
@@ -25311,6 +25317,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
           { id: "categories", icon: "th-large",     label: "Catégories" },
           { id: "promos",     icon: "bullhorn",     label: "Promos" },
           { id: "sections",   icon: "layer-group",  label: "Sections" },
+          { id: "widgets",    icon: "grip-vertical", label: "Widgets" },
           { id: "trust",      icon: "shield-alt",   label: "Confiance" },
           { id: "texts",      icon: "font",         label: "Textes" },
         ].map(t => React.createElement("button", {
@@ -25696,6 +25703,38 @@ CREATE POLICY "Service role only" ON invoice_sequences
             )
           );
         })
+      ),
+
+      adminHpTab === "widgets" && React.createElement(React.Fragment, null,
+        React.createElement("div", { style: { background: "rgba(0,133,62,0.06)", borderRadius: 10, padding: "0.85rem 1rem", marginBottom: "1.25rem", fontSize: "0.83rem", color: "var(--text-secondary)" } },
+          React.createElement("i", { className: "fas fa-info-circle", style: { color: "var(--primary)", marginRight: "0.4rem" } }),
+          "Activez/masquez chaque bouton flottant et choisissez son coin d'\u00e9cran. Les widgets d'un m\u00eame coin s'empilent automatiquement. Appliqu\u00e9 en direct pour tous les visiteurs."),
+        (function () {
+          var REG = (window.NexusWidgets && window.NexusWidgets.REGISTRY) || [];
+          var cfg = (window.NexusWidgets ? window.NexusWidgets.merged(adminWidgets) : (adminWidgets || {}));
+          var CORNERS = [["top-left", "\u2196 Haut gauche"], ["top-right", "\u2197 Haut droite"], ["bottom-left", "\u2199 Bas gauche"], ["bottom-right", "\u2198 Bas droite"]];
+          var setW = function (key, patch) {
+            var next = Object.assign({}, cfg); next[key] = Object.assign({}, cfg[key], patch);
+            setAdminWidgets(next); saveS("nexus_widget_layout", next);
+            try { window.dispatchEvent(new CustomEvent("nexus:widgets-updated", { detail: next })); } catch (e) {}
+          };
+          if (!REG.length) return React.createElement("div", { className: "card", style: { color: "var(--text-secondary)" } }, "Module widgets non charg\u00e9 \u2014 rechargez la page.");
+          return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.6rem" } },
+            REG.map(function (w) {
+              var c = cfg[w.key] || { enabled: true, corner: w.corner };
+              return React.createElement("div", { key: w.key, className: "card", style: { display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", opacity: c.enabled === false ? 0.55 : 1, padding: "0.75rem 1rem" } },
+                React.createElement("span", { style: { fontWeight: 700, flex: "1 1 140px" } }, w.label),
+                React.createElement("label", { style: { display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", cursor: "pointer" } },
+                  React.createElement("input", { type: "checkbox", checked: c.enabled !== false, onChange: function (e) { setW(w.key, { enabled: e.target.checked }); } }),
+                  "Affich\u00e9"),
+                React.createElement("select", { className: "form-select", value: c.corner, disabled: c.enabled === false, style: { flex: "0 0 auto", padding: "0.35rem 0.5rem", fontSize: "0.82rem" }, onChange: function (e) { setW(w.key, { corner: e.target.value }); } },
+                  CORNERS.map(function (o) { return React.createElement("option", { key: o[0], value: o[0] }, o[1]); }))
+              );
+            }),
+            React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.4rem" } },
+              "\ud83d\udca1 Limitez \xe0 2-3 widgets par coin pour ne pas surcharger l'\xe9cran mobile.")
+          );
+        })()
       ),
 
       adminHpTab === "trust" && React.createElement(React.Fragment, null,
@@ -42068,6 +42107,71 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULE MES LIVRAISONS ============== -->
+
+<!-- ════════════ NEXUS — Positionnement des widgets flottants (admin) ════════════
+     Applique la disposition définie par l'admin (Tableau de bord → Page d'accueil
+     → Widgets) à TOUS les boutons flottants, via une feuille de style injectée en
+     dernier (priorité !important). Config partagée dans app_config. ════════════ -->
+<script>
+(function () {
+  if (typeof window === 'undefined' || !document) return;
+  // Registre des widgets flottants gérables (sélecteur stable + coin par défaut).
+  var REGISTRY = [
+    { key: 'menu',        sel: '.nexus-menu-fab',          label: '☰ Menu',         corner: 'top-left' },
+    { key: 'courier',     sel: '#nexus-courier-fab',       label: '🛵 Coursier',    corner: 'bottom-left' },
+    { key: 'courierDash', sel: '#nexus-courier-dash-fab',  label: '📦 Mes courses', corner: 'bottom-left' },
+    { key: 'cart',        sel: '.floating-cart',           label: '🛒 Panier',      corner: 'bottom-right' },
+    { key: 'troc',        sel: '.floating-wishlist',       label: '🔄 Troc',        corner: 'bottom-right' },
+    { key: 'stories',     sel: '.floating-offer',          label: '🎬 Stories',     corner: 'bottom-right' },
+  ];
+  var LS_KEY = 'nexus_widget_layout';
+  function defaults() { var o = {}; REGISTRY.forEach(function (w) { o[w.key] = { enabled: true, corner: w.corner }; }); return o; }
+  function merged(cfg) { var d = defaults(); cfg = cfg || {}; Object.keys(d).forEach(function (k) { if (cfg[k]) d[k] = Object.assign({}, d[k], cfg[k]); }); return d; }
+  function cached() { try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; } }
+
+  function buildCss(cfg) {
+    cfg = merged(cfg);
+    var groups = { 'top-left': [], 'top-right': [], 'bottom-left': [], 'bottom-right': [] };
+    var css = '';
+    REGISTRY.forEach(function (w) {
+      var c = cfg[w.key]; if (!c) return;
+      if (c.enabled === false) { css += w.sel + '{display:none !important;}'; return; }
+      (groups[c.corner] || groups['bottom-right']).push(w);
+    });
+    var BASE = 5, STEP = 4.2; // rem (empilement dans un même coin)
+    Object.keys(groups).forEach(function (corner) {
+      groups[corner].forEach(function (w, i) {
+        var off = (BASE + i * STEP).toFixed(1) + 'rem';
+        var r = 'position:fixed !important;z-index:9979 !important;';
+        r += (corner.indexOf('bottom') === 0) ? ('bottom:' + off + ' !important;top:auto !important;') : ('top:' + off + ' !important;bottom:auto !important;');
+        r += (corner.indexOf('right') >= 0) ? 'right:1rem !important;left:auto !important;' : 'left:1rem !important;right:auto !important;';
+        css += w.sel + '{' + r + '}';
+      });
+    });
+    return css;
+  }
+  function apply(cfg) {
+    var el = document.getElementById('nexus-widgets-style');
+    if (!el) { el = document.createElement('style'); el.id = 'nexus-widgets-style'; }
+    el.textContent = buildCss(cfg);
+    document.head.appendChild(el); // (ré)appended en dernier → priorité
+  }
+  var _cfg = null;
+  function load() {
+    _cfg = cached(); apply(_cfg);
+    if (typeof NexusAdminConfig !== 'undefined') {
+      NexusAdminConfig.get(LS_KEY).then(function (c) {
+        if (c) { _cfg = c; try { localStorage.setItem(LS_KEY, JSON.stringify(c)); } catch (e) {} apply(c); }
+      }).catch(function () {});
+    }
+  }
+  window.NexusWidgets = { REGISTRY: REGISTRY, defaults: defaults, merged: merged, apply: apply, reload: load, current: function () { return merged(_cfg); } };
+  window.addEventListener('nexus:widgets-updated', function (e) { var c = (e && e.detail) || cached(); _cfg = c; apply(c); });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load); else load();
+  setTimeout(load, 1500); // les FABs sont injectés tardivement par React/IIFE
+  console.info('[NEXUS] Widgets layout prêt ✅');
+})();
+</script>
 
 </body>
 </html>
