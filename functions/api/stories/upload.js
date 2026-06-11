@@ -51,12 +51,14 @@ export async function onRequest(context) {
         new_asset_settings: { playback_policy: ['public'], encoding_tier: 'baseline' },
       }),
     });
-    if (!r.ok) { console.warn('[stories] Mux upload error', r.status, await r.text().catch(() => '')); return err('Création upload vidéo échouée', 502); }
+    if (!r.ok) { const dt = await r.text().catch(() => ''); console.warn('[stories] Mux upload error', r.status, dt); return err('Création upload vidéo échouée (Mux ' + r.status + ') : ' + dt.slice(0, 200), 502); }
     mux = (await r.json()).data;
   } catch (e) { return err('Mux indisponible : ' + (e.message || e), 502); }
 
-  // 2) Insérer la story (service key)
-  let storyId = null;
+  // 2) Insérer la story (service key). Si l'insert échoue, on NE renvoie PAS de
+  // succès : sinon le client envoie la vidéo à Mux mais aucune story n'existe →
+  // rien ne s'affiche jamais (échec silencieux). On remonte l'erreur réelle.
+  let storyId = null, insertErr = null;
   try {
     const r = await fetch(`${env.SUPABASE_URL}/rest/v1/stories`, {
       method: 'POST',
@@ -71,9 +73,10 @@ export async function onRequest(context) {
         mux_upload_id: mux.id, status: 'uploading',
       }),
     });
-    const rows = r.ok ? await r.json() : null;
-    storyId = Array.isArray(rows) && rows[0] ? rows[0].id : null;
-  } catch (e) { console.warn('[stories] insert', e.message); }
+    if (r.ok) { const rows = await r.json(); storyId = Array.isArray(rows) && rows[0] ? rows[0].id : null; }
+    else { insertErr = await r.text().catch(() => 'HTTP ' + r.status); console.warn('[stories] insert KO', r.status, insertErr); }
+  } catch (e) { insertErr = e.message; console.warn('[stories] insert', e.message); }
 
+  if (!storyId) return err('Story non enregistrée : ' + (insertErr || 'erreur inconnue'), 502);
   return ok({ ok: true, storyId, uploadId: mux.id, uploadUrl: mux.url });
 }
