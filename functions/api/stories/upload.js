@@ -1,12 +1,19 @@
 // functions/api/stories/upload.js → POST /api/stories/upload
-// [NEXUS STORIES] Crée un upload direct Mux et insère la story (status=uploading).
-// Le client PUT ensuite le fichier vidéo vers l'URL renvoyée ; le webhook
-// /api/webhooks/mux passera la story en 'active' une fois encodée.
+// [NEXUS STORIES] Deux modes de publication :
+//
+//   A. DIRECT (par défaut, SANS Mux) — le client a déjà téléversé la vidéo dans
+//      Supabase Storage (bucket public `nexus-stories`) et envoie son URL
+//      publique dans `videoUrl`. On insère la story en status='active' tout de
+//      suite. Aucune dépendance Mux → marche toujours.
+//
+//   B. MUX (optionnel, si MUX_TOKEN_ID/SECRET configurés et `videoUrl` absent) —
+//      crée un upload direct Mux, story en status='uploading' ; le webhook
+//      /api/webhooks/mux la passe en 'active' après encodage (HLS adaptatif).
 //
 // Auth : Bearer token Supabase (vendeur connecté).
-// Réponse : { ok, storyId, uploadUrl }  (ou 503 si Mux non configuré).
+// Réponse A : { ok, storyId }     Réponse B : { ok, storyId, uploadId, uploadUrl }
 //
-// Variables : SUPABASE_URL, SUPABASE_SERVICE_KEY, MUX_TOKEN_ID, MUX_TOKEN_SECRET.
+// Variables : SUPABASE_URL, SUPABASE_SERVICE_KEY [, MUX_TOKEN_ID, MUX_TOKEN_SECRET].
 import { ok, err, corsOptions } from '../_lib/response.js';
 
 async function sbUser(env, token) {
@@ -18,14 +25,26 @@ async function sbUser(env, token) {
   } catch { return null; }
 }
 
+// Insert d'une story via la service key (bypasse le RLS de la table).
+async function insertStory(env, fields) {
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/stories`, {
+    method: 'POST',
+    headers: {
+      apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      'Content-Type': 'application/json', Prefer: 'return=representation',
+    },
+    body: JSON.stringify(fields),
+  });
+  if (!r.ok) { const t = await r.text().catch(() => 'HTTP ' + r.status); throw new Error(t); }
+  const rows = await r.json();
+  return Array.isArray(rows) && rows[0] ? rows[0].id : null;
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   if (request.method === 'OPTIONS') return corsOptions();
   if (request.method !== 'POST') return err('POST uniquement', 405);
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_KEY) return err('Configuration Supabase incomplète', 503);
-  if (!env.MUX_TOKEN_ID || !env.MUX_TOKEN_SECRET) {
-    return err('Vidéo non configurée : ajoutez MUX_TOKEN_ID / MUX_TOKEN_SECRET (mux.com).', 503);
-  }
 
   const auth = request.headers.get('Authorization') || '';
   if (!auth.startsWith('Bearer ')) return err('Token manquant', 401);
@@ -38,6 +57,37 @@ export async function onRequest(context) {
   const productId = body.productId || null;
   const category = (body.category || '').toString().slice(0, 60) || null;
   const city = (body.city || 'Dakar').toString().slice(0, 60);
+  const vendorName = (user.user_metadata && user.user_metadata.name) || user.email || 'Vendeur';
+
+  // ── MODE A : DIRECT (vidéo déjà dans Storage, URL fournie) ──────────────────
+  const videoUrl = (body.videoUrl || '').toString().trim();
+  if (videoUrl) {
+    // Sécurité : n'accepter que des URLs https du Storage Supabase de CE projet
+    // (évite d'enregistrer une story pointant vers un domaine arbitraire).
+    let host = '';
+    try { host = new URL(videoUrl).host; } catch { return err('videoUrl invalide', 400); }
+    let projectHost = '';
+    try { projectHost = new URL(env.SUPABASE_URL).host; } catch {}
+    if (!videoUrl.startsWith('https://') || (projectHost && host !== projectHost)) {
+      return err('videoUrl doit être une URL Supabase Storage de ce projet', 400);
+    }
+    try {
+      const storyId = await insertStory(env, {
+        vendor_id: user.id, vendor_name: vendorName,
+        product_id: productId, title, category, city,
+        video_url: videoUrl, status: 'active',
+      });
+      if (!storyId) return err('Story non enregistrée', 502);
+      return ok({ ok: true, storyId });
+    } catch (e) {
+      return err('Story non enregistrée : ' + (e.message || e), 502);
+    }
+  }
+
+  // ── MODE B : MUX (encodage adaptatif, si configuré) ─────────────────────────
+  if (!env.MUX_TOKEN_ID || !env.MUX_TOKEN_SECRET) {
+    return err('Aucune vidéo fournie. (Mode direct attendu : champ videoUrl.)', 400);
+  }
 
   // 1) Créer l'upload direct Mux
   let mux;

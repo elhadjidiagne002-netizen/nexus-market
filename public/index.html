@@ -13275,7 +13275,8 @@ const NexusStoriesWidget = ({ user }) => {
   const [busy, setBusy] = React.useState(false);
   const videoRef = React.useRef(null);
   const hlsRef = React.useRef(null);
-  const fileRef = React.useRef(null);
+  const fileRef = React.useRef(null);   // capture caméra (vidéo instantanée)
+  const importRef = React.useRef(null); // import d'un fichier (galerie / disque)
   const E = React.createElement;
   const toast = (m, t) => (window.__nexusToast || function () {})(m, t || 'info');
 
@@ -13283,7 +13284,9 @@ const NexusStoriesWidget = ({ user }) => {
     setLoading(true);
     try {
       if (DataService._sb) {
-        const { data } = await DataService._sb.from('stories').select('*').eq('status', 'active').not('mux_playback_id', 'is', null).order('created_at', { ascending: false }).limit(50);
+        // Stories actives : soit Mux encodé (mux_playback_id), soit upload direct
+        // (video_url). L'une OU l'autre suffit pour être lisible.
+        const { data } = await DataService._sb.from('stories').select('*').eq('status', 'active').or('mux_playback_id.not.is.null,video_url.not.is.null').order('created_at', { ascending: false }).limit(50);
         if (data) { setItems(data); setIdx(0); setLoading(false); }
         // Stories du vendeur encore en encodage → indicateur « bientôt visible ».
         if (user && user.id) {
@@ -13303,12 +13306,18 @@ const NexusStoriesWidget = ({ user }) => {
   React.useEffect(() => {
     if (!open) return;
     const v = videoRef.current; const cur = items[idx];
-    if (!v || !cur || !cur.mux_playback_id) return;
-    const src = 'https://stream.mux.com/' + cur.mux_playback_id + '.m3u8';
+    if (!v || !cur) return;
     if (hlsRef.current) { try { hlsRef.current.destroy(); } catch (_) {} hlsRef.current = null; }
-    if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = src; }
-    else if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls(); h.loadSource(src); h.attachMedia(v); hlsRef.current = h; }
-    else { v.src = src; }
+    // Upload direct (MP4 dans Storage) : lecture native par URL. Prioritaire car
+    // ne nécessite ni HLS ni Mux.
+    if (cur.video_url && !cur.mux_playback_id) {
+      v.src = cur.video_url;
+    } else if (cur.mux_playback_id) {
+      const src = 'https://stream.mux.com/' + cur.mux_playback_id + '.m3u8';
+      if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = src; }
+      else if (window.Hls && window.Hls.isSupported()) { const h = new window.Hls(); h.loadSource(src); h.attachMedia(v); hlsRef.current = h; }
+      else { v.src = src; }
+    } else { return; }
     // [MUX DATA] suivi d'engagement (clé publique). Monitor une seule fois par
     // élément vidéo ; changement de vidéo signalé via 'videochange'.
     try {
@@ -13350,10 +13359,12 @@ const NexusStoriesWidget = ({ user }) => {
     if (!user || !user.id) { toast('Connectez-vous comme vendeur pour publier une story.', 'warning'); return; }
     if (!/^video\//.test(file.type || '')) { toast('Choisissez un fichier vidéo (15–60s).', 'error'); return; }
     if (file.size > 100 * 1024 * 1024) { toast('Vidéo trop lourde (max 100 Mo).', 'error'); return; }
+    if (!DataService._sb) { toast('Connexion à la base indisponible.', 'error'); return; }
     setBusy(true);
     try {
       let token = '';
       try { const { data } = await DataService._sb.auth.getSession(); token = (data && data.session && data.session.access_token) || ''; } catch (_) {}
+
       const title = (typeof prompt === 'function' ? prompt('Titre de votre story (ex. iPhone 11 — démo)') : '') || '';
       // [STORIES SHOPPABLES] Associer un de SES produits → bouton « Acheter » dans la story.
       let productId = null;
@@ -13368,13 +13379,28 @@ const NexusStoriesWidget = ({ user }) => {
           if (n >= 1 && n <= myProds.length) productId = myProds[n - 1].id;
         }
       } catch (_) {}
-      const r = await fetch('/api/stories/upload', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ title, productId }) });
+
+      // 1) Téléverser la vidéo DIRECTEMENT dans Supabase Storage (bucket public
+      //    nexus-stories) — pas de Mux requis. Marche pour un import (galerie)
+      //    comme pour une capture caméra.
+      const ext = (file.name && file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
+      const fname = user.id + '/' + Date.now() + '-' + Math.random().toString(16).slice(2, 8) + '.' + ext;
+      const { data: up, error: upErr } = await DataService._sb.storage.from('nexus-stories')
+        .upload(fname, file, { contentType: file.type || 'video/mp4', upsert: true });
+      if (upErr || !up) { toast('Échec de l’envoi : ' + ((upErr && upErr.message) || 'inconnu') + ' (le bucket « nexus-stories » existe-t-il ?)', 'error'); setBusy(false); return; }
+      const videoUrl = DataService._sb.storage.from('nexus-stories').getPublicUrl(up.path).data.publicUrl;
+
+      // 2) Enregistrer la story (active immédiatement) côté serveur (service key).
+      const r = await fetch('/api/stories/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ title, productId, videoUrl }),
+      });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.uploadUrl) { toast(j.error || 'Upload vidéo indisponible (Mux non configuré ?).', 'error'); setBusy(false); return; }
-      const put = await fetch(j.uploadUrl, { method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
-      if (!put.ok) { toast('Échec de l’envoi de la vidéo.', 'error'); setBusy(false); return; }
+      if (!r.ok || !j.ok) { toast(j.error || 'Publication impossible.', 'error'); setBusy(false); return; }
       try { fetch('/api/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: ['/stories'] }) }).catch(() => {}); } catch (_) {}
-      toast('Vidéo envoyée ! Encodage en cours — visible dans ~1 min. 🎬', 'success', 9000);
+      toast('Story publiée ! 🎬', 'success', 6000);
+      load();
     } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
   };
 
@@ -13387,18 +13413,25 @@ const NexusStoriesWidget = ({ user }) => {
       E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', color: '#fff' } },
         E('strong', null, '🎬 NEXUS Stories'),
         E('div', { style: { display: 'flex', gap: 8 } },
-          (user && user.id) && E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, style: { background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem 0.8rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : '＋ Publier'),
+          (user && user.id) && E('button', { onClick: () => importRef.current && importRef.current.click(), disabled: busy, title: 'Importer une vidéo depuis votre appareil', style: { background: '#fff', color: '#7c3aed', border: 'none', borderRadius: 8, padding: '0.4rem 0.7rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : '⬆ Importer'),
+          (user && user.id) && E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, title: 'Filmer une vidéo maintenant', style: { background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem 0.7rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : '🎥 Filmer'),
           E('button', { onClick: () => setOpen(false), style: { background: 'none', border: 'none', color: '#fff', fontSize: 26, cursor: 'pointer', lineHeight: 1 } }, '×')
         )
       ),
-      E('input', { ref: fileRef, type: 'file', accept: 'video/*', capture: 'environment', style: { display: 'none' }, onChange: e => startUpload(e.target.files && e.target.files[0]) }),
+      // Capture caméra (mobile : ouvre l'appareil photo en mode vidéo).
+      E('input', { ref: fileRef, type: 'file', accept: 'video/*', capture: 'environment', style: { display: 'none' }, onChange: e => { startUpload(e.target.files && e.target.files[0]); e.target.value = ''; } }),
+      // Import depuis la galerie / le disque (PAS de capture → sélecteur de fichiers).
+      E('input', { ref: importRef, type: 'file', accept: 'video/*', style: { display: 'none' }, onChange: e => { startUpload(e.target.files && e.target.files[0]); e.target.value = ''; } }),
       // Indicateur d'encodage en cours pour le vendeur (story pas encore active).
       pendingCount > 0 && E('div', { style: { background: 'rgba(124,58,237,.9)', color: '#fff', textAlign: 'center', padding: '6px 12px', fontSize: '.8rem' } }, '⏳ ' + pendingCount + ' story' + (pendingCount > 1 ? 's' : '') + ' en cours d’encodage — visible' + (pendingCount > 1 ? 's' : '') + ' sous ~1 min.'),
       loading ? E('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' } }, 'Chargement…')
         : !cur ? E('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', justifyContent: 'center', color: '#fff', padding: 24, textAlign: 'center' } },
             E('div', { style: { fontSize: 44 } }, '🎬'),
             E('div', null, 'Aucune vidéo pour le moment.'),
-            (user && user.id) && E('button', { onClick: () => fileRef.current && fileRef.current.click(), style: { background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem 1.2rem', fontWeight: 800, cursor: 'pointer' } }, '＋ Publier la première vidéo'))
+            (user && user.id) && E('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' } },
+              E('button', { onClick: () => importRef.current && importRef.current.click(), disabled: busy, style: { background: '#fff', color: '#7c3aed', border: '2px solid #7c3aed', borderRadius: 10, padding: '0.7rem 1.2rem', fontWeight: 800, cursor: 'pointer' } }, '⬆ Importer une vidéo'),
+              E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, style: { background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem 1.2rem', fontWeight: 800, cursor: 'pointer' } }, '🎥 Filmer')),
+            !(user && user.id) && E('div', { style: { fontSize: '.82rem', opacity: .7 } }, 'Connectez-vous comme vendeur pour publier.'))
           : E('div', { style: { flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' } },
               E('video', { ref: videoRef, controls: true, playsInline: true, autoPlay: true, loop: true, muted: false, style: { width: '100%', height: '100%', objectFit: 'contain', background: '#000' } }),
               E('div', { style: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: '16px', color: '#fff', background: 'linear-gradient(transparent,rgba(0,0,0,.7))' } },
