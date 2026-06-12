@@ -38483,7 +38483,7 @@ window.addEventListener('unhandledrejection', function(event) {
       try {
         var r = await this._sb.rpc('online_couriers_count', {
           p_lat: (lat != null ? lat : null), p_lng: (lng != null ? lng : null),
-          p_radius_m: radiusM || 12000
+          p_radius_m: radiusM || 30000   // = rayon du dispatch (cascade)
         });
         return (!r.error && typeof r.data === 'number') ? r.data : null;
       } catch (e) { console.warn('[Coursier] onlineCouriersCount:', e.message); return null; }
@@ -38775,12 +38775,14 @@ window.addEventListener('unhandledrejection', function(event) {
       } else setQuote(null);
     }, [pickup, dropoff, zones, pGeo, dGeo]);
 
-    // Coursiers disponibles autour du point de retrait (preuve sociale + confiance)
+    // Coursiers disponibles autour du point de retrait (preuve sociale + confiance).
+    // Rayon = celui du DISPATCH (30 km) : afficher « aucun coursier » alors que la
+    // cascade peut en solliciter un à 20 km induisait l'acheteur en erreur.
     React.useEffect(function () {
       var pc = coordsOf('pickup');
       if (!pc) { setNearby(null); return; }
       var cancelled = false;
-      DataService.nearbyCouriers(pc.lat, pc.lng, 7000, 15).then(function (list) {
+      DataService.nearbyCouriers(pc.lat, pc.lng, 30000, 20).then(function (list) {
         if (!cancelled) setNearby(list || []);
       });
       return function () { cancelled = true; };
@@ -38928,7 +38930,7 @@ window.addEventListener('unhandledrejection', function(event) {
           // Preuve sociale : coursiers disponibles autour du retrait (+ carte de zone)
           (nearby != null) && E('div', { style: { marginBottom: '.7rem' } },
             nearby.length > 0
-              ? E('div', { style: { fontSize: '.8rem', color: '#00853E', fontWeight: 600, marginBottom: '.4rem' } }, '🟢 ' + nearby.length + ' coursier' + (nearby.length > 1 ? 's' : '') + ' en ligne près du retrait')
+              ? E('div', { style: { fontSize: '.8rem', color: '#00853E', fontWeight: 600, marginBottom: '.4rem' } }, '🟢 ' + nearby.length + ' coursier' + (nearby.length > 1 ? 's' : '') + ' disponible' + (nearby.length > 1 ? 's' : '') + ' pour ce retrait')
               : E('div', { style: { fontSize: '.8rem', color: '#b45309', marginBottom: '.4rem' } }, '⏳ Aucun coursier en ligne à l\'instant — votre demande sera proposée dès qu\'un coursier se connecte.'),
             (function () { var pc = coordsOf('pickup'); return (pc && nearby.length > 0) && E('div', { ref: function (el) { if (!el || el.__nb || !window.NexusMap) return; el.__nb = true; NexusMap.nearby(el, { lat: pc.lat, lng: pc.lng, label: 'Point de retrait' }, []); }, className: 'nexus-map', style: { height: 160 } }); })()
           ),
