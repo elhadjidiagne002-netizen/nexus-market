@@ -16,7 +16,7 @@
 // l'architecture client-driven du site : acheteur → vendeur à la commande,
 // etc.). Garde-fous anti-abus : type whitelist (contrainte DB), longueurs
 // bornées, lien INTERNE uniquement (anti-phishing), rate limit 60/min/IP.
-import { options, json, err, requireAuth, supabase, isInternalCall, internalSecret } from './_lib/utils.js';
+import { options, json, err, requireAuth, supabase, isInternalCall } from './_lib/utils.js';
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
 
 // Contrainte CHECK de notifications.type — toute autre valeur ferait échouer l'INSERT.
@@ -62,17 +62,10 @@ export async function onRequest(context) {
     return err('Insertion impossible : ' + e.message, 500);
   }
 
-  // Web Push (appareil fermé ou en arrière-plan) — ne retarde pas la réponse.
-  try {
-    const origin = new URL(request.url).origin;
-    context.waitUntil(
-      fetch(origin + '/push-send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': internalSecret(env) },
-        body: JSON.stringify({ userId, title, body: message || title, url: link }),
-      }).catch(() => {})
-    );
-  } catch (_) { /* best-effort */ }
+  // Web Push : géré par le TRIGGER DB trg_push_on_notification (pg_net →
+  // /push-send) qui couvre TOUTES les insertions (endpoint, RPC dispatch,
+  // pg_cron…). Ne pas pousser ici aussi → doublon de notification.
+  // Cf. database/migrations/2026_06_12_push_on_notification_trigger.sql.
 
   return json({ ok: true, id: (row && row.id) || null });
 }

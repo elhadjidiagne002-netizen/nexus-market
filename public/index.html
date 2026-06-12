@@ -39316,17 +39316,34 @@ window.addEventListener('unhandledrejection', function(event) {
 
     function _setOfflinePref(v) { try { localStorage.setItem('nexus_courier_offline', v ? '1' : '0'); } catch (e) {} }
 
-    // Activer les notifications (permission + abonnement Web Push)
+    // Activer les notifications (permission + abonnement Web Push).
+    // [FIX] Le token doit venir de la session Supabase : localStorage 'nexus_jwt'
+    // est souvent vide → /api/push subscribe répondait 401 → abonnement JAMAIS
+    // enregistré alors que l'utilisateur croyait avoir activé les notifications.
     function enableNotifs() {
       try { if (window.Notification) Notification.requestPermission(); } catch (e) {}
-      try {
-        var _t = null; try { _t = localStorage.getItem('nexus_jwt'); } catch (e) {}
-        if (window.nexusPush && nexusPush.subscribe) {
-          nexusPush.subscribe(_t).then(function (ok) {
-            alert(ok ? '🔔 Notifications activées ! Vous serez alerté des nouvelles courses.' : 'Notifications non activées (autorisez-les dans les réglages du téléphone).');
-          });
-        }
-      } catch (e) {}
+      function withToken(cb) {
+        try {
+          if (DataService._sb && DataService._sb.auth && DataService._sb.auth.getSession) {
+            DataService._sb.auth.getSession().then(function (r) {
+              var t = r && r.data && r.data.session && r.data.session.access_token;
+              if (t) return cb(t);
+              try { cb(sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt')); } catch (e) { cb(null); }
+            }).catch(function () { cb(null); });
+            return;
+          }
+        } catch (e) {}
+        try { cb(sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt')); } catch (e) { cb(null); }
+      }
+      withToken(function (_t) {
+        try {
+          if (window.nexusPush && nexusPush.subscribe) {
+            nexusPush.subscribe(_t).then(function (ok) {
+              alert(ok ? '🔔 Notifications activées ! Vous serez alerté des nouvelles courses.' : 'Notifications non activées (autorisez-les dans les réglages du téléphone, puis réessayez).');
+            });
+          }
+        } catch (e) {}
+      });
     }
 
     // Passer en ligne : tente la géoloc, sinon utilise la zone du profil
