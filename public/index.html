@@ -38476,6 +38476,19 @@ window.addEventListener('unhandledrejection', function(event) {
       return [];
     },
 
+    // Nombre de livreurs en ligne (RPC publique — renvoie juste un entier).
+    // Sans coordonnées : total éligible au dispatch ; avec : dans le rayon.
+    async onlineCouriersCount(lat, lng, radiusM) {
+      if (!this._sb) return null;
+      try {
+        var r = await this._sb.rpc('online_couriers_count', {
+          p_lat: (lat != null ? lat : null), p_lng: (lng != null ? lng : null),
+          p_radius_m: radiusM || 12000
+        });
+        return (!r.error && typeof r.data === 'number') ? r.data : null;
+      } catch (e) { console.warn('[Coursier] onlineCouriersCount:', e.message); return null; }
+    },
+
     // Noter un coursier après livraison (RPC rate_courier, anti double-notation)
     async rateCourier(deliveryId, stars) {
       if (this._sb) {
@@ -38675,8 +38688,21 @@ window.addEventListener('unhandledrejection', function(event) {
     var _dg = React.useState(null), dGeo = _dg[0], setDGeo = _dg[1];   // {lat,lng} livraison GPS
     var _loc = React.useState(''), locating = _loc[0], setLocating = _loc[1]; // 'pickup'|'dropoff'|''
     var _nb = React.useState(null), nearby = _nb[0], setNearby = _nb[1];      // coursiers proches du retrait
+    var _oc = React.useState(null), onlineCount = _oc[0], setOnlineCount = _oc[1]; // livreurs en ligne (global)
     var _live = React.useState(null), live = _live[0], setLive = _live[1];    // état live de la course créée
     var _cc = React.useState(null), courierCard = _cc[0], setCourierCard = _cc[1]; // fiche coursier assigné
+
+    // Nombre TOTAL de livreurs en ligne — visible dès l'ouverture du formulaire
+    // (avant même de choisir un point de retrait). Rafraîchi toutes les 30 s.
+    React.useEffect(function () {
+      var stop = false;
+      function tick() {
+        if (stop || !DataService.onlineCouriersCount) return;
+        DataService.onlineCouriersCount(null, null).then(function (n) { if (!stop && n != null) setOnlineCount(n); });
+      }
+      tick(); var iv = setInterval(tick, 30000);
+      return function () { stop = true; clearInterval(iv); };
+    }, []);
 
     // Suivi temps réel : tant que la course cherche un coursier, on fait avancer
     // la cascade (timeouts) et on détecte l'attribution.
@@ -38863,6 +38889,17 @@ window.addEventListener('unhandledrejection', function(event) {
           E('span', { style: { fontSize: '1.3rem' } }, '🛵'),
           E('span', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem' } }, 'Demander un coursier'),
           E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.3rem', cursor: 'pointer' } }, '×')),
+        // Livreurs en ligne MAINTENANT (global) — visible avant de remplir quoi que ce soit.
+        (onlineCount != null) && E('div', {
+          style: { display: 'flex', alignItems: 'center', gap: 8, padding: '.55rem 1.25rem',
+                   background: onlineCount > 0 ? '#f0fdf4' : '#fffbeb',
+                   borderBottom: '1px solid ' + (onlineCount > 0 ? '#bbf7d0' : '#fde68a'),
+                   fontSize: '.8rem', fontWeight: 600, color: onlineCount > 0 ? '#15803d' : '#b45309' } },
+          E('span', { style: { width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
+                               background: onlineCount > 0 ? '#16a34a' : '#d97706' } }),
+          onlineCount > 0
+            ? (onlineCount + ' livreur' + (onlineCount > 1 ? 's' : '') + ' en ligne en ce moment')
+            : 'Aucun livreur en ligne pour l\'instant — votre demande sera proposée dès qu\'un livreur se connecte.'),
         E('div', { style: { padding: '1.25rem' } },
           E('p', { style: lbl }, 'Type de course'),
           E('div', { style: { display: 'flex', gap: 6, marginBottom: '.8rem' } },
@@ -41113,17 +41150,39 @@ window.addEventListener('unhandledrejection', function(event) {
 
   // ── Ping GPS du coursier (position live → courier_ping RPC) ────────────────
   // Activé quand l'app coursier passe online : window.__NEXUS_COURIER_ONLINE__ = true
-  // (et false hors-ligne). Utilise watchPosition pour suivre en continu, à coût nul.
-  var _watchId=null, _lastPing=0;
+  // (et false hors-ligne). watchPosition suit les déplacements, MAIS ne se
+  // déclenche QUE si la position change : un livreur IMMOBILE (assis en attente
+  // de courses) ne pingait jamais → location_updated_at dépassait les 15 min de
+  // fraîcheur exigées par nearby_couriers → « en ligne » à l'écran mais INVISIBLE
+  // au dispatch. → HEARTBEAT : re-ping toutes les 4 min avec la position
+  // courante (ou la dernière connue), même sans mouvement.
+  var _watchId=null, _lastPing=0, _lastPos=null;
+  function _ping(lat,lng){
+    if(lat==null||lng==null) return;
+    _lastPing=Date.now(); _lastPos={lat:lat,lng:lng};
+    var client=sb(); if(!client) return;
+    try{ client.rpc('courier_ping',{ p_lat:lat, p_lng:lng }); }catch(e){}
+  }
+  // Ping « fraîcheur » : position actuelle si possible, sinon dernière connue.
+  function _heartbeat(){
+    if(!window.__NEXUS_COURIER_ONLINE__) return;
+    if(Date.now()-_lastPing < 230000) return;   // déjà pingé il y a < ~4 min
+    if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(
+        function(p){ _ping(p.coords.latitude, p.coords.longitude); },
+        function(){ if(_lastPos) _ping(_lastPos.lat,_lastPos.lng); },
+        { enableHighAccuracy:false, timeout:10000, maximumAge:180000 }
+      );
+    } else if(_lastPos){ _ping(_lastPos.lat,_lastPos.lng); }
+  }
   function startCourierPing(){
     if(_watchId!=null || !navigator.geolocation) return;
     _watchId=navigator.geolocation.watchPosition(function(p){
       if(!window.__NEXUS_COURIER_ONLINE__) return;
       var now=Date.now();
+      _lastPos={lat:p.coords.latitude,lng:p.coords.longitude};
       if(now-_lastPing < 8000) return;          // au plus 1 ping / 8 s
-      _lastPing=now;
-      var client=sb(); if(!client) return;
-      try{ client.rpc('courier_ping',{ p_lat:p.coords.latitude, p_lng:p.coords.longitude }); }catch(e){}
+      _ping(p.coords.latitude, p.coords.longitude);
     }, function(){}, { enableHighAccuracy:true, maximumAge:5000, timeout:15000 });
   }
   function stopCourierPing(){
@@ -41134,6 +41193,12 @@ window.addEventListener('unhandledrejection', function(event) {
   setInterval(function(){
     if(window.__NEXUS_COURIER_ONLINE__) startCourierPing(); else stopCourierPing();
   }, 2000);
+  // Heartbeat anti-péremption (immobile / onglet en arrière-plan throttlé).
+  setInterval(_heartbeat, 60000);
+  // Retour sur l'app (onglet redevenu visible) → re-ping immédiat.
+  document.addEventListener('visibilitychange', function(){
+    if(document.visibilityState==='visible' && window.__NEXUS_COURIER_ONLINE__){ _lastPing=0; _heartbeat(); }
+  });
 
   window.NexusMap = { track:track, nearby:nearby, locateMe:locateMe, autoMount:autoMount,
                       ensureLeaflet:ensureLeaflet, startCourierPing:startCourierPing, stopCourierPing:stopCourierPing,
