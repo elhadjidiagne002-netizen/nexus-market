@@ -30474,8 +30474,9 @@ const AxApp = () => {
   };
 
   return React.createElement(React.Fragment, null,
-    // Bouton flottant
+    // Bouton flottant (masqué par le menu de raccourcis — cf. HIDE #nexus-annonce-fab)
     React.createElement('button', {
+      id: 'nexus-annonce-fab',
       onClick: () => setOpen(true),
       title: 'Déposer une annonce',
       style:{
@@ -30913,6 +30914,13 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     { cls: 'slide-0', badge: '🛵 Livraison express', title: 'Un coursier\nà la demande', sub: 'Faites livrer en quelques minutes · suivi GPS en direct', deco: '🛵', action: 'nexus:open-courier', cta: 'Commander un coursier' },
     { cls: 'slide-3', badge: '🇸🇳 Local & Élevage', title: 'Produits locaux\n& NEXUS Élevage', sub: 'Soutenez le Sénégal · moutons Tabaski, volaille, bétail', deco: '🐑', action: 'nexus:open-local-elevage', cta: 'Découvrir' },
     { cls: 'slide-2', badge: '🎬 NEXUS Stories', title: 'Les produits\nen vidéo', sub: 'Découvrez les vendeurs et leurs articles en stories', deco: '🎬', action: 'nexus:open-stories', cta: 'Regarder' },
+    // ── Bannières ajoutées pour les fonctionnalités qui n'en avaient pas ──────
+    { cls: 'slide-3', badge: '📣 Annonces Express', title: 'Vendez en\n2 minutes', sub: 'Publiez une annonce sans inscription · contact WhatsApp direct', deco: '📣', action: 'nexus:open-annonce', cta: 'Déposer une annonce' },
+    { cls: 'slide-0', badge: '🤖 Assistant IA', title: 'Trouvez tout\navec l\'IA', sub: 'Décrivez votre besoin en français ou wolof, l\'IA vous guide', deco: '🤖', action: 'nexus:open-assistant', cta: 'Discuter avec l\'IA' },
+    { cls: 'slide-2', badge: '🔄 NEXUS Troc', title: 'Échangez\nsans argent', sub: 'Troquez vos objets contre ce dont vous avez besoin', deco: '🔄', action: 'nexus:open-troc', cta: 'Échanger' },
+    { cls: 'slide-1', badge: '💬 Communauté', title: 'Rejoignez\nla discussion', sub: 'Échangez en direct avec la communauté NEXUS', deco: '💬', action: 'nexus:open-public-chat', cta: 'Discuter' },
+    { cls: 'slide-2', badge: '🔊 Accessibilité', title: 'Naviguez\nà la voix', sub: 'Écoute vocale, recherche parlée et gros texte — pour tous', deco: '🔊', action: 'nexus:open-accessibility', cta: 'Activer' },
+    // ── Bannières génériques / promo ──────────────────────────────────────────
     { cls: 'slide-1', badge: '⚡ Vente Flash', title: 'Jusqu\'à -60%\nsur l\'Électronique', sub: 'Offres limitées, profitez-en maintenant', oldPrice: '150 000 F', newPrice: '89 990 F', deco: '%' },
     { cls: 'slide-0', badge: '🌿 Marketplace', title: 'Des milliers de\nProduits vérifiés', sub: 'Paiement Orange Money & Wave · Protection acheteur', deco: 'NX' },
   ];
@@ -42573,22 +42581,33 @@ window.addEventListener('unhandledrejection', function(event) {
     }, 150);
   }
 
-  // Entrées du menu (ordre d'affichage, de haut en bas).
+  // Ponts d'événements : certaines fonctionnalités n'ont pas d'événement dédié
+  // (annonce, assistant IA, accessibilité). On en crée pour que le MENU **et**
+  // les bannières hero puissent les ouvrir via un simple CustomEvent.
+  window.addEventListener('nexus:open-annonce',       function () { if (window.__axOpenModal) window.__axOpenModal(); else clickSel('#nexus-annonce-fab'); });
+  window.addEventListener('nexus:open-assistant',     function () { clickSel('#nexus-ai-fab'); });
+  window.addEventListener('nexus:open-accessibility', function () { clickSel('#nx-vox-fab'); });
+
+  // Entrées du menu (ordre d'affichage, de haut en bas). Le PANIER n'y est PAS :
+  // il garde son comportement conditionnel (n'apparaît à droite que si le panier
+  // contient un article) — cf. rendu React `.floating-cart`.
   var ITEMS = [
-    { icon: '🛒', label: 'Panier',            act: function () { emit('nexus:open-cart'); } },
-    { icon: '📣', label: 'Vendre en express', act: function () { clickSel('.ax-fab'); } },
+    { icon: '📣', label: 'Vendre en express', act: function () { emit('nexus:open-annonce'); } },
     { icon: '🛵', label: 'Coursier',          act: function () { emit('nexus:open-courier'); } },
-    { icon: '🤖', label: 'Assistant IA',      act: function () { clickSel('#nexus-ai-fab'); } },
+    { icon: '🤖', label: 'Assistant IA',      act: function () { emit('nexus:open-assistant'); } },
     { icon: '🔄', label: 'Troc',              act: function () { emit('nexus:open-troc'); } },
     { icon: '🎬', label: 'Stories',           act: function () { emit('nexus:open-stories'); } },
     { icon: '💬', label: 'Chat communauté',   act: function () { emit('nexus:open-public-chat'); } },
     { icon: '🐑', label: 'Local & Élevage',   act: function () { emit('nexus:open-local-elevage'); } },
-    { icon: '🔊', label: 'Accessibilité',     act: function () { clickSel('#nx-vox-fab'); } }
+    { icon: '🔊', label: 'Accessibilité',     act: function () { emit('nexus:open-accessibility'); } }
   ];
 
   // Boutons flottants d'origine à MASQUER (le menu les remplace visuellement).
-  var HIDE = ['.floating-cart', '.floating-wishlist', '.floating-offer',
-              '#nexus-courier-fab', '.ax-fab', '#nx-vox-fab',
+  // .floating-cart EXCLU volontairement : il reste visible à droite, conditionnel.
+  // #nexus-annonce-fab = l'ancien bouton « vendre express » autonome (supprimé du
+  // visuel car désormais dans le menu).
+  var HIDE = ['.floating-wishlist', '.floating-offer',
+              '#nexus-courier-fab', '#nexus-annonce-fab', '#nx-vox-fab',
               '#nexus-public-chat-fab', '#nx-le-fab', '#nexus-ai-fab'];
 
   // ── Styles ─────────────────────────────────────────────────────────────────
