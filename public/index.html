@@ -35938,7 +35938,20 @@ window.nexusPush.subscribe = async function(apiToken) {
       return false;
     }
   } catch (err) {
-    console.warn('[Push] Erreur lors de l\'abonnement :', err.message);
+    // « Registration failed - push service error » : le NAVIGATEUR n'atteint
+    // pas le service de push (FCM). Causes typiques : Brave (Réglages →
+    // Confidentialité → activer « Utiliser les services Google pour la
+    // messagerie push »), pare-feu/VPN bloquant fcm.googleapis.com, ou
+    // navigation privée. Rien à corriger côté NEXUS — changer de navigateur
+    // ou débloquer FCM. Sur Android/Chrome (téléphone coursier), FCM est natif.
+    if (/push service error|registration failed/i.test(err.message || '')) {
+      console.warn('[Push] ⚠️ Le navigateur ne peut pas joindre le service de push (FCM). '
+        + 'Brave : activer « Services Google pour la messagerie push » dans les réglages. '
+        + 'Sinon : pare-feu/VPN bloquant fcm.googleapis.com, ou mode privé. '
+        + 'Erreur : ' + err.message);
+    } else {
+      console.warn('[Push] Erreur lors de l\'abonnement :', err.message);
+    }
     return false;
   }
 };
