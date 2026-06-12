@@ -42543,6 +42543,122 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS — LANCEUR DE RACCOURCIS (un seul bouton -> déploie les widgets)
+     ──────────────────────────────────────────────────────────────────────────
+     Au lieu d'afficher en permanence tous les boutons flottants (panier, troc,
+     stories, coursier, annonce, accessibilité, chat, local), on n'affiche qu'UN
+     bouton « Raccourcis ». Un appui déploie temporairement les widgets ; on en
+     choisit un, ou on referme (clic ailleurs / Échap / auto-repli). Indépendant
+     du moteur de positionnement (NexusWidgets) : il ne fait que MASQUER/AFFICHER.
+     Repli gracieux : si ce script ne s'exécute pas, les FAB restent visibles.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_FAB_LAUNCHER__ || !document.body) return;
+  window.__NEXUS_FAB_LAUNCHER__ = true;
+
+  // Tous les boutons flottants à regrouper derrière le lanceur (ordre = ordre
+  // d'apparition à l'ouverture, du plus bas au plus haut).
+  var SEL = [
+    '.floating-cart', '.floating-wishlist', '.floating-offer',
+    '#nexus-courier-fab', '.ax-fab', '#nx-vox-fab',
+    '#nexus-public-chat-fab', '#nx-le-fab'
+  ];
+  var sels = SEL.join(',');
+
+  // ── Styles : masquage par défaut + transition d'apparition (avec léger décalé)
+  var css = ''
+    + sels + '{transition:opacity .22s ease, transform .24s cubic-bezier(.34,1.4,.64,1), visibility .22s !important;}'
+    + 'body.nx-fabs-managed:not(.nx-fabs-open) ' + SEL.join(',body.nx-fabs-managed:not(.nx-fabs-open) ')
+      + '{opacity:0 !important;visibility:hidden !important;transform:translateY(18px) scale(.55) !important;pointer-events:none !important;}';
+  SEL.forEach(function (s, i) {
+    css += 'body.nx-fabs-open ' + s + '{transition-delay:' + (i * 0.035).toFixed(3) + 's !important;}';
+  });
+  css += [
+    '.nx-fab-launcher{position:fixed;right:1rem;bottom:1rem;z-index:9986;width:58px;height:58px;border-radius:50%;',
+    'border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;',
+    'background:linear-gradient(135deg,#00853E,#00b955);box-shadow:0 6px 20px rgba(0,133,62,.45);',
+    'transition:transform .25s cubic-bezier(.34,1.5,.64,1),box-shadow .2s;}',
+    '.nx-fab-launcher:hover{transform:scale(1.07);}',
+    '.nx-fab-launcher.open{transform:rotate(135deg);background:linear-gradient(135deg,#dc2626,#ef4444);box-shadow:0 6px 20px rgba(220,38,38,.45);}',
+    '.nx-fab-launcher svg{width:26px;height:26px;}',
+    '.nx-fab-launcher.pulse{animation:nxLauncherPulse 2.2s ease-in-out infinite;}',
+    '@keyframes nxLauncherPulse{0%,100%{box-shadow:0 6px 20px rgba(0,133,62,.45)}50%{box-shadow:0 6px 30px rgba(0,133,62,.85)}}',
+    '.nx-fab-hint{position:fixed;right:5rem;bottom:1.6rem;z-index:9986;max-width:190px;background:#111;color:#fff;',
+    'padding:8px 12px;border-radius:12px;font:600 12.5px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;',
+    'box-shadow:0 8px 22px rgba(0,0,0,.3);animation:nxHintIn .3s ease;}',
+    '.nx-fab-hint:after{content:"";position:absolute;right:-6px;bottom:14px;border:6px solid transparent;border-left-color:#111;}',
+    '@keyframes nxHintIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}',
+    ''
+  ].join('');
+  var st = document.createElement('style'); st.id = 'nx-fab-launcher-style';
+  st.textContent = css; document.head.appendChild(st);
+
+  // ── Activer le système (masque les FAB tant que non ouvert) ────────────────
+  document.body.classList.add('nx-fabs-managed');
+
+  var GRID = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.6"/>'
+    + '<rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/>'
+    + '<rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>';
+  var CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">'
+    + '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+
+  var btn = document.createElement('button');
+  btn.className = 'nx-fab-launcher pulse';
+  btn.setAttribute('aria-label', 'Raccourcis NEXUS');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.setAttribute('title', 'Raccourcis');
+  btn.innerHTML = GRID;
+  document.body.appendChild(btn);
+
+  var autoTimer = null;
+  function isOpen() { return document.body.classList.contains('nx-fabs-open'); }
+  function open() {
+    document.body.classList.add('nx-fabs-open');
+    btn.classList.add('open'); btn.classList.remove('pulse');
+    btn.innerHTML = CLOSE; btn.setAttribute('aria-expanded', 'true');
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(close, 8000); // repli auto si inactif
+  }
+  function close() {
+    document.body.classList.remove('nx-fabs-open');
+    btn.classList.remove('open');
+    btn.innerHTML = GRID; btn.setAttribute('aria-expanded', 'false');
+    clearTimeout(autoTimer);
+  }
+  function toggle() { isOpen() ? close() : open(); }
+
+  btn.addEventListener('click', function (e) { e.stopPropagation(); toggle(); });
+
+  // Choisir un raccourci -> on referme (affichage temporaire, comme demandé).
+  document.addEventListener('click', function (e) {
+    if (!isOpen()) return;
+    if (btn.contains(e.target)) return;
+    var fab = e.target.closest && e.target.closest(sels);
+    if (fab) { setTimeout(close, 60); return; }   // laisse l'action du FAB se déclencher
+    close();                                       // clic ailleurs -> repli
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && isOpen()) close(); });
+
+  // Indice première visite : « Tous vos raccourcis sont ici ».
+  try {
+    if (!localStorage.getItem('nx_fab_hint_v1')) {
+      var hint = document.createElement('div');
+      hint.className = 'nx-fab-hint';
+      hint.textContent = '👇 Tous vos raccourcis sont ici';
+      document.body.appendChild(hint);
+      setTimeout(function () { try { hint.remove(); } catch (_) {} }, 6000);
+      localStorage.setItem('nx_fab_hint_v1', '1');
+    }
+  } catch (_) {}
+
+  window.NexusFabLauncher = { open: open, close: close, toggle: toggle, selectors: SEL };
+  console.info('[NEXUS] Lanceur de raccourcis prêt ✅');
+})();
+</script>
+
 </body>
 </html>
 
