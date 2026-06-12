@@ -155,8 +155,20 @@ export async function validatePaymentAmount(env, { orderIds, uid, amountEur }) {
 
   const maxDisc = Math.min(0.95, Math.max(0, parseFloat(env.PAY_MAX_DISCOUNT || '0.6')));
   const floor = expectedEur * (1 - maxDisc);
-  const ceil  = expectedEur * 1.005; // +0,5 % de tolérance (arrondis / taux de change)
-  if (amountEur > ceil)  return { ok: false, status: 400, error: 'Montant supérieur au total de la commande' };
+  // [FIX checkout 400] Le montant FACTURÉ dépasse légitimement orders.total :
+  // les frais de suivi WhatsApp (~200 FCFA) et les arrondis de conversion EUR↔XOF
+  // ne sont PAS stockés dans orders.total. L'ancien plafond +0,5 % rejetait donc
+  // des paiements valides (« Montant supérieur au total de la commande »).
+  // Le SUR-paiement n'est pas un vecteur de fraude contre la plateforme (au
+  // contraire du sous-paiement, borné strictement par `floor`). On tolère donc un
+  // dépassement modéré = 2 % + un buffer absolu couvrant les frais fixes même sur
+  // une petite commande. Configurable via PAY_FEE_TOLERANCE_EUR (défaut 2 €).
+  const feeTolEur = Math.max(0, parseFloat(env.PAY_FEE_TOLERANCE_EUR || '2'));
+  const ceil = expectedEur * 1.02 + feeTolEur;
+  if (amountEur > ceil) {
+    console.warn('[pay] montant > plafond toléré (frais/arrondis ?)', { amountEur, expectedEur, ceil });
+    return { ok: false, status: 400, error: 'Montant supérieur au total de la commande' };
+  }
   if (amountEur < floor) return { ok: false, status: 400, error: 'Montant inférieur au total dû' };
   return { ok: true, expectedEur };
 }
