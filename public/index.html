@@ -3283,6 +3283,22 @@ const NexusWA = {
     }
   },
 
+  // État de l'instance Green API. La cause n°1 d'échec d'envoi est une instance
+  // « notAuthorized » (téléphone WhatsApp non lié / délié après inactivité) :
+  // Green API refuse alors TOUT envoi. Ce diagnostic le rend visible.
+  async getState() {
+    const base = this._cfg.apiUrl || 'https://api.green-api.com';
+    const inst = this._cfg.instanceId || '';
+    const tok  = this._cfg.apiToken || '';
+    if (!inst || !tok) return { ok: false, state: 'notConfigured' };
+    try {
+      const r = await fetch(`${base}/waInstance${inst}/getStateInstance/${tok}`);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) return { ok: false, state: 'error', http: r.status, error: d.message || d.error };
+      return { ok: true, state: d.stateInstance || 'unknown' };
+    } catch (e) { return { ok: false, state: 'error', error: e.message }; }
+  },
+
   // ── Templates ─────────────────────────────────────────────────────────
 
   async firstSale(vendorPhone, vendorName, orderTotal, orderId) {
@@ -19724,6 +19740,8 @@ const WhatsAppAdminPanel = ({ addToast }) => {
   const [_waSaving, _setWaSaving] = React.useState(false);
   const [_waTest,   _setWaTest]   = React.useState('');
   const [_waTesting,_setWaTesting]= React.useState(false);
+  const [_waChecking,_setWaChecking]= React.useState(false);
+  const [_waState,  _setWaState]  = React.useState(null);   // 'authorized' | 'notAuthorized' | ...
   const [_ambSend,  _setAmbSend]  = React.useState(false);
   const WE = React.createElement;
 
@@ -19739,6 +19757,18 @@ const WhatsAppAdminPanel = ({ addToast }) => {
     const r = await NexusWA.send(_waTest.replace(/\D/g,''), '\u2705 *Test NEXUS Market*\nInt\u00e9gration WhatsApp Green API op\u00e9rationnelle\u00a0! \uD83C\uDF89\n'+NEXUS_CONFIG.siteHost, 'test');
     addToast(r.ok ? '\u2705 Message envoy\u00e9\u00a0!' : '\u274C \u00c9chec\u00a0: ' + (r.error||'V\u00e9rifiez les credentials'), r.ok?'success':'error');
     _setWaTesting(false);
+  };
+  const checkWA = async () => {
+    _setWaChecking(true);
+    // Sauvegarde implicite des champs saisis pour tester la bonne instance.
+    NexusWA._cfg.instanceId = _waInst; NexusWA._cfg.apiToken = _waToken; NexusWA._cfg.apiUrl = NexusWA._cfg.apiUrl || (_waInst ? 'https://'+_waInst.slice(0,4)+'.api.greenapi.com' : '');
+    const s = await NexusWA.getState();
+    _setWaState(s.state);
+    _setWaChecking(false);
+    if (s.state === 'authorized') addToast('\u2705 Instance connect\u00e9e \u2014 les messages peuvent partir', 'success');
+    else if (s.state === 'notAuthorized') addToast('\u26a0\ufe0f Instance NON LI\u00c9E \u2014 scannez le QR code sur green-api.com avec le t\u00e9l\u00e9phone NEXUS', 'error', 9000);
+    else if (s.state === 'notConfigured') addToast('Renseignez Instance ID + API Token', 'warning');
+    else addToast('\u00c9tat\u00a0: ' + s.state + (s.error ? ' ('+s.error+')' : ''), 'warning');
   };
   const sendAmbReports = async () => {
     _setAmbSend(true);
@@ -19791,8 +19821,23 @@ const WhatsAppAdminPanel = ({ addToast }) => {
       WE('div',{style:{display:'flex',gap:'.75rem',flexWrap:'wrap'}},
         WE('button',{className:'btn btn-primary'+(_waSaving?' btn-loading':''),onClick:saveWA,disabled:_waSaving},
           WE('i',{className:'fas fa-save'}),' Sauvegarder'),
+        WE('button',{className:'btn btn-secondary'+(_waChecking?' btn-loading':''),onClick:checkWA,disabled:_waChecking},
+          WE('i',{className:'fas fa-plug'}),' Vérifier la connexion'),
         WE('a',{href:'https://green-api.com',target:'_blank',className:'btn btn-secondary'},
           WE('i',{className:'fas fa-external-link-alt'}),' Dashboard Green API')
+      ),
+      // Bandeau d'état de l'instance : cause n°1 d'échec = « notAuthorized ».
+      _waState && WE('div',{
+        className:'alert alert-'+(_waState==='authorized'?'success':'danger'),
+        style:{fontSize:'.82rem',margin:0}
+      },
+        _waState==='authorized'
+          ? WE('span',null,WE('strong',null,'🟢 Instance connectée (authorized). '),'Les messages WhatsApp peuvent être envoyés.')
+          : _waState==='notAuthorized'
+            ? WE('span',null,WE('strong',null,'⚫ Téléphone NON lié (notAuthorized). '),'Aucun message ne partira. Ouvrez ',
+                WE('a',{href:'https://green-api.com',target:'_blank',style:{color:'inherit',textDecoration:'underline'}},'green-api.com'),
+                ', instance ',WE('code',null,_waInst),', et scannez le QR code avec WhatsApp du numéro NEXUS (Réglages → Appareils connectés).')
+            : WE('span',null,WE('strong',null,'ℹ️ État : ',_waState,'. '),'Vérifiez l’instance sur green-api.com.')
       ),
       WE('hr',{style:{margin:'.5rem 0'}}),
       WE('div',{style:{fontWeight:700,fontSize:'.88rem',marginBottom:'.5rem'}},'\uD83E\uDDEA Test d\'envoi'),
