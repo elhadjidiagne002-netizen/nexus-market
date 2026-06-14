@@ -127,7 +127,8 @@ async function runCleanup(env) {
   await del('audit_logs', `created_at=lt.${ago(90)}`, 'audit_logs_90d');
 
   // ── 5. Logs SMS de plus de 60 jours ──────────────────────────────────────
-  await del('sms_logs', `created_at=lt.${ago(60)}`, 'sms_logs_60d');
+  // NB: la colonne horodatage de sms_logs est `sent_at` (pas created_at).
+  await del('sms_logs', `sent_at=lt.${ago(60)}`, 'sms_logs_60d');
 
   // ── 6. Ambassador referrals payés de plus de 180 jours ───────────────────
   await del('ambassador_referrals', `status=eq.paid&created_at=lt.${ago(180)}`, 'ambassador_referrals_paid_180d');
