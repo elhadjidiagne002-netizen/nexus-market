@@ -23294,8 +23294,12 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       })
       .catch(() => {});
     // Charger les vendeurs depuis Supabase/backend (pas localStorage)
+    // [FIX] La liste « Vendeurs Actifs » ne doit montrer QUE les vendeurs validés :
+    // on exclut les rejetés (status='banned') et ceux encore en attente
+    // (status='pending', affichés à part). Sinon un vendeur refusé réapparaissait
+    // ici avec le badge « Actif » codé en dur, donnant l'impression d'un rejet sans effet.
     DataService.getUsers().then(map => {
-      if (map) setVendors(Object.values(map).filter(u => u.role === "vendor"));
+      if (map) setVendors(Object.values(map).filter(u => u.role === "vendor" && u.status !== "banned" && u.status !== "pending"));
     }).catch(() => {});
 
     // Charger les vendeurs en attente — triple source de vérité
