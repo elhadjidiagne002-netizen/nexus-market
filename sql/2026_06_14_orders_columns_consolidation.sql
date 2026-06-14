@@ -35,6 +35,18 @@ DECLARE
   n_uid_only      int;   -- user_id renseigné sans buyer_id
   n_cancel_diverge int;  -- canceled_at différent de cancelled_at
 BEGIN
+  -- Idempotence : si les colonnes legacy sont déjà absentes, la consolidation a
+  -- déjà été appliquée → on sort AVANT toute requête les référençant (plpgsql ne
+  -- planifie un SELECT qu'à son exécution, donc ce RETURN évite l'erreur 42703).
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'orders'
+      AND column_name IN ('order_total','amount_fcfa','id_old','canceled_at','user_id')
+  ) THEN
+    RAISE NOTICE 'Consolidation orders déjà appliquée (colonnes legacy absentes) — rien à faire.';
+    RETURN;
+  END IF;
+
   SELECT count(*) FILTER (WHERE total IS NULL),
          count(order_total),
          count(amount_fcfa),
