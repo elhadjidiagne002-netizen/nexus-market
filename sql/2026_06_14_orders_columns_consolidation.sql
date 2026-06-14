@@ -59,10 +59,10 @@ ALTER TABLE orders DROP COLUMN IF EXISTS canceled_at;   -- miroir exact de cance
 ALTER TABLE orders DROP COLUMN IF EXISTS user_id;       -- doublon de buyer_id, aucune écriture, fallback lecture seul
 
 -- ── Étape 2 : drop du miroir EUR legacy ─────────────────────────────────────
--- ⚠️ GATÉ (2026-06-14) : NON exécuté tant que index.html:16895 lit `r.amount_eur`.
---    Dropper maintenant afficherait un CA vendeur à 0 pour les commandes ≥ 2026-05-21.
---    → Décommenter cette ligne UNIQUEMENT après déploiement du correctif §3-C.
--- ALTER TABLE orders DROP COLUMN IF EXISTS amount_eur;    -- = total (ère ancienne) / 0 (récente), miroir mort
+-- ✅ FAIT le 2026-06-14 via la migration dédiée 2026_06_14_orders_drop_amount_eur.sql
+--    (après déploiement du correctif d'affichage index.html, commit 02f3d56).
+--    Laissée ici en commentaire pour la traçabilité — ne pas ré-exécuter ce fichier.
+-- ALTER TABLE orders DROP COLUMN IF EXISTS amount_eur;
 
 -- ── Étape 3 (optionnelle) : durcir le canonique ─────────────────────────────
 -- 0 NULL constaté sur le live ; verrouille l'invariant « toute commande a un montant ».
