@@ -16889,18 +16889,21 @@ const downloadMonthlyStatement = async (month) => {
         .lt("created_at", endISO)
         .order("created_at", { ascending: false });
       if (!error && Array.isArray(data) && data.length > 0) {
-        orders = data.map(r => ({
+        orders = data.map(r => {
+          const eur = (r.total ?? r.amount_eur ?? 0);   // `total` = montant canonique (EUR)
+          return {
           id:            r.id,
           date:          r.created_at || r.updated_at,
-          total:         r.amount_eur  || 0,
-          totalFcfa:     r.amount_fcfa || 0,
+          total:         eur,
+          totalFcfa:     (r.amount_fcfa ?? Math.round(eur * 655.957)),  // amount_fcfa supprimée → conversion
           status:        r.status      || "processing",
           paymentMethod: r.payment_method || "—",
-          products:      Array.isArray(r.items) ? r.items : [],
+          products:      Array.isArray(r.products) ? r.products : (Array.isArray(r.items) ? r.items : []),
           buyerName:     r.buyer_name  || (r.buyer_address ? r.buyer_address.split(",")[0] : "Client"),
           trackingNumber:r.tracking_number || "—",
           shipping:      r.shipping    || "standard",
-        }));
+          };
+        });
       }
     } catch (e) {
       console.warn("[Statement] Supabase:", e.message);

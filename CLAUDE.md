@@ -15,15 +15,23 @@ backend serverless **Cloudflare Pages Functions** (`functions/`) + **Supabase** 
 ### 1. Table `orders` — noms de colonnes
 - L'acheteur est **`buyer_id`** (PAS `user_id`), le vendeur **`vendor_id`** (PAS `vendor`).
 - Le montant est **`total`** (en FCFA), il n'existe **pas** de `amount_eur`.
-- `status` ∈ `{pending_payment, processing, in_transit, delivered, cancelled}`.
-- `payment_status` ∈ `{pending, paid, failed, refunded}` (parfois `partially_refunded`).
-- `payment_method` ∈ `{card, mobile}` (jamais `'stripe'`).
+- `status` ∈ `{pending, pending_payment, processing, in_transit, delivered, cancelled}`
+  (contrainte live `orders_status_check` — `pending` inclus, vérifié 2026-06-14).
+- `payment_status` ∈ `{pending, paid, failed, refunded, partially_refunded}`.
+- `payment_method` ∈ `{card, mobile, cod}` (jamais `'stripe'` ; `cod` = paiement à la livraison).
 - Colonnes existantes utiles : `stripe_payment_id`, `mobile_money_ref`, `processing_at`,
-  `cancelled_at`, `cancel_reason`, `admin_notes`. **N'existent PAS** : `paid_at`,
-  `amount_eur`, `paytech_token`, `stripe_payment_intent`, `refunded_amount`, `failure_reason`.
+  `cancelled_at`, `cancel_reason`, `admin_notes`.
+- ⚠️ **Dette legacy vérifiée le 2026-06-14** : la table contient AUSSI des colonnes
+  redondantes/legacy bien présentes en prod (contrairement à d'anciennes notes) :
+  `amount_eur` (NOT NULL def 0), `amount_fcfa`, `order_total`, `subtotal`, `paid_at`,
+  `paytech_token`, `failure_reason`, `user_id` (doublon de `buyer_id`), `id_old`,
+  `canceled_at` (doublon de `cancelled_at`). **Canonique** : `total` (montant), `buyer_id`,
+  `vendor_id`, `id` (uuid). ⚠️ Les valeurs de `total` observées sont en **EUR** (ex. 36.13),
+  pas en FCFA — incohérence sémantique à trancher avant d'unifier les colonnes montant.
 
 ### 2. Table `notifications` — contrainte sur `type`
-`type` ∈ `{order, offer, message, return, vendor, system, dispute}` **uniquement**.
+`type` ∈ `{order, offer, message, return, vendor, system, dispute, new_vendor}` (contrainte
+live `notifications_type_check`, vérifiée 2026-06-14 — `new_vendor` inclus).
 Toute autre valeur (`payment`, `payout`, `stock_alert`, `new_order`…) fait échouer l'INSERT.
 Pas de colonne `metadata` ni `order_id` → utiliser `link` (TEXT).
 
