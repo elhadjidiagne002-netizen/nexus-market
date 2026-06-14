@@ -13534,6 +13534,7 @@ const NexusMegaMenu = ({ user, inDashboard }) => {
         )),
         sec('Services NEXUS', E(React.Fragment, null,
           item('Coursier à la demande', () => emit('nexus:open-courier'), '🛵'),
+          item('NEXUS Pro — ouvriers & artisans proches', () => emit('nexus:open-pros'), '🔧'),
           item('NEXUS Élevage & produits locaux', () => emit('nexus:open-local-elevage'), '🐑'),
           item('Louma — le marché en ligne', () => emit('nexus:open-louma'), '🏪'),
           item('NEXUS Troc — échanger sans argent', () => emit('nexus:open-troc'), '🔄'),
@@ -22939,6 +22940,7 @@ const LoumaAdminMount = ({ addToast }) => {  const ref = React.useRef(null);  Re
 const HP_ACTIONS = [
   { value: '', label: '— Par défaut (connexion acheteur) —' },
   { value: 'nexus:open-courier', label: '🛵 Coursier à la demande' },
+  { value: 'nexus:open-pros', label: '🔧 NEXUS Pro (ouvriers & artisans)' },
   { value: 'nexus:open-local-elevage', label: '🐑 Local & Élevage' },
   { value: 'nexus:open-stories', label: '🎬 NEXUS Stories' },
   { value: 'nexus:open-troc', label: '🔄 NEXUS Troc' },
@@ -41847,6 +41849,333 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 <!-- ============== FIN MODULE LOCAL & ÉLEVAGE ============== -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS PRO 🔧 — Ouvriers / artisans professionnels géolocalisés
+     Module autonome (vanilla) : FAB + overlay 2 onglets.
+       · Trouver : recherche des pros LES PLUS PROCHES (RPC nearby_pros + carte),
+         filtrable par métier ; contact direct WhatsApp + itinéraire.
+       · S'inscrire : un pro dépose son métier + ses coordonnées + sa position
+         (RPC pro_register). Réutilise le socle PostGIS (profiles.geolocation).
+     Dégrade gracieusement si la migration 2026_06_14_nexus_pros.sql n'est pas
+     encore exécutée (messages neutres, aucune erreur bloquante).
+     ════════════════════════════════════════════════════════════════════════ -->
+<style>
+  #nx-pro-fab{position:fixed;right:1.5rem;bottom:25rem;z-index:600;height:52px;padding:0 12px;border-radius:26px;
+    background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;border:2px solid #FDEF42;cursor:pointer;
+    font-size:1.4rem;line-height:1;display:flex;align-items:center;justify-content:center;gap:4px;
+    box-shadow:0 4px 18px rgba(29,78,216,.42);transition:transform .25s}
+  #nx-pro-fab:hover{transform:scale(1.08)}
+  @media (max-width:768px){ #nx-pro-fab{height:46px;bottom:24.5rem;right:0.6rem;font-size:1.15rem;padding:0 10px} }
+  @media (max-width:360px){ #nx-pro-fab{bottom:23.2rem;right:0.5rem} }
+  #nx-pro-ov{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10040;display:none;align-items:flex-start;justify-content:center;padding:1rem;overflow:auto;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #nx-pro-ov.open{display:flex}
+  .nx-pro-card{background:#fff;border-radius:18px;max-width:760px;width:100%;margin:2vh 0;overflow:hidden}
+  .nx-pro-head{display:flex;align-items:center;gap:10px;padding:1rem 1.25rem;background:#1d4ed8;color:#fff}
+  .nx-pro-tabs{display:flex;border-bottom:1px solid #eee}
+  .nx-pro-tab{flex:1;padding:.8rem;border:none;background:none;cursor:pointer;font-weight:700;font-size:.9rem;color:#666}
+  .nx-pro-tab.on{color:#1d4ed8;box-shadow:inset 0 -3px 0 #1d4ed8}
+  .nx-pro-body{padding:1rem 1.25rem;min-height:160px}
+  .nx-pro-chip{display:inline-block;padding:4px 11px;border-radius:99px;border:1px solid #ddd;background:#fff;font-size:.75rem;cursor:pointer;margin:0 6px 6px 0}
+  .nx-pro-chip.on{background:#1d4ed8;color:#fff;border-color:#1d4ed8}
+  .nx-pro-tab-pane{display:none}.nx-pro-tab-pane.on{display:block}
+  .nx-pro-field{display:block;width:100%;padding:.55rem .7rem;border:1px solid #d4d4d8;border-radius:9px;font-size:.85rem;margin-bottom:.6rem;box-sizing:border-box}
+  .nx-pro-label{font-size:.78rem;font-weight:700;color:#444;margin:0 0 .25rem}
+  .nx-pro-tile{border:1px solid #eee;border-radius:12px;padding:.6rem .7rem;margin-bottom:.55rem;display:flex;gap:.65rem;align-items:flex-start}
+  .nx-pro-tile .av{width:46px;height:46px;border-radius:10px;background:#eef2ff;display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex:0 0 auto;overflow:hidden}
+  .nx-pro-tile .av img{width:100%;height:100%;object-fit:cover}
+</style>
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_PRO__) return; window.__NEXUS_PRO__ = true;
+  var UX = window.NexusUX || { sb: function () { try { return (window.DataService && DataService._sb) || null; } catch (e) { return null; } }, user: function () { return null; }, toast: function (m) { try { alert(m); } catch (e) {} } };
+  function sb() { return UX.sb(); }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // Métiers de départ (BTP & maison). Surclassable via window.__NEXUS_PRO_METIERS.
+  var METIERS = window.__NEXUS_PRO_METIERS || [
+    { id: 'Maçon',                e: '🧱' },
+    { id: 'Plombier',             e: '🚰' },
+    { id: 'Électricien',          e: '💡' },
+    { id: 'Menuisier (bois)',     e: '🪚' },
+    { id: 'Soudeur / Métallique', e: '🔩' },
+    { id: 'Peintre',              e: '🎨' },
+    { id: 'Carreleur',            e: '🧰' },
+    { id: 'Froid & Climatisation',e: '❄️' },
+    { id: 'Plâtrier / Staff',     e: '🪟' },
+    { id: 'Jardinier',            e: '🌿' },
+    { id: 'Déménageur',           e: '📦' },
+    { id: 'Vitrier',              e: '🪞' },
+  ];
+  function metierEmoji(name) {
+    for (var i = 0; i < METIERS.length; i++) { if (METIERS[i].id === name) return METIERS[i].e; }
+    return '🔧';
+  }
+  function waLink(phone, msg) {
+    var p = String(phone || '').replace(/\D/g, '');
+    if (p.length === 9 && p[0] === '7') p = '221' + p;
+    return 'https://wa.me/' + (p || '') + '?text=' + encodeURIComponent(msg);
+  }
+  function stars(n) {
+    var v = Math.round(Number(n) || 0), s = '';
+    for (var i = 1; i <= 5; i++) s += (i <= v ? '★' : '☆');
+    return s;
+  }
+  function fmtDate(d) { try { return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }); } catch (e) { return ''; } }
+
+  // ── Onglet « Trouver un pro » : carte + liste triée par proximité ────────────
+  function showNearby(host, profession) {
+    host.innerHTML = '<div style="text-align:center;color:#666;padding:1rem">📍 Localisation…</div>';
+    if (!window.NexusMap || !NexusMap.locateMe) { host.innerHTML = '<div style="color:#999;padding:1rem">Carte indisponible.</div>'; return; }
+    NexusMap.locateMe({ enableHighAccuracy: false, timeout: 8000 }).then(function (pos) {
+      var c = sb();
+      var rpc = c ? c.rpc('nearby_pros', { p_lat: pos.lat, p_lng: pos.lng, p_radius_m: 50000, p_limit: 40, p_profession: profession || null }) : Promise.resolve({ data: [] });
+      return Promise.resolve(rpc).then(function (r) {
+        var list = (r && r.data) || [];
+        host.innerHTML = '';
+        var mapEl = document.createElement('div'); mapEl.className = 'nexus-map'; mapEl.style.height = '230px'; mapEl.style.marginBottom = '.7rem';
+        host.appendChild(mapEl);
+        var pins = list.filter(function (b) { return b.lat != null && b.lng != null; }).map(function (b) {
+          return { lat: b.lat, lng: b.lng, name: metierEmoji(b.profession) + ' ' + (b.name || b.profession || 'Pro'), distance_km: b.distance_km };
+        });
+        try { NexusMap.nearby(mapEl, { lat: pos.lat, lng: pos.lng, label: 'Vous' }, pins); } catch (e) {}
+        if (!list.length) {
+          var em = document.createElement('div'); em.style.cssText = 'color:#999;text-align:center;padding:.6rem';
+          em.textContent = 'Aucun professionnel ' + (profession ? '(' + profession + ') ' : '') + 'géolocalisé à proximité pour l’instant.';
+          host.appendChild(em); return;
+        }
+        list.forEach(function (b) {
+          var tile = document.createElement('div'); tile.className = 'nx-pro-tile';
+          var meta = [b.profession, (b.experience_years ? b.experience_years + ' ans d’exp.' : ''), b.tarif_text, (b.distance_km != null ? b.distance_km + ' km' : '')].filter(Boolean).join(' · ');
+          tile.innerHTML =
+            '<div class="av">' + (b.photo_url ? '<img src="' + esc(b.photo_url) + '" alt="" loading="lazy" onerror="this.parentNode.textContent=\'' + metierEmoji(b.profession) + '\'">' : metierEmoji(b.profession)) + '</div>'
+            + '<div style="flex:1;min-width:0">'
+            + '<div style="font-weight:700;line-height:1.2">' + esc(b.name || b.profession || 'Professionnel') + '</div>'
+            + '<div style="font-size:.74rem;color:#1d4ed8;margin-top:1px">' + esc(meta) + '</div>'
+            + (b.rating_count > 0 ? '<div style="font-size:.74rem;color:#f59e0b;margin-top:2px">' + stars(b.rating_avg) + ' <b>' + Number(b.rating_avg).toFixed(1) + '</b> <span style="color:#999">(' + b.rating_count + ' avis)</span></div>' : '')
+            + (b.description ? '<div style="font-size:.74rem;color:#666;margin-top:3px">' + esc(b.description) + '</div>' : '')
+            + (b.city ? '<div style="font-size:.7rem;color:#999;margin-top:2px">📍 ' + esc(b.city) + '</div>' : '')
+            + '</div>';
+          var actions = document.createElement('div'); actions.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex:0 0 auto';
+          var wa = document.createElement('button'); wa.textContent = '💬'; wa.title = 'Contacter sur WhatsApp';
+          wa.style.cssText = 'border:none;border-radius:8px;background:#25D366;color:#fff;font-size:1rem;padding:.35rem .55rem;cursor:pointer';
+          wa.addEventListener('click', function () {
+            window.open(waLink(b.phone, 'Bonjour, j’ai vu votre profil de ' + (b.profession || 'professionnel') + ' sur NEXUS Market. J’aurais besoin de vos services.'), '_blank');
+          });
+          actions.appendChild(wa);
+          if (b.lat != null && b.lng != null) {
+            var nav = document.createElement('button'); nav.textContent = '🧭'; nav.title = 'Itinéraire';
+            nav.style.cssText = 'border:1px solid #1d4ed8;background:#fff;color:#1d4ed8;border-radius:8px;font-size:1rem;padding:.35rem .55rem;cursor:pointer';
+            nav.addEventListener('click', function () { NexusMap.openDirections(b.lat, b.lng, b.name || b.profession || 'Pro'); });
+            actions.appendChild(nav);
+          }
+          var rev = document.createElement('button'); rev.textContent = '⭐'; rev.title = 'Avis & notation';
+          rev.style.cssText = 'border:1px solid #f59e0b;background:#fff;color:#f59e0b;border-radius:8px;font-size:1rem;padding:.35rem .55rem;cursor:pointer';
+          rev.addEventListener('click', function () { showReviews(b); });
+          actions.appendChild(rev);
+          tile.appendChild(actions);
+          host.appendChild(tile);
+        });
+      });
+    }).catch(function () {
+      host.innerHTML = '<div style="color:#b45309;padding:1rem">Position indisponible (refus GPS). Activez la localisation pour voir les pros proches.</div>';
+    });
+  }
+
+  // ── Avis & notation d'un pro (modal superposé) ───────────────────────────────
+  var revModal = null;
+  function showReviews(b) {
+    if (!b || !b.pro_id) { UX.toast('Avis indisponibles pour ce profil.'); return; }
+    if (!revModal) {
+      revModal = document.createElement('div'); revModal.id = 'nx-pro-rev';
+      revModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10060;display:none;align-items:center;justify-content:center;padding:1rem';
+      revModal.addEventListener('click', function (e) { if (e.target === revModal) revModal.style.display = 'none'; });
+      document.body.appendChild(revModal);
+    }
+    var c = sb();
+    revModal.innerHTML =
+      '<div style="background:#fff;border-radius:16px;max-width:460px;width:100%;max-height:88vh;overflow:auto;font-family:system-ui,-apple-system,sans-serif">'
+      + '<div style="display:flex;align-items:center;gap:8px;padding:.9rem 1.1rem;background:#1d4ed8;color:#fff;border-radius:16px 16px 0 0">'
+      + '<span style="font-size:1.2rem">' + metierEmoji(b.profession) + '</span><b style="flex:1">Avis — ' + esc(b.name || b.profession || 'Pro') + '</b>'
+      + '<button id="nx-rev-x" aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.3rem;cursor:pointer">×</button></div>'
+      + '<div style="padding:1rem 1.1rem">'
+      + '<div id="nx-rev-summary" style="color:#f59e0b;font-weight:700;margin-bottom:.6rem">' + (b.rating_count > 0 ? stars(b.rating_avg) + ' ' + Number(b.rating_avg).toFixed(1) + ' (' + b.rating_count + ' avis)' : 'Aucun avis pour l’instant.') + '</div>'
+      + '<div id="nx-rev-list" style="margin-bottom:1rem"><div style="color:#999;font-size:.85rem">Chargement…</div></div>'
+      + '<div style="border-top:1px solid #eee;padding-top:.8rem">'
+      + '<div class="nx-pro-label">Votre note</div>'
+      + '<div id="nx-rev-stars" style="font-size:1.7rem;color:#d1d5db;cursor:pointer;letter-spacing:3px;margin-bottom:.4rem">☆☆☆☆☆</div>'
+      + '<textarea id="nx-rev-comment" class="nx-pro-field" rows="2" placeholder="Votre commentaire (optionnel)" maxlength="400"></textarea>'
+      + '<button id="nx-rev-submit" style="width:100%;padding:.6rem;border:none;background:#f59e0b;color:#fff;border-radius:9px;font-weight:700;cursor:pointer">Publier mon avis</button>'
+      + '<div id="nx-rev-status" style="font-size:.78rem;color:#1d4ed8;text-align:center;margin-top:.4rem"></div>'
+      + '</div></div></div>';
+    revModal.style.display = 'flex';
+    revModal.querySelector('#nx-rev-x').addEventListener('click', function () { revModal.style.display = 'none'; });
+
+    // Sélecteur d'étoiles
+    var chosen = 0;
+    var starsEl = revModal.querySelector('#nx-rev-stars');
+    function paintStars(n) { starsEl.textContent = ''; for (var i = 1; i <= 5; i++) { var sp = document.createElement('span'); sp.textContent = (i <= n ? '★' : '☆'); sp.style.color = (i <= n ? '#f59e0b' : '#d1d5db'); sp.dataset.v = i; starsEl.appendChild(sp); } }
+    paintStars(0);
+    starsEl.addEventListener('click', function (e) { var v = e.target && e.target.dataset && e.target.dataset.v; if (v) { chosen = parseInt(v, 10); paintStars(chosen); } });
+
+    // Liste des avis existants
+    function loadList() {
+      var listEl = revModal.querySelector('#nx-rev-list');
+      if (!c) { listEl.innerHTML = '<div style="color:#999;font-size:.85rem">Avis indisponibles (hors ligne).</div>'; return; }
+      Promise.resolve(c.from('pro_reviews').select('user_name,rating,comment,created_at').eq('pro_id', b.pro_id).order('created_at', { ascending: false }).limit(50)).then(function (r) {
+        var rows = (r && r.data) || [];
+        if (!rows.length) { listEl.innerHTML = '<div style="color:#999;font-size:.85rem">Soyez le premier à laisser un avis.</div>'; return; }
+        listEl.innerHTML = rows.map(function (rv) {
+          return '<div style="border-bottom:1px solid #f3f3f3;padding:.5rem 0">'
+            + '<div style="font-size:.85rem"><b>' + esc(rv.user_name || 'Client') + '</b> <span style="color:#f59e0b">' + stars(rv.rating) + '</span></div>'
+            + (rv.comment ? '<div style="font-size:.8rem;color:#555;margin-top:2px">' + esc(rv.comment) + '</div>' : '')
+            + '<div style="font-size:.68rem;color:#aaa;margin-top:2px">' + fmtDate(rv.created_at) + '</div></div>';
+        }).join('');
+      }).catch(function () { listEl.innerHTML = '<div style="color:#999;font-size:.85rem">Impossible de charger les avis.</div>'; });
+    }
+    loadList();
+
+    // Soumission
+    revModal.querySelector('#nx-rev-submit').addEventListener('click', function () {
+      var statusEl = revModal.querySelector('#nx-rev-status');
+      var u = UX.user(); if (!u || !u.id) { UX.toast('Connectez-vous pour laisser un avis.'); return; }
+      if (!c) { UX.toast('Service indisponible.'); return; }
+      if (chosen < 1) { UX.toast('Choisissez une note (1 à 5 étoiles).'); return; }
+      statusEl.textContent = '⏳ Envoi…';
+      Promise.resolve(c.rpc('submit_pro_review', { p_pro_id: b.pro_id, p_rating: chosen, p_comment: revModal.querySelector('#nx-rev-comment').value.trim() || null })).then(function (r) {
+        var d = r && r.data;
+        if (d && d.ok === false) {
+          var why = d.reason === 'self_review' ? 'Vous ne pouvez pas vous auto-évaluer.' : d.reason === 'auth' ? 'Connectez-vous pour laisser un avis.' : 'Avis refusé.';
+          statusEl.textContent = ''; UX.toast(why, { bg: '#b45309' }); return;
+        }
+        statusEl.textContent = '✅ Merci pour votre avis !';
+        loadList();
+      }).catch(function () { statusEl.textContent = ''; UX.toast('Échec de l’envoi de l’avis.', { bg: '#b45309' }); });
+    });
+  }
+
+  // ── Onglet « Je suis un pro » : inscription / mise à jour de la fiche ─────────
+  function submitRegister(form, statusEl) {
+    var u = UX.user();
+    if (!u || !u.id) { UX.toast('Connectez-vous pour créer votre profil professionnel.'); return; }
+    var c = sb(); if (!c) { UX.toast('Service indisponible.'); return; }
+    var profession = form.profession.value.trim();
+    if (!profession) { UX.toast('Choisissez votre métier.'); return; }
+    var phone = form.phone.value.trim();
+    if (!phone) { UX.toast('Indiquez un numéro de téléphone (WhatsApp de préférence).'); return; }
+    statusEl.textContent = '📍 Récupération de votre position…';
+    NexusMap.locateMe({ enableHighAccuracy: true, timeout: 9000 }).then(function (pos) {
+      statusEl.textContent = '⏳ Publication de votre profil…';
+      return c.rpc('pro_register', { payload: {
+        name:             form.name.value.trim() || null,
+        profession:       profession,
+        description:      form.description.value.trim() || null,
+        experience_years: form.experience_years.value ? parseInt(form.experience_years.value, 10) : null,
+        tarif_text:       form.tarif_text.value.trim() || null,
+        phone:            phone,
+        city:             form.city.value.trim() || null,
+        lat:              pos.lat,
+        lng:              pos.lng,
+        disponible:       true,
+      } });
+    }).then(function (r) {
+      var d = r && r.data;
+      if (d && d.ok === false) { throw new Error(d.reason || 'echec'); }
+      statusEl.textContent = '';
+      UX.toast('🔧 Votre profil pro est en ligne — vous apparaissez sur la carte des pros proches !', { bg: '#1d4ed8', duration: 5000 });
+    }).catch(function (e) {
+      statusEl.textContent = '';
+      var msg = (e && /position|denied|timeout/i.test(e.message || '')) ? 'Position requise : autorisez la localisation puis réessayez.' : 'Échec de la publication. La fonctionnalité est peut-être en cours d’activation.';
+      UX.toast(msg, { bg: '#b45309' });
+    });
+  }
+
+  // ── Overlay ──────────────────────────────────────────────────────────────────
+  var ov = null;
+  function buildOverlay() {
+    if (ov) return ov;
+    ov = document.createElement('div'); ov.id = 'nx-pro-ov';
+    var metierOptions = METIERS.map(function (m) { return '<option value="' + esc(m.id) + '">' + m.e + ' ' + esc(m.id) + '</option>'; }).join('');
+    ov.innerHTML =
+      '<div class="nx-pro-card">'
+      + '<div class="nx-pro-head"><span style="font-size:1.4rem">🔧</span><b style="flex:1">NEXUS Pro — Ouvriers & artisans</b><button id="nx-pro-x" aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div>'
+      + '<div class="nx-pro-tabs"><button class="nx-pro-tab on" data-t="find">🔍 Trouver un pro</button><button class="nx-pro-tab" data-t="reg">🧰 Je suis un pro</button></div>'
+      + '<div class="nx-pro-body">'
+      // ── Pane Trouver ──
+      + '<div class="nx-pro-tab-pane on" id="nx-pro-pane-find">'
+      + '<div style="background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;border-radius:12px;padding:.8rem 1rem;margin-bottom:.8rem"><b>Un pro près de chez vous</b><div style="font-size:.8rem;opacity:.92">Maçon, plombier, électricien… trouvez le professionnel le plus proche et contactez-le directement.</div></div>'
+      + '<div id="nx-pro-chips" style="margin-bottom:.6rem"></div>'
+      + '<button id="nx-pro-search-btn" style="width:100%;padding:.65rem;border:none;background:#1d4ed8;color:#fff;border-radius:10px;font-weight:700;cursor:pointer;margin-bottom:.7rem">📍 Pros près de moi</button>'
+      + '<div id="nx-pro-results"></div>'
+      + '</div>'
+      // ── Pane Inscription ──
+      + '<div class="nx-pro-tab-pane" id="nx-pro-pane-reg">'
+      + '<div style="background:#eef2ff;border-radius:12px;padding:.7rem 1rem;margin-bottom:.8rem;font-size:.82rem;color:#1e3a8a">Inscrivez-vous gratuitement : votre fiche apparaîtra aux clients proches qui cherchent votre métier. Connexion requise.</div>'
+      + '<form id="nx-pro-form">'
+      + '<div class="nx-pro-label">Métier *</div><select name="profession" class="nx-pro-field" required>' + metierOptions + '</select>'
+      + '<div class="nx-pro-label">Nom / atelier</div><input name="name" class="nx-pro-field" placeholder="Ex : Atelier Diop & Fils" maxlength="80">'
+      + '<div class="nx-pro-label">Téléphone (WhatsApp) *</div><input name="phone" class="nx-pro-field" placeholder="77 123 45 67" required maxlength="20">'
+      + '<div class="nx-pro-label">Description / spécialité</div><textarea name="description" class="nx-pro-field" rows="2" placeholder="Ex : Pose carrelage, faïence, dalles. Travail soigné." maxlength="300"></textarea>'
+      + '<div style="display:flex;gap:.6rem">'
+      + '<div style="flex:1"><div class="nx-pro-label">Années d’exp.</div><input name="experience_years" type="number" min="0" max="70" class="nx-pro-field" placeholder="5"></div>'
+      + '<div style="flex:2"><div class="nx-pro-label">Tarif indicatif</div><input name="tarif_text" class="nx-pro-field" placeholder="à partir de 5 000 FCFA / sur devis" maxlength="60"></div>'
+      + '</div>'
+      + '<div class="nx-pro-label">Ville / quartier</div><input name="city" class="nx-pro-field" placeholder="Dakar — Médina" maxlength="60">'
+      + '<button type="submit" style="width:100%;padding:.7rem;border:none;background:#1d4ed8;color:#fff;border-radius:10px;font-weight:700;cursor:pointer;margin-top:.3rem">🚀 Publier mon profil (avec ma position)</button>'
+      + '<div id="nx-pro-reg-status" style="font-size:.78rem;color:#1d4ed8;text-align:center;margin-top:.5rem"></div>'
+      + '</form>'
+      + '</div>'
+      + '</div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('#nx-pro-x').addEventListener('click', close);
+
+    // Onglets
+    Array.prototype.forEach.call(ov.querySelectorAll('.nx-pro-tab'), function (b) {
+      b.addEventListener('click', function () {
+        Array.prototype.forEach.call(ov.querySelectorAll('.nx-pro-tab'), function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        ov.querySelector('#nx-pro-pane-find').classList.toggle('on', b.dataset.t === 'find');
+        ov.querySelector('#nx-pro-pane-reg').classList.toggle('on', b.dataset.t === 'reg');
+      });
+    });
+
+    // Chips métiers (filtre)
+    var chipHost = ov.querySelector('#nx-pro-chips'); var cur = '';
+    var allChip = document.createElement('span'); allChip.className = 'nx-pro-chip on'; allChip.textContent = 'Tous'; chipHost.appendChild(allChip);
+    var chipEls = [allChip];
+    allChip.addEventListener('click', function () { cur = ''; chipEls.forEach(function (x) { x.classList.remove('on'); }); allChip.classList.add('on'); });
+    METIERS.forEach(function (m) {
+      var ch = document.createElement('span'); ch.className = 'nx-pro-chip'; ch.textContent = m.e + ' ' + m.id; chipHost.appendChild(ch); chipEls.push(ch);
+      ch.addEventListener('click', function () { cur = m.id; chipEls.forEach(function (x) { x.classList.remove('on'); }); ch.classList.add('on'); });
+    });
+
+    ov.querySelector('#nx-pro-search-btn').addEventListener('click', function () { showNearby(ov.querySelector('#nx-pro-results'), cur); });
+    ov.querySelector('#nx-pro-form').addEventListener('submit', function (e) {
+      e.preventDefault(); submitRegister(e.target, ov.querySelector('#nx-pro-reg-status'));
+    });
+    return ov;
+  }
+  function open() { buildOverlay(); ov.classList.add('open'); }
+  function close() { if (ov) ov.classList.remove('open'); }
+
+  // ── FAB + ouverture par événement (intégrable au lanceur unique) ─────────────
+  function injectFab() {
+    if (document.getElementById('nx-pro-fab') || !document.body) return;
+    var b = document.createElement('button'); b.id = 'nx-pro-fab'; b.innerHTML = '🔧';
+    b.setAttribute('aria-label', 'Trouver un ouvrier / artisan professionnel près de moi');
+    b.setAttribute('title', 'NEXUS Pro 🔧 — ouvriers & artisans proches');
+    b.addEventListener('click', open); document.body.appendChild(b);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectFab); else injectFab();
+  window.addEventListener('nexus:open-pros', open);
+  // Deep-link depuis la page SEO /pro/:id (CTA → /?pro=…) : ouvre directement le module.
+  try { if (/[?&]pro=/.test(location.search)) setTimeout(open, 400); } catch (e) {}
+  console.info('[NEXUS] Module NEXUS Pro chargé ✅');
+})();
+</script>
+<!-- ============== FIN MODULE NEXUS PRO ============== -->
 
 <!-- ════════════════════════════════════════════════════════════════════════
      NEXUS — ACCESSIBILITÉ « NexusVox » (navigation pour public analphabète)

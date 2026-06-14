@@ -26,12 +26,13 @@ async function handle({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const nowIso = new Date().toISOString().slice(0, 10);
 
-  // Produits actifs + annonces express + trocs + stories actifs.
-  const [products, annonces, trocs, stories] = await Promise.all([
+  // Produits actifs + annonces express + trocs + stories actifs + pros (NEXUS Pro).
+  const [products, annonces, trocs, stories, pros] = await Promise.all([
     sbGet(env, 'products?select=id,name,image_url,updated_at&active=eq.true&order=updated_at.desc&limit=5000'),
     sbGet(env, `annonces_express?select=id,category,city,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
     sbGet(env, `troc_listings?select=id,title,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
     sbGet(env, `stories?select=id,mux_playback_id,created_at&status=eq.active&order=created_at.desc&limit=5000`),
+    sbGet(env, `pros?select=id,profession,photo_url,updated_at&status=eq.active&order=updated_at.desc&limit=5000`),
   ]);
 
   const urls = [];
@@ -55,6 +56,12 @@ async function handle({ request, env }) {
     const loc = `${origin}/stories/${encodeURIComponent(st.id)}`;
     const img = `\n    <image:image><image:loc>https://image.mux.com/${xmlEscape(st.mux_playback_id)}/thumbnail.jpg?width=360</image:loc></image:image>`;
     urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(st.created_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>${img}\n  </url>`);
+  }
+
+  for (const pr of (pros || [])) {
+    const loc = `${origin}/pro/${encodeURIComponent(pr.id)}`;
+    const img = pr.photo_url ? `\n    <image:image><image:loc>${xmlEscape(pr.photo_url)}</image:loc><image:title>${xmlEscape(pr.profession)}</image:title></image:image>` : '';
+    urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(pr.updated_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>${img}\n  </url>`);
   }
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
