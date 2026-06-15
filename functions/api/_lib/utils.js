@@ -85,8 +85,11 @@ export function isInternalCall(request, env) {
   // (ces functions en ont besoin) et JAMAIS exposée au client (seul l'anon key
   // est dans le bundle). Évite que le push/WhatsApp interne casse quand ni
   // INTERNAL_API_SECRET ni CRON_SECRET ne sont définis.
-  const expected = env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || '';
-  return !!expected && provided === expected;
+  // [FIX] Accepter N'IMPORTE LEQUEL des secrets internes configurés (tous server-only) :
+  // sinon, dès que CRON_SECRET est défini, lui seul est attendu et les appelants
+  // envoyant la SERVICE KEY (ex. trigger DB push) renvoient 401.
+  const accepted = [env.INTERNAL_API_SECRET, env.CRON_SECRET, env.SUPABASE_SERVICE_KEY].filter(Boolean);
+  return !!provided && accepted.includes(provided);
 }
 
 // Valeur à envoyer dans l'en-tête X-Internal-Secret par les appelants internes.

@@ -155,8 +155,12 @@ export async function onRequestPost(context) {
   // L'ancien code n'exigeait AUCUNE auth pour un envoi ciblé (userId) : n'importe
   // qui pouvait pousser une notif « ✅ Paiement confirmé » avec une url malveillante.
   // Repli robuste sur SUPABASE_SERVICE_KEY (toujours côté serveur, jamais client).
-  const INTERNAL_SECRET = env.INTERNAL_API_SECRET || env.CRON_SECRET || SUPABASE_SERVICE_KEY || "";
-  const isInternal = !!INTERNAL_SECRET && (request.headers.get("X-Internal-Secret") || "") === INTERNAL_SECRET;
+  // [FIX] Accepter N'IMPORTE LEQUEL des secrets internes (tous server-only). Sinon,
+  // dès que CRON_SECRET est défini, il prime et le trigger DB _push_on_notification
+  // (qui envoie la SERVICE KEY via le Vault) renvoie 401 -> plus aucun push.
+  const _provided = request.headers.get("X-Internal-Secret") || "";
+  const _internalSecrets = [env.INTERNAL_API_SECRET, env.CRON_SECRET, SUPABASE_SERVICE_KEY].filter(Boolean);
+  const isInternal = !!_provided && _internalSecrets.includes(_provided);
 
   let callerUid = null, isAdmin = false;
   if (!isInternal) {
