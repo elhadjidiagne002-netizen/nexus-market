@@ -122,18 +122,34 @@ function buildWelcomeHtml({ name, siteUrl }) {
 }
 
 // ── Envoi via Resend API ────────────────────────────────────────────────────
-async function sendViaResend({ apiKey, from, to, subject, html }) {
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ from, to: [to], subject, html }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.message || `Resend error ${res.status}`);
-  return data;
+// Envoi avec REDONDANCE : Resend (primaire) -> Brevo (secours).
+async function sendViaResend({ resendKey, brevoKey, from, to, subject, html }) {
+  // 1) Resend
+  if (resendKey) {
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${resendKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to: [to], subject, html }),
+      });
+      if (res.ok) return await res.json().catch(() => ({}));
+      console.warn("[confirm-email] Resend HTTP " + res.status + " -> bascule Brevo");
+    } catch (e) { console.warn("[confirm-email] Resend KO:", e.message, "-> bascule Brevo"); }
+  }
+  // 2) Brevo (secours)
+  if (brevoKey) {
+    const m = /^\s*(.*?)\s*<([^>]+)>\s*$/.exec(from || "");
+    const sender = m ? { name: (m[1] || "NEXUS Market").trim(), email: m[2].trim() } : { name: "NEXUS Market", email: from };
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": brevoKey, "Content-Type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ sender, to: [{ email: to }], subject, htmlContent: html }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.message || `Brevo error ${res.status}`);
+    return data;
+  }
+  throw new Error("Aucun fournisseur email (RESEND_API_KEY / BREVO_API_KEY)");
 }
 
 // ── Handler principal ───────────────────────────────────────────────────────
@@ -142,13 +158,14 @@ export async function onRequestPost(context) {
 
   const {
     RESEND_API_KEY,
+    BREVO_API_KEY,
     RESEND_FROM = "NEXUS Market <nx@nexusmarket.sn>",
     SUPABASE_URL,
     SUPABASE_SERVICE_KEY,
     SITE_URL = "https://nexus-market-asb.pages.dev",
   } = env;
 
-  if (!RESEND_API_KEY) return json(503, { error: "RESEND_API_KEY manquante" });
+  if (!RESEND_API_KEY && !BREVO_API_KEY) return json(503, { error: "Aucun fournisseur email (RESEND_API_KEY / BREVO_API_KEY)" });
   if (!SUPABASE_SERVICE_KEY) return json(503, { error: "SUPABASE_SERVICE_KEY manquante" });
 
   let body;
@@ -187,7 +204,8 @@ export async function onRequestPost(context) {
       const displayName = name || email.split("@")[0];
 
       await sendViaResend({
-        apiKey: RESEND_API_KEY,
+        resendKey: RESEND_API_KEY,
+        brevoKey: BREVO_API_KEY,
         from: RESEND_FROM,
         to: email,
         subject: "✅ Confirmez votre inscription – NEXUS Market",
@@ -201,7 +219,8 @@ export async function onRequestPost(context) {
     if (action === "welcome") {
       const displayName = name || email.split("@")[0];
       await sendViaResend({
-        apiKey: RESEND_API_KEY,
+        resendKey: RESEND_API_KEY,
+        brevoKey: BREVO_API_KEY,
         from: RESEND_FROM,
         to: email,
         subject: "🎉 Bienvenue sur NEXUS Market !",

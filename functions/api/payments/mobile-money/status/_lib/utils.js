@@ -107,11 +107,31 @@ export function paginate(url) {
 }
 
 // ─── Envoyer un email via Resend ──────────────────────────────────────────────
+// Envoi d'email avec REDONDANCE : Resend (primaire) -> Brevo (secours).
 export async function sendEmail(env, { to, subject, html }) {
-  if (!env.RESEND_API_KEY) return console.warn('[email] RESEND_API_KEY manquant');
-  return fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: env.EMAIL_FROM || 'NEXUS Market <nx@nexusmarket.sn>', to, subject, html }),
-  });
+  const from = env.EMAIL_FROM || 'NEXUS Market <nx@nexusmarket.sn>';
+  if (env.RESEND_API_KEY) {
+    try {
+      const r = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to, subject, html }),
+      });
+      if (r.ok) return r;
+      console.warn('[email] Resend HTTP ' + r.status + ' -> bascule Brevo');
+    } catch (e) { console.warn('[email] Resend KO:', e.message, '-> bascule Brevo'); }
+  }
+  if (env.BREVO_API_KEY) {
+    const m = /^\s*(.*?)\s*<([^>]+)>\s*$/.exec(from);
+    const sender = m ? { name: (m[1] || 'NEXUS Market').trim(), email: m[2].trim() } : { name: 'NEXUS Market', email: from };
+    try {
+      return await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ sender, to: [{ email: to }], subject, htmlContent: html }),
+      });
+    } catch (e) { console.warn('[email] Brevo KO:', e.message); }
+  }
+  console.warn('[email] aucun fournisseur email configure (RESEND_API_KEY / BREVO_API_KEY)');
+  return null;
 }

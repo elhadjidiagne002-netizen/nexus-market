@@ -23492,6 +23492,26 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     loadData();
     addToast('Demande de ' + (vendor?.name || 'cet utilisateur') + ' refus\u00e9e', 'info');
   };
+  // [EMAIL] Notifie l'acheteur par email d'un changement de statut de sa commande.
+  // Best-effort : résout l'email côté serveur (via /api/notify-user), ne bloque rien.
+  const notifyBuyerOrderStatus = async (orderId, newStatus, reason) => {
+    try {
+      const evMap = { processing: 'order_processing', in_transit: 'order_in_transit', delivered: 'order_delivered', cancelled: 'order_cancelled' };
+      const event = evMap[newStatus];
+      if (!event || !DataService._sb) return;
+      const { data: sess } = await DataService._sb.auth.getSession();
+      const token = sess?.session?.access_token;
+      if (!token) return;
+      const { data: ord } = await DataService._sb.from('orders').select('buyer_id,buyer_name,tracking_number').eq('id', orderId).maybeSingle();
+      if (!ord || !ord.buyer_id) return;
+      fetch('/api/notify-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ event, userId: ord.buyer_id, vars: { buyer_name: ord.buyer_name || '', order_id: String(orderId).slice(0, 8).toUpperCase(), tracking_number: ord.tracking_number || '', reason: reason || '' } }),
+      }).catch(() => {});
+    } catch (_) {}
+  };
+
   const updateOrderStatus = async (orderId, newStatus) => {
     // Verrou anti-revert + update optimiste immédiat
     _pendingStatusUpdates.current.add(orderId);
@@ -23512,6 +23532,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
               return;
             }
             addToast("Commande annulee, stock restitue.", "success");
+            notifyBuyerOrderStatus(orderId, "cancelled");
             if (typeof _pendingStatusUpdates !== "undefined") setTimeout(() => _pendingStatusUpdates.current.delete(orderId), 3000);
             return;
           } catch (_ce) {
@@ -23565,6 +23586,8 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       }
     }
     addToast(`Statut mis à jour → ${newStatus}`, "success");
+    // [EMAIL] Notifie l'acheteur du changement de statut (best-effort, non bloquant).
+    notifyBuyerOrderStatus(orderId, newStatus);
     // Libérer le verrou après 3s
     setTimeout(() => _pendingStatusUpdates.current.delete(orderId), 3000);
 
@@ -28961,6 +28984,25 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
     loadData();
     addToast(savedOk ? "Produit publi\xE9 ! \u2705" : "\u26A0\uFE0F Produit ajout\xE9 en local mais NON enregistr\xE9 dans Supabase \u2014 v\xE9rifiez la connexion/les droits.", savedOk ? "success" : "warning", savedOk ? 4000 : 8000);
   };
+  // [EMAIL] Notifie l'acheteur par email d'un changement de statut (best-effort).
+  const notifyBuyerOrderStatus = async (orderId, newStatus, reason) => {
+    try {
+      const evMap = { processing: 'order_processing', in_transit: 'order_in_transit', delivered: 'order_delivered', cancelled: 'order_cancelled' };
+      const event = evMap[newStatus];
+      if (!event || !DataService._sb) return;
+      const { data: sess } = await DataService._sb.auth.getSession();
+      const token = sess?.session?.access_token;
+      if (!token) return;
+      const { data: ord } = await DataService._sb.from('orders').select('buyer_id,buyer_name,tracking_number').eq('id', orderId).maybeSingle();
+      if (!ord || !ord.buyer_id) return;
+      fetch('/api/notify-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ event, userId: ord.buyer_id, vars: { buyer_name: ord.buyer_name || '', order_id: String(orderId).slice(0, 8).toUpperCase(), tracking_number: ord.tracking_number || '', reason: reason || '' } }),
+      }).catch(() => {});
+    } catch (_) {}
+  };
+
   const updateOrderStatus = async (orderId, newStatus) => {
     // Update optimiste immédiat
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus, updated_at: new Date().toISOString() } : o));
@@ -28979,6 +29021,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
               return;
             }
             addToast("Commande annulee, stock restitue.", "success");
+            notifyBuyerOrderStatus(orderId, "cancelled");
             if (typeof _pendingStatusUpdates !== "undefined") setTimeout(() => _pendingStatusUpdates.current.delete(orderId), 3000);
             return;
           } catch (_ce) {

@@ -10,6 +10,10 @@ import { sendEventEmail } from './_lib/notify.js';
 const ALLOWED = new Set([
   'quote_request', 'product_moderated', 'low_stock', 'vendor_new_order',
   'payout_requested', 'payout_processed', 'payout_failed',
+  // Cycle de vie commande (acheteur) + relation client
+  'order_confirmed', 'order_processing', 'order_shipped', 'order_in_transit',
+  'order_delivered', 'order_cancelled', 'return_requested',
+  'vendor_approved', 'vendor_rejected', 'welcome', 'new_message',
 ]);
 
 export async function onRequest({ request, env }) {
@@ -18,7 +22,7 @@ export async function onRequest({ request, env }) {
 
   const [user, authError] = await requireAuth(request, env);
   if (authError) return authError;
-  if (!env.RESEND_API_KEY) return json({ ok: true, skipped: 'no_resend' });
+  if (!env.RESEND_API_KEY && !env.BREVO_API_KEY) return json({ ok: true, skipped: 'no_provider' });
 
   let body;
   try { body = await request.json(); } catch { return err('JSON invalide', 400); }

@@ -33,6 +33,38 @@ const DEFAULTS = {
     html: wrap('Demande de virement reçue', '<p>Bonjour {{vendor_name}},</p><p>Nous avons bien reçu votre demande de virement de <strong>{{amount_fcfa}} FCFA</strong>. Elle est en cours de traitement.</p>') },
   admin_payout_request: { subject: '💸 Demande de retrait : {{amount_fcfa}} FCFA — {{vendor_name}}',
     html: wrap('Nouvelle demande de retrait', '<p>Le vendeur <strong>{{vendor_name}}</strong> demande un retrait de <strong>{{amount_fcfa}} FCFA</strong> via {{method}}.</p>') },
+
+  // ── Cycle de vie d'une commande (acheteur) ──────────────────────────────────
+  order_confirmed: { subject: '🛒 Commande confirmée — {{order_id}}',
+    html: wrap('Commande confirmée', '<p>Bonjour {{buyer_name}},</p><p>Votre commande <strong>{{order_id}}</strong> est bien enregistrée. Nous vous tiendrons informé(e) de son avancement.</p>') },
+  order_processing: { subject: '📦 Commande en préparation — {{order_id}}',
+    html: wrap('Commande en préparation', '<p>Bonjour {{buyer_name}},</p><p>Votre commande <strong>{{order_id}}</strong> est en cours de préparation par le vendeur.</p>') },
+  order_shipped: { subject: '🚚 Commande expédiée — {{order_id}}',
+    html: wrap('Commande expédiée', '<p>Bonjour {{buyer_name}},</p><p>Bonne nouvelle ! Votre commande <strong>{{order_id}}</strong> a été expédiée.{{#if tracking_number}} Suivi : <strong>{{tracking_number}}</strong>.{{/if}}</p>') },
+  order_in_transit: { subject: '🛵 Commande en cours de livraison — {{order_id}}',
+    html: wrap('En cours de livraison', '<p>Bonjour {{buyer_name}},</p><p>Votre commande <strong>{{order_id}}</strong> est en route. Le livreur arrive bientôt.</p>') },
+  order_delivered: { subject: '✅ Commande livrée — {{order_id}}',
+    html: wrap('Commande livrée', '<p>Bonjour {{buyer_name}},</p><p>Votre commande <strong>{{order_id}}</strong> a été livrée. Merci de votre confiance ! N\'hésitez pas à laisser un avis.</p>') },
+  order_cancelled: { subject: '❌ Commande annulée — {{order_id}}',
+    html: wrap('Commande annulée', '<p>Bonjour {{buyer_name}},</p><p>Votre commande <strong>{{order_id}}</strong> a été annulée.{{#if reason}} Motif : {{reason}}.{{/if}} Un remboursement éventuel sera traité sous peu.</p>') },
+
+  // ── Vendeur ─────────────────────────────────────────────────────────────────
+  vendor_new_order: { subject: '🎉 Nouvelle commande reçue — {{order_id}}',
+    html: wrap('Nouvelle commande !', '<p>Bonjour {{vendor_name}},</p><p>Vous avez reçu une nouvelle commande <strong>{{order_id}}</strong> d\'un montant de <strong>{{total}}</strong>. Préparez-la depuis votre tableau de bord vendeur.</p>') },
+  vendor_approved: { subject: '✅ Votre boutique est validée — NEXUS Market',
+    html: wrap('Bienvenue parmi les vendeurs NEXUS', '<p>Bonjour {{vendor_name}},</p><p>Félicitations ! Votre boutique <strong>{{shop_name}}</strong> est validée. Vous pouvez désormais publier vos produits et vendre sur NEXUS Market.</p>') },
+  vendor_rejected: { subject: 'Votre dossier vendeur — NEXUS Market',
+    html: wrap('Dossier examiné', '<p>Bonjour {{vendor_name}},</p><p>Après examen, nous ne pouvons pas valider votre inscription à ce stade.{{#if reason}} Motif : {{reason}}.{{/if}} Vous pourrez soumettre un nouveau dossier ultérieurement.</p>') },
+
+  // ── Compte & relation client ────────────────────────────────────────────────
+  welcome: { subject: '👋 Bienvenue sur NEXUS Market !',
+    html: wrap('Bienvenue !', '<p>Bonjour {{name}},</p><p>Votre compte NEXUS Market est créé. Découvrez des milliers de produits, payez avec Orange Money / Wave, et faites-vous livrer partout au Sénégal.</p>') },
+  new_message: { subject: '💬 Nouveau message sur NEXUS Market',
+    html: wrap('Nouveau message', '<p>Bonjour {{name}},</p><p>Vous avez reçu un nouveau message{{#if from_name}} de <strong>{{from_name}}</strong>{{/if}}. Connectez-vous pour y répondre.</p>') },
+  return_requested: { subject: '↩️ Demande de retour — Commande {{order_id}}',
+    html: wrap('Demande de retour reçue', '<p>Bonjour {{buyer_name}},</p><p>Votre demande de retour pour la commande <strong>{{order_id}}</strong> a bien été enregistrée. Notre équipe la traite.</p>') },
+  dispute_opened: { subject: '⚖️ Litige ouvert — Commande {{order_id}}',
+    html: wrap('Litige ouvert', '<p>Bonjour,</p><p>Un litige a été ouvert pour la commande <strong>{{order_id}}</strong>. Notre équipe va l\'examiner et revenir vers les parties.</p>') },
 };
 
 /**
@@ -42,7 +74,7 @@ const DEFAULTS = {
  */
 export async function sendEventEmail(env, eventKey, to, vars = {}) {
   if (!to) return { skipped: 'no_recipient' };
-  if (!env.RESEND_API_KEY) return { skipped: 'no_resend' };
+  if (!env.RESEND_API_KEY && !env.BREVO_API_KEY) return { skipped: 'no_provider' };
   const cfg = await getEventConfig(env, eventKey);
   if (cfg && cfg.email_enabled === false) return { skipped: 'disabled' };
 
