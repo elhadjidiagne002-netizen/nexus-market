@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v6"; // Incrémenté → force remplacement du cache v5
+const CACHE_NAME = "nexus-v7"; // v7 (2026-06-15) → purge cache v6 + recharge nouveau code (EmailService serveur-en-premier, fix commande)
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────
