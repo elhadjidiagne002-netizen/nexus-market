@@ -65,6 +65,12 @@ const DEFAULTS = {
     html: wrap('Demande de retour reçue', '<p>Bonjour {{buyer_name}},</p><p>Votre demande de retour pour la commande <strong>{{order_id}}</strong> a bien été enregistrée. Notre équipe la traite.</p>') },
   dispute_opened: { subject: '⚖️ Litige ouvert — Commande {{order_id}}',
     html: wrap('Litige ouvert', '<p>Bonjour,</p><p>Un litige a été ouvert pour la commande <strong>{{order_id}}</strong>. Notre équipe va l\'examiner et revenir vers les parties.</p>') },
+
+  // ── Alertes stock / prix (déclenchées par stock-alerts.js) ──────────────────
+  stock_back: { subject: '🔔 De nouveau en stock : {{product_name}}',
+    html: wrap('De nouveau disponible', '<p>Bonjour {{buyer_name}},</p><p>Bonne nouvelle ! <strong>{{product_name}}</strong> est de nouveau en stock. Commandez vite avant rupture.{{#if product_url}}<br><br><a href="{{product_url}}" style="color:#00853E;font-weight:700">Voir le produit →</a>{{/if}}</p>') },
+  price_drop: { subject: '📉 Baisse de prix : {{product_name}}',
+    html: wrap('Le prix a baissé', '<p>Bonjour {{buyer_name}},</p><p>Le prix de <strong>{{product_name}}</strong> a baissé{{#if discount_pct}} de {{discount_pct}}%{{/if}} — désormais <strong>{{new_price}}</strong>.{{#if product_url}}<br><br><a href="{{product_url}}" style="color:#00853E;font-weight:700">En profiter →</a>{{/if}}</p>') },
 };
 
 /**
