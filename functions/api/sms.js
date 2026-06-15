@@ -154,7 +154,9 @@ export async function onRequest({ request, env }) {
   const hasTwilio = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN);
 
   if (!hasAT && !hasOrange && !hasTwilio) {
-    return json({ error: 'Aucun provider SMS configuré (AT_API_KEY / ORANGE_CLIENT_ID / TWILIO_ACCOUNT_SID)' }, 503);
+    // SMS optionnel et non configuré : on dégrade proprement (200) plutôt que 503,
+    // pour ne pas polluer la console et ne pas faire échouer le flux commande.
+    return json({ ok: false, skipped: 'sms_not_configured' }, 200);
   }
 
   try {
