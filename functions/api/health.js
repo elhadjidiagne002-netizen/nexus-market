@@ -9,7 +9,7 @@ export async function onRequest(context) {
       status: 'ok',
       service: 'nexus-market-api',
       time: new Date().toISOString(),
-      build: '2026-06-15-push-auth-fix',
+      build: '2026-06-15-order-email-server',
       checks: {
         runtime: 'cloudflare-pages-functions',
         supabase: !!(context.env.SUPABASE_URL && context.env.SUPABASE_SERVICE_KEY),
