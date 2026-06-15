@@ -7699,38 +7699,41 @@ const EmailService = {
     }
     const _logE = (status) => { try { NexusNotif.logEmail({ to_email: to, subject: subject || "", template: templateId || null, status, user_id: ((typeof DataService !== "undefined") ? DataService?._user?.id : null) || null }); } catch (_) {} };
 
-    // ── 1. BREVO (300/jour gratuits) ──────────────────────────────────────
+    // ── 1. Backend serveur (Resend -> Brevo) — PRIORITAIRE ────────────────
+    // Le serveur gère la REDONDANCE Resend/Brevo, le bon expéditeur (EMAIL_FROM,
+    // domaine vérifié) et la journalisation avec provider_id. On le tente EN
+    // PREMIER. Les chemins client ci-dessous (vieux senders) ne sont qu'un
+    // SECOURS — avant, le Brevo client interceptait et "réussissait" sans
+    // délivrer (loggé sent, provider_id null), court-circuitant le serveur.
+    // Tenté même en INVITÉ (apiUrl vide en same-origin → URL relative).
+    const _t = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
+    {
+      try {
+        const _h = { "Content-Type": "application/json" };
+        if (_t) _h["Authorization"] = `Bearer ${_t}`;
+        const r = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/email/send", { method: "POST", headers: _h, body: JSON.stringify({ to, subject, html: htmlBody }) });
+        if (r.ok) { const j = await r.json(); if (j.ok) { console.log("[EmailService] ✅ backend (Resend/Brevo)", to); return true; } }  // serveur journalise déjà (provider_id)
+      } catch(e) { console.warn("[EmailService] backend:", e.message); }
+    }
+    // ── 2. BREVO client (SECOURS) ─────────────────────────────────────────
     if (NEXUS_CONFIG.brevo?.apiKey) {
       try {
         const r = await fetch("https://api.brevo.com/v3/smtp/email", {
           method: "POST",
           headers: { "Content-Type": "application/json", "api-key": NEXUS_CONFIG.brevo.apiKey },
-          body: JSON.stringify({ sender: { name: NEXUS_CONFIG.brevo.senderName||"NEXUS Market", email: NEXUS_CONFIG.brevo.senderEmail||"noreply@nexus.sn" }, to: [{ email: to }], subject, htmlContent: htmlBody })
+          body: JSON.stringify({ sender: { name: NEXUS_CONFIG.brevo.senderName||"NEXUS Market", email: NEXUS_CONFIG.brevo.senderEmail||"nx@nexusmarket.sn" }, to: [{ email: to }], subject, htmlContent: htmlBody })
         });
         if (r.ok) { console.log("[Brevo] ✅", to, "—", subject); _logE("sent"); return true; }
         const err = await r.json().catch(()=>({}));
         console.warn("[Brevo] ⚠️", r.status, err.message || JSON.stringify(err));
       } catch(e) { console.warn("[Brevo] réseau:", e.message); }
     }
-    // ── 2. EmailJS fallback ───────────────────────────────────────────────
+    // ── 3. EmailJS fallback (SECOURS) ─────────────────────────────────────
     const uTpl = NEXUS_CONFIG.emailjs.universalTemplateId;
     if (!this._initialized && window.emailjs && isEmailjsConfigured()) { window.emailjs.init({ publicKey: NEXUS_CONFIG.emailjs.publicKey }); this._initialized = true; }
     if (isEmailjsConfigured() && this._initialized && uTpl) {
       try { await window.emailjs.send(NEXUS_CONFIG.emailjs.serviceId, uTpl, { to_email: to, reply_to: to, subject, html_body: htmlBody, ...variables }); console.log("[EmailJS] ✅", to); _logE("sent"); return true; }
       catch(e) { console.warn("[EmailJS]", e?.status || e?.message || e); }
-    }
-    // ── 3. Backend API ────────────────────────────────────────────────────
-    const _t = DataService?._token || sessionStorage.getItem("nexus_jwt") || localStorage.getItem("nexus_jwt");
-    // [FIX] Backend serveur (Resend) tenté même en INVITÉ (sans token) : en
-    // same-origin (Cloudflare Pages) apiUrl est vide → l'URL relative suffit.
-    // L'endpoint applique un quota strict pour les invités (anti-spam).
-    {
-      try {
-        const _h = { "Content-Type": "application/json" };
-        if (_t) _h["Authorization"] = `Bearer ${_t}`;
-        const r = await fetch((NEXUS_CONFIG.apiUrl||"") + "/api/email/send", { method: "POST", headers: _h, body: JSON.stringify({ to, subject, html: htmlBody }) });
-        if (r.ok) { const j = await r.json(); if (j.ok) { console.log("[EmailService] ✅ backend", to); _logE("sent"); return true; } }
-      } catch(e) { console.warn("[EmailService] backend:", e.message); }
     }
     // Tentative finale via Cloudflare Function /api/email (si elle existe)
     const _t2 = DataService?._token || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
