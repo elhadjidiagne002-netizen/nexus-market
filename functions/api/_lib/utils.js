@@ -275,6 +275,6 @@ export async function sendEmail(env, { to, subject, html }) {
   return fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: 'NEXUS Market <noreply@nexus-market.com>', to, subject, html }),
+    body: JSON.stringify({ from: env.EMAIL_FROM || 'NEXUS Market <nx@nexusmarket.sn>', to, subject, html }),
   });
 }

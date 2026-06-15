@@ -138,7 +138,7 @@ export async function onRequestPost(context) {
   const {
     SUPABASE_URL, SUPABASE_SERVICE_KEY,
     VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY,
-    VAPID_EMAIL = "mailto:admin@nexus-market.com",
+    VAPID_EMAIL = "mailto:nx@nexusmarket.sn",
   } = env;
 
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !SUPABASE_SERVICE_KEY) {

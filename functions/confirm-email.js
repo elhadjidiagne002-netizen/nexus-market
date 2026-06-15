@@ -142,7 +142,7 @@ export async function onRequestPost(context) {
 
   const {
     RESEND_API_KEY,
-    RESEND_FROM = "NEXUS Market <noreply@nexus-market.sn>",
+    RESEND_FROM = "NEXUS Market <nx@nexusmarket.sn>",
     SUPABASE_URL,
     SUPABASE_SERVICE_KEY,
     SITE_URL = "https://nexus-market-asb.pages.dev",

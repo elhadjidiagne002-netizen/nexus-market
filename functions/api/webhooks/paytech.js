@@ -37,7 +37,7 @@ async function sendBuyerConfirmation(env, order) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from:    "NEXUS Market <commandes@nexus.sn>",
+      from:    env.EMAIL_FROM || "NEXUS Market <nx@nexusmarket.sn>",
       to:      order.buyer_email,
       subject: `Votre commande NEXUS #${order.id.slice(0, 8)} est confirmee`,
       html:    `<h2>Merci pour votre commande !</h2>
