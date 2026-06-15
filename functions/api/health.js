@@ -9,12 +9,14 @@ export async function onRequest(context) {
       status: 'ok',
       service: 'nexus-market-api',
       time: new Date().toISOString(),
+      build: '2026-06-15-email-redundancy',
       checks: {
         runtime: 'cloudflare-pages-functions',
         supabase: !!(context.env.SUPABASE_URL && context.env.SUPABASE_SERVICE_KEY),
         paytech: !!(context.env.PAYTECH_API_KEY && context.env.PAYTECH_API_SECRET),
         sms: context.env.SMS_PROVIDER || 'simulate',
-        imgbb: !!context.env.IMGBB_API_KEY
+        imgbb: !!context.env.IMGBB_API_KEY,
+        email: { resend: !!context.env.RESEND_API_KEY, brevo: !!context.env.BREVO_API_KEY }
       }
     }),
     {
