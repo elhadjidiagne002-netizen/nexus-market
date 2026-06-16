@@ -66,12 +66,13 @@ export async function onRequest({ request, env }) {
   }
 
   // 2. Extraire l'identifiant depuis custom_field (commande / boost / abo Pro)
-  let order_id = null, boostId = null, subId = null;
+  let order_id = null, boostId = null, subId = null, storyId = null;
   try {
     const cf = typeof custom_field === 'string' ? JSON.parse(custom_field) : custom_field;
     order_id = cf?.order_id;
     boostId  = cf?.boostId || cf?.boost_id;
     subId    = cf?.subId   || cf?.sub_id;
+    storyId  = cf?.storyId || cf?.story_id;
   } catch { /* ignore */ }
 
   const isPaid = type_event === 'sale_complete';
@@ -127,6 +128,16 @@ export async function onRequest({ request, env }) {
       });
     }
     return jsonR({ ok: true, kind: 'boost', activated: isPaid });
+  }
+
+  // 2quater. Paiement de PUBLICATION d'une STORY → activation côté serveur
+  // (pending_payment -> active). En cas d'échec, on laisse 'pending_payment'
+  // pour permettre une nouvelle tentative.
+  if (storyId && !order_id) {
+    if (isPaid) {
+      await sbUpdate(env, 'stories', `id=eq.${encodeURIComponent(storyId)}`, { status: 'active' });
+    }
+    return jsonR({ ok: true, kind: 'story', activated: isPaid });
   }
 
   if (!order_id) {

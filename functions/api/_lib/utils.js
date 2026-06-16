@@ -265,6 +265,31 @@ export async function validateProSubscription(env, { subId, uid, amountXof }) {
   return { ok: true, sub: row };
 }
 
+// [STORY PAYANTE] Valide le montant de publication d'une story contre le tarif
+// CANONIQUE (app_config -> nexus_monetization_cfg.story_fee) + l'appartenance.
+export async function validateStoryFee(env, { storyId, uid, amountXof }) {
+  if (!storyId) return { ok: false, status: 400, error: 'story_id requis' };
+  const sb = supabase(env);
+  let row;
+  try {
+    const rows = await sb.from('stories').select('id,vendor_id,status', `id=eq.${encodeURIComponent(storyId)}`);
+    row = Array.isArray(rows) ? rows[0] : null;
+  } catch (e) { return { ok: false, status: 502, error: 'Lecture story impossible' }; }
+  if (!row) return { ok: false, status: 404, error: 'Story introuvable' };
+  if (row.vendor_id && uid && row.vendor_id !== uid) return { ok: false, status: 403, error: 'Story non autorisée' };
+  if (row.status === 'active') return { ok: false, status: 409, error: 'Story déjà publiée' };
+
+  let cfg = {};
+  try {
+    const c = await sb.from('app_config').select('value', `key=eq.nexus_monetization_cfg`);
+    cfg = (Array.isArray(c) && c[0] && c[0].value) || {};
+  } catch (_) {}
+  const canonical = cfg.story_fee != null ? Math.round(Number(cfg.story_fee)) : 0;
+  if (!(canonical > 0)) return { ok: false, status: 400, error: 'Publication gratuite — aucun paiement requis' };
+  if (Math.round(Number(amountXof)) !== canonical) return { ok: false, status: 400, error: 'Montant ne correspond pas au tarif de publication' };
+  return { ok: true, story: row };
+}
+
 export function paginate(url) {
   const u = new URL(url);
   const page  = parseInt(u.searchParams.get('page')  || '1');

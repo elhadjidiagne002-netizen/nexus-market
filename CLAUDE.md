@@ -98,11 +98,22 @@ Purge des compteurs >24h dans le cron cleanup.
 `npm run format`.
 
 ## Manquements connus non résolus (nécessitent décision/accès)
-- Réconciliation des deux jeux de migrations (cf. §4).
-- `api_keys` / RPC `api_key_validate` (utilisés par `products-feed.js`) non définis.
-- `notifications.user_id = "admin"` dans `payout-request.js` : doit être un UUID (`ADMIN_USER_ID`).
+- **Devis de livraison transporteur** : `functions/api/shipping-quote.js` est un stub
+  (`[TODO] Brancher un vrai transporteur`) — intégration DHL/GIG/SENPOST réelle à faire
+  (clés présentes dans `.env`, mais specs API requises).
+- **Paiement monétisation via Wave/OM** : les liens Wave/Orange Money n'ont pas de callback
+  → boosts/abonnements/flash/priorité B2B payés ainsi restent `pending` (activation manuelle
+  admin). Canal automatisé = **PayTech** (IPN). Stories payantes : flux PayTech **câblé**
+  (2026-06-16, `kind:'story'` dans init/ipn + `validateStoryFee`). Wave/OM auto = nécessite
+  l'API Wave Business.
+- Réconciliation des deux jeux de migrations (`database/migrations/` + `sql/`, cf. §4).
 - Réponses API non standardisées (`{error}` vs `{ok:false,error}`) : helper canonique
   = `functions/api/_lib/response.js` (`ok`/`err`) ; migration progressive recommandée.
-- Cibles de déploiement multiples (`vercel.json`, `render.yaml`, `Dockerfile`) : la cible
-  active est **Cloudflare Pages** (cf. `wrangler.toml`) ; les autres sont à retirer si inutilisées.
+- Webhook `functions/api/webhooks/paytech.js` : doublon **non branché**, conservé
+  volontairement (cf. en-tête du fichier) ; à retirer seulement si confirmé inutile.
 - Frontend monolithique (`public/index.html`), pas de TypeScript : refonte hors périmètre.
+
+### ✅ Déjà résolus — ne plus lister (vérifié 2026-06-16)
+`api_keys` (table) + `api_key_validate` (RPC) **existent** ; `payout_requests.amount_xof`
+**présent** ; `vercel.json`/`render.yaml`/`Dockerfile` **supprimés** ; `payout-request.js`
+utilise déjà **`ADMIN_USER_ID`** (plus de `user_id="admin"` en dur).

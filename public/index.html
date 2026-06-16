@@ -13500,7 +13500,19 @@ const NexusStoriesWidget = ({ user }) => {
       if (!r.ok || !j.ok) { toast(j.error || 'Publication impossible.', 'error'); setBusy(false); return; }
       try { fetch('/api/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: ['/stories'] }) }).catch(() => {}); } catch (_) {}
       if (j.requiresPayment) {
-        toast('Story enregistrée — en attente de paiement (' + (Number(j.fee) || 0).toLocaleString('fr-FR') + ' FCFA). Le paiement sera bientôt disponible.', 'info', 9000);
+        // [STORY PAYANTE] Tarif > 0 → paiement PayTech ; l'IPN active la story.
+        toast('Publication payante (' + (Number(j.fee) || 0).toLocaleString('fr-FR') + ' FCFA) — redirection vers le paiement…', 'info', 6000);
+        try {
+          var _origin = window.location.origin;
+          var _pr = await fetch('/api/payments/paytech/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify({ kind: 'story', story_id: j.storyId, order_id: j.storyId, amount: j.fee, item_name: 'Publication NEXUS Story', success_url: _origin + '/?stories=1', cancel_url: _origin + '/?stories=1' }),
+          });
+          var _pj = await _pr.json().catch(function () { return {}; });
+          if (_pr.ok && _pj.redirect_url) { window.location.href = _pj.redirect_url; return; }
+          toast('Paiement indisponible : ' + (_pj.error || 'réessayez plus tard') + '. Story en attente de paiement.', 'warning', 9000);
+        } catch (e) { toast('Paiement indisponible (réseau). Story en attente de paiement.', 'warning', 8000); }
       } else {
         toast('Story publiée ! 🎬', 'success', 6000);
       }
