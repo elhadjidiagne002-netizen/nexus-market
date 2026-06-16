@@ -46,7 +46,7 @@ const DEFAULTS = {
 
   // ── Cycle de vie d'une commande (acheteur) ──────────────────────────────────
   order_confirmed: { subject: '🛒 Commande confirmée — {{order_id}}',
-    html: wrap('Commande confirmée', '<p>Bonjour {{buyer_name}},</p><p>Votre commande <strong>{{order_id}}</strong> est bien enregistrée. Nous vous tiendrons informé(e) de son avancement.</p>') },
+    html: wrap('Merci pour votre commande !', '<p>Bonjour <strong>{{buyer_name}}</strong>,</p><p>Votre commande <strong>#{{order_id}}</strong> est bien enregistrée. Nous vous tiendrons informé(e) de son avancement.</p>{{#if total}}<p style="margin:16px 0 4px"><strong>Montant :</strong> {{total}}</p>{{/if}}{{#if items}}<p style="margin:16px 0 6px"><strong>Articles :</strong></p>{{items}}{{/if}}{{#if address}}<p style="margin:16px 0 4px"><strong>Livraison :</strong> {{address}}</p>{{/if}}{{#if order_date}}<p style="margin:12px 0 0;color:#6b7280;font-size:13px">Commande passée le {{order_date}}.</p>{{/if}}') },
   order_processing: { subject: '📦 Commande en préparation — {{order_id}}',
     html: wrap('Commande en préparation', '<p>Bonjour {{buyer_name}},</p><p>Votre commande <strong>{{order_id}}</strong> est en cours de préparation par le vendeur.</p>') },
   order_shipped: { subject: '🚚 Commande expédiée — {{order_id}}',
