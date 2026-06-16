@@ -10,12 +10,22 @@ function applyVars(str, vars) {
   return s.replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] != null ? String(vars[k]) : ''));
 }
 
-// Gabarit HTML minimal et neutre (utilisé si aucun template DB n'est défini).
+// Gabarit HTML de marque (utilisé si aucun template configuré n'est défini) :
+// en-tête vert, carte de contenu, bouton CTA et pied de page. Le {{site_url}}
+// est substitué par applyVars au moment de l'envoi.
 function wrap(title, bodyHtml) {
-  return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fff">
-  <div style="background:#00853E;padding:20px;text-align:center"><h1 style="color:#fff;margin:0;font-size:20px">NEXUS Market</h1></div>
-  <div style="padding:28px 24px;background:#f9fafb"><h2 style="color:#111827;margin:0 0 12px;font-size:18px">${title}</h2>${bodyHtml}</div>
-  <div style="background:#1f2937;color:#9ca3af;padding:12px;text-align:center;font-size:12px">NEXUS Market — Dakar, Sénégal</div>
+  return `<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;background:#ffffff">
+  <div style="background:#00853E;padding:24px 20px;text-align:center">
+    <h1 style="color:#ffffff;margin:0;font-size:22px;letter-spacing:.3px">NEXUS Market</h1>
+  </div>
+  <div style="padding:32px 24px;background:#f9fafb">
+    <h2 style="color:#111827;margin:0 0 16px;font-size:18px">${title}</h2>
+    <div style="background:#ffffff;border-radius:10px;padding:20px 22px;box-shadow:0 1px 3px rgba(0,0,0,.08);color:#374151;font-size:14px;line-height:1.6">${bodyHtml}</div>
+    <div style="margin-top:28px;text-align:center">
+      <a href="{{site_url}}" style="background:#00853E;color:#ffffff;padding:13px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;display:inline-block">Accéder à NEXUS Market</a>
+    </div>
+  </div>
+  <div style="background:#1f2937;color:#9ca3af;padding:14px;text-align:center;font-size:12px">NEXUS Market — Dakar, Sénégal &nbsp;|&nbsp; nexusmarket.sn</div>
 </div>`;
 }
 
@@ -73,9 +83,37 @@ const DEFAULTS = {
     html: wrap('Le prix a baissé', '<p>Bonjour {{buyer_name}},</p><p>Le prix de <strong>{{product_name}}</strong> a baissé{{#if discount_pct}} de {{discount_pct}}%{{/if}} — désormais <strong>{{new_price}}</strong>.{{#if product_url}}<br><br><a href="{{product_url}}" style="color:#00853E;font-weight:700">En profiter →</a>{{/if}}</p>') },
 };
 
+// Mapping clé d'événement serveur → identifiant de template de l'éditeur admin
+// (app_config.nexus_email_templates). La plupart sont identiques ; seul
+// order_confirmed diffère (l'éditeur l'appelle order_confirmation).
+const ADMIN_TPL_ALIAS = { order_confirmed: 'order_confirmation' };
+
 /**
- * Envoi d'email serveur par clé d'événement : gating + template (DB ou défaut)
- * + substitution + envoi Resend + journalisation. Ne lève jamais.
+ * Template configuré par l'admin dans l'éditeur (Admin → Templates email),
+ * stocké dans app_config.nexus_email_templates = { [templateId]: {subject, htmlBody|html} }.
+ * Renvoie { subject, html } ou null. Lit les deux conventions de clé (htmlBody/html).
+ */
+async function getAdminTemplate(env, eventKey) {
+  try {
+    const sb = supabase(env);
+    const rows = await sb.from('app_config').select('value', `key=eq.nexus_email_templates`);
+    const cfg = Array.isArray(rows) && rows[0] && rows[0].value;
+    if (!cfg || typeof cfg !== 'object') return null;
+    const id = ADMIN_TPL_ALIAS[eventKey] || eventKey;
+    const t = cfg[id];
+    if (!t) return null;
+    const html = t.htmlBody || t.html || '';
+    const subject = t.subject || '';
+    if (!html && !subject) return null;
+    return { subject, html };
+  } catch (_) { return null; }
+}
+
+/**
+ * Envoi d'email serveur par clé d'événement : gating + template + substitution
+ * + envoi Resend + journalisation. Ne lève jamais. Résolution du template :
+ *   1) table email_templates (name=eventKey)  2) éditeur admin (app_config)
+ *   3) gabarit de marque intégré (DEFAULTS).
  * vars._userId / vars._orderId alimentent le journal.
  */
 export async function sendEventEmail(env, eventKey, to, vars = {}) {
@@ -85,12 +123,19 @@ export async function sendEventEmail(env, eventKey, to, vars = {}) {
   if (cfg && cfg.email_enabled === false) return { skipped: 'disabled' };
 
   let subject = '', html = '';
+  // 1) Template serveur dédié (table email_templates).
   try {
     const sb = supabase(env);
     const rows = await sb.from('email_templates').select('subject,html_body', `name=eq.${encodeURIComponent(eventKey)}`);
     const t = Array.isArray(rows) && rows[0];
     if (t) { subject = t.subject || ''; html = t.html_body || ''; }
   } catch (_) {}
+  // 2) Template configuré dans l'éditeur admin (app_config.nexus_email_templates).
+  if (!subject || !html) {
+    const at = await getAdminTemplate(env, eventKey);
+    if (at) { subject = subject || at.subject; html = html || at.html; }
+  }
+  // 3) Gabarit de marque intégré.
   if (!subject || !html) {
     const d = DEFAULTS[eventKey] || { subject: 'NEXUS Market', html: wrap('Notification', '<p>{{message}}</p>') };
     subject = subject || d.subject;
