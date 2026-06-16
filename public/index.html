@@ -38673,7 +38673,15 @@ window.addEventListener('unhandledrejection', function(event) {
       if (lat != null) patch.current_lat = lat;
       if (lng != null) patch.current_lng = lng;
       if (this._sb) {
-        try { await this._sb.from('profiles').update(patch).eq('id', courierId); }
+        try {
+          await this._sb.from('profiles').update(patch).eq('id', courierId);
+          // Amorce la sonde d'honnêteté : la position vient d'être écrite côté
+          // serveur → on considère le ping « frais » (évite une fausse alerte
+          // « position non partagée » dans les premières secondes en ligne).
+          if (status === 'available' && lat != null && lng != null) {
+            try { window.__NEXUS_COURIER_PING_OK__ = Date.now(); window.__NEXUS_COURIER_PING_ERR__ = null; } catch (e3) {}
+          }
+        }
         catch (e) { console.warn('[Coursier] setCourierStatus:', e.message); }
         // [FIX OFFRES] nearby_couriers exige couriers.is_available = true. On le
         // synchronise avec l'état en ligne (sinon un coursier « en ligne » ne reçoit
@@ -39376,6 +39384,7 @@ window.addEventListener('unhandledrejection', function(event) {
     var _ea = React.useState(null), earned = _ea[0], setEarned = _ea[1];   // {id,total_earned, deliveries_done}
     var _eh = React.useState([]), earnHist = _eh[0], setEarnHist = _eh[1];  // historique courier_earnings
     var _se = React.useState(false), showEarn = _se[0], setShowEarn = _se[1];
+    var _ps = React.useState(false), pingStale = _ps[0], setPingStale = _ps[1]; // position plus partagée → invisible aux clients
 
     var user = props.user || {};
     var userId = user.id;                                   // = profiles.id = auth.uid()
@@ -39443,6 +39452,21 @@ window.addEventListener('unhandledrejection', function(event) {
       if (off) setOnline(false);
       else { setOnline(true); if (!window.__NEXUS_COURIER_ONLINE__) goOnline(); }
     }, []);
+
+    // Sonde d'honnêteté : si le coursier est « en ligne » mais que le serveur n'a
+    // plus reçu de ping GPS depuis > 8 min (géoloc refusée, onglet throttlé, RPC
+    // en échec…), il est en réalité INVISIBLE aux clients (filtre de fraîcheur).
+    // On le prévient au lieu d'afficher faussement une pastille verte.
+    React.useEffect(function () {
+      function check() {
+        if (!online) { setPingStale(false); return; }
+        var ok = 0; try { ok = window.__NEXUS_COURIER_PING_OK__ || 0; } catch (e) {}
+        setPingStale(Date.now() - ok > 8 * 60000);
+      }
+      check();
+      var iv = setInterval(check, 15000);
+      return function () { clearInterval(iv); };
+    }, [online]);
 
     function _setOfflinePref(v) { try { localStorage.setItem('nexus_courier_offline', v ? '1' : '0'); } catch (e) {} }
 
@@ -39569,13 +39593,23 @@ window.addEventListener('unhandledrejection', function(event) {
 
         // Bandeau disponibilité
         E('div', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '1rem 1.25rem', borderBottom: '1px solid #f0f0f0' } },
-          E('div', { style: { width: 12, height: 12, borderRadius: '50%', background: online ? '#16a34a' : '#9ca3af' } }),
+          E('div', { style: { width: 12, height: 12, borderRadius: '50%', background: online ? (pingStale ? '#f59e0b' : '#16a34a') : '#9ca3af' } }),
           E('div', { style: { flex: 1 } },
-            E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, online ? 'En ligne — disponible' : 'Hors ligne'),
-            E('div', { style: { fontSize: '.7rem', color: '#999' } }, online ? (pos ? 'Position partagée' : 'Position : zone du profil') : 'Vous ne recevez pas d\'offres')),
+            E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, online ? (pingStale ? 'En ligne — position non partagée' : 'En ligne — disponible') : 'Hors ligne'),
+            E('div', { style: { fontSize: '.7rem', color: '#999' } }, online ? (pingStale ? 'Vous êtes invisible aux clients' : (pos ? 'Position partagée' : 'Position : zone du profil')) : 'Vous ne recevez pas d\'offres')),
           E('button', { onClick: online ? goOffline : goOnline, disabled: busy, style: { padding: '.5rem 1rem', borderRadius: 20, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '.8rem', background: online ? '#fee2e2' : '#16a34a', color: online ? '#b91c1c' : '#fff' } },
             busy ? '…' : (online ? 'Passer hors ligne' : 'Passer en ligne')),
           E('button', { onClick: enableNotifs, title: 'Activer les notifications', 'aria-label': 'Activer les notifications', style: { marginLeft: 8, width: 38, height: 38, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#1d4ed8', color: '#fff', fontSize: '1.05rem' } }, '🔔')),
+
+        // ⚠️ Alerte « position non partagée » : en ligne mais le serveur ne reçoit
+        // plus de ping GPS → invisible aux commanditaires. Bouton pour réactiver.
+        online && pingStale && E('div', { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '.7rem 1.25rem', background: '#fffbeb', borderBottom: '1px solid #fde68a' } },
+          E('span', { style: { fontSize: '1.1rem' } }, '⚠️'),
+          E('div', { style: { flex: 1, fontSize: '.78rem', color: '#92400e', lineHeight: 1.35 } },
+            E('strong', null, 'Vous êtes invisible aux clients.'),
+            ' Votre position n\'est plus partagée (localisation refusée ou app en arrière-plan). Réactivez-la pour recevoir des courses.'),
+          E('button', { onClick: goOnline, disabled: busy, style: { padding: '.45rem .8rem', borderRadius: 16, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '.76rem', background: '#f59e0b', color: '#fff', whiteSpace: 'nowrap' } },
+            busy ? '…' : 'Réactiver')),
 
         // ── Mes gains (repliable) ─────────────────────────────────────────────
         showEarn && E('div', { style: { padding: '.85rem 1.25rem', background: '#fffbea', borderBottom: '1px solid #f0f0f0' } },
@@ -41310,7 +41344,21 @@ window.addEventListener('unhandledrejection', function(event) {
     if(lat==null||lng==null) return;
     _lastPing=Date.now(); _lastPos={lat:lat,lng:lng};
     var client=sb(); if(!client) return;
-    try{ client.rpc('courier_ping',{ p_lat:lat, p_lng:lng }); }catch(e){}
+    // ⚠️ supabase-js v2 : le builder rpc() est PARESSEUX — la requête HTTP n'est
+    // envoyée QUE si l'on appelle .then()/await. Sans ça, le ping ne partait
+    // jamais → position figée → coursier invisible (fraîcheur dépassée) alors
+    // que son écran affiche « En ligne ». Le .then() déclenche l'envoi ET sert de
+    // sonde d'honnêteté : __NEXUS_COURIER_PING_OK__ = dernier ping RÉELLEMENT reçu
+    // par le serveur (le dashboard l'utilise pour avertir « position non partagée »).
+    try{
+      client.rpc('courier_ping',{ p_lat:lat, p_lng:lng }).then(
+        function(r){
+          if(r && r.error){ window.__NEXUS_COURIER_PING_ERR__ = String((r.error && r.error.message) || r.error); }
+          else { window.__NEXUS_COURIER_PING_OK__ = Date.now(); window.__NEXUS_COURIER_PING_ERR__ = null; }
+        },
+        function(e){ window.__NEXUS_COURIER_PING_ERR__ = (e && e.message) || 'network'; }
+      );
+    }catch(e){}
   }
   // Ping « fraîcheur » : position actuelle si possible, sinon dernière connue.
   function _heartbeat(){
