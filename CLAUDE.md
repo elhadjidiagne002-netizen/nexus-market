@@ -21,13 +21,17 @@ backend serverless **Cloudflare Pages Functions** (`functions/`) + **Supabase** 
 - `payment_method` ∈ `{card, mobile, cod}` (jamais `'stripe'` ; `cod` = paiement à la livraison).
 - Colonnes existantes utiles : `stripe_payment_id`, `mobile_money_ref`, `processing_at`,
   `cancelled_at`, `cancel_reason`, `admin_notes`.
-- ⚠️ **Dette legacy vérifiée le 2026-06-14** : la table contient AUSSI des colonnes
-  redondantes/legacy bien présentes en prod (contrairement à d'anciennes notes) :
-  `amount_eur` (NOT NULL def 0), `amount_fcfa`, `order_total`, `subtotal`, `paid_at`,
-  `paytech_token`, `failure_reason`, `user_id` (doublon de `buyer_id`), `id_old`,
-  `canceled_at` (doublon de `cancelled_at`). **Canonique** : `total` (montant), `buyer_id`,
-  `vendor_id`, `id` (uuid). ⚠️ Les valeurs de `total` observées sont en **EUR** (ex. 36.13),
-  pas en FCFA — incohérence sémantique à trancher avant d'unifier les colonnes montant.
+- ✅ **Nettoyage legacy effectué (consolidation)** : les colonnes redondantes
+  `amount_eur`, `amount_fcfa`, `order_total`, `user_id` (doublon de `buyer_id`), `id_old`,
+  `canceled_at` (doublon de `cancelled_at`) ont été **supprimées** (vérifié 2026-06-16).
+  Colonnes de montant restantes : **`total`** (canonique) et `subtotal`. Autres legacy
+  encore présentes mais utiles : `paid_at`, `paytech_token`, `failure_reason`, `cancelled_at`.
+- 💶 **Convention monétaire = EUR (tranchée 2026-06-16)** : `total`, `subtotal` ET
+  `products[].price` sont **uniformément en EUR** (vérifié 41/41 commandes : total ∈ [4.26,
+  451.14] ; ex. boubou subtotal 34.99 = price 34.99). Affichage FCFA = **× 655.957**
+  (`round(total*655.957)`), comme le font déjà les triggers WhatsApp et `/api/order-email`.
+  Ce n'est donc PAS une incohérence de données — toute la pile est en EUR, seul l'affichage
+  est en FCFA. Conserver ×655.957 pour tout montant montré à l'utilisateur.
 
 ### 2. Table `notifications` — contrainte sur `type`
 `type` ∈ `{order, offer, message, return, vendor, system, dispute, new_vendor}` (contrainte
