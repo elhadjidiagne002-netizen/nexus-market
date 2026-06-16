@@ -22688,6 +22688,18 @@ const AdminLivraisonPanel = ({ addToast }) => {
     await sb.from('couriers').update({ status:'suspended' }).eq('id',id);
     addToast('Coursier suspendu','warning'); load();
   };
+  // Réintégrer un coursier suspendu (en cas de nécessité). Repasse status=active
+  // et repart d'un état de présence propre : hors ligne + indisponible (le coursier
+  // se remet en ligne lui-même depuis l'app), ce qui purge un éventuel courier_status
+  // 'busy' résiduel sans course en cours.
+  const reactivateCourier = async (id) => {
+    const co = couriers.find(c=>c.id===id);
+    await sb.from('couriers').update({ status:'active', is_available:false, approved_at:new Date().toISOString() }).eq('id',id);
+    if (co && co.user_id) {
+      try { await sb.from('profiles').update({ courier_status:'offline' }).eq('id', co.user_id); } catch(_){}
+    }
+    addToast('✅ Coursier réintégré','success'); load();
+  };
 
   const payCourier = async (courierId, method) => {
     const co = couriers.find(c=>c.id===courierId);
@@ -22877,7 +22889,8 @@ const AdminLivraisonPanel = ({ addToast }) => {
           ),
           E('div',{style:{display:'flex',gap:'.4rem',flexWrap:'wrap'}},
             co.status==='pending'&&E('button',{className:'btn btn-primary btn-sm',onClick:()=>approveCourier(co.id)},'✅ Approuver'),
-            co.status==='active'&&E('button',{className:'btn btn-secondary btn-sm',onClick:()=>suspendCourier(co.id)},'⏸ Suspendre')
+            co.status==='active'&&E('button',{className:'btn btn-secondary btn-sm',onClick:()=>suspendCourier(co.id)},'⏸ Suspendre'),
+            co.status==='suspended'&&E('button',{className:'btn btn-primary btn-sm',onClick:()=>reactivateCourier(co.id)},'↩️ Réintégrer')
           )
         );
       })
