@@ -25,6 +25,23 @@ async function sbUser(env, token) {
   } catch { return null; }
 }
 
+// Tarif de publication d'une story (FCFA) — config admin canonique
+// (app_config.nexus_monetization_cfg.story_fee). 0/absent = gratuit (défaut).
+async function storyFee(env) {
+  try {
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/app_config?key=eq.nexus_monetization_cfg&select=value`, {
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` },
+    });
+    if (r.ok) {
+      const rows = await r.json();
+      const v = Array.isArray(rows) && rows[0] && rows[0].value;
+      const f = v && Number(v.story_fee);
+      if (isFinite(f) && f > 0) return Math.round(f);
+    }
+  } catch (_) {}
+  return 0;
+}
+
 // Insert d'une story via la service key (bypasse le RLS de la table).
 async function insertStory(env, fields) {
   const r = await fetch(`${env.SUPABASE_URL}/rest/v1/stories`, {
@@ -79,14 +96,18 @@ export async function onRequest(context) {
       return err('videoUrl doit être une URL Supabase Storage de ce projet', 400);
     }
     try {
+      // [STORY PAYANTE] Gate régulé par l'admin (story_fee). 0 = gratuit (défaut
+      // lancement) → publication immédiate. > 0 → story gelée 'pending_payment'
+      // jusqu'au paiement (le flux de paiement sera branché ultérieurement).
+      const fee = await storyFee(env);
       const storyId = await insertStory(env, {
         vendor_id: user.id, vendor_name: vendorName,
         product_id: productId, title, category, city,
-        video_url: videoUrl, status: 'active',
+        video_url: videoUrl, status: fee > 0 ? 'pending_payment' : 'active',
         price, allow_offers: allowOffers,
       });
       if (!storyId) return err('Story non enregistrée', 502);
-      return ok({ ok: true, storyId });
+      return ok({ ok: true, storyId, requiresPayment: fee > 0, fee });
     } catch (e) {
       return err('Story non enregistrée : ' + (e.message || e), 502);
     }

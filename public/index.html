@@ -13499,7 +13499,11 @@ const NexusStoriesWidget = ({ user }) => {
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) { toast(j.error || 'Publication impossible.', 'error'); setBusy(false); return; }
       try { fetch('/api/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: ['/stories'] }) }).catch(() => {}); } catch (_) {}
-      toast('Story publiée ! 🎬', 'success', 6000);
+      if (j.requiresPayment) {
+        toast('Story enregistrée — en attente de paiement (' + (Number(j.fee) || 0).toLocaleString('fr-FR') + ' FCFA). Le paiement sera bientôt disponible.', 'info', 9000);
+      } else {
+        toast('Story publiée ! 🎬', 'success', 6000);
+      }
       load();
     } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
   };
@@ -21845,6 +21849,9 @@ const MonetizationConfigPanel = ({ addToast }) => {
     pro_mensuel_price:      8000,  // Boutique Pro — abonnement mensuel
     pro_annuel_price:       80000, // Boutique Pro — abonnement annuel (2 mois offerts)
 
+    // Stories à la vente
+    story_fee:              0,     // FCFA par story publiée (0 = gratuit — défaut lancement)
+
     // Flash sponsorisées
     flash_12h_price:        1500,
     flash_24h_price:        3000,
@@ -22002,6 +22009,9 @@ const MonetizationConfigPanel = ({ addToast }) => {
       Row({ children: [
         Field({ label: '⭐ Boost Mensuel (30 jours)', k: 'boost_mensuel_price', suffix: 'FCFA' }),
         Field({ label: '🏆 Tête de gondole catégorie', k: 'boost_cat_price', suffix: 'FCFA / 7j', hint: 'Positions 1-3 dans la catégorie ciblée' }),
+      ]}),
+      Row({ children: [
+        Field({ label: '🎬 Story à la vente (publication)', k: 'story_fee', suffix: 'FCFA / story', hint: '0 = gratuit (recommandé au lancement). Si > 0, la story attend le paiement avant d\'être publiée.' }),
       ]}),
       E('div', { style: { background: 'var(--color-background-secondary)', borderRadius: 8, padding: '0.75rem', fontSize: '0.82rem', color: 'var(--color-text-secondary)' } },
         '⚠️ Les prix modifiés ici s\'appliquent aux nouvelles souscriptions. Les boosts en cours ne sont pas affectés.'
