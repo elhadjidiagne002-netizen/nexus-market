@@ -45,13 +45,16 @@ Le code attend des colonnes ajoutées par `database/migrations/2026_06_03_payout
 `vendor_email`) + statuts `processing`/`failed`. **Exécuter cette migration.**
 
 ### 4. DEUX jeux de migrations qui divergent ⚠️
-`database/migrations/` et `sql/` définissent parfois les **mêmes tables différemment** :
-- `orders.id` : `TEXT` (database/migrations) vs `UUID` (sql/).
-- `loyalty_points` : grand livre `earn/redeem` (database/migrations) vs table de **solde**
-  `points/total_earned/total_redeemed` (`sql/loyalty_migration.sql`, attendue par le code).
-Le schéma réellement déployé dépend de l'ordre d'exécution en prod. **À réconcilier**
-(nécessite un accès à la base déployée). Les deux s'accordent toutefois sur
-`buyer_id/vendor_id/total/payment_status`.
+`database/migrations/` et `sql/` définissent parfois les **mêmes tables différemment**.
+✅ **TRANCHÉ sur la base déployée (vérifié 2026-06-16)** — le canonique = les définitions
+**`sql/`** (que le code attend) ; les variantes `database/migrations/` sont **périmées** :
+- `orders.id` = **`UUID`** en prod (PAS `TEXT`).
+- `loyalty_points` = **table de SOLDE** `user_id/points/total_earned/total_redeemed/updated_at`
+  (`sql/loyalty_migration.sql`) — c'est ce que lit `functions/loyalty.js` (`.select('points')`,
+  RPC `add_loyalty_points`). PAS le grand-livre `earn/redeem`.
+Règle : **en cas de divergence des deux dossiers, `sql/` fait foi** (= prod). Ne PAS
+rejouer une migration `database/migrations/` qui contredit ça sur la base prod. Les deux
+s'accordent sur `buyer_id/vendor_id/total/payment_status`.
 
 ### 5. Variable secret PayTech — deux conventions
 Flux commande (`paytech/init.js`, `paytech/ipn.js`) : `PAYTECH_API_SECRET`.
@@ -106,7 +109,9 @@ Purge des compteurs >24h dans le cron cleanup.
   admin). Canal automatisé = **PayTech** (IPN). Stories payantes : flux PayTech **câblé**
   (2026-06-16, `kind:'story'` dans init/ipn + `validateStoryFee`). Wave/OM auto = nécessite
   l'API Wave Business.
-- Réconciliation des deux jeux de migrations (`database/migrations/` + `sql/`, cf. §4).
+- Unification physique des deux dossiers de migrations : la divergence sémantique est
+  **tranchée** (§4, `sql/` fait foi = prod) ; reste le housekeeping (dédupliquer/aligner les
+  fichiers). Non bloquant.
 - Réponses API non standardisées (`{error}` vs `{ok:false,error}`) : helper canonique
   = `functions/api/_lib/response.js` (`ok`/`err`) ; migration progressive recommandée.
 - Webhook `functions/api/webhooks/paytech.js` : doublon **non branché**, conservé
