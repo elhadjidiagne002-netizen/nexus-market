@@ -290,6 +290,49 @@ export async function validateStoryFee(env, { storyId, uid, amountXof }) {
   return { ok: true, story: row };
 }
 
+// [FLASH] Montant d'une vente flash sponsorisée == price_fcfa stocké (et ce prix
+// doit être l'un des tarifs flash configurés) + appartenance + non payée.
+export async function validateFlashSale(env, { flashId, uid, amountXof }) {
+  if (!flashId) return { ok: false, status: 400, error: 'flash_id requis' };
+  const sb = supabase(env);
+  let row;
+  try {
+    const rows = await sb.from('flash_sales').select('id,vendor_id,created_by,price_fcfa,payment_status', `id=eq.${encodeURIComponent(flashId)}`);
+    row = Array.isArray(rows) ? rows[0] : null;
+  } catch { return { ok: false, status: 502, error: 'Lecture flash impossible' }; }
+  if (!row) return { ok: false, status: 404, error: 'Vente flash introuvable' };
+  const owner = row.vendor_id || row.created_by;
+  if (owner && uid && owner !== uid) return { ok: false, status: 403, error: 'Vente flash non autorisée' };
+  if (row.payment_status === 'paid') return { ok: false, status: 409, error: 'Vente flash déjà payée' };
+  let cfg = {};
+  try { const c = await sb.from('app_config').select('value', `key=eq.nexus_monetization_cfg`); cfg = (Array.isArray(c) && c[0] && c[0].value) || {}; } catch (_) {}
+  const flashPrices = [cfg.flash_12h_price, cfg.flash_24h_price, cfg.flash_48h_price, cfg.flash_7j_price].map(Number).filter(n => n > 0);
+  const stored = Math.round(Number(row.price_fcfa) || 0);
+  const amt = Math.round(Number(amountXof));
+  if (amt !== stored || (flashPrices.length && !flashPrices.includes(stored))) return { ok: false, status: 400, error: 'Montant de vente flash invalide' };
+  return { ok: true, flash: row };
+}
+
+// [B2B] Paiement du traitement PRIORITAIRE d'un devis B2B.
+export async function validateB2bPriority(env, { quoteId, uid, amountXof }) {
+  if (!quoteId) return { ok: false, status: 400, error: 'quote_id requis' };
+  const sb = supabase(env);
+  let row;
+  try {
+    const rows = await sb.from('b2b_quotes').select('id,buyer_id,priority_price,priority_payment_status', `id=eq.${encodeURIComponent(quoteId)}`);
+    row = Array.isArray(rows) ? rows[0] : null;
+  } catch { return { ok: false, status: 502, error: 'Lecture devis impossible' }; }
+  if (!row) return { ok: false, status: 404, error: 'Devis introuvable' };
+  if (row.buyer_id && uid && row.buyer_id !== uid) return { ok: false, status: 403, error: 'Devis non autorisé' };
+  if (row.priority_payment_status === 'paid') return { ok: false, status: 409, error: 'Priorité déjà payée' };
+  let cfg = {};
+  try { const c = await sb.from('app_config').select('value', `key=eq.nexus_monetization_cfg`); cfg = (Array.isArray(c) && c[0] && c[0].value) || {}; } catch (_) {}
+  const canonical = Math.round(Number(row.priority_price || cfg.b2b_priority_price || 2000));
+  if (!(canonical > 0)) return { ok: false, status: 400, error: 'Tarif priorité B2B inconnu' };
+  if (Math.round(Number(amountXof)) !== canonical) return { ok: false, status: 400, error: 'Montant ne correspond pas au tarif priorité' };
+  return { ok: true, quote: row };
+}
+
 export function paginate(url) {
   const u = new URL(url);
   const page  = parseInt(u.searchParams.get('page')  || '1');

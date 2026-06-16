@@ -8,7 +8,7 @@
 //   SUPABASE_URL / SUPABASE_SERVICE_KEY
 // ============================================================
 
-import { requireAuth, validatePaymentAmount, validateBoostAmount, validateProSubscription, validateStoryFee } from '../../_lib/utils.js';
+import { requireAuth, validatePaymentAmount, validateBoostAmount, validateProSubscription, validateStoryFee, validateFlashSale, validateB2bPriority } from '../../_lib/utils.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -47,7 +47,7 @@ export async function onRequest({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
 
-  const { order_id, amount, item_name, success_url, cancel_url, order_ids, kind, boost_id, sub_id, story_id } = body;
+  const { order_id, amount, item_name, success_url, cancel_url, order_ids, kind, boost_id, sub_id, story_id, flash_id, quote_id } = body;
   if (!order_id || !amount || !success_url || !cancel_url)
     return jsonR({ error: 'order_id, amount, success_url, cancel_url requis' }, 400);
 
@@ -63,6 +63,12 @@ export async function onRequest({ request, env }) {
   } else if (kind === 'story') {
     // Publication payante d'une story : montant == tarif canonique (config admin).
     const chk = await validateStoryFee(env, { storyId: story_id || order_id, uid, amountXof: Number(amount) });
+    if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
+  } else if (kind === 'flash') {
+    const chk = await validateFlashSale(env, { flashId: flash_id || order_id, uid, amountXof: Number(amount) });
+    if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
+  } else if (kind === 'b2b_priority') {
+    const chk = await validateB2bPriority(env, { quoteId: quote_id || order_id, uid, amountXof: Number(amount) });
     if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
   } else {
     // Commande : montant borné au total réel des commandes (orders.total, EUR).
@@ -97,9 +103,11 @@ export async function onRequest({ request, env }) {
         // [FIX] custom_field doit porter l'identifiant SELON le type, sinon l'IPN
         // ne peut pas activer boost/abo/story (il ne voit que order_id).
         custom_field: JSON.stringify(
-          kind === 'story' ? { story_id: story_id || order_id, user_id: uid }
-          : kind === 'boost' ? { boost_id, user_id: uid }
-          : kind === 'pro'   ? { sub_id, user_id: uid }
+          kind === 'story'        ? { story_id: story_id || order_id, user_id: uid }
+          : kind === 'flash'        ? { flash_id: flash_id || order_id, user_id: uid }
+          : kind === 'b2b_priority' ? { quote_id: quote_id || order_id, user_id: uid }
+          : kind === 'boost'        ? { boost_id, user_id: uid }
+          : kind === 'pro'          ? { sub_id, user_id: uid }
           : { order_id, user_id: uid }
         ),
       }),

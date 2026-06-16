@@ -66,13 +66,15 @@ export async function onRequest({ request, env }) {
   }
 
   // 2. Extraire l'identifiant depuis custom_field (commande / boost / abo Pro)
-  let order_id = null, boostId = null, subId = null, storyId = null;
+  let order_id = null, boostId = null, subId = null, storyId = null, flashId = null, quoteId = null;
   try {
     const cf = typeof custom_field === 'string' ? JSON.parse(custom_field) : custom_field;
     order_id = cf?.order_id;
     boostId  = cf?.boostId || cf?.boost_id;
     subId    = cf?.subId   || cf?.sub_id;
     storyId  = cf?.storyId || cf?.story_id;
+    flashId  = cf?.flash_id;
+    quoteId  = cf?.quote_id;
   } catch { /* ignore */ }
 
   const isPaid = type_event === 'sale_complete';
@@ -138,6 +140,24 @@ export async function onRequest({ request, env }) {
       await sbUpdate(env, 'stories', `id=eq.${encodeURIComponent(storyId)}`, { status: 'active' });
     }
     return jsonR({ ok: true, kind: 'story', activated: isPaid });
+  }
+
+  // 2quinquies. VENTE FLASH sponsorisée → activation au paiement.
+  if (flashId && !order_id) {
+    await sbUpdate(env, 'flash_sales', `id=eq.${encodeURIComponent(flashId)}`, {
+      payment_status: isPaid ? 'paid' : 'failed', active: !!isPaid, payment_ref: ref_command || null,
+    });
+    return jsonR({ ok: true, kind: 'flash', activated: isPaid });
+  }
+
+  // 2sexies. PRIORITÉ B2B → marquage payé au paiement.
+  if (quoteId && !order_id) {
+    await sbUpdate(env, 'b2b_quotes', `id=eq.${encodeURIComponent(quoteId)}`, {
+      priority_payment_status: isPaid ? 'paid' : 'failed',
+      priority_payment_ref: ref_command || null,
+      priority_paid_at: isPaid ? new Date().toISOString() : null,
+    });
+    return jsonR({ ok: true, kind: 'b2b_priority', activated: isPaid });
   }
 
   if (!order_id) {

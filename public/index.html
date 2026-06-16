@@ -24112,6 +24112,31 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setTimeout(() => _doSaveFlash(plan), 800);
     };
 
+    // [PAYTECH] Paiement EN LIGNE (confirmation auto via IPN → activation immédiate).
+    const _payFlashPaytech = async (plan) => {
+      if (!vFlashForm.productId || !vFlashForm.discount) { addToast('Choisissez un produit et une remise', 'warning'); return; }
+      if (!DataService._sb) { addToast('Connexion indisponible', 'error'); return; }
+      setFlashPayStep('pending');
+      const endsAt = new Date(Date.now() + plan.hours * 3600000).toISOString();
+      try {
+        const { data: ins, error } = await DataService._sb.from('flash_sales').insert({
+          product_id: vFlashForm.productId, vendor_id: currentUser2.id,
+          discount: parseInt(vFlashForm.discount), ends_at: endsAt, active: false,
+          is_sponsored: true, price_fcfa: plan.price, payment_status: 'pending', created_by: currentUser2.id,
+        }).select('id').single();
+        if (error || !ins) { addToast('Erreur : ' + ((error && error.message) || 'flash'), 'error'); setFlashPayStep('pay'); return; }
+        const origin = window.location.origin;
+        const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
+          method: 'POST',
+          body: JSON.stringify({ kind: 'flash', flash_id: ins.id, order_id: 'FLASH-' + ins.id.slice(0, 12).toUpperCase(), amount: plan.price, item_name: 'Vente flash sponsoris\xE9e — ' + plan.label, success_url: origin + '/?flash_return=success', cancel_url: origin + '/?flash_return=cancel' }),
+        }).catch(e => ({ __err: e.message }));
+        if (initRes && initRes.redirect_url) { addToast('Redirection vers PayTech…', 'info', 3000); setTimeout(() => { window.location.href = initRes.redirect_url; }, 600); return; }
+        await DataService._sb.from('flash_sales').delete().eq('id', ins.id).catch(() => {});
+        addToast('PayTech indisponible : ' + ((initRes && (initRes.error || initRes.__err)) || 'r\xE9essayez') + '. Vous pouvez payer par Wave/OM.', 'warning', 9000);
+        setFlashPayStep('pay');
+      } catch (e) { addToast('Erreur : ' + e.message, 'error'); setFlashPayStep('pay'); }
+    };
+
     const createVFlash = () => {
       if (!vFlashForm.productId || !vFlashForm.discount) { addToast('Choisissez un produit et une remise', 'warning'); return; }
       setFlashSelPlan(FLASH_SPONSORED_PLANS[1]); setFlashPayStep('choose'); setFlashPayModal(true);
@@ -24198,6 +24223,11 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
                   /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "Choisissez votre mode de paiement :")
                 ),
                 /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.75rem" } },
+                  /* @__PURE__ */ React.createElement("button", {
+                    className: "btn", style: { padding: "0.85rem", fontSize: "1rem", border: "none", borderRadius: "10px", display: "flex", alignItems: "center", gap: "0.75rem", justifyContent: "center", background: "#00853E", color: "#fff", fontWeight: 700 },
+                    onClick: () => _payFlashPaytech(flashSelPlan)
+                  }, "💳 Payer en ligne — activation immédiate"),
+                  /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", fontSize: "0.74rem", color: "var(--text-secondary)" } }, "ou paiement manuel (activation différée après vérification) :"),
                   /* @__PURE__ */ React.createElement("button", {
                     className: "btn", style: { padding: "0.85rem", fontSize: "1rem", border: "1.5px solid #4FC3F7", borderRadius: "10px", display: "flex", alignItems: "center", gap: "0.75rem", justifyContent: "center", background: "#E1F5FE", color: "#0277BD" },
                     onClick: () => _payFlash(flashSelPlan, "wave")
@@ -28379,7 +28409,7 @@ const InsuranceWidget = ({ product, currentUser, addToast }) => {
   const [open,      setOpen]      = React.useState(false);
   const [step,      setStep]      = React.useState(1);
   const [showPrioModal, setShowPrioModal] = React.useState(false);
-  const [prioPayMethod, setPrioPayMethod] = React.useState('wave');
+  const [prioPayMethod, setPrioPayMethod] = React.useState('paytech');
   const B2B_PRIORITY_PRICE = 2000; // FCFA // 1=intro, 2=form, 3=confirmed
   const [submitting,setSubmitting]= React.useState(false);
   const [form, setForm] = React.useState({
@@ -32351,8 +32381,11 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
       resetForm();
     } catch (err) {
       addToast('Erreur envoi : ' + err.message, 'error');
+      setBusy(false);
+      return null;
     }
     setBusy(false);
+    return rec.id;
   };
 
   const resetForm = () => {
@@ -32368,16 +32401,26 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
     const oNum = NEXUS_CONFIG.payments?.om?.number   || '77XXXXXXX';
 
     const doSend = async (isPriority) => {
-      let ref = null;
-      if (isPriority) {
-        ref = 'B2B-' + Date.now().toString(36).toUpperCase();
-        setPaying(true);
-        if (prioPayMethod === 'wave') window.open('https://pay.wave.com/m/' + wNum + '/c/SN?amount=' + B2B_PRIORITY_PRICE + '&note=NEXUS-' + ref, '_blank');
-        else alert('Orange Money : envoyez ' + B2B_PRIORITY_PRICE.toLocaleString('fr-FR') + ' FCFA au ' + oNum + '\nRéférence : NEXUS-' + ref + '\n\nVotre devis sera traité en priorité.');
-        setTimeout(() => setPaying(false), 800);
-      }
       setShowPrioModal(false);
-      await sendQuote(isPriority, ref);
+      const ref = isPriority ? ('B2B-' + Date.now().toString(36).toUpperCase()) : null;
+      const quoteId = await sendQuote(isPriority, ref);
+      if (!isPriority || !quoteId) return;
+      // Priorité payante : PayTech par défaut (confirmation auto via IPN), Wave/OM en repli manuel.
+      if (prioPayMethod === 'paytech') {
+        try {
+          const origin = window.location.origin;
+          const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
+            method: 'POST',
+            body: JSON.stringify({ kind: 'b2b_priority', quote_id: quoteId, order_id: 'B2BPRIO-' + quoteId.slice(0, 12).toUpperCase(), amount: B2B_PRIORITY_PRICE, item_name: 'Traitement prioritaire devis B2B', success_url: origin + '/?b2b_return=success', cancel_url: origin + '/?b2b_return=cancel' }),
+          }).catch(e => ({ __err: e.message }));
+          if (initRes && initRes.redirect_url) { window.location.href = initRes.redirect_url; return; }
+          addToast('PayTech indisponible — payez par Wave/OM. Réf : ' + ref, 'warning', 9000);
+        } catch (e) { addToast('Erreur PayTech : ' + e.message, 'warning'); }
+      } else if (prioPayMethod === 'wave') {
+        window.open('https://pay.wave.com/m/' + wNum + '/c/SN?amount=' + B2B_PRIORITY_PRICE + '&note=NEXUS-' + ref, '_blank');
+      } else {
+        alert('Orange Money : envoyez ' + B2B_PRIORITY_PRICE.toLocaleString('fr-FR') + ' FCFA au ' + oNum + '\nRéférence : NEXUS-' + ref + '\n\nVotre devis sera traité en priorité.');
+      }
     };
 
     return E('div', {
@@ -32421,10 +32464,10 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
               B2B_PRIORITY_PRICE.toLocaleString('fr-FR') + ' FCFA')
           ),
           E('div', { style: { display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' } },
-            ['wave','om'].map(m =>
+            ['paytech','wave','om'].map(m =>
               E('label', { key: m, style: { display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.83rem', fontWeight: prioPayMethod === m ? 700 : 400 } },
                 E('input', { type: 'radio', name: 'prioMethod', checked: prioPayMethod === m, onChange: e => { e.stopPropagation(); setPrioPayMethod(m); } }),
-                m === 'wave' ? '🌊 Wave' : '🟠 Orange Money'
+                m === 'paytech' ? '💳 En ligne (auto)' : m === 'wave' ? '🌊 Wave (manuel)' : '🟠 OM (manuel)'
               )
             )
           )
