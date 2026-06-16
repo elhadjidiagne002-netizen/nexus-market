@@ -71,6 +71,22 @@ const DEFAULTS = {
     html: wrap('Bienvenue parmi les vendeurs NEXUS', '<p>Bonjour {{vendor_name}},</p><p>Félicitations ! Votre boutique <strong>{{shop_name}}</strong> est validée. Vous pouvez désormais publier vos produits et vendre sur NEXUS Market.</p>') },
   vendor_rejected: { subject: 'Votre dossier vendeur — NEXUS Market',
     html: wrap('Dossier examiné', '<p>Bonjour {{vendor_name}},</p><p>Après examen, nous ne pouvons pas valider votre inscription à ce stade.{{#if reason}} Motif : {{reason}}.{{/if}} Vous pourrez soumettre un nouveau dossier ultérieurement.</p>') },
+  low_stock: { subject: '📉 Stock faible : {{product_name}} ({{stock}} restant)',
+    html: wrap('Stock faible', '<p>Bonjour {{vendor_name}},</p><p>Votre produit <strong>{{product_name}}</strong> n\'a plus que <strong>{{stock}}</strong> unité(s) en stock. Pensez à le réapprovisionner pour ne pas manquer de ventes.</p>') },
+  product_moderated: { subject: 'Modération de votre produit {{product_name}} — NEXUS',
+    html: wrap('Produit modéré', '<p>Bonjour {{vendor_name}},</p><p>Votre produit <strong>{{product_name}}</strong> a été modéré et n\'est plus visible.{{#if reason}} Motif : {{reason}}.{{/if}}</p><p style="margin-top:14px;color:#6b7280;font-size:13px">Corrigez-le depuis votre tableau de bord pour le soumettre à nouveau.</p>') },
+
+  // ── Devis B2B ───────────────────────────────────────────────────────────────
+  quote_request: { subject: '📨 Nouvelle demande de devis de {{buyer_name}} — NEXUS',
+    html: wrap('Nouvelle demande de devis', '<p>Bonjour {{vendor_name}},</p><p><strong>{{buyer_name}}</strong> vous demande un devis.</p>{{#if request_text}}<p style="margin:14px 0 4px"><strong>Demande :</strong></p><p>{{request_text}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Répondez depuis votre tableau de bord vendeur.</p>') },
+  quote_sent: { subject: '📄 Votre devis NEXUS Market',
+    html: wrap('Votre devis', '<p>Bonjour {{buyer_name}},</p><p>Le vendeur vous a transmis un devis{{#if total}} d\'un montant de <strong>{{total}}</strong>{{/if}}.{{#if quote_id}} Référence : {{quote_id}}.{{/if}}</p>{{#if message}}<p style="margin-top:12px">{{message}}</p>{{/if}}') },
+
+  // ── Admin ───────────────────────────────────────────────────────────────────
+  admin_new_vendor: { subject: '🆕 Nouveau vendeur : {{vendor_name}}',
+    html: wrap('Nouveau vendeur inscrit', '<p>Un nouveau vendeur vient de s\'inscrire et attend validation.</p><p style="margin:14px 0 4px"><strong>Nom :</strong> {{vendor_name}}</p>{{#if vendor_email}}<p style="margin:4px 0"><strong>Email :</strong> {{vendor_email}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Validez-le depuis l\'admin → Vendeurs.</p>') },
+  admin_new_dispute: { subject: '⚖️ Nouveau litige #{{dispute_id}}',
+    html: wrap('Nouveau litige ouvert', '<p>Un litige vient d\'être ouvert.</p><p style="margin:14px 0 4px"><strong>Litige :</strong> #{{dispute_id}}</p>{{#if order_id}}<p style="margin:4px 0"><strong>Commande :</strong> {{order_id}}</p>{{/if}}{{#if buyer_name}}<p style="margin:4px 0"><strong>Acheteur :</strong> {{buyer_name}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Traitez-le depuis l\'admin → Litiges.</p>') },
 
   // ── Compte & relation client ────────────────────────────────────────────────
   welcome: { subject: '👋 Bienvenue sur NEXUS Market !',
