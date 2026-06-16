@@ -13286,6 +13286,73 @@ const NexusTrocWidget = ({ user }) => {
   );
 };
 
+// [STORIES À LA VENTE] Modal « Acheter » (mise en relation) / « Faire une offre »
+// (négociation). Ouvert à TOUS, même invités (RPC submit_story_offer = anon).
+// Email obligatoire (accusé auto). Montant saisi en FCFA → stocké en EUR.
+const StoryOfferModal = ({ data, onClose, toast }) => {
+  const E = React.createElement;
+  const kind = (data && data.kind) || 'offer';
+  const story = (data && data.story) || {};
+  const isBuy = kind === 'buy';
+  const [name, setName] = React.useState('');
+  const [phone, setPhone] = React.useState('');
+  const [email, setEmail] = React.useState('');
+  const [amount, setAmount] = React.useState('');   // FCFA
+  const [message, setMessage] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [done, setDone] = React.useState(false);
+  const _toast = toast || ((m, t) => (window.__nexusToast || function () {})(m, t || 'info'));
+
+  const submit = async () => {
+    if (!name.trim() || !phone.trim() || !email.trim()) { _toast('Nom, téléphone et email sont requis.', 'warning'); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) { _toast('Email invalide.', 'warning'); return; }
+    let amountEur = null;
+    if (!isBuy) {
+      const f = parseInt(String(amount).replace(/[^\d]/g, ''), 10);
+      if (!(f > 0)) { _toast('Indiquez le montant de votre offre (FCFA).', 'warning'); return; }
+      amountEur = f / 655.957;
+    }
+    setBusy(true);
+    try {
+      const sb = (typeof DataService !== 'undefined') && DataService._sb;
+      if (!sb) { _toast('Connexion indisponible.', 'error'); setBusy(false); return; }
+      const r = await sb.rpc('submit_story_offer', { payload: {
+        story_id: story.id, kind: kind, name: name.trim(), phone: phone.trim(), email: email.trim(),
+        amount: amountEur != null ? String(amountEur) : null, message: message.trim() || null,
+      } });
+      const res = (r && r.data) || {};
+      if (r && !r.error && res.ok) { setDone(true); }
+      else { _toast('Échec : ' + ((res && res.reason) || (r && r.error && r.error.message) || 'erreur'), 'error'); }
+    } catch (e) { _toast('Erreur : ' + (e.message || e), 'error'); }
+    setBusy(false);
+  };
+
+  const fld = (val, set, ph, type) => E('input', { value: val, onChange: e => set(e.target.value), placeholder: ph, type: type || 'text', style: { width: '100%', padding: '.6rem .7rem', borderRadius: 10, border: '1px solid #ddd', marginBottom: 8, fontSize: '.92rem', boxSizing: 'border-box' } });
+
+  return E('div', { onClick: onClose, style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 } },
+    E('div', { onClick: e => e.stopPropagation(), style: { background: '#fff', borderRadius: 16, width: '100%', maxWidth: 420, padding: '1.2rem 1.25rem', maxHeight: '92vh', overflowY: 'auto' } },
+      E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 } },
+        E('strong', { style: { fontSize: '1.05rem' } }, isBuy ? '🛒 Acheter' : '💰 Faire une offre'),
+        E('button', { onClick: onClose, 'aria-label': 'Fermer', style: { background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', lineHeight: 1 } }, '×')),
+      E('div', { style: { fontSize: '.85rem', color: '#666', marginBottom: 12 } }, '🎬 ' + (story.title || 'Story') + (story.price != null ? ' · ' + Math.round(Number(story.price) * 655.957).toLocaleString('fr-FR') + ' FCFA' : '')),
+      done
+        ? E('div', { style: { textAlign: 'center', padding: '1rem 0' } },
+            E('div', { style: { fontSize: 38 } }, '✅'),
+            E('div', { style: { fontWeight: 700, margin: '.5rem 0' } }, 'Transmis au vendeur !'),
+            E('div', { style: { fontSize: '.85rem', color: '#666' } }, 'Il vous contactera directement. Un email de confirmation vous a été envoyé.'),
+            E('button', { onClick: onClose, style: { marginTop: 14, background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, padding: '.6rem 1.2rem', fontWeight: 700, cursor: 'pointer' } }, 'Fermer'))
+        : E('div', null,
+            fld(name, setName, 'Votre nom *'),
+            fld(phone, setPhone, 'Téléphone (WhatsApp) *', 'tel'),
+            fld(email, setEmail, 'Email *', 'email'),
+            !isBuy && fld(amount, setAmount, 'Votre offre en FCFA *', 'tel'),
+            E('textarea', { value: message, onChange: e => setMessage(e.target.value), placeholder: 'Message au vendeur (optionnel)', rows: 2, style: { width: '100%', padding: '.6rem .7rem', borderRadius: 10, border: '1px solid #ddd', marginBottom: 8, fontSize: '.92rem', resize: 'vertical', boxSizing: 'border-box' } }),
+            E('div', { style: { fontSize: '.72rem', color: '#999', marginBottom: 10 } }, 'Pas besoin de compte. Le vendeur reçoit votre demande par WhatsApp et email.'),
+            E('button', { onClick: submit, disabled: busy, style: { width: '100%', background: isBuy ? '#00853E' : '#7c3aed', color: '#fff', border: 'none', borderRadius: 10, padding: '.75rem', fontWeight: 800, cursor: 'pointer', fontSize: '.95rem' } }, busy ? 'Envoi…' : (isBuy ? 'Envoyer ma demande' : 'Envoyer mon offre')))
+    )
+  );
+};
+
 // [NEXUS STORIES] Widget autonome de vidéos produit (format Reels). Bouton flottant
 // + visionneuse plein écran (lecture HLS via Mux/hls.js, navigation ▲▼) + upload
 // vendeur (POST /api/stories/upload → PUT direct Mux). Ouverture via événement.
@@ -13296,6 +13363,7 @@ const NexusStoriesWidget = ({ user }) => {
   const [pendingCount, setPendingCount] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [offerModal, setOfferModal] = React.useState(null); // { kind:'buy'|'offer', story }
   const videoRef = React.useRef(null);
   const hlsRef = React.useRef(null);
   const fileRef = React.useRef(null);   // capture caméra (vidéo instantanée)
@@ -13403,6 +13471,15 @@ const NexusStoriesWidget = ({ user }) => {
         }
       } catch (_) {}
 
+      // [STORIES À LA VENTE] Prix affiché (FCFA → EUR stocké) + autoriser les offres.
+      let storyPriceEur = null, allowOffers = true;
+      try {
+        const fcfaStr = (typeof prompt === 'function') ? prompt('Prix de vente affiché sur la story (en FCFA) ?\nLaissez vide si vous ne fixez pas de prix.') : '';
+        const f = parseInt(String(fcfaStr || '').replace(/[^\d]/g, ''), 10);
+        if (f > 0) storyPriceEur = f / 655.957;
+        allowOffers = (typeof confirm === 'function') ? confirm('Autoriser les acheteurs à FAIRE UNE OFFRE (négociation) ?\n\nOK = oui · Annuler = non') : true;
+      } catch (_) {}
+
       // 1) Téléverser la vidéo DIRECTEMENT dans Supabase Storage (bucket public
       //    nexus-stories) — pas de Mux requis. Marche pour un import (galerie)
       //    comme pour une capture caméra.
@@ -13417,7 +13494,7 @@ const NexusStoriesWidget = ({ user }) => {
       const r = await fetch('/api/stories/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ title, productId, videoUrl }),
+        body: JSON.stringify({ title, productId, videoUrl, price: storyPriceEur, allowOffers }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) { toast(j.error || 'Publication impossible.', 'error'); setBusy(false); return; }
@@ -13472,12 +13549,20 @@ const NexusStoriesWidget = ({ user }) => {
                     E('div', { style: { fontWeight: 800, fontSize: '.84rem', color: '#00853E' } }, _storyPrice(storyProd.price), storyProd.stock === 0 ? E('span', { style: { color: '#b91c1c', fontWeight: 700, marginLeft: 6 } }, '· Épuisé') : null)
                   ),
                   E('span', { style: { flexShrink: 0, background: '#00853E', color: '#fff', borderRadius: 10, padding: '.5rem .8rem', fontWeight: 800, fontSize: '.8rem', whiteSpace: 'nowrap' } }, '🛒 Voir')
+                ),
+                // [STORIES À LA VENTE] Prix vendeur + actions : Acheter (mise en
+                // relation) / Faire une offre (négociation). Ouvert à tous, même invités.
+                (cur.price != null || cur.allow_offers !== false) && E('div', { style: { marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                  cur.price != null && E('div', { style: { fontWeight: 800, fontSize: '.95rem', color: '#fff', background: 'rgba(0,133,62,.95)', borderRadius: 10, padding: '.45rem .7rem' } }, _storyPrice(cur.price)),
+                  cur.price != null && E('button', { onClick: () => setOfferModal({ kind: 'buy', story: cur }), style: { background: '#00853E', color: '#fff', border: 'none', borderRadius: 10, padding: '.5rem .9rem', fontWeight: 800, cursor: 'pointer' } }, '🛒 Acheter'),
+                  (cur.allow_offers !== false) && E('button', { onClick: () => setOfferModal({ kind: 'offer', story: cur }), style: { background: '#fff', color: '#7c3aed', border: 'none', borderRadius: 10, padding: '.5rem .9rem', fontWeight: 800, cursor: 'pointer' } }, '💰 Faire une offre')
                 )
               ),
               idx > 0 && navBtn('▲', () => go(-1), { top: 10 }),
               idx < items.length - 1 && navBtn('▼', () => go(1), { bottom: 92 })
             )
-    )
+    ),
+    offerModal && E(StoryOfferModal, { data: offerModal, onClose: () => setOfferModal(null), toast: toast })
   );
 };
 

@@ -61,6 +61,12 @@ const DEFAULTS = {
   // ── Vendeur ─────────────────────────────────────────────────────────────────
   vendor_new_order: { subject: '🎉 Nouvelle commande reçue — {{order_id}}',
     html: wrap('Nouvelle commande !', '<p>Bonjour {{vendor_name}},</p><p>Vous avez reçu une nouvelle commande <strong>{{order_id}}</strong> d\'un montant de <strong>{{total}}</strong>. Préparez-la depuis votre tableau de bord vendeur.</p>') },
+  // ── Stories à la vente / offres (acheteur invité inclus) ────────────────────
+  new_offer: { subject: '💰 {{kind_label}} sur {{story_title}} — NEXUS',
+    html: wrap('{{kind_label}} reçue', '<p>Bonjour,</p><p>Vous avez reçu une <strong>{{kind_label}}</strong> sur « {{story_title}} ».</p><p style="margin:16px 0 4px"><strong>Client :</strong> {{buyer_name}}</p><p style="margin:4px 0"><strong>Téléphone :</strong> {{buyer_phone}}</p>{{#if buyer_email}}<p style="margin:4px 0"><strong>Email :</strong> {{buyer_email}}</p>{{/if}}{{#if amount}}<p style="margin:4px 0"><strong>Montant proposé :</strong> {{amount}}</p>{{/if}}{{#if message}}<p style="margin:12px 0 4px"><strong>Message :</strong> {{message}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Contactez le client pour conclure la vente.</p>') },
+  offer_submitted: { subject: '✅ Votre {{kind_label}} est transmise — NEXUS Market',
+    html: wrap('Bien reçu !', '<p>Bonjour {{buyer_name}},</p><p>Votre {{kind_label}} sur « {{story_title}} » a bien été transmise au vendeur{{#if amount}} pour <strong>{{amount}}</strong>{{/if}}. Il vous contactera directement.</p><p style="margin-top:12px;color:#6b7280;font-size:13px">Référence : {{offer_id}}.</p>') },
+
   vendor_approved: { subject: '✅ Votre boutique est validée — NEXUS Market',
     html: wrap('Bienvenue parmi les vendeurs NEXUS', '<p>Bonjour {{vendor_name}},</p><p>Félicitations ! Votre boutique <strong>{{shop_name}}</strong> est validée. Vous pouvez désormais publier vos produits et vendre sur NEXUS Market.</p>') },
   vendor_rejected: { subject: 'Votre dossier vendeur — NEXUS Market',

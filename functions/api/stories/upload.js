@@ -57,6 +57,13 @@ export async function onRequest(context) {
   const productId = body.productId || null;
   const category = (body.category || '').toString().slice(0, 60) || null;
   const city = (body.city || 'Dakar').toString().slice(0, 60);
+  // Prix de vente de la story (EUR ; convention NEXUS). null = pas de prix affiché.
+  let price = null;
+  if (body.price != null && body.price !== '') {
+    const p = Number(body.price);
+    if (isFinite(p) && p > 0) price = p;
+  }
+  const allowOffers = body.allowOffers === false ? false : true;
   const vendorName = (user.user_metadata && user.user_metadata.name) || user.email || 'Vendeur';
 
   // ── MODE A : DIRECT (vidéo déjà dans Storage, URL fournie) ──────────────────
@@ -76,6 +83,7 @@ export async function onRequest(context) {
         vendor_id: user.id, vendor_name: vendorName,
         product_id: productId, title, category, city,
         video_url: videoUrl, status: 'active',
+        price, allow_offers: allowOffers,
       });
       if (!storyId) return err('Story non enregistrée', 502);
       return ok({ ok: true, storyId });
