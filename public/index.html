@@ -4019,8 +4019,11 @@ function drivePreviewUrl(fileIdOrUrl) {
 
 /** URL de téléchargement direct Google Drive */
 function driveDownloadUrl(fileIdOrUrl) {
-  const id = extractDriveId(fileIdOrUrl) || fileIdOrUrl;
-  return `https://drive.google.com/uc?export=download&id=${id}`;
+  const id = extractDriveId(fileIdOrUrl);
+  // Lien Google Drive → URL de téléchargement direct. Sinon (Google Cloud Storage,
+  // S3, toute URL publique directe) → on renvoie le lien tel quel.
+  if (id) return `https://drive.google.com/uc?export=download&id=${id}`;
+  return fileIdOrUrl;
 }
 
 /** Ouvre le PDF en prévisualisation dans un nouvel onglet */
@@ -29079,6 +29082,9 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       description:   newProduct.description.trim() || null,
       imageUrl,
       active:        newProduct.active,
+      // [PRODUIT NUMÉRIQUE] Lien du fichier (PDF / eBook / audio, ex. Google Drive).
+      // Etait saisi mais JAMAIS persisté → l'acheteur ne pouvait rien télécharger.
+      fileUrl:       newProduct.book_download_url || newProduct.fileUrl || null,
     };
 
     // [FIX] Appel backend POST /api/products — validation serveur + logs + notification admin
@@ -29126,6 +29132,7 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
       description:    payload.description ?? null,
       image_url:      payload.imageUrl,
       active:         payload.active,
+      file_url:       payload.fileUrl || null,   // produit numérique (PDF/eBook)
       vendor_id:      currentUser2.id,
       vendor_name:    currentUser2.name,
     };
@@ -33729,6 +33736,10 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     return full.fileUrl || full.file_url || null;
   }).filter(Boolean);
   if (digitalFiles.length === 0) return null;
+  // [SÉCURITÉ] Le fichier numérique n'est téléchargeable QU'APRÈS paiement confirmé
+  // (sinon une commande « à la livraison » non payée donnerait le PDF gratuitement).
+  const _paid = order.paymentStatus === "paid" || order.payment_status === "paid" || !!order.stripePaymentId || !!order.stripe_payment_id;
+  if (!_paid) return /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.75rem", padding: "0.75rem 1rem", background: "rgba(245,158,11,.08)", border: "1px solid #f59e0b55", borderRadius: "10px", fontSize: "0.82rem", color: "#92400e" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-lock", style: { marginRight: "0.4rem" }, "aria-hidden": "true" }), "Vos fichiers numériques seront téléchargeables ici dès le paiement confirmé.");
   return /* @__PURE__ */ React.createElement("div", { style: { marginTop: "0.75rem", padding: "0.85rem 1rem", background: "linear-gradient(135deg,rgba(2,132,199,.06),rgba(14,165,233,.04))", border: "1.5px solid #0284c755", borderRadius: "10px" } },
     /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem" } },
       /* @__PURE__ */ React.createElement("i", { className: "fab fa-google-drive", style: { color: "#4285f4" } }), " Fichier(s) numérique(s)"
