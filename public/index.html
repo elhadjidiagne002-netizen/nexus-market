@@ -4033,6 +4033,29 @@ function openDrivePdf(fileIdOrUrl) {
   window.open(`https://drive.google.com/file/d/${id}/view`, '_blank');
 }
 
+/** [PRODUIT NUMÉRIQUE] Téléverse un fichier (PDF/eBook/audio) dans Cloudflare R2
+ *  via /api/storage/upload (vendeur connecté requis). Renvoie l'URL /api/files/<clé>
+ *  à stocker dans products.file_url. N'utilise PAS Supabase Storage. */
+async function nexusUploadPdf(file) {
+  if (!file) throw new Error('Aucun fichier');
+  if (file.size > 50 * 1024 * 1024) throw new Error('Fichier trop lourd (max 50 Mo)');
+  let token = '';
+  try {
+    const sb = (typeof DataService !== 'undefined') && DataService._sb;
+    if (sb) { const s = (await sb.auth.getSession()).data && (await sb.auth.getSession()).data.session; token = (s && s.access_token) || ''; }
+  } catch (_) {}
+  if (!token) { try { token = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt') || ''; } catch (_) {} }
+  if (!token) throw new Error('Connectez-vous comme vendeur pour téléverser.');
+  const res = await fetch('/api/storage/upload?name=' + encodeURIComponent(file.name || 'fichier.pdf'), {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream', Authorization: 'Bearer ' + token },
+    body: file,
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || !j.url) throw new Error(j.error || 'Téléversement échoué');
+  return j.url;
+}
+
 const normalizeProduct = (p) => {
   if (!p) return p;
   return {
@@ -17711,8 +17734,18 @@ React.createElement("div", { className: "form-group" },
     onChange: (e) => setForm(__spreadProps(__spreadValues({}, form), { fileUrl: e.target.value })),
     placeholder: "https://drive.google.com/file/d/FILE_ID/view?usp=sharing"
   }),
+  React.createElement("label", { className: "btn btn-secondary btn-sm", style: { cursor: "pointer", margin: "0.45rem 0", display: "inline-flex", alignItems: "center", gap: "0.4rem" } },
+    React.createElement("i", { className: "fas fa-upload" }), " T\xE9l\xE9verser le fichier",
+    React.createElement("input", { type: "file", accept: ".pdf,.epub,.mp3,application/pdf,application/epub+zip,audio/mpeg", style: { display: "none" }, onChange: async (e) => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      addToast("T\xE9l\xE9versement en cours…", "info", 5000);
+      try { const u = await nexusUploadPdf(f); setForm(prev => __spreadProps(__spreadValues({}, prev), { fileUrl: u })); addToast("Fichier t\xE9l\xE9vers\xE9 ✅", "success"); }
+      catch (err) { addToast("\xC9chec : " + (err && err.message || err), "error", 9000); }
+      e.target.value = "";
+    } })
+  ),
   React.createElement("div", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.3rem", lineHeight: 1.5 } },
-    "Partagez le fichier avec \"Tout le monde peut voir\" dans Google Drive, puis collez le lien ici. ",
+    "T\xE9l\xE9versez votre fichier (PDF/eBook/audio) ci-dessus, OU partagez-le \"Tout le monde peut voir\" dans Google Drive et collez le lien. ",
     React.createElement("a", { href: "https://support.google.com/drive/answer/2494822", target: "_blank", style: { color: "var(--primary)" } }, "Guide →")
   ),
   form.fileUrl && extractDriveId(form.fileUrl) && React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginTop: "0.5rem", flexWrap: "wrap", alignItems: "center" } },
@@ -29897,7 +29930,20 @@ React.createElement("div", { className: "form-group" },
     DIGITAL_BOOK_CATS.includes(newProduct.category) && /* @__PURE__ */ React.createElement("div", { className: "form-group" },
       /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "\uD83D\uDD17 Lien de t\xE9l\xE9chargement (eBook / PDF / Audio)"),
       /* @__PURE__ */ React.createElement("input", { type: "url", className: "form-input", placeholder: "https://drive.google.com/file/...", value: newProduct.book_download_url || "", onChange: e => setNewProduct(__spreadProps(__spreadValues({}, newProduct), { book_download_url: e.target.value })) }),
-      /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "0.2rem" } }, "\u26A0\uFE0F Ce lien sera envoy\xE9 \xE0 l\'acheteur apr\xE8s paiement confirm\xE9.")
+      /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.5rem", margin: "0.45rem 0", fontSize: "0.8rem", color: "var(--text-secondary)" } },
+        "\u2014 ou \u2014",
+        /* @__PURE__ */ React.createElement("label", { className: "btn btn-secondary btn-sm", style: { cursor: "pointer", margin: 0 } },
+          /* @__PURE__ */ React.createElement("i", { className: "fas fa-upload", "aria-hidden": "true" }), " T\xE9l\xE9verser le PDF",
+          /* @__PURE__ */ React.createElement("input", { type: "file", accept: ".pdf,.epub,.mp3,application/pdf,application/epub+zip,audio/mpeg", style: { display: "none" }, onChange: async (e) => {
+            const f = e.target.files && e.target.files[0]; if (!f) { return; }
+            addToast("T\xE9l\xE9versement en cours\u2026", "info", 5000);
+            try { const u = await nexusUploadPdf(f); setNewProduct(p => __spreadProps(__spreadValues({}, p), { book_download_url: u })); addToast("Fichier t\xE9l\xE9vers\xE9 \u2705", "success"); }
+            catch (err) { addToast("\xC9chec : " + (err && err.message || err), "error", 9000); }
+            e.target.value = "";
+          } })
+        )
+      ),
+      /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "0.2rem" } }, "\u26A0\uFE0F Le fichier (lien ou t\xE9l\xE9vers\xE9) sera accessible \xE0 l\'acheteur apr\xE8s paiement confirm\xE9.")
     )
   ),
   /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: addProduct }, /* @__PURE__ */ React.createElement("i", { className: newProduct.active ? "fas fa-plus" : "fas fa-save", "aria-hidden": "true" }), " ", newProduct.active ? "Ajouter le Produit" : "\uD83D\uDCBE Sauvegarder en brouillon"))), editProduct && /* @__PURE__ */ React.createElement(
