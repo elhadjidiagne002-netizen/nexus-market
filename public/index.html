@@ -12426,6 +12426,15 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
     return Object.keys(errs).length === 0;
   };
   const processPayment = (stripeResult = null) => {
+    // [AUTH PAIEMENT EN LIGNE] Le paiement en ligne (carte / mobile money) exige un
+    // compte (anti-fraude + liaison de la transaction à l'utilisateur). Le paiement
+    // à la livraison (COD) reste ouvert aux invités. On bloque AVANT de créer la
+    // commande → pas de commande orpheline en attente, et message clair.
+    if ((paymentMethod === "card" || paymentMethod === "mobile") && !(currentUser2 && currentUser2.id)) {
+      addToast("Connectez-vous ou créez un compte pour payer en ligne. Le paiement à la livraison reste disponible sans compte.", "info", 8000);
+      try { window.dispatchEvent(new CustomEvent("nexus:open-login")); } catch (_) {}
+      return;
+    }
     // [UX #15] Bloque les double-soumissions — la ref est synchrone, contrairement à setLoading
     if (submittingRef.current) return;
     submittingRef.current = true;
