@@ -96,7 +96,7 @@ export async function onRequest({ request, env }) {
         currency:    'XOF',
         ref_command,
         command_name: item_name || 'Commande NEXUS Market',
-        env:          env.PAYTECH_API_KEY?.startsWith('test_') ? 'test' : 'prod',
+        env:          (env.PAYTECH_ENV || (env.PAYTECH_API_KEY?.startsWith('test_') ? 'test' : 'prod')),
         ipn_url:      `${new URL(success_url).origin}/api/payments/paytech/ipn`,
         success_url,
         cancel_url,
@@ -116,8 +116,14 @@ export async function onRequest({ request, env }) {
     const data = await res.json();
 
     if (!res.ok || data.success !== 1) {
-      console.error('[PayTech] Init error:', JSON.stringify(data));
-      return jsonR({ error: data.errors?.[0] || 'Erreur PayTech' }, 400);
+      console.error('[PayTech] Init error:', res.status, JSON.stringify(data));
+      // Faire remonter la VRAIE raison de PayTech (clés invalides, compte non
+      // activé, mode test/prod…) au lieu d'un « Erreur PayTech » opaque.
+      const detail =
+        (data && Array.isArray(data.errors) ? data.errors.join(' · ') : (data && data.errors)) ||
+        (data && (data.message || data.error)) ||
+        ('PayTech a refusé (HTTP ' + res.status + ')');
+      return jsonR({ error: 'PayTech : ' + detail }, 400);
     }
 
     // 2. Persister la session PayTech en Supabase pour la réconciliation IPN
