@@ -1,0 +1,28 @@
+;; ============================================================================
+;; Enregistrements À AJOUTER dans Cloudflare — nexusmarket.sn
+;; Resend (envoi des emails de l'app) + DMARC (delivrabilite)
+;; Cloudflare : DNS -> Records -> "Import and Export" -> "Import DNS records"
+;;
+;; CE FICHIER NE CONTIENT QUE LES 4 NOUVEAUX ENREGISTREMENTS.
+;;   -> L'import les AJOUTE a la zone existante. Comme aucun n'existe encore,
+;;      il n'y a NI doublon NI conflit. Ton email OVH/Zimbra (apex) et ton
+;;      site Pages restent intacts (ces records sont sur 'send.' / 'resend._domainkey.'
+;;      / '_dmarc.', jamais sur l'apex).
+;;   -> Tous en DNS only (MX/TXT ne se proxifient pas).
+;;
+;; Apres import : Resend -> "Verify DNS Records" (les 3 doivent passer au vert).
+;; ============================================================================
+
+;; ── Resend : MX return-path (region eu-west-1) ──────────────────────────────
+send.nexusmarket.sn.                1   IN  MX   10 feedback-smtp.eu-west-1.amazonses.com.
+
+;; ── Resend : SPF du sous-domaine d'envoi ────────────────────────────────────
+send.nexusmarket.sn.                1   IN  TXT  "v=spf1 include:amazonses.com ~all"
+
+;; ── Resend : DKIM ───────────────────────────────────────────────────────────
+resend._domainkey.nexusmarket.sn.   1   IN  TXT  "p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDYtp211fuHz5pGK7yPbWwN0mbh756NPCujYSaugXiQI7Q/175UiQMWUuwLwwgA9DgfAFbsojbwRmLQXskIkmMJxNEoCDp0/Bu0jTBdrV5kelCDSOXt1Gb88za3tf1dHd2aLaDK0kw5HWEnAfftAoEKNRGrMAdJFKh4ZKUI4/HqjQIDAQAB"
+
+;; ── DMARC (mode surveillance 'none' au depart ; durcir en quarantine/reject ensuite) ──
+_dmarc.nexusmarket.sn.              1   IN  TXT  "v=DMARC1; p=none; rua=mailto:nx@nexusmarket.sn; fo=1; adkim=r; aspf=r"
+
+;; ── FIN ─────────────────────────────────────────────────────────────────────

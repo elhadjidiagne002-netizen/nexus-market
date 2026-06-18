@@ -1,0 +1,49 @@
+;; ============================================================================
+;; Zone DNS CORRIGÉE — nexusmarket.sn — à importer dans Cloudflare
+;; Cloudflare : DNS -> Records -> "Import and Export" -> "Import DNS records"
+;;
+;; Corrections vs l'export du 2026-06-14 :
+;;   - SUPPRIMÉ : ftp (CNAME), TXT "1|www.nexusmarket.sn", TXT "3|welcome"
+;;               (vestiges de l'hébergement web OVH, inutiles).
+;;   - SUPPRIMÉ : A/AAAA OVH (51.91.236.255 / 2001:41d0:301::29) -> déjà absents,
+;;               le site passe par les CNAME -> Cloudflare Pages.
+;;   - EMAIL (mail/imap/smtp/pop3/autoconfig/autodiscover) en DNS ONLY (gris) :
+;;               PAS de proxy, sinon la messagerie Zimbra/OVH casse.
+;;   - SITE (apex + www) en PROXIFIÉ (cf-proxied:true) -> Cloudflare Pages.
+;;
+;; *** IMPORTANT — l'import AJOUTE des enregistrements (il ne REMPLACE pas la zone). ***
+;;   Pour éviter les DOUBLONS, supprime d'abord les enregistrements existants
+;;   correspondants dans Cloudflare, OU n'utilise ce fichier que sur une zone vide.
+;;   Le SOA et les NS sont gérés par Cloudflare et ignorés à l'import.
+;;
+;; Après import : vérifie le "Proxy status" -> seuls l'apex et www doivent être
+;;   ORANGE (proxifié) ; TOUS les enregistrements email doivent être GRIS (DNS only).
+;; ============================================================================
+
+;; ── SITE — Cloudflare Pages — PROXIFIÉ (orange) ─────────────────────────────
+nexusmarket.sn.                 1   IN  CNAME   nexus-market-asb.pages.dev. ; cf_tags=cf-proxied:true
+www.nexusmarket.sn.             1   IN  CNAME   nexus-market-asb.pages.dev. ; cf_tags=cf-proxied:true
+
+;; ── EMAIL OVH / Zimbra — DNS ONLY (gris) — NE PAS PROXIFIER ──────────────────
+;; MX (réception du courrier)
+nexusmarket.sn.                 1   IN  MX      1 mx1.mail.ovh.net.
+nexusmarket.sn.                 1   IN  MX      5 mx2.mail.ovh.net.
+nexusmarket.sn.                 1   IN  MX      100 mx3.mail.ovh.net.
+
+;; SPF (anti-usurpation)
+nexusmarket.sn.                 1   IN  TXT     "v=spf1 include:mx.ovh.com -all"
+
+;; Hôtes mail (IMAP/POP/SMTP + autoconfiguration des clients)
+mail.nexusmarket.sn.            1   IN  CNAME   ssl0.ovh.net.
+imap.nexusmarket.sn.            1   IN  CNAME   ssl0.ovh.net.
+smtp.nexusmarket.sn.            1   IN  CNAME   ssl0.ovh.net.
+pop3.nexusmarket.sn.            1   IN  CNAME   ssl0.ovh.net.
+autoconfig.nexusmarket.sn.      1   IN  CNAME   mailconfig.ovh.net.
+autodiscover.nexusmarket.sn.    1   IN  CNAME   mailconfig.ovh.net.
+
+;; SRV (découverte automatique : autodiscover / IMAPS / submission)
+_autodiscover._tcp.nexusmarket.sn.  1   IN  SRV  0 0 443 mailconfig.ovh.net.
+_imaps._tcp.nexusmarket.sn.         1   IN  SRV  0 0 993 ssl0.ovh.net.
+_submission._tcp.nexusmarket.sn.    1   IN  SRV  0 0 465 ssl0.ovh.net.
+
+;; ── FIN ─────────────────────────────────────────────────────────────────────
