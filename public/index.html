@@ -13403,6 +13403,7 @@ const NexusStoriesWidget = ({ user }) => {
   const [pendingCount, setPendingCount] = React.useState(0);
   const [loading, setLoading] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [uploadForm, setUploadForm] = React.useState(null); // null | {file,title,productId,priceStr,allowOffers,products}
   const [offerModal, setOfferModal] = React.useState(null); // { kind:'buy'|'offer', story }
   const videoRef = React.useRef(null);
   const hlsRef = React.useRef(null);
@@ -13415,18 +13416,26 @@ const NexusStoriesWidget = ({ user }) => {
     setLoading(true);
     try {
       if (DataService._sb) {
-        // Stories actives : soit Mux encodé (mux_playback_id), soit upload direct
-        // (video_url). L'une OU l'autre suffit pour être lisible.
-        const { data } = await DataService._sb.from('stories').select('*').eq('status', 'active').or('mux_playback_id.not.is.null,video_url.not.is.null').order('created_at', { ascending: false }).limit(50);
-        if (data) { setItems(data); setIdx(0); setLoading(false); }
+        // Stories actives (status='active'). On ne filtre PAS sur mux_playback_id/video_url
+        // via OR pour éviter un échec silencieux si la colonne video_url n'existe pas encore.
+        // Le rendu vidéo gère déjà le cas où aucun des deux champs n'est renseigné.
+        const { data, error } = await DataService._sb.from('stories').select('*')
+          .eq('status', 'active')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (error) {
+          toast('Erreur chargement stories : ' + (error.message || JSON.stringify(error)), 'error');
+          setItems([]); setLoading(false); return;
+        }
+        setItems(data || []); setIdx(0); setLoading(false);
         // Stories du vendeur encore en encodage → indicateur « bientôt visible ».
         if (user && user.id) {
           DataService._sb.from('stories').select('id').eq('vendor_id', user.id).eq('status', 'uploading')
             .then(({ data: pend }) => setPendingCount((pend || []).length)).catch(() => {});
         }
-        if (data) return;
+        return;
       }
-    } catch (_) {}
+    } catch (e) { toast('Stories inaccessibles : ' + (e.message || e), 'error'); }
     setItems([]); setLoading(false);
   };
   React.useEffect(() => { if (open) load(); }, [open]);
@@ -13485,79 +13494,79 @@ const NexusStoriesWidget = ({ user }) => {
 
   const go = (d) => setIdx(i => Math.max(0, Math.min(items.length - 1, i + d)));
 
-  const startUpload = async (file) => {
+  // Étape 1 : sélection du fichier → valider + charger les produits → ouvrir le formulaire.
+  const openUploadForm = async (file) => {
     if (!file) return;
-    if (!user || !user.id) { toast('Connectez-vous comme vendeur pour publier une story.', 'warning'); return; }
-    if (!/^video\//.test(file.type || '')) { toast('Choisissez un fichier vidéo (15–60s).', 'error'); return; }
-    if (file.size > 100 * 1024 * 1024) { toast('Vidéo trop lourde (max 100 Mo).', 'error'); return; }
-    if (!DataService._sb) { toast('Connexion à la base indisponible.', 'error'); return; }
+    if (!user || !user.id) { toast(‘Connectez-vous comme vendeur pour publier une story.’, ‘warning’); return; }
+    if (!/^video\//.test(file.type || ‘’)) { toast(‘Choisissez un fichier vidéo (15–60s).’, ‘error’); return; }
+    if (file.size > 100 * 1024 * 1024) { toast(‘Vidéo trop lourde (max 100 Mo).’, ‘error’); return; }
+    if (!DataService._sb) { toast(‘Connexion à la base indisponible.’, ‘error’); return; }
+    setBusy(true);
+    let products = [];
+    try {
+      const { data: myProds } = await DataService._sb.from(‘products’)
+        .select(‘id,name’).eq(‘vendor_id’, user.id).eq(‘active’, true)
+        .order(‘created_at’, { ascending: false }).limit(30);
+      products = myProds || [];
+    } catch (_) {}
+    setBusy(false);
+    setUploadForm({ file, title: ‘’, productId: ‘’, priceStr: ‘’, allowOffers: true, products });
+  };
+
+  // Étape 2 : soumission du formulaire → upload Storage → enregistrement serveur.
+  const startUpload = async () => {
+    if (!uploadForm) return;
+    const { file, title, productId, priceStr, allowOffers } = uploadForm;
+    if (!file) return;
+    if (!DataService._sb) { toast(‘Connexion à la base indisponible.’, ‘error’); return; }
+    setUploadForm(null);
     setBusy(true);
     try {
-      let token = '';
-      try { const { data } = await DataService._sb.auth.getSession(); token = (data && data.session && data.session.access_token) || ''; } catch (_) {}
-
-      const title = (typeof prompt === 'function' ? prompt('Titre de votre story (ex. iPhone 11 — démo)') : '') || '';
-      // [STORIES SHOPPABLES] Associer un de SES produits → bouton « Acheter » dans la story.
-      let productId = null;
-      try {
-        const { data: myProds } = await DataService._sb.from('products')
-          .select('id,name').eq('vendor_id', user.id).eq('active', true)
-          .order('created_at', { ascending: false }).limit(30);
-        if (myProds && myProds.length && typeof prompt === 'function') {
-          const listStr = myProds.map((p, i) => (i + 1) + '. ' + p.name).join('\n');
-          const pick = prompt('Associer un produit à vendre dans cette story ?\nTapez le numéro (ou laissez vide pour aucun) :\n\n' + listStr);
-          const n = parseInt(pick, 10);
-          if (n >= 1 && n <= myProds.length) productId = myProds[n - 1].id;
-        }
-      } catch (_) {}
-
-      // [STORIES À LA VENTE] Prix affiché (FCFA → EUR stocké) + autoriser les offres.
-      let storyPriceEur = null, allowOffers = true;
-      try {
-        const fcfaStr = (typeof prompt === 'function') ? prompt('Prix de vente affiché sur la story (en FCFA) ?\nLaissez vide si vous ne fixez pas de prix.') : '';
-        const f = parseInt(String(fcfaStr || '').replace(/[^\d]/g, ''), 10);
-        if (f > 0) storyPriceEur = f / 655.957;
-        allowOffers = (typeof confirm === 'function') ? confirm('Autoriser les acheteurs à FAIRE UNE OFFRE (négociation) ?\n\nOK = oui · Annuler = non') : true;
-      } catch (_) {}
+      let token = ‘’;
+      try { const { data } = await DataService._sb.auth.getSession(); token = (data && data.session && data.session.access_token) || ‘’; } catch (_) {}
+      const storyPriceEur = (() => { const f = parseInt(String(priceStr || ‘’).replace(/[^\d]/g, ‘’), 10); return f > 0 ? f / 655.957 : null; })();
 
       // 1) Téléverser la vidéo DIRECTEMENT dans Supabase Storage (bucket public
-      //    nexus-stories) — pas de Mux requis. Marche pour un import (galerie)
-      //    comme pour une capture caméra.
-      const ext = (file.name && file.name.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
-      const fname = user.id + '/' + Date.now() + '-' + Math.random().toString(16).slice(2, 8) + '.' + ext;
-      const { data: up, error: upErr } = await DataService._sb.storage.from('nexus-stories')
-        .upload(fname, file, { contentType: file.type || 'video/mp4', upsert: true });
-      if (upErr || !up) { toast('Échec de l’envoi : ' + ((upErr && upErr.message) || 'inconnu') + ' (le bucket « nexus-stories » existe-t-il ?)', 'error'); setBusy(false); return; }
-      const videoUrl = DataService._sb.storage.from('nexus-stories').getPublicUrl(up.path).data.publicUrl;
+      //    nexus-stories) — pas de Mux requis.
+      const ext = (file.name && file.name.split(‘.’).pop() || ‘’).toLowerCase().replace(/[^a-z0-9]/g, ‘’) || ‘mp4’;
+      const fname = user.id + ‘/’ + Date.now() + ‘-’ + Math.random().toString(16).slice(2, 8) + ‘.’ + ext;
+      const { data: up, error: upErr } = await DataService._sb.storage.from(‘nexus-stories’)
+        .upload(fname, file, { contentType: file.type || ‘video/mp4’, upsert: true });
+      if (upErr || !up) { toast(‘Envoi échoué : ‘ + ((upErr && upErr.message) || ‘inconnu’) + ‘ (bucket « nexus-stories » manquant ?)’, ‘error’); setBusy(false); return; }
+      const videoUrl = DataService._sb.storage.from(‘nexus-stories’).getPublicUrl(up.path).data.publicUrl;
 
       // 2) Enregistrer la story (active immédiatement) côté serveur (service key).
-      const r = await fetch('/api/stories/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-        body: JSON.stringify({ title, productId, videoUrl, price: storyPriceEur, allowOffers }),
+      const r = await fetch(‘/api/stories/upload’, {
+        method: ‘POST’,
+        headers: { ‘Content-Type’: ‘application/json’, Authorization: ‘Bearer ‘ + token },
+        body: JSON.stringify({ title: title || ‘’, productId: productId || null, videoUrl, price: storyPriceEur, allowOffers }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok) { toast(j.error || 'Publication impossible.', 'error'); setBusy(false); return; }
-      try { fetch('/api/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: ['/stories'] }) }).catch(() => {}); } catch (_) {}
+      if (!r.ok || !j.ok) { toast(j.error || ‘Publication impossible.’, ‘error’); setBusy(false); return; }
+      try { fetch(‘/api/indexnow’, { method: ‘POST’, headers: { ‘Content-Type’: ‘application/json’ }, body: JSON.stringify({ urls: [‘/stories’] }) }).catch(() => {}); } catch (_) {}
       if (j.requiresPayment) {
-        // [STORY PAYANTE] Tarif > 0 → paiement PayTech ; l'IPN active la story.
-        toast('Publication payante (' + (Number(j.fee) || 0).toLocaleString('fr-FR') + ' FCFA) — redirection vers le paiement…', 'info', 6000);
+        toast(‘Publication payante (‘ + (Number(j.fee) || 0).toLocaleString(‘fr-FR’) + ‘ FCFA) — redirection vers le paiement…’, ‘info’, 6000);
         try {
           var _origin = window.location.origin;
-          var _pr = await fetch('/api/payments/paytech/init', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-            body: JSON.stringify({ kind: 'story', story_id: j.storyId, order_id: j.storyId, amount: j.fee, item_name: 'Publication NEXUS Story', success_url: _origin + '/?stories=1', cancel_url: _origin + '/?stories=1' }),
+          var _pr = await fetch(‘/api/payments/paytech/init’, {
+            method: ‘POST’,
+            headers: { ‘Content-Type’: ‘application/json’, Authorization: ‘Bearer ‘ + token },
+            body: JSON.stringify({ kind: ‘story’, story_id: j.storyId, order_id: j.storyId, amount: j.fee, item_name: ‘Publication NEXUS Story’, success_url: _origin + ‘/?stories=1’, cancel_url: _origin + ‘/?stories=1’ }),
           });
           var _pj = await _pr.json().catch(function () { return {}; });
           if (_pr.ok && _pj.redirect_url) { window.location.href = _pj.redirect_url; return; }
-          toast('Paiement indisponible : ' + (_pj.error || 'réessayez plus tard') + '. Story en attente de paiement.', 'warning', 9000);
-        } catch (e) { toast('Paiement indisponible (réseau). Story en attente de paiement.', 'warning', 8000); }
+          toast(‘Paiement indisponible : ‘ + (_pj.error || ‘réessayez plus tard’) + ‘. Story en attente.’, ‘warning’, 9000);
+        } catch (e) { toast(‘Paiement indisponible (réseau). Story en attente.’, ‘warning’, 8000); }
       } else {
-        toast('Story publiée ! 🎬', 'success', 6000);
+        toast(‘Story publiée !’, ‘success’, 6000);
+        // Mise à jour optimiste : affiche la story immédiatement sans attendre load().
+        if (j.storyId) {
+          const ns = { id: j.storyId, title: title || ‘’, video_url: videoUrl, mux_playback_id: null, status: ‘active’, vendor_id: user.id, vendor_name: user.name || ‘’, created_at: new Date().toISOString(), product_id: productId || null, price: storyPriceEur, allow_offers: allowOffers };
+          setItems(prev => [ns, ...prev]); setIdx(0);
+        }
       }
       load();
-    } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+    } catch (e) { toast(‘Erreur : ‘ + (e.message || e), ‘error’); } finally { setBusy(false); }
   };
 
   const cur = items[idx];
@@ -13575,9 +13584,9 @@ const NexusStoriesWidget = ({ user }) => {
         )
       ),
       // Capture caméra (mobile : ouvre l'appareil photo en mode vidéo).
-      E('input', { ref: fileRef, type: 'file', accept: 'video/*', capture: 'environment', style: { display: 'none' }, onChange: e => { startUpload(e.target.files && e.target.files[0]); e.target.value = ''; } }),
+      E('input', { ref: fileRef, type: 'file', accept: 'video/*', capture: 'environment', style: { display: 'none' }, onChange: e => { openUploadForm(e.target.files && e.target.files[0]); e.target.value = ''; } }),
       // Import depuis la galerie / le disque (PAS de capture → sélecteur de fichiers).
-      E('input', { ref: importRef, type: 'file', accept: 'video/*', style: { display: 'none' }, onChange: e => { startUpload(e.target.files && e.target.files[0]); e.target.value = ''; } }),
+      E('input', { ref: importRef, type: 'file', accept: 'video/*', style: { display: 'none' }, onChange: e => { openUploadForm(e.target.files && e.target.files[0]); e.target.value = ''; } }),
       // Indicateur d'encodage en cours pour le vendeur (story pas encore active).
       pendingCount > 0 && E('div', { style: { background: 'rgba(124,58,237,.9)', color: '#fff', textAlign: 'center', padding: '6px 12px', fontSize: '.8rem' } }, '⏳ ' + pendingCount + ' story' + (pendingCount > 1 ? 's' : '') + ' en cours d’encodage — visible' + (pendingCount > 1 ? 's' : '') + ' sous ~1 min.'),
       loading ? E('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' } }, 'Chargement…')
@@ -13618,7 +13627,42 @@ const NexusStoriesWidget = ({ user }) => {
               idx < items.length - 1 && navBtn('▼', () => go(1), { bottom: 92 })
             )
     ),
-    offerModal && E(StoryOfferModal, { data: offerModal, onClose: () => setOfferModal(null), toast: toast })
+    offerModal && E(StoryOfferModal, { data: offerModal, onClose: () => setOfferModal(null), toast: toast }),
+    // Formulaire de publication : remplace les prompt()/confirm() bloqués sur mobile.
+    uploadForm && E('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.78)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 } },
+      E('div', { style: { background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 420, width: '100%', maxHeight: '90vh', overflowY: 'auto' } },
+        E('h3', { style: { margin: '0 0 18px', fontWeight: 800, fontSize: '1.1rem' } }, 'Publier votre story'),
+        E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, 'Titre'),
+        E('input', { type: 'text', value: uploadForm.title, placeholder: 'Ex. iPhone 11 — démo rapide', maxLength: 80, autoFocus: true,
+          style: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1.5px solid #d1d5db', padding: '0.5rem 0.7rem', fontSize: '1rem', marginBottom: 14 },
+          onChange: ev => setUploadForm(f => ({ ...f, title: ev.target.value })) }),
+        uploadForm.products.length > 0 && E(React.Fragment, null,
+          E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, 'Produit associé (optionnel)'),
+          E('select', { value: uploadForm.productId,
+            style: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1.5px solid #d1d5db', padding: '0.5rem 0.7rem', fontSize: '.97rem', marginBottom: 14 },
+            onChange: ev => setUploadForm(f => ({ ...f, productId: ev.target.value })) },
+            E('option', { value: '' }, '— Aucun produit —'),
+            ...uploadForm.products.map(p => E('option', { key: p.id, value: p.id }, p.name))
+          )
+        ),
+        E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, 'Prix affiché (FCFA, optionnel)'),
+        E('input', { type: 'number', min: 0, value: uploadForm.priceStr, placeholder: 'Laisser vide si pas de prix',
+          style: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1.5px solid #d1d5db', padding: '0.5rem 0.7rem', fontSize: '1rem', marginBottom: 14 },
+          onChange: ev => setUploadForm(f => ({ ...f, priceStr: ev.target.value })) }),
+        E('label', { style: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 20, fontWeight: 700, fontSize: '.93rem' } },
+          E('input', { type: 'checkbox', checked: uploadForm.allowOffers, style: { width: 18, height: 18, cursor: 'pointer', flexShrink: 0 },
+            onChange: ev => setUploadForm(f => ({ ...f, allowOffers: ev.target.checked })) }),
+          'Autoriser les acheteurs à faire une offre'
+        ),
+        E('div', { style: { display: 'flex', gap: 10 } },
+          E('button', { onClick: () => { setUploadForm(null); setBusy(false); },
+            style: { flex: 1, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 10, padding: '0.72rem', fontWeight: 700, cursor: 'pointer', fontSize: '.97rem' } }, 'Annuler'),
+          E('button', { onClick: startUpload, disabled: busy,
+            style: { flex: 2, background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 10, padding: '0.72rem', fontWeight: 800, cursor: 'pointer', fontSize: '.97rem' } },
+            busy ? 'Envoi en cours…' : 'Publier la story')
+        )
+      )
+    )
   );
 };
 
