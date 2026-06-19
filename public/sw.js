@@ -233,20 +233,40 @@ self.addEventListener("push", event => {
   const icon  = data.icon    || PUSH_ICONS[type] || PUSH_ICONS.system;
 
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon,
-      badge:    data.badge || PUSH_BADGE,
-      vibrate:  [200, 100, 200],
-      tag:      type,       // Remplace les notifs du même type (pas d'empilement)
-      renotify: true,       // Vibre quand même si tag identique
-      data:     { url: link, type },
-      actions: [
-        { action: "open",    title: "Ouvrir" },
-        { action: "dismiss", title: "Ignorer" },
-      ],
-    })
+    Promise.all([
+      self.registration.showNotification(title, {
+        body,
+        icon,
+        badge:    data.badge || PUSH_BADGE,
+        vibrate:  [200, 100, 200],
+        tag:      type,       // Remplace les notifs du même type (pas d'empilement)
+        renotify: true,       // Vibre quand même si tag identique
+        data:     { url: link, type },
+        actions: [
+          { action: "open",    title: "Ouvrir" },
+          { action: "dismiss", title: "Ignorer" },
+        ],
+      }),
+      // Profite du réveil du SW (push) pour déclencher un heartbeat coursier.
+      // Le SW est actif → les timers JS de la page ne sont plus nécessaires.
+      self.clients.matchAll({ type: "window" }).then(cs =>
+        cs.forEach(c => c.postMessage({ type: "COURIER_HEARTBEAT" }))
+      ),
+    ])
   );
+});
+
+// ── Periodic Background Sync : heartbeat coursier (Chrome Android) ────────────
+// Enregistré par la page quand le coursier passe en ligne.
+// Permet de ping la position toutes les ~3 min même app en arrière-plan.
+self.addEventListener("periodicsync", event => {
+  if (event.tag === "courier-heartbeat") {
+    event.waitUntil(
+      self.clients.matchAll({ type: "window" }).then(cs =>
+        cs.forEach(c => c.postMessage({ type: "COURIER_HEARTBEAT" }))
+      )
+    );
+  }
 });
 
 // ── Notification click ────────────────────────────────────────────────────────

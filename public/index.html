@@ -27802,19 +27802,20 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
   const handleActivate = async () => {
     if (!selectedPlan) return;
     const plan = BOOST_PLANS.find(p => p.type === selectedPlan);
-    if (plan?.needsCat && !targetCat) {
+    if (!plan) return;
+    if (plan.needsCat && !targetCat) {
       addToast('Veuillez sélectionner une catégorie cible pour ce forfait', 'warning');
       return;
     }
     setPaying(true);
     try {
       const now     = new Date();
-      const endsAt  = new Date(now.getTime() + selectedPlan.days * 86400000);
+      const endsAt  = new Date(now.getTime() + plan.days * 86400000);
       const boostId = crypto.randomUUID();
       const boostRow = {
         id: boostId, product_id: product.id, vendor_id: currentUser2.id,
-        boost_type:      selectedPlan.type, price_fcfa: selectedPlan.price,
-        target_category: selectedPlan.needsCat ? (targetCat || product.category || null) : null,
+        boost_type:      plan.type, price_fcfa: plan.price,
+        target_category: plan.needsCat ? (targetCat || product.category || null) : null,
         started_at: now.toISOString(), ends_at: endsAt.toISOString(),
         active: payMethod !== 'paytech', payment_method: payMethod, payment_status: 'pending',
       };
@@ -27840,8 +27841,8 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
             kind:         'boost',
             boost_id:     boostId,
             order_id:     'BOOST-' + boostId.slice(0,12).toUpperCase(),
-            amount:       selectedPlan.price,
-            item_name:    'Boost "' + product.name + '" \u2014 ' + selectedPlan.label + ' (' + selectedPlan.days + 'j)',
+            amount:       plan.price,
+            item_name:    'Boost "' + product.name + '" \u2014 ' + plan.label + ' (' + plan.days + 'j)',
             success_url:  origin + '/?boost_return=success&boostId=' + boostId,
             cancel_url:   origin + '/?boost_return=cancel&boostId='  + boostId,
             custom_field: JSON.stringify({ boostId, vendorId: currentUser2.id, productId: product.id }),
@@ -27868,9 +27869,9 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
         const wNum = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.waveNumber) || '';
         if (!wNum || wNum === '77XXXXXXX') { addToast('\u26a0\ufe0f Num\xe9ro Wave non configur\xe9.', 'warning', 8000); setPaying(false); return; }
         const ref  = 'BOOST-' + boostId.slice(0,8).toUpperCase();
-        const note = encodeURIComponent('Boost "' + product.name + '" (' + selectedPlan.label + ') \u2014 ' + ref);
-        window.open('https://pay.wave.com/m/' + wNum + '?amount=' + selectedPlan.price + '&note=' + note, '_blank');
-        addToast('\ud83d\udcf1 Wave ouvert \u2014 ' + selectedPlan.price.toLocaleString('fr-FR') + ' FCFA \u00b7 R\xe9f\xa0: ' + ref, 'info', 10000);
+        const note = encodeURIComponent('Boost "' + product.name + '" (' + plan.label + ') \u2014 ' + ref);
+        window.open('https://pay.wave.com/m/' + wNum + '?amount=' + plan.price + '&note=' + note, '_blank');
+        addToast('\ud83d\udcf1 Wave ouvert \u2014 ' + plan.price.toLocaleString('fr-FR') + ' FCFA \u00b7 R\xe9f\xa0: ' + ref, 'info', 10000);
       }
 
       // 2c. Orange Money
@@ -27878,7 +27879,7 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
         const omNum = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.orangeMoneyNumber) || '';
         if (!omNum || omNum === '77XXXXXXX') { addToast('\u26a0\ufe0f Num\xe9ro Orange Money non configur\xe9.', 'warning', 8000); setPaying(false); return; }
         const ref = 'BOOST-' + boostId.slice(0,8).toUpperCase();
-        addToast('\ud83d\udfe0 Envoyez ' + selectedPlan.price.toLocaleString('fr-FR') + ' FCFA au +221' + omNum + ' (OM NEXUS) \u2014 R\xe9f\xa0: ' + ref, 'info', 14000);
+        addToast('\ud83d\udfe0 Envoyez ' + plan.price.toLocaleString('fr-FR') + ' FCFA au +221' + omNum + ' (OM NEXUS) \u2014 R\xe9f\xa0: ' + ref, 'info', 14000);
       }
 
       // 3. Confirmation
@@ -39769,6 +39770,12 @@ window.addEventListener('unhandledrejection', function(event) {
         DataService.setCourierStatus(userId, 'available', lat, lng).then(function () {
           // Active le ping GPS continu (watchPosition → RPC courier_ping)
           try { window.__NEXUS_COURIER_ONLINE__ = true; } catch(e){}
+          // Periodic Background Sync (Chrome Android) — heartbeat toutes les ~3 min
+          if(navigator.serviceWorker && navigator.serviceWorker.controller){
+            navigator.serviceWorker.ready.then(function(reg){
+              if(reg.periodicSync) reg.periodicSync.register('courier-heartbeat',{minInterval:3*60*1000}).catch(function(){});
+            });
+          }
           setOnline(true); setBusy(false); refresh();
         });
       }
@@ -39797,6 +39804,11 @@ window.addEventListener('unhandledrejection', function(event) {
       setBusy(true);
       DataService.setCourierStatus(userId, 'offline').then(function () {
         try { window.__NEXUS_COURIER_ONLINE__ = false; } catch(e){}
+        if(navigator.serviceWorker && navigator.serviceWorker.controller){
+          navigator.serviceWorker.ready.then(function(reg){
+            if(reg.periodicSync) reg.periodicSync.unregister('courier-heartbeat').catch(function(){});
+          });
+        }
         setOnline(false); setBusy(false); setOffers([]);
       });
     }
@@ -41640,7 +41652,7 @@ window.addEventListener('unhandledrejection', function(event) {
       _lastPos={lat:p.coords.latitude,lng:p.coords.longitude};
       if(now-_lastPing < 8000) return;          // au plus 1 ping / 8 s
       _ping(p.coords.latitude, p.coords.longitude);
-    }, function(){}, { enableHighAccuracy:true, maximumAge:5000, timeout:15000 });
+    }, function(){}, { enableHighAccuracy:false, maximumAge:30000, timeout:20000 });
   }
   function stopCourierPing(){
     if(_watchId!=null && navigator.geolocation){ try{ navigator.geolocation.clearWatch(_watchId); }catch(e){} }
@@ -41655,6 +41667,29 @@ window.addEventListener('unhandledrejection', function(event) {
   // Retour sur l'app (onglet redevenu visible) → re-ping immédiat.
   document.addEventListener('visibilitychange', function(){
     if(document.visibilityState==='visible' && window.__NEXUS_COURIER_ONLINE__){ _lastPing=0; _heartbeat(); }
+  });
+
+  // ── Background location : arrière-plan mobile / PWA ────────────────────────
+  // Page Lifecycle API (Chrome/Android) — freeze = page mise en cache par l'OS
+  document.addEventListener('freeze', function(){
+    if(_lastPos) try{ localStorage.setItem('__ncourier_pos', JSON.stringify({lat:_lastPos.lat,lng:_lastPos.lng,t:Date.now()})); }catch(e){}
+  });
+  document.addEventListener('resume', function(){
+    if(!window.__NEXUS_COURIER_ONLINE__) return;
+    try{ var s=localStorage.getItem('__ncourier_pos'); if(s){ var p=JSON.parse(s); _lastPos={lat:p.lat,lng:p.lng}; } }catch(e){}
+    _lastPing=0; _heartbeat();
+  });
+  // iOS Safari : pagehide/pageshow (bfcache)
+  window.addEventListener('pagehide', function(e){
+    if(e.persisted && _lastPos) try{ localStorage.setItem('__ncourier_pos', JSON.stringify({lat:_lastPos.lat,lng:_lastPos.lng,t:Date.now()})); }catch(e){}
+  });
+  window.addEventListener('pageshow', function(e){
+    if(e.persisted && window.__NEXUS_COURIER_ONLINE__){ _lastPing=0; _heartbeat(); }
+  });
+  // SW → page : le Service Worker peut envoyer {type:'COURIER_HEARTBEAT'} pour
+  // déclencher un ping même quand les timers JS sont throttlés (arrière-plan).
+  if(navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function(e){
+    if(e.data && e.data.type==='COURIER_HEARTBEAT' && window.__NEXUS_COURIER_ONLINE__){ _lastPing=0; _heartbeat(); }
   });
 
   window.NexusMap = { track:track, nearby:nearby, locateMe:locateMe, autoMount:autoMount,
