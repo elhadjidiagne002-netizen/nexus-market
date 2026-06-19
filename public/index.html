@@ -39820,6 +39820,20 @@ window.addEventListener('unhandledrejection', function(event) {
               if(reg.periodicSync) reg.periodicSync.register('courier-heartbeat',{minInterval:3*60*1000}).catch(function(){});
             });
           }
+          // Screen Wake Lock — empêche Android de throttler JS/géoloc quand l'écran
+          // reste allumé (TWA PWA Builder). Se libère automatiquement si l'écran
+          // s'éteint ; le listener visibilitychange le ré-acquiert au réveil.
+          if ('wakeLock' in navigator) {
+            navigator.wakeLock.request('screen').then(function(wl){ window.__NEXUS_WAKE_LOCK__ = wl; }).catch(function(){});
+            if (!window.__NEXUS_WAKE_LOCK_LISTENER__) {
+              window.__NEXUS_WAKE_LOCK_LISTENER__ = function() {
+                if (document.visibilityState === 'visible' && window.__NEXUS_COURIER_ONLINE__) {
+                  navigator.wakeLock.request('screen').then(function(wl){ window.__NEXUS_WAKE_LOCK__ = wl; }).catch(function(){});
+                }
+              };
+              document.addEventListener('visibilitychange', window.__NEXUS_WAKE_LOCK_LISTENER__);
+            }
+          }
           setOnline(true); setBusy(false); refresh();
         });
       }
@@ -39853,6 +39867,9 @@ window.addEventListener('unhandledrejection', function(event) {
             if(reg.periodicSync) reg.periodicSync.unregister('courier-heartbeat').catch(function(){});
           });
         }
+        // Libérer le WakeLock et son listener quand le coursier passe hors ligne
+        if (window.__NEXUS_WAKE_LOCK__) { try { window.__NEXUS_WAKE_LOCK__.release(); } catch(e){} window.__NEXUS_WAKE_LOCK__ = null; }
+        if (window.__NEXUS_WAKE_LOCK_LISTENER__) { document.removeEventListener('visibilitychange', window.__NEXUS_WAKE_LOCK_LISTENER__); window.__NEXUS_WAKE_LOCK_LISTENER__ = null; }
         setOnline(false); setBusy(false); setOffers([]);
       });
     }
