@@ -4,6 +4,13 @@
  */
 
 export async function onRequest(context) {
+  // Redirection canonique : www.nexusmarket.sn → nexusmarket.sn (301 permanent)
+  const reqUrl = new URL(context.request.url);
+  if (reqUrl.hostname === "www.nexusmarket.sn") {
+    reqUrl.hostname = "nexusmarket.sn";
+    return Response.redirect(reqUrl.toString(), 301);
+  }
+
   if (context.request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
