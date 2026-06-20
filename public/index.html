@@ -13894,6 +13894,84 @@ const StoriesAdminPanel = ({ addToast }) => {
   );
 };
 
+// ── ProsAdminPanel — modération des artisans NEXUS Pro (table `pros`) ──────────
+// Rendu dans AdminDashboard quand view === "pros". Calqué sur StoriesAdminPanel.
+// Nécessite les migrations sql/2026_06_14_nexus_pros.sql + sql/2026_06_20_pros_admin.sql.
+const ProsAdminPanel = ({ addToast }) => {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [busyId, setBusyId] = React.useState(null);
+  const [notReady, setNotReady] = React.useState(false);
+  const E = React.createElement;
+  const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const TABLE_MISSING = /could not find the table|pgrst205|does not exist|schema cache/i;
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await DataService._sb.from('pros').select('*').order('created_at', { ascending: false }).limit(300);
+      if (error) {
+        if (TABLE_MISSING.test((error.message || '') + ' ' + (error.code || ''))) { setNotReady(true); setItems([]); }
+        else throw error;
+      } else { setNotReady(false); setItems(data || []); }
+    } catch (e) { toast('Lecture des pros échouée : ' + (e.message || e), 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { if (DataService._sb) load(); else setLoading(false); }, []);
+  const setStatus = async (it, status) => {
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('pros').update({ status }).eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.map(x => x.id === it.id ? { ...x, status } : x));
+      toast('Statut mis à jour.', 'success');
+    } catch (e) { toast('Échec : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  const del = async (it) => {
+    if (typeof confirm === 'function' && !confirm('Supprimer définitivement cette fiche professionnelle ?')) return;
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('pros').delete().eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.filter(x => x.id !== it.id));
+      toast('Fiche supprimée.', 'success');
+    } catch (e) { toast('Échec suppression : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  const badgeClass = (s) => s === 'active' ? 'success' : s === 'banned' ? 'danger' : 'secondary';
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      E('h2', { className: 'card-title' }, '🔧 Modération NEXUS Pro — artisans (' + items.length + ')'),
+      E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir')
+    ),
+    loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : notReady ? E('div', { style: { padding: '1.2rem', margin: '1rem', background: '#FEF9C3', border: '1px solid #F59E0B', borderRadius: 10, color: '#78350F' } },
+          E('div', { style: { fontWeight: 800, marginBottom: 6 } }, '⚠️ Module NEXUS Pro non encore activé'),
+          E('div', { style: { fontSize: '.9rem' } }, 'Exécutez les migrations ', E('code', null, 'sql/2026_06_14_nexus_pros.sql'), ' puis ', E('code', null, 'sql/2026_06_20_pros_admin.sql'), ' dans Supabase (SQL Editor), puis rafraîchissez.'))
+      : items.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-hard-hat' }), E('h3', null, 'Aucun professionnel inscrit'))
+        : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null, ['', 'Nom', 'Métier', 'Téléphone', 'Ville', 'Note', 'Statut', 'Inscrit', 'Actions'].map((h, i) => E('th', { key: i }, h)))),
+          E('tbody', null, items.map(it => E('tr', { key: it.id },
+            E('td', { 'data-label': '' }, it.photo_url
+              ? E('img', { src: it.photo_url, alt: '', loading: 'lazy', style: { width: 40, height: 40, objectFit: 'cover', borderRadius: 8 } })
+              : E('div', { style: { width: 40, height: 40, borderRadius: 8, background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '🔧')),
+            E('td', { 'data-label': 'Nom' }, E('strong', null, it.name || '—')),
+            E('td', { 'data-label': 'Métier' }, it.profession || '—'),
+            E('td', { 'data-label': 'Téléphone' }, it.phone ? E('a', { href: 'tel:' + it.phone }, it.phone) : '—'),
+            E('td', { 'data-label': 'Ville' }, it.city || '—'),
+            E('td', { 'data-label': 'Note' }, (it.rating_count > 0) ? (Number(it.rating_avg).toFixed(1) + ' ★ (' + it.rating_count + ')') : '—'),
+            E('td', { 'data-label': 'Statut' }, E('span', { className: 'badge badge-' + badgeClass(it.status) }, it.status)),
+            E('td', { 'data-label': 'Inscrit' }, it.created_at ? new Date(it.created_at).toLocaleDateString('fr-FR') : '—'),
+            E('td', { 'data-label': 'Actions' }, E('div', { className: 'flex gap-1' },
+              it.status === 'active'
+                ? E('button', { className: 'btn btn-sm btn-secondary', disabled: busyId === it.id, onClick: () => setStatus(it, 'hidden') }, 'Masquer')
+                : E('button', { className: 'btn btn-sm btn-success', disabled: busyId === it.id, onClick: () => setStatus(it, 'active') }, 'Activer'),
+              it.status !== 'banned' && E('button', { className: 'btn btn-sm btn-warning', disabled: busyId === it.id, onClick: () => setStatus(it, 'banned') }, 'Bannir'),
+              E('button', { className: 'btn btn-sm btn-danger', disabled: busyId === it.id, onClick: () => del(it) }, 'Suppr.')
+            ))
+          )))
+        ))
+  );
+};
+
 // [GRACE 72H] Bandeau global de compte à rebours, affiché en haut de l'app pour un
 // vendeur en accès provisoire (status pending dans la fenêtre de 72h).
 const VendorGraceBanner = ({ user }) => {
@@ -14484,7 +14562,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
 };
 // [FIX #310] RoleHeader extrait au niveau module — défini dans RegisterForm causait un remontage à chaque render
 const RoleHeader = ({ role, onBack }) => {
-  const labels = {buyer:"\ud83d\uded2 Acheteur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",vendor:"\ud83c\udfea Vendeur",courier:"\ud83d\udef5 Livreur indépendant"};
+  const labels = {buyer:"\ud83d\uded2 Acheteur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",pro:"\ud83d\udd27 Professionnel (artisan / ouvrier)",vendor:"\ud83c\udfea Vendeur",courier:"\ud83d\udef5 Livreur indépendant"};
   return React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--border)"}},
     React.createElement("button",{onClick:onBack,style:{background:"none",border:"none",cursor:"pointer",color:"var(--text-secondary)",fontSize:"0.9rem",padding:"0.3rem"}},
       React.createElement("i",{className:"fas fa-arrow-left"})
@@ -14601,7 +14679,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
   // ─── Validation per step ─────────────────────────────────
   const validate = () => {
     const e = {};
-    if (role === "buyer") {
+    if (role === "buyer" || role === "pro") {
       if (!form.name.trim() || form.name.trim().length < 2) e.name = "Nom trop court";
       if (!validateEmail(form.email)) e.email = "Email invalide";
       if (!validatePassword(form.password)) e.password = "Min 6 caract\xe8res";
@@ -14803,6 +14881,23 @@ if (json.token || json.accessToken) {
         // ── GA4 : événement de conversion "sign_up" ───────────────────────
         try { if (window.nexusAnalytics) window.nexusAnalytics.trackSignUp('buyer_pro'); } catch(_) {}
         onLogin(newUser);
+      } else if (role === "pro") {
+        // ── Professionnel NEXUS Pro (artisan / ouvrier) ────────────────────
+        // On crée un compte de base ; la fiche métier (profession + position GPS)
+        // est complétée ensuite via le module NEXUS Pro (RPC pro_register), ouvert
+        // automatiquement après connexion. Le flag survit à la confirmation email.
+        const profile = { role:"buyer", name:form.name, avatar };
+        try { localStorage.setItem("nexus_pending_pro_register", "1"); } catch(_) {}
+        const newPro = await DataService.signUp(form.email, form.password, profile);
+        if (newPro.__emailConfirmPending) {
+          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
+          setDone(true); setLoading(false); return;
+        }
+        addToast(`Bienvenue, ${form.name} ! Complétez votre fiche professionnelle.`, "success");
+        try { if (window.nexusAnalytics) window.nexusAnalytics.trackSignUp('pro'); } catch(_) {}
+        onLogin(newPro);
+        try { localStorage.removeItem("nexus_pending_pro_register"); } catch(_) {}
+        setTimeout(() => { try { window.dispatchEvent(new CustomEvent('nexus:open-pros', { detail: { tab: 'reg' } })); } catch(_) {} }, 700);
       } else {
         // buyer
         const profile = { role:"buyer", name:form.name, avatar };
@@ -14899,6 +14994,7 @@ if (json.token || json.accessToken) {
     const roles = [
       {id:"buyer",icon:"\ud83d\uded2",label:"Acheteur particulier",desc:"Commandez en toute s\xe9curit\xe9",color:"var(--primary)"},
       {id:"buyer_pro",icon:"\ud83c\udfe2",label:"Acheteur professionnel",desc:"Compte entreprise B2B",color:"#0284c7"},
+      {id:"pro",icon:"🔧",label:"Professionnel (artisan)",desc:"Plombier, maçon, électricien… visible sur la carte des pros",color:"#1d4ed8"},
       {id:"vendor",icon:"\ud83c\udfea",label:"Vendeur",desc:"Vendez vos produits",color:"var(--danger)"},
       {id:"courier",icon:"\ud83d\udef5",label:"Livreur / Coursier",desc:"Livrez \u00e0 Dakar \u2014 jusqu\u2019\u00e0 25\u202f000 FCFA/jour",color:"#D97706"}
     ];
@@ -14979,9 +15075,13 @@ if (json.token || json.accessToken) {
   const _roleHeaderOnBack = () => { setRole(""); setStep(1); setErrors({}); };
 
   // ─── BUYER PARTICULIER ────────────────────────────────────
-  if (role === "buyer") {
+  if (role === "buyer" || role === "pro") {
     return React.createElement(React.Fragment,null,
       React.createElement(RoleHeader,{role:role,onBack:_roleHeaderOnBack}),
+      role === "pro" && React.createElement("div",{style:{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:"10px",padding:"0.7rem 0.9rem",marginBottom:"1rem",fontSize:"0.82rem",color:"#1e3a8a"}},
+        React.createElement("i",{className:"fas fa-info-circle",style:{marginRight:"0.4rem"}}),
+        "Créez d’abord votre compte. Juste après, vous indiquerez votre métier et votre position pour apparaître sur la carte des pros proches."
+      ),
       React.createElement("div",{className:"form-group"},
         React.createElement("label",{className:"form-label",htmlFor:"b-name"},"Nom complet ",React.createElement("span",{className:"required"},"*")),
         inp("b-name","text","Fatou Diop",form.name,e=>setF("name",e.target.value),{autoFocus:true}),
@@ -23972,6 +24072,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "products", icon: "tags", label: "Produits" },
     { id: "troc", icon: "exchange-alt", label: "🔄 Troc" },
     { id: "stories", icon: "video", label: "🎬 Stories" },
+    { id: "pros", icon: "hard-hat", label: "🔧 Pros (artisans)" },
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
     { id: "louma", icon: "store", label: "\uD83D\uDFE1 Louma du vendredi" },
     { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: stats.stockAlerts ?? (storage.getArray("stock_alerts")).length },
@@ -24101,7 +24202,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"),
       /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")
     )));
-  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "products" && (() => {
+  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "products" && (() => {
     const pending = products.filter((p) => !p.moderated);
     const approved = products.filter((p) => p.moderated);
     const moderateProduct = async (pid, approve) => {
@@ -42624,7 +42725,13 @@ window.addEventListener('unhandledrejection', function(event) {
     return ov;
   }
   function open() { buildOverlay(); ov.classList.add('open'); }
+  function openTab(t) {
+    buildOverlay(); ov.classList.add('open');
+    var btn = ov.querySelector('.nx-pro-tab[data-t="' + (t || 'find') + '"]');
+    if (btn) try { btn.click(); } catch (e) {}
+  }
   function close() { if (ov) ov.classList.remove('open'); }
+  function curUser() { try { return (window.NexusUX && window.NexusUX.user && window.NexusUX.user()) || null; } catch (e) { return null; } }
 
   // ── FAB + ouverture par événement (intégrable au lanceur unique) ─────────────
   function injectFab() {
@@ -42635,9 +42742,24 @@ window.addEventListener('unhandledrejection', function(event) {
     b.addEventListener('click', open); document.body.appendChild(b);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectFab); else injectFab();
-  window.addEventListener('nexus:open-pros', open);
+  window.addEventListener('nexus:open-pros', function (e) {
+    if (e && e.detail && e.detail.tab) openTab(e.detail.tab); else open();
+  });
   // Deep-link depuis la page SEO /pro/:id (CTA → /?pro=…) : ouvre directement le module.
   try { if (/[?&]pro=/.test(location.search)) setTimeout(open, 400); } catch (e) {}
+  // Inscription « Professionnel » depuis le bouton S'inscrire : ouvrir l'onglet
+  // « Je suis un pro » dès que l'utilisateur est connecté (survit à la confirmation email).
+  try {
+    if (localStorage.getItem('nexus_pending_pro_register') === '1') {
+      var _proTries = 0;
+      var _proIv = setInterval(function () {
+        _proTries++;
+        var u = curUser();
+        if (u && u.id) { clearInterval(_proIv); try { localStorage.removeItem('nexus_pending_pro_register'); } catch (e) {} setTimeout(function () { openTab('reg'); }, 500); }
+        else if (_proTries > 60) { clearInterval(_proIv); }
+      }, 500);
+    }
+  } catch (e) {}
   console.info('[NEXUS] Module NEXUS Pro chargé ✅');
 })();
 </script>
