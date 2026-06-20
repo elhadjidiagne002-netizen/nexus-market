@@ -13972,6 +13972,65 @@ const ProsAdminPanel = ({ addToast }) => {
   );
 };
 
+// ── BreedersAdminPanel — gestion des éleveurs NEXUS (profiles.is_breeder) ──────
+// Rendu dans AdminDashboard quand view === "breeders".
+// Nécessite la migration sql/2026_06_20_breeders_admin.sql (RPC admin_list_breeders
+// + admin_set_breeder, SECURITY DEFINER, réservées aux comptes admin).
+const BreedersAdminPanel = ({ addToast }) => {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [busyId, setBusyId] = React.useState(null);
+  const [notReady, setNotReady] = React.useState(false);
+  const E = React.createElement;
+  const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const FN_MISSING = /could not find the function|pgrst202|does not exist|schema cache/i;
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await DataService._sb.rpc('admin_list_breeders');
+      if (error) {
+        if (FN_MISSING.test((error.message || '') + ' ' + (error.code || ''))) { setNotReady(true); setItems([]); }
+        else throw error;
+      } else { setNotReady(false); setItems(data || []); }
+    } catch (e) { toast('Lecture des éleveurs échouée : ' + (e.message || e), 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { if (DataService._sb) load(); else setLoading(false); }, []);
+  const revoke = async (it) => {
+    if (typeof confirm === 'function' && !confirm('Retirer le statut éleveur de ' + (it.name || 'cet utilisateur') + ' ?')) return;
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.rpc('admin_set_breeder', { p_user_id: it.id, p_is_breeder: false });
+      if (error) throw error;
+      setItems(xs => xs.filter(x => x.id !== it.id));
+      toast('Statut éleveur retiré.', 'success');
+    } catch (e) { toast('Échec : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      E('h2', { className: 'card-title' }, '🐏 Éleveurs NEXUS (' + items.length + ')'),
+      E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir')
+    ),
+    loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : notReady ? E('div', { style: { padding: '1.2rem', margin: '1rem', background: '#FEF9C3', border: '1px solid #F59E0B', borderRadius: 10, color: '#78350F' } },
+          E('div', { style: { fontWeight: 800, marginBottom: 6 } }, '⚠️ Gestion éleveurs non encore activée'),
+          E('div', { style: { fontSize: '.9rem' } }, 'Exécutez la migration ', E('code', null, 'sql/2026_06_20_breeders_admin.sql'), ' dans Supabase (SQL Editor), puis rafraîchissez.'))
+      : items.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-paw' }), E('h3', null, 'Aucun éleveur inscrit'))
+        : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null, ['Nom', 'Boutique', 'Téléphone', 'Position', 'Inscrit', 'Actions'].map((h, i) => E('th', { key: i }, h)))),
+          E('tbody', null, items.map(it => E('tr', { key: it.id },
+            E('td', { 'data-label': 'Nom' }, E('strong', null, it.name || '—')),
+            E('td', { 'data-label': 'Boutique' }, it.shop_name || '—'),
+            E('td', { 'data-label': 'Téléphone' }, it.phone ? E('a', { href: 'tel:' + it.phone }, it.phone) : '—'),
+            E('td', { 'data-label': 'Position' }, (it.current_lat != null && it.current_lng != null)
+              ? E('a', { href: 'https://maps.google.com/?q=' + it.current_lat + ',' + it.current_lng, target: '_blank', rel: 'noopener' }, '📍 Carte') : '—'),
+            E('td', { 'data-label': 'Inscrit' }, it.created_at ? new Date(it.created_at).toLocaleDateString('fr-FR') : '—'),
+            E('td', { 'data-label': 'Actions' }, E('button', { className: 'btn btn-sm btn-danger', disabled: busyId === it.id, onClick: () => revoke(it) }, 'Retirer statut'))
+          )))
+        ))
+  );
+};
+
 // [GRACE 72H] Bandeau global de compte à rebours, affiché en haut de l'app pour un
 // vendeur en accès provisoire (status pending dans la fenêtre de 72h).
 const VendorGraceBanner = ({ user }) => {
@@ -14562,7 +14621,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
 };
 // [FIX #310] RoleHeader extrait au niveau module — défini dans RegisterForm causait un remontage à chaque render
 const RoleHeader = ({ role, onBack }) => {
-  const labels = {buyer:"\ud83d\uded2 Acheteur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",pro:"\ud83d\udd27 Professionnel (artisan / ouvrier)",vendor:"\ud83c\udfea Vendeur",courier:"\ud83d\udef5 Livreur indépendant"};
+  const labels = {buyer:"\ud83d\uded2 Acheteur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",pro:"\ud83d\udd27 Professionnel (artisan / ouvrier)",breeder:"\ud83d\udc0f \u00c9leveur / Producteur local",vendor:"\ud83c\udfea Vendeur",courier:"\ud83d\udef5 Livreur indépendant"};
   return React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--border)"}},
     React.createElement("button",{onClick:onBack,style:{background:"none",border:"none",cursor:"pointer",color:"var(--text-secondary)",fontSize:"0.9rem",padding:"0.3rem"}},
       React.createElement("i",{className:"fas fa-arrow-left"})
@@ -14679,7 +14738,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
   // ─── Validation per step ─────────────────────────────────
   const validate = () => {
     const e = {};
-    if (role === "buyer" || role === "pro") {
+    if (role === "buyer" || role === "pro" || role === "breeder") {
       if (!form.name.trim() || form.name.trim().length < 2) e.name = "Nom trop court";
       if (!validateEmail(form.email)) e.email = "Email invalide";
       if (!validatePassword(form.password)) e.password = "Min 6 caract\xe8res";
@@ -14898,6 +14957,22 @@ if (json.token || json.accessToken) {
         onLogin(newPro);
         try { localStorage.removeItem("nexus_pending_pro_register"); } catch(_) {}
         setTimeout(() => { try { window.dispatchEvent(new CustomEvent('nexus:open-pros', { detail: { tab: 'reg' } })); } catch(_) {} }, 700);
+      } else if (role === "breeder") {
+        // ── Éleveur / Producteur local (NEXUS Élevage 🐏) ──────────────────
+        // Compte de base ; le statut éleveur (is_breeder + position GPS) est
+        // activé ensuite via le module Local & Élevage, ouvert après connexion.
+        const profile = { role:"buyer", name:form.name, avatar };
+        try { localStorage.setItem("nexus_pending_breeder", "1"); } catch(_) {}
+        const newBreeder = await DataService.signUp(form.email, form.password, profile);
+        if (newBreeder.__emailConfirmPending) {
+          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
+          setDone(true); setLoading(false); return;
+        }
+        addToast(`Bienvenue, ${form.name} ! Activez votre profil éleveur.`, "success");
+        try { if (window.nexusAnalytics) window.nexusAnalytics.trackSignUp('breeder'); } catch(_) {}
+        onLogin(newBreeder);
+        try { localStorage.removeItem("nexus_pending_breeder"); } catch(_) {}
+        setTimeout(() => { try { window.dispatchEvent(new CustomEvent('nexus:open-local-elevage', { detail: { become: true } })); } catch(_) {} }, 700);
       } else {
         // buyer
         const profile = { role:"buyer", name:form.name, avatar };
@@ -14995,6 +15070,7 @@ if (json.token || json.accessToken) {
       {id:"buyer",icon:"\ud83d\uded2",label:"Acheteur particulier",desc:"Commandez en toute s\xe9curit\xe9",color:"var(--primary)"},
       {id:"buyer_pro",icon:"\ud83c\udfe2",label:"Acheteur professionnel",desc:"Compte entreprise B2B",color:"#0284c7"},
       {id:"pro",icon:"🔧",label:"Professionnel (artisan)",desc:"Plombier, maçon, électricien… visible sur la carte des pros",color:"#1d4ed8"},
+      {id:"breeder",icon:"🐏",label:"Éleveur / Producteur local",desc:"Bétail (Tabaski) & produits du terroir géolocalisés",color:"#00853E"},
       {id:"vendor",icon:"\ud83c\udfea",label:"Vendeur",desc:"Vendez vos produits",color:"var(--danger)"},
       {id:"courier",icon:"\ud83d\udef5",label:"Livreur / Coursier",desc:"Livrez \u00e0 Dakar \u2014 jusqu\u2019\u00e0 25\u202f000 FCFA/jour",color:"#D97706"}
     ];
@@ -15075,12 +15151,16 @@ if (json.token || json.accessToken) {
   const _roleHeaderOnBack = () => { setRole(""); setStep(1); setErrors({}); };
 
   // ─── BUYER PARTICULIER ────────────────────────────────────
-  if (role === "buyer" || role === "pro") {
+  if (role === "buyer" || role === "pro" || role === "breeder") {
     return React.createElement(React.Fragment,null,
       React.createElement(RoleHeader,{role:role,onBack:_roleHeaderOnBack}),
       role === "pro" && React.createElement("div",{style:{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:"10px",padding:"0.7rem 0.9rem",marginBottom:"1rem",fontSize:"0.82rem",color:"#1e3a8a"}},
         React.createElement("i",{className:"fas fa-info-circle",style:{marginRight:"0.4rem"}}),
         "Créez d’abord votre compte. Juste après, vous indiquerez votre métier et votre position pour apparaître sur la carte des pros proches."
+      ),
+      role === "breeder" && React.createElement("div",{style:{background:"#ecfdf5",border:"1px solid #a7f3d0",borderRadius:"10px",padding:"0.7rem 0.9rem",marginBottom:"1rem",fontSize:"0.82rem",color:"#065f46"}},
+        React.createElement("i",{className:"fas fa-info-circle",style:{marginRight:"0.4rem"}}),
+        "Créez d’abord votre compte. Juste après, on activera votre profil éleveur avec votre position pour que les acheteurs (bétail Tabaski, produits du terroir) vous trouvent sur la carte."
       ),
       React.createElement("div",{className:"form-group"},
         React.createElement("label",{className:"form-label",htmlFor:"b-name"},"Nom complet ",React.createElement("span",{className:"required"},"*")),
@@ -24073,6 +24153,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "troc", icon: "exchange-alt", label: "🔄 Troc" },
     { id: "stories", icon: "video", label: "🎬 Stories" },
     { id: "pros", icon: "hard-hat", label: "🔧 Pros (artisans)" },
+    { id: "breeders", icon: "paw", label: "🐏 Éleveurs" },
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
     { id: "louma", icon: "store", label: "\uD83D\uDFE1 Louma du vendredi" },
     { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: stats.stockAlerts ?? (storage.getArray("stock_alerts")).length },
@@ -24202,7 +24283,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"),
       /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")
     )));
-  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "products" && (() => {
+  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "products" && (() => {
     const pending = products.filter((p) => !p.moderated);
     const approved = products.filter((p) => p.moderated);
     const moderateProduct = async (pid, approve) => {
@@ -42400,6 +42481,7 @@ window.addEventListener('unhandledrejection', function(event) {
     ov.__paintAnimals && ov.__paintAnimals();
   }
   function close() { if (ov) ov.classList.remove('open'); }
+  function curUser() { try { return (window.NexusUX && window.NexusUX.user && window.NexusUX.user()) || null; } catch (e) { return null; } }
 
   // ── FAB + ouverture par événement ───────────────────────────────────────────
   function injectFab() {
@@ -42410,7 +42492,23 @@ window.addEventListener('unhandledrejection', function(event) {
     b.addEventListener('click', open); document.body.appendChild(b);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectFab); else injectFab();
-  window.addEventListener('nexus:open-local-elevage', open);
+  window.addEventListener('nexus:open-local-elevage', function (e) {
+    open();
+    if (e && e.detail && e.detail.become) setTimeout(function () { try { becomeBreeder(); } catch (_) {} }, 500);
+  });
+  // Inscription « Éleveur » depuis le bouton S'inscrire : activer le profil éleveur
+  // dès que l'utilisateur est connecté (flag localStorage, survit à la confirmation email).
+  try {
+    if (localStorage.getItem('nexus_pending_breeder') === '1') {
+      var _brTries = 0;
+      var _brIv = setInterval(function () {
+        _brTries++;
+        var u = curUser();
+        if (u && u.id) { clearInterval(_brIv); try { localStorage.removeItem('nexus_pending_breeder'); } catch (e) {} setTimeout(function () { open(); try { becomeBreeder(); } catch (_) {} }, 600); }
+        else if (_brTries > 60) { clearInterval(_brIv); }
+      }, 500);
+    }
+  } catch (e) {}
   console.info('[NEXUS] Module Local & Élevage chargé ✅');
 })();
 </script>
