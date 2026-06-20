@@ -8,6 +8,8 @@ export async function onRequest({ request, env }) {
     ['/guide/vendre-sur-nexus-market', '🏪 Vendre sur NEXUS Market', 'De l’annonce express à la boutique pro : créer ses fiches, fixer ses prix, recevoir ses paiements et fidéliser.'],
     ['/guide/paiement-mobile-money', '💳 Payer avec Orange Money & Wave', 'Comment fonctionnent les paiements mobiles au Sénégal, leurs frais, leur sécurité et la garantie acheteur.'],
     ['/guide/livraison-au-senegal', '🚚 La livraison au Sénégal', 'Délais, tarifs, suivi, coursier à la demande et bonnes pratiques pour Dakar et les régions.'],
+    ['/guide/acheter-mouton-tabaski-senegal', '🐏 Acheter un mouton de Tabaski', 'Quand acheter, comment choisir un mouton sain, négocier le prix et trouver un éleveur de confiance près de chez vous.'],
+    ['/guide/vendre-telephone-occasion-senegal', '📱 Vendre son téléphone d’occasion', 'Préparer l’appareil, fixer le prix, rédiger l’annonce et vendre sans arnaque grâce au paiement sécurisé.'],
   ];
   const body = `
 <h1>Guides NEXUS Market</h1>
