@@ -13732,8 +13732,18 @@ const NexusMegaMenu = ({ user, inDashboard }) => {
         sec('Catégories', NEXUS_MENU_CATS.map(([label, slug]) => item(label, () => go('/categorie/' + slug), '›'))),
         sec('Vendre & gagner', E(React.Fragment, null,
           item('Devenir vendeur', () => emit('nexus:open-register', 'vendor'), '🏪'),
-          item('Booster mes annonces (Pro)', () => emit('nexus:open-register', 'vendor'), '⭐'),
-          item('Programme ambassadeur', () => emit('nexus:open-register', 'vendor'), '🤝')
+          item('Booster mes annonces (Pro)', () => {
+            setOpen(false);
+            if (user && user.id && user.role === 'vendor') { try { window.dispatchEvent(new CustomEvent('nexus:hide-public-home')); } catch (_) {} }
+            else { try { window.dispatchEvent(new CustomEvent('nexus:open-register', { detail: 'vendor' })); } catch (_) {} }
+          }, '⭐'),
+          item('Programme ambassadeur', () => {
+            setOpen(false);
+            if (user && user.id) {
+              try { window.dispatchEvent(new CustomEvent('nexus:hide-public-home')); } catch (_) {}
+              setTimeout(() => { try { window.dispatchEvent(new CustomEvent('nexus:goto-buyer-view', { detail: 'ambassador' })); } catch (_) {} }, 350);
+            } else { try { window.dispatchEvent(new CustomEvent('nexus:open-login')); } catch (_) {} }
+          }, '🤝')
         )),
         sec((user && user.id) ? 'Mon espace' : 'Mon compte', E(React.Fragment, null,
           (user && user.id) ? item('↩ Retour au tableau de bord', () => emit('nexus:hide-public-home'), '📊') : item('Se connecter / S’inscrire', () => emit('nexus:open-login'), '👤'),
@@ -31175,6 +31185,41 @@ const CategoryGridPanel = ({ allCats, filterCategory, setFilterCategory, setCurr
   );
 };
 
+// ── NexusServicesStrip — bande de découverte des verticaux sur la page d'accueil
+// Rend visibles, dès l'accueil, les fonctionnalités déjà présentes (jusqu'ici
+// accessibles seulement via le menu ☰ ou des boutons flottants). Chaque carte
+// déclenche l'événement d'ouverture du module concerné (déjà branché).
+const NexusServicesStrip = () => {
+  const E = React.createElement;
+  const fire = (ev) => { try { window.dispatchEvent(new CustomEvent(ev)); } catch (_) {} };
+  const items = [
+    { ev: 'nexus:open-pros',          icon: '🔧', label: 'Artisans & ouvriers', desc: 'Plombier, maçon, électricien…', color: '#1d4ed8' },
+    { ev: 'nexus:open-local-elevage', icon: '🐏', label: 'Élevage & local',      desc: 'Bétail Tabaski, produits du terroir', color: '#00853E' },
+    { ev: 'nexus:open-courier',       icon: '🛵', label: 'Coursier',             desc: 'Livraison à la demande à Dakar', color: '#D97706' },
+    { ev: 'nexus:open-troc',          icon: '🔄', label: 'Troc',                 desc: 'Échanger sans argent', color: '#7C3AED' },
+    { ev: 'nexus:open-stories',       icon: '🎬', label: 'Stories',              desc: 'Vidéos produit des vendeurs', color: '#DB2777' },
+    { ev: 'nexus:open-louma',         icon: '🏪', label: 'Louma',                desc: 'Le marché en ligne du vendredi', color: '#C98A00' },
+  ];
+  return E('div', { style: { background: 'var(--bg-light, #f8fafc)', borderBottom: '1px solid var(--border, #e5e7eb)', padding: '0.85rem 0' } },
+    E('div', { style: { maxWidth: 1200, margin: '0 auto', padding: '0 1rem' } },
+      E('div', { style: { fontSize: '0.78rem', fontWeight: 800, letterSpacing: '.04em', textTransform: 'uppercase', color: 'var(--text-secondary, #64748b)', marginBottom: '0.55rem' } }, 'Services NEXUS'),
+      E('div', { style: { display: 'flex', gap: '0.7rem', overflowX: 'auto', paddingBottom: '0.25rem', WebkitOverflowScrolling: 'touch' } },
+        items.map((it) => E('button', {
+          key: it.ev,
+          onClick: () => fire(it.ev),
+          style: { flex: '0 0 auto', width: 168, textAlign: 'left', background: '#fff', border: '1px solid var(--border, #e5e7eb)', borderLeft: '4px solid ' + it.color, borderRadius: 12, padding: '0.7rem 0.8rem', cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,.05)' },
+          onMouseEnter: (e) => { e.currentTarget.style.boxShadow = '0 4px 14px rgba(0,0,0,.12)'; e.currentTarget.style.transform = 'translateY(-2px)'; },
+          onMouseLeave: (e) => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,.05)'; e.currentTarget.style.transform = 'none'; },
+        },
+          E('div', { style: { fontSize: '1.6rem', lineHeight: 1, marginBottom: '0.35rem' } }, it.icon),
+          E('div', { style: { fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary, #0f172a)' } }, it.label),
+          E('div', { style: { fontSize: '0.72rem', color: 'var(--text-secondary, #64748b)', marginTop: '0.15rem', lineHeight: 1.3 } }, it.desc)
+        ))
+      )
+    )
+  );
+};
+
 const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, currentUser: currentUserProp = null, onBackToDashboard = null }) => {
   // [FIX] showOnDemandPage manquait dans PublicCatalog → ReferenceError au clic CTA OnDemand
   const [showOnDemandPage, setShowOnDemandPage] = useState(false);
@@ -33653,6 +33698,12 @@ function nexusResetSEO() {
 
 const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, cartTrigger, wishlistTrigger }) => {
   const [view, setView] = useState("catalog");
+  // Navigation externe vers un onglet acheteur (ex. menu « Programme ambassadeur »).
+  React.useEffect(() => {
+    const h = (e) => { if (e && e.detail) setView(e.detail); };
+    window.addEventListener('nexus:goto-buyer-view', h);
+    return () => window.removeEventListener('nexus:goto-buyer-view', h);
+  }, []);
   useEffect(() => { const _gh = () => setView("catalog"); window.addEventListener("nexus:go-home", _gh); return () => window.removeEventListener("nexus:go-home", _gh); }, []);
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
@@ -35418,7 +35469,7 @@ const App = ({ onUserChange }) => {
       onToggleSidebar: toggleSidebar,
       showPublicHome
     }
-  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusMegaMenu, { user: currentUser2, inDashboard: !!(currentUser2 && !showPublicHome) }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusMegaMenu, { user: currentUser2, inDashboard: !!(currentUser2 && !showPublicHome) }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(NexusServicesStrip, null), /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) })) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
