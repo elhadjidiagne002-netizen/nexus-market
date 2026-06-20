@@ -26,6 +26,8 @@ const FOOTER = [
   ['/faq', 'Questions fréquentes'],
   ['/a-propos', 'À propos de NEXUS'],
   ['/contact', 'Nous contacter'],
+  ['/cgu', 'Conditions d’utilisation'],
+  ['/confidentialite', 'Politique de confidentialité'],
 ];
 
 function ld(o) {
