@@ -10,6 +10,9 @@ export async function onRequest({ request, env }) {
     ['/guide/livraison-au-senegal', '🚚 La livraison au Sénégal', 'Délais, tarifs, suivi, coursier à la demande et bonnes pratiques pour Dakar et les régions.'],
     ['/guide/acheter-mouton-tabaski-senegal', '🐏 Acheter un mouton de Tabaski', 'Quand acheter, comment choisir un mouton sain, négocier le prix et trouver un éleveur de confiance près de chez vous.'],
     ['/guide/vendre-telephone-occasion-senegal', '📱 Vendre son téléphone d’occasion', 'Préparer l’appareil, fixer le prix, rédiger l’annonce et vendre sans arnaque grâce au paiement sécurisé.'],
+    ['/guide/devenir-coursier-livreur-dakar', '🛵 Devenir coursier / livreur à Dakar', 'Prérequis, fonctionnement des courses géolocalisées, revenus et conseils pour livrer et gagner de l’argent.'],
+    ['/guide/troc-echanger-objets-senegal', '🔄 Le troc : échanger sans argent', 'Échangez vos objets en bon état, évaluez un troc équilibré et sécurisez la remise.'],
+    ['/guide/produits-locaux-terroir-senegal', '🇸🇳 Produits locaux & du terroir', 'Consommer sénégalais : pourquoi, quels produits, et comment trouver les producteurs proches.'],
   ];
   const body = `
 <h1>Guides NEXUS Market</h1>
