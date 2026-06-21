@@ -25,9 +25,9 @@ async function sbUser(env, token) {
   } catch { return null; }
 }
 
-// Tarif de publication d'une story (FCFA) — config admin canonique
-// (app_config.nexus_monetization_cfg.story_fee). 0/absent = gratuit (défaut).
-async function storyFee(env) {
+// Config de monétisation canonique (app_config.nexus_monetization_cfg), réglée
+// par l'admin depuis son tableau de bord. Tarif de story + durées d'affichage.
+async function monetizationCfg(env) {
   try {
     const r = await fetch(`${env.SUPABASE_URL}/rest/v1/app_config?key=eq.nexus_monetization_cfg&select=value`, {
       headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` },
@@ -35,11 +35,39 @@ async function storyFee(env) {
     if (r.ok) {
       const rows = await r.json();
       const v = Array.isArray(rows) && rows[0] && rows[0].value;
-      const f = v && Number(v.story_fee);
-      if (isFinite(f) && f > 0) return Math.round(f);
+      if (v && typeof v === 'object') return v;
     }
   } catch (_) {}
-  return 0;
+  return {};
+}
+
+// Tarif de publication d'une story (FCFA). 0/absent = gratuit (défaut lancement).
+function storyFeeFromCfg(cfg) {
+  const f = cfg && Number(cfg.story_fee);
+  return isFinite(f) && f > 0 ? Math.round(f) : 0;
+}
+
+// Abonnement (offre) du vendeur — détermine la durée de vie de sa story.
+async function vendorPlan(env, userId) {
+  try {
+    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=is_pro,pro_plan,pro_until`, {
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` },
+    });
+    if (r.ok) { const rows = await r.json(); if (Array.isArray(rows) && rows[0]) return rows[0]; }
+  } catch (_) {}
+  return {};
+}
+
+// Durée d'affichage (heures) avant suppression auto, selon l'offre du vendeur.
+// Réglable par l'admin ; valeurs par défaut : gratuit 24h, Pro 7j, Pro annuel 30j.
+function storyTtlHours(cfg, plan) {
+  const num = (v, d) => { const n = Number(v); return isFinite(n) && n > 0 ? n : d; };
+  const free = num(cfg && cfg.story_ttl_free_h, 24);
+  const pro = num(cfg && cfg.story_ttl_pro_h, 168);
+  const proAnnuel = num(cfg && cfg.story_ttl_proannuel_h, 720);
+  const proActive = plan && plan.is_pro && plan.pro_until && new Date(plan.pro_until).getTime() > Date.now();
+  if (proActive) return plan.pro_plan === 'pro_annuel' ? proAnnuel : pro;
+  return free;
 }
 
 // Insert d'une story via la service key (bypasse le RLS de la table).
@@ -98,13 +126,18 @@ export async function onRequest(context) {
     try {
       // [STORY PAYANTE] Gate régulé par l'admin (story_fee). 0 = gratuit (défaut
       // lancement) → publication immédiate. > 0 → story gelée 'pending_payment'
-      // jusqu'au paiement (le flux de paiement sera branché ultérieurement).
-      const fee = await storyFee(env);
+      // jusqu'au paiement.
+      // [MINUTERIE] expires_at = now + durée liée à l'offre d'abonnement du vendeur.
+      const cfg = await monetizationCfg(env);
+      const fee = storyFeeFromCfg(cfg);
+      const plan = await vendorPlan(env, user.id);
+      const ttlH = storyTtlHours(cfg, plan);
+      const expiresAt = new Date(Date.now() + ttlH * 3600 * 1000).toISOString();
       const storyId = await insertStory(env, {
         vendor_id: user.id, vendor_name: vendorName,
         product_id: productId, title, category, city,
         video_url: videoUrl, status: fee > 0 ? 'pending_payment' : 'active',
-        price, allow_offers: allowOffers,
+        price, allow_offers: allowOffers, expires_at: expiresAt,
       });
       if (!storyId) return err('Story non enregistrée', 502);
       return ok({ ok: true, storyId, requiresPayment: fee > 0, fee });
@@ -138,6 +171,10 @@ export async function onRequest(context) {
   // succès : sinon le client envoie la vidéo à Mux mais aucune story n'existe →
   // rien ne s'affiche jamais (échec silencieux). On remonte l'erreur réelle.
   let storyId = null, insertErr = null;
+  // [MINUTERIE] durée d'affichage liée à l'offre d'abonnement du vendeur.
+  const cfgB = await monetizationCfg(env);
+  const planB = await vendorPlan(env, user.id);
+  const expiresAtB = new Date(Date.now() + storyTtlHours(cfgB, planB) * 3600 * 1000).toISOString();
   try {
     const r = await fetch(`${env.SUPABASE_URL}/rest/v1/stories`, {
       method: 'POST',
@@ -149,7 +186,7 @@ export async function onRequest(context) {
         vendor_id: user.id,
         vendor_name: (user.user_metadata && user.user_metadata.name) || user.email || 'Vendeur',
         product_id: productId, title, category, city,
-        mux_upload_id: mux.id, status: 'uploading',
+        mux_upload_id: mux.id, status: 'uploading', expires_at: expiresAtB,
       }),
     });
     if (r.ok) { const rows = await r.json(); storyId = Array.isArray(rows) && rows[0] ? rows[0].id : null; }

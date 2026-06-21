@@ -13435,6 +13435,22 @@ const StoryOfferModal = ({ data, onClose, toast }) => {
 // [NEXUS STORIES] Widget autonome de vidéos produit (format Reels). Bouton flottant
 // + visionneuse plein écran (lecture HLS via Mux/hls.js, navigation ▲▼) + upload
 // vendeur (POST /api/stories/upload → PUT direct Mux). Ouverture via événement.
+// ── StoryTtlBadge — compte a rebours avant suppression auto de la story ──
+// La duree d'affichage est fixee a la publication selon l'abonnement du vendeur
+// (gratuit / Boutique Pro mensuel / annuel) — cf. functions/api/stories/upload.js.
+const StoryTtlBadge = ({ expiresAt }) => {
+  const E = React.createElement;
+  const [, force] = React.useState(0);
+  React.useEffect(() => { const t = setInterval(() => force(n => n + 1), 60000); return () => clearInterval(t); }, []);
+  if (!expiresAt) return null;
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (!isFinite(ms)) return null;
+  const expired = ms <= 0;
+  const h = Math.floor(ms / 3600000), d = Math.floor(h / 24);
+  const label = expired ? 'Expiree' : d >= 1 ? ('Disparait dans ' + d + ' j') : h >= 1 ? ('Disparait dans ' + h + ' h') : ('Disparait dans ' + Math.max(1, Math.floor(ms / 60000)) + ' min');
+  return E('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 6, background: expired ? 'rgba(185,28,28,.92)' : 'rgba(0,0,0,.45)', color: '#fff', borderRadius: 999, padding: '3px 10px', fontSize: '.74rem', fontWeight: 700 } }, '⏱ ' + label);
+};
+
 const NexusStoriesWidget = ({ user }) => {
   const [open, setOpen] = React.useState(false);
   const [items, setItems] = React.useState([]);
@@ -13446,6 +13462,7 @@ const NexusStoriesWidget = ({ user }) => {
   const [offerModal, setOfferModal] = React.useState(null); // { kind:'buy'|'offer', story }
   const videoRef = React.useRef(null);
   const hlsRef = React.useRef(null);
+  const wantIdRef = React.useRef(null); // story ciblée à l'ouverture (clic sur une carte)
   const fileRef = React.useRef(null);   // capture caméra (vidéo instantanée)
   const importRef = React.useRef(null); // import d'un fichier (galerie / disque)
   const E = React.createElement;
@@ -13466,7 +13483,7 @@ const NexusStoriesWidget = ({ user }) => {
           toast('Erreur chargement stories : ' + (error.message || JSON.stringify(error)), 'error');
           setItems([]); setLoading(false); return;
         }
-        setItems(data || []); setIdx(0); setLoading(false);
+        { const list = data || []; const wi = wantIdRef.current ? list.findIndex(s => s.id === wantIdRef.current) : -1; wantIdRef.current = null; setItems(list); setIdx(wi >= 0 ? wi : 0); } setLoading(false);
         // Stories du vendeur encore en encodage → indicateur « bientôt visible ».
         if (user && user.id) {
           DataService._sb.from('stories').select('id').eq('vendor_id', user.id).eq('status', 'uploading')
@@ -13478,7 +13495,7 @@ const NexusStoriesWidget = ({ user }) => {
     setItems([]); setLoading(false);
   };
   React.useEffect(() => { if (open) load(); }, [open]);
-  React.useEffect(() => { const h = () => setOpen(true); window.addEventListener('nexus:open-stories', h); return () => window.removeEventListener('nexus:open-stories', h); }, []);
+  React.useEffect(() => { const h = (e) => { try { wantIdRef.current = (e && e.detail && e.detail.id) || null; } catch (_) { wantIdRef.current = null; } setOpen(true); }; window.addEventListener('nexus:open-stories', h); return () => window.removeEventListener('nexus:open-stories', h); }, []);
   React.useEffect(() => { try { const q = new URLSearchParams(location.search); if (q.get('stories') || q.get('story')) setOpen(true); } catch (_) {} }, []);
 
   // Charge la vidéo HLS courante
@@ -13641,6 +13658,7 @@ const NexusStoriesWidget = ({ user }) => {
               E('div', { style: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: '16px', color: '#fff', background: 'linear-gradient(transparent,rgba(0,0,0,.7))' } },
                 E('div', { style: { fontWeight: 800 } }, cur.title || 'Vidéo produit'),
                 E('div', { style: { fontSize: '.85rem', opacity: .85 } }, (cur.category || '') + (cur.city ? ' · ' + cur.city : '') + (cur.vendor_name ? ' · ' + cur.vendor_name : '')),
+                cur.expires_at && E(StoryTtlBadge, { expiresAt: cur.expires_at }),
                 // [STORIES SHOPPABLES] Barre d'achat : produit lié → ouvre la fiche.
                 storyProd && E('div', {
                   onClick: openStoryProduct, role: 'button', tabIndex: 0,
@@ -22268,6 +22286,10 @@ const MonetizationConfigPanel = ({ addToast }) => {
 
     // Stories à la vente
     story_fee:              0,     // FCFA par story publiée (0 = gratuit — défaut lancement)
+    // Durée d'affichage d'une story avant suppression auto, selon l'abonnement du vendeur (heures)
+    story_ttl_free_h:       24,    // vendeur gratuit : 24h
+    story_ttl_pro_h:        168,   // Boutique Pro mensuel : 7 jours
+    story_ttl_proannuel_h:  720,   // Boutique Pro annuel : 30 jours
 
     // Flash sponsorisées
     flash_12h_price:        1500,
@@ -22429,6 +22451,14 @@ const MonetizationConfigPanel = ({ addToast }) => {
       ]}),
       Row({ children: [
         Field({ label: '🎬 Story à la vente (publication)', k: 'story_fee', suffix: 'FCFA / story', hint: '0 = gratuit (recommandé au lancement). Si > 0, la story attend le paiement avant d\'être publiée.' }),
+      ]}),
+      E('div', { style: { fontWeight: 600, fontSize: '0.82rem', margin: '0.5rem 0 0.25rem', color: 'var(--color-text-secondary)' } }, '🎬 Durée d\'affichage des stories avant suppression auto (selon l\'abonnement du vendeur)'),
+      Row({ children: [
+        Field({ label: 'Vendeur gratuit', k: 'story_ttl_free_h', suffix: 'heures', hint: 'Ex. 24 = 1 jour' }),
+        Field({ label: 'Boutique Pro (mensuel)', k: 'story_ttl_pro_h', suffix: 'heures', hint: 'Ex. 168 = 7 jours' }),
+      ]}),
+      Row({ children: [
+        Field({ label: 'Boutique Pro (annuel)', k: 'story_ttl_proannuel_h', suffix: 'heures', hint: 'Ex. 720 = 30 jours' }),
       ]}),
       E('div', { style: { background: 'var(--color-background-secondary)', borderRadius: 8, padding: '0.75rem', fontSize: '0.82rem', color: 'var(--color-text-secondary)' } },
         '⚠️ Les prix modifiés ici s\'appliquent aux nouvelles souscriptions. Les boosts en cours ne sont pas affectés.'
@@ -31383,6 +31413,75 @@ const NexusEarnBanner = ({ user }) => {
   );
 };
 
+// ── HomeStoriesRow — stories presentees comme les produits en Ventes Flash :
+// cartes horizontales (video affichee comme une photo) + boutons. Placee au-dessus
+// des Ventes Flash. Duree de vie liee a l'abonnement du vendeur (cf. upload.js).
+const HomeStoriesRow = ({ user }) => {
+  const E = React.createElement;
+  const [stories, setStories] = React.useState([]);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!DataService._sb) return;
+        const nowIso = new Date().toISOString();
+        const { data } = await DataService._sb.from('stories')
+          .select('id,title,vendor_name,product_id,video_url,mux_playback_id,price,created_at,expires_at')
+          .eq('status', 'active')
+          .or('expires_at.is.null,expires_at.gt.' + nowIso)
+          .order('created_at', { ascending: false })
+          .limit(15);
+        if (!cancelled) setStories(data || []);
+      } catch (_) {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const open = (id) => { try { window.dispatchEvent(new CustomEvent('nexus:open-stories', id ? { detail: { id: id } } : undefined)); } catch (_) {} };
+  const openProduct = (pid) => { try { window.dispatchEvent(new CustomEvent('nexus:open-product', { detail: pid })); } catch (_) {} };
+  const isVendor = !!(user && user.id);
+  if (!stories.length && !isVendor) return null;
+  const fmt = (p) => { try { if (typeof formatPrice === 'function') return formatPrice(p); } catch (_) {} return Math.round((Number(p) || 0) * 655.957).toLocaleString('fr-FR') + ' FCFA'; };
+  // La video est affichee comme une photo : miniature Mux, ou 1re image de la
+  // video directe (#t=0.1), sinon emoji.
+  const thumb = (s) => {
+    if (s.mux_playback_id) return E('img', { src: 'https://image.mux.com/' + s.mux_playback_id + '/thumbnail.jpg?width=400&height=300&fit_mode=smartcrop', alt: s.title || 'Story', loading: 'lazy', style: { width: '100%', height: '100%', objectFit: 'cover' }, onError: function (e) { e.target.style.display = 'none'; } });
+    if (s.video_url) return E('video', { src: s.video_url + '#t=0.1', muted: true, playsInline: true, preload: 'metadata', tabIndex: -1, style: { width: '100%', height: '100%', objectFit: 'cover', background: '#000', pointerEvents: 'none' } });
+    return E('div', { style: { fontSize: '2.4rem' } }, '🎬');
+  };
+  const card = (s) => E('div', { key: s.id, className: 'flash-card', onClick: function () { open(s.id); } },
+    E('div', { className: 'flash-card-img', style: { position: 'relative' } },
+      thumb(s),
+      E('span', { style: { position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,.62)', color: '#fff', borderRadius: 6, padding: '2px 7px', fontSize: '.66rem', fontWeight: 800 } }, '▶ Vidéo'),
+      E('span', { style: { position: 'absolute', bottom: 8, right: 8, width: 34, height: 34, borderRadius: '50%', background: 'rgba(225,27,34,.92)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.9rem' } }, '▶')
+    ),
+    E('div', { className: 'flash-card-body' },
+      E('div', { className: 'flash-card-name' }, s.title || s.vendor_name || 'Story'),
+      s.price != null && E('div', { className: 'flash-card-prices', style: { marginBottom: 6 } }, E('span', { className: 'flash-price-new' }, fmt(s.price))),
+      E('div', { style: { fontSize: '.7rem', color: 'var(--text-secondary)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, '🏪 ' + (s.vendor_name || 'Vendeur')),
+      E('div', { style: { display: 'flex', gap: 6 } },
+        E('button', { className: 'btn btn-primary btn-sm', style: { flex: 1, fontSize: '.74rem', padding: '.4rem' }, onClick: function (e) { e.stopPropagation(); open(s.id); } }, '▶ Regarder'),
+        s.product_id && E('button', { className: 'btn btn-secondary btn-sm', title: 'Voir le produit', style: { fontSize: '.78rem', padding: '.4rem .55rem' }, onClick: function (e) { e.stopPropagation(); openProduct(s.product_id); } }, '🛒')
+      )
+    )
+  );
+  const addCard = isVendor && E('div', { className: 'flash-card', onClick: function () { open(); }, style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 230, cursor: 'pointer' } },
+    E('div', { style: { fontSize: '2.6rem', color: '#E11B22', lineHeight: 1 } }, '＋'),
+    E('div', { style: { fontWeight: 800, fontSize: '.82rem', marginTop: 8, color: 'var(--text-primary)' } }, 'Publier une story')
+  );
+  return E('div', { className: 'home-section' },
+    E('div', { className: 'flash-sale-section' },
+      E('div', { className: 'flash-header' },
+        E('div', { className: 'flash-badge', style: { background: 'linear-gradient(135deg,#E11B22,#00853E)' } }, '🎬 STORIES'),
+        E('button', { className: 'section-see-all', style: { marginLeft: 'auto' }, onClick: function () { open(); } }, 'Voir tout →')
+      ),
+      E('div', { className: 'flash-scroll' },
+        addCard,
+        stories.map(card)
+      )
+    )
+  );
+};
+
 const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, currentUser: currentUserProp = null, onBackToDashboard = null }) => {
   // [FIX] showOnDemandPage manquait dans PublicCatalog → ReferenceError au clic CTA OnDemand
   const [showOnDemandPage, setShowOnDemandPage] = useState(false);
@@ -31899,131 +31998,6 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     ),
 
 
-    // ── VOUS NE TROUVEZ PAS ? CTA OnDemand ──
-    React.createElement('div', {
-      onClick: function() { setShowOnDemandPage(true); },
-      style: {
-        margin: '0 1rem 0.5rem',
-        background: 'linear-gradient(135deg,#fff8e1,#fffde7)',
-        border: '1.5px solid rgba(234,179,8,.3)',
-        borderRadius: 12, padding: '.7rem 1rem',
-        display: 'flex', alignItems: 'center', gap: '.75rem',
-        cursor: 'pointer', transition: 'all .18s',
-      }
-    },
-      React.createElement('div', { style:{ fontSize:'1.4rem', lineHeight:1 } }, '🔍'),
-      React.createElement('div', { style:{ flex:1, minWidth:0 } },
-        React.createElement('div', { style:{ fontWeight:700, fontSize:'.85rem', color:'#92400e' } },
-          'Vous ne trouvez pas ce que vous cherchez ?'
-        ),
-        React.createElement('div', { style:{ fontSize:'.75rem', color:'#b45309' } },
-          'Envoyez votre liste — l\u2019administrateur NEXUS le trouve pour vous en 24h'
-        )
-      ),
-      React.createElement('span', { style:{ fontSize:'.78rem', fontWeight:700, color:'#d97706', whiteSpace:'nowrap' } },
-        'Demander →'
-      )
-    ),
-
-    // ── NEWCOMER SELL CTA ──
-    React.createElement('div', {
-      style: {
-        margin: '0 1rem 0.75rem',
-        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-        borderRadius: 16,
-        padding: '1rem 1.25rem',
-        display: 'flex', alignItems: 'center',
-        justifyContent: 'space-between', gap: '0.75rem',
-        flexWrap: 'wrap',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-      }
-    },
-      React.createElement('div', { style: { display:'flex', alignItems:'center', gap:'0.75rem', flex:1, minWidth:0 } },
-        // Steps
-        React.createElement('div', { style: { display:'flex', gap:'0.4rem', alignItems:'center', flexWrap:'wrap' } },
-          ...[
-            { n:'1', icon:'📷', label:'Photo' },
-            { n:'2', icon:'💰', label:'Prix FCFA' },
-            { n:'3', icon:'📱', label:'WhatsApp' },
-          ].map((s, i) => React.createElement(React.Fragment, { key: i },
-            React.createElement('div', { style:{
-              display:'flex', flexDirection:'column', alignItems:'center',
-              background:'rgba(255,255,255,0.08)', borderRadius:10,
-              padding:'0.4rem 0.65rem', minWidth:52,
-            }},
-              React.createElement('span', { style:{ fontSize:'1.2rem', lineHeight:1 } }, s.icon),
-              React.createElement('span', { style:{ fontSize:'0.6rem', color:'rgba(255,255,255,0.7)', fontWeight:700, marginTop:2 } }, s.label)
-            ),
-            i < 2 && React.createElement('span', { style:{ color:'rgba(255,255,255,0.3)', fontSize:'0.9rem', fontWeight:700 } }, '→')
-          )),
-          React.createElement('div', { style:{ marginLeft:'0.25rem' } },
-            React.createElement('div', { style:{ color:'white', fontWeight:800, fontSize:'0.88rem', lineHeight:1.3 } }, 'Vendez en 2 min'),
-            React.createElement('div', { style:{ color:'rgba(255,255,255,0.55)', fontSize:'0.7rem' } }, 'Sans inscription · Juste WhatsApp')
-          )
-        )
-      ),
-      React.createElement('button', {
-        onClick: () => window.__axOpenModal && window.__axOpenModal(),
-        style:{
-          background:'#FDEE42', color:'#1a1a1a', border:'none', borderRadius:12,
-          padding:'0.7rem 1.1rem', fontWeight:800, cursor:'pointer', fontSize:'0.88rem',
-          display:'flex', alignItems:'center', gap:'0.4rem', whiteSpace:'nowrap',
-          boxShadow:'0 2px 8px rgba(253,238,66,0.4)', flexShrink:0,
-        }
-      },
-        React.createElement('i', { className:'fas fa-bolt' }), ' Déposer une annonce'
-      )
-    ),
-
-    // ── ONDEMAND HERO CTA ──────────────────────────────────────────────────────
-    React.createElement('div', {
-      onClick: function() { setShowOnDemandPage(true); },
-      style: {
-        margin: '0 1rem 0.75rem',
-        background: 'linear-gradient(135deg,#16213e 0%,#1a1a2e 60%,#0f3460 100%)',
-        borderRadius: 16, padding: '1rem 1.25rem',
-        display: 'flex', alignItems: 'center',
-        gap: '1rem', cursor: 'pointer',
-        boxShadow: '0 4px 16px rgba(15,52,96,0.35)',
-        transition: 'transform .18s, box-shadow .18s',
-        position: 'relative', overflow: 'hidden',
-      },
-      onMouseEnter: function(e) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(15,52,96,0.45)'; },
-      onMouseLeave: function(e) { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '0 4px 16px rgba(15,52,96,0.35)'; },
-    },
-      // Icône IA animée
-      React.createElement('div', { style: {
-        width: 52, height: 52, borderRadius: '50%', flexShrink: 0,
-        background: 'linear-gradient(135deg,#FDEE42,#f5c800)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: '1.4rem',
-      }}, '🤖'),
-      // Texte central
-      React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-        React.createElement('div', { style: { color: 'white', fontWeight: 800, fontSize: '.95rem', lineHeight: 1.3, marginBottom: '.25rem' } },
-          'Vous ne trouvez pas ce produit ?'
-        ),
-        React.createElement('div', { style: { color: 'rgba(255,255,255,.65)', fontSize: '.78rem', lineHeight: 1.4 } },
-          'Notre IA vous aide à décrire votre besoin — nous le trouvons sous 24h'
-        ),
-        React.createElement('div', { style: { display: 'flex', gap: '.5rem', marginTop: '.4rem', flexWrap: 'wrap' } },
-          ['📱 Français & Wolof', '🔓 Sans inscription', '⏱ Réponse 24h'].map(function(tag) {
-            return React.createElement('span', { key: tag, style: {
-              fontSize: '.67rem', fontWeight: 700, padding: '2px 8px', borderRadius: 99,
-              background: 'rgba(253,238,66,.15)', color: '#FDEE42',
-            }}, tag);
-          })
-        )
-      ),
-      // Badge + flèche
-      React.createElement('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '.3rem', flexShrink: 0 } },
-        React.createElement('div', { style: { background: '#FDEE42', color: '#1a1a1a', borderRadius: 8, padding: '.35rem .75rem', fontWeight: 800, fontSize: '.8rem', whiteSpace: 'nowrap' } },
-          'Commander →'
-        ),
-        React.createElement('div', { style: { fontSize: '.65rem', color: 'rgba(255,255,255,.45)' } }, 'Gratuit')
-      )
-    ),
-
     // ── CATEGORY BAR avec menus déroulants ──────────────────────────────
     (() => {
       const CAT_GROUPS = [
@@ -32088,25 +32062,8 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       );
     })(),
 
-    // ── TRUST BAR ──
-    React.createElement('div', { className: 'home-section', style: { paddingTop: '1.25rem' } },
-      React.createElement('div', { className: 'trust-bar' },
-        [
-          { icon: 'fas fa-shield-alt', title: 'Acheteurs protégés', sub: 'Paiement 100% sécurisé' },
-          { icon: 'fas fa-mobile-alt', title: 'Orange Money · Wave · Free', sub: 'Mobile Money via PayTech' },
-          { icon: 'fas fa-truck', title: 'Livraison rapide', sub: 'Partout au Sénégal' },
-          { icon: 'fas fa-undo', title: 'Retours faciles', sub: '30 jours satisfait ou remboursé' },
-          { icon: 'fas fa-headset', title: 'Support client', sub: '7j/7 de 8h à 20h' },
-        ].map((t, i) => React.createElement('div', { key: i, className: 'trust-item' },
-          React.createElement('div', { className: 'trust-icon' }, React.createElement('i', { className: t.icon })),
-          React.createElement('div', null,
-            React.createElement('div', { className: 'trust-text-title' }, t.title),
-            React.createElement('div', { className: 'trust-text-sub' }, t.sub)
-          )
-        ))
-      )
-    ),
 
+    React.createElement(HomeStoriesRow, { user: currentUser2 }),
     // ── FLASH SALES ──
     flashProducts.length > 0 && React.createElement('div', { className: 'home-section' },
       React.createElement('div', { className: 'flash-sale-section' },
@@ -32153,34 +32110,6 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
 
     // ── CATEGORY GRID (collapsible) — composant nommé (fix React error #300) ──
     React.createElement(CategoryGridPanel, { allCats, filterCategory, setFilterCategory, setCurrentPage, products, getCatIcon }),
-
-    // ── PROMO BANNERS ──
-    React.createElement('div', { className: 'home-section' },
-      React.createElement('div', { className: 'promo-banners' },
-        PROMOS.map((p, i) => React.createElement('div', { key: i, className: `promo-banner ${p.cls || 'green'}`, onClick: () => onPromoClick(p) },
-          React.createElement('div', { className: 'promo-banner-deco' }, p.deco),
-          React.createElement('div', { className: 'promo-banner-label' }, p.label),
-          React.createElement('div', { className: 'promo-banner-title', style: { whiteSpace: 'pre-line' } }, p.title),
-          React.createElement('div', { className: 'promo-banner-cta' }, (p.cta || 'Découvrir') + ' ', React.createElement('i', { className: 'fas fa-arrow-right' }))
-        ))
-      )
-    ),
-
-    // ── NEXUS TROC (entrée menu / bannière) ──
-    React.createElement('div', { className: 'home-section' },
-      React.createElement('div', {
-        role: 'button', tabIndex: 0,
-        onClick: () => { try { window.dispatchEvent(new CustomEvent('nexus:open-troc')); } catch (_) {} },
-        style: { cursor: 'pointer', background: 'linear-gradient(135deg,#00853E,#0d9488)', color: '#fff', borderRadius: '12px', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.9rem' }
-      },
-        React.createElement('div', { style: { fontSize: '2rem' } }, '🔄'),
-        React.createElement('div', { style: { flex: 1, minWidth: 0 } },
-          React.createElement('div', { style: { fontWeight: 800, fontSize: '1rem' } }, 'NEXUS Troc — échangez sans argent'),
-          React.createElement('div', { style: { fontSize: '0.85rem', opacity: 0.92 } }, 'Mon téléphone contre ta tablette. Publiez votre objet et proposez des échanges.')
-        ),
-        React.createElement('span', { style: { background: 'rgba(255,255,255,.25)', padding: '0.4rem 0.8rem', borderRadius: 999, fontWeight: 700, fontSize: '0.85rem', whiteSpace: 'nowrap' } }, 'Ouvrir →')
-      )
-    ),
 
     // ── MEILLEURES VENTES ──
     topRated.length > 0 && React.createElement('div', { className: 'home-section' },
@@ -32363,20 +32292,6 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
         ),
         /* ── AdSense Leaderboard — uniquement si contenu présent (règles AdSense) ── */
         /* Indicateur sponsorisé — visible uniquement si catBoosts actifs */
-        /* CTA Devenir Livreur — bandeau public */
-        React.createElement('div', { style: { background: 'linear-gradient(90deg,#D97706,#F59E0B)', color: '#fff', borderRadius: 12, padding: '0.85rem 1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', margin: '0 0 0.75rem', flexWrap: 'wrap' } },
-          React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '0.65rem' } },
-            React.createElement('span', { style: { fontSize: '1.4rem' } }, '🛵'),
-            React.createElement('div', null,
-              React.createElement('div', { style: { fontWeight: 700, fontSize: '0.93rem' } }, 'Devenez livreur NEXUS — Gagnez jusqu\'à 25 000 FCFA/jour'),
-              React.createElement('div', { style: { fontSize: '0.78rem', opacity: 0.9 } }, 'Livraisons à Dakar · Paiement Wave & OM · Inscription gratuite')
-            )
-          ),
-          React.createElement('button', {
-            style: { background: '#fff', color: '#D97706', fontWeight: 700, border: 'none', borderRadius: 8, padding: '0.45rem 1.1rem', cursor: 'pointer', fontSize: '0.85rem', flexShrink: 0 },
-            onClick: () => window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'register', preselectedRole: 'courier' } }))
-          }, 'S\'inscrire →')
-        ),
         currentItems.length > 0 && currentItems[0]?._isSponsored && React.createElement('div', {
           style: { width: '100%', display: 'flex', alignItems: 'center', gap: '0.5rem',
                    fontSize: '0.78rem', color: 'var(--text-secondary)', padding: '0.25rem 0.5rem',
@@ -32534,29 +32449,70 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       )
     ),
 
-    // ── SIGN-UP BANNER ──
-    React.createElement('div', { className: 'home-section', style: { paddingBottom: '2rem' } },
-      React.createElement('div', {
-        style: {
-          background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 60%, #E11B22 100%)',
-          borderRadius: '18px', padding: '2.5rem', textAlign: 'center', color: 'white'
-        }
-      },
-        React.createElement('h2', { style: { fontFamily: "'Montserrat',sans-serif", fontSize: '1.8rem', fontWeight: 800, marginBottom: '0.5rem' } }, '🎉 Rejoignez NEXUS Market Sénégal'),
-        React.createElement('p', { style: { opacity: 0.88, marginBottom: '1.5rem', fontSize: '1.05rem' } }, 'Des milliers de vendeurs vérifiés · Paiement Orange Money & Wave · Livraison partout'),
-        React.createElement('div', { style: { display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' } },
-          React.createElement('button', { className: 'btn btn-lg', style: { background: 'var(--accent)', color: '#111', fontWeight: 800 }, onClick: () => onLoginClick('buyer') },
-            React.createElement('i', { className: 'fas fa-sign-in-alt' }), ' Se connecter'
-          ),
-          React.createElement('button', { className: 'btn btn-lg', style: { background: 'rgba(255,255,255,0.15)', color: 'white', border: '2px solid rgba(255,255,255,0.4)' }, onClick: () => onRegisterClick(null) },
-            React.createElement('i', { className: 'fas fa-user-plus' }), ' Créer un compte'
-          ),
-          React.createElement('button', { className: 'btn btn-lg', style: { background: 'rgba(255,255,255,0.1)', color: 'white', border: '2px solid rgba(255,255,255,0.3)' }, onClick: () => onRegisterClick('vendor') },
-            React.createElement('i', { className: 'fas fa-store' }), ' Vendre sur NEXUS'
+    // ── FONCTIONNALITES NEXUS (deplacees en bas pour mettre les produits en avant) ──
+    // ── NEWCOMER SELL CTA ──
+    React.createElement('div', {
+      style: {
+        margin: '0 1rem 0.75rem',
+        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+        borderRadius: 16,
+        padding: '1rem 1.25rem',
+        display: 'flex', alignItems: 'center',
+        justifyContent: 'space-between', gap: '0.75rem',
+        flexWrap: 'wrap',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+      }
+    },
+      React.createElement('div', { style: { display:'flex', alignItems:'center', gap:'0.75rem', flex:1, minWidth:0 } },
+        // Steps
+        React.createElement('div', { style: { display:'flex', gap:'0.4rem', alignItems:'center', flexWrap:'wrap' } },
+          ...[
+            { n:'1', icon:'📷', label:'Photo' },
+            { n:'2', icon:'💰', label:'Prix FCFA' },
+            { n:'3', icon:'📱', label:'WhatsApp' },
+          ].map((s, i) => React.createElement(React.Fragment, { key: i },
+            React.createElement('div', { style:{
+              display:'flex', flexDirection:'column', alignItems:'center',
+              background:'rgba(255,255,255,0.08)', borderRadius:10,
+              padding:'0.4rem 0.65rem', minWidth:52,
+            }},
+              React.createElement('span', { style:{ fontSize:'1.2rem', lineHeight:1 } }, s.icon),
+              React.createElement('span', { style:{ fontSize:'0.6rem', color:'rgba(255,255,255,0.7)', fontWeight:700, marginTop:2 } }, s.label)
+            ),
+            i < 2 && React.createElement('span', { style:{ color:'rgba(255,255,255,0.3)', fontSize:'0.9rem', fontWeight:700 } }, '→')
+          )),
+          React.createElement('div', { style:{ marginLeft:'0.25rem' } },
+            React.createElement('div', { style:{ color:'white', fontWeight:800, fontSize:'0.88rem', lineHeight:1.3 } }, 'Vendez en 2 min'),
+            React.createElement('div', { style:{ color:'rgba(255,255,255,0.55)', fontSize:'0.7rem' } }, 'Sans inscription · Juste WhatsApp')
           )
         )
+      ),
+      React.createElement('button', {
+        onClick: () => window.__axOpenModal && window.__axOpenModal(),
+        style:{
+          background:'#FDEE42', color:'#1a1a1a', border:'none', borderRadius:12,
+          padding:'0.7rem 1.1rem', fontWeight:800, cursor:'pointer', fontSize:'0.88rem',
+          display:'flex', alignItems:'center', gap:'0.4rem', whiteSpace:'nowrap',
+          boxShadow:'0 2px 8px rgba(253,238,66,0.4)', flexShrink:0,
+        }
+      },
+        React.createElement('i', { className:'fas fa-bolt' }), ' Déposer une annonce'
       )
     ),
+        React.createElement('div', { style: { background: 'linear-gradient(90deg,#D97706,#F59E0B)', color: '#fff', borderRadius: 12, padding: '0.85rem 1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', margin: '0 0 0.75rem', flexWrap: 'wrap' } },
+          React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '0.65rem' } },
+            React.createElement('span', { style: { fontSize: '1.4rem' } }, '🛵'),
+            React.createElement('div', null,
+              React.createElement('div', { style: { fontWeight: 700, fontSize: '0.93rem' } }, 'Devenez livreur NEXUS — Gagnez jusqu\'à 25 000 FCFA/jour'),
+              React.createElement('div', { style: { fontSize: '0.78rem', opacity: 0.9 } }, 'Livraisons à Dakar · Paiement Wave & OM · Inscription gratuite')
+            )
+          ),
+          React.createElement('button', {
+            style: { background: '#fff', color: '#D97706', fontWeight: 700, border: 'none', borderRadius: 8, padding: '0.45rem 1.1rem', cursor: 'pointer', fontSize: '0.85rem', flexShrink: 0 },
+            onClick: () => window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'register', preselectedRole: 'courier' } }))
+          }, 'S\'inscrire →')
+        ),
+
 
     // ── FLOATING CART ──
     cart.length > 0 && React.createElement('button', {
@@ -35644,7 +35600,7 @@ const App = ({ onUserChange }) => {
       onToggleSidebar: toggleSidebar,
       showPublicHome
     }
-  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusMegaMenu, { user: currentUser2, inDashboard: !!(currentUser2 && !showPublicHome) }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(NexusServicesStrip, null), /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }), /* @__PURE__ */ React.createElement(NexusEarnBanner, { user: currentUser2 })) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
+  ), (currentUser2 && currentUser2.role === "vendor" && currentUser2.status !== "approved" && currentUser2.status !== "active" && vendorGraceActive(currentUser2)) && /* @__PURE__ */ React.createElement(VendorGraceBanner, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusTrocWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusStoriesWidget, { user: currentUser2 }), /* @__PURE__ */ React.createElement(NexusMegaMenu, { user: currentUser2, inDashboard: !!(currentUser2 && !showPublicHome) }), (!currentUser2 || showPublicHome) ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(PublicCatalog, { addToast, onLoginClick: handleLoginClick, onRegisterClick: handleRegisterClick, cartTrigger: cartBroadcast, currentUser: currentUser2, onBackToDashboard: () => setShowPublicHome(false) }), /* @__PURE__ */ React.createElement(NexusServicesStrip, null), /* @__PURE__ */ React.createElement(NexusEarnBanner, { user: currentUser2 })) : /* @__PURE__ */ React.createElement("div", { className: "main-layout" }, currentUser2.role === "admin" && /* @__PURE__ */ React.createElement(AdminDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar }), currentUser2.role === "vendor" && /* @__PURE__ */ React.createElement(VendorDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, onDownloadStatement: downloadMonthlyStatement }), currentUser2.role === "courier" && /* @__PURE__ */ React.createElement(CourierApp, { currentUser: currentUser2, addToast }), ( currentUser2.role === "buyer" || currentUser2.role === "buyer_pro" ) && /* @__PURE__ */ React.createElement(BuyerDashboard, { currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar: toggleSidebar, cartTrigger: cartBroadcast, wishlistTrigger: wishlistBroadcast })), showAuth && /* @__PURE__ */ React.createElement(
     AuthModal,
     {
       onLogin: handleLogin,
