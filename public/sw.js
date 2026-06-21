@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v7"; // v7 (2026-06-15) → purge cache v6 + recharge nouveau code (EmailService serveur-en-premier, fix commande)
+const CACHE_NAME = "nexus-v8"; // v8 (2026-06-21) → garde same-origin dans fetch (fix MIME text/html sur scripts tiers Plausible/Cloudflare), repli index.html réservé aux navigations
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────
@@ -88,6 +88,11 @@ self.addEventListener("fetch", event => {
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
+  // [FIX] Ne JAMAIS intercepter le cross-origin (Plausible, Cloudflare beacon,
+  // CDN tiers…) : laisser le navigateur les charger nativement. Sinon, en cas
+  // d'échec, le repli index.html renvoyait du HTML pour un script → erreurs
+  // « MIME type text/html » et intégrité SRI cassée.
+  if (url.origin !== self.location.origin) return;
   if (BYPASS_HOSTS.some(h => url.hostname.includes(h))) return;
   if (BYPASS_PATHS.some(p => url.pathname.startsWith(p))) return;
 
@@ -101,7 +106,11 @@ self.addEventListener("fetch", event => {
           return res;
         })
         .catch(() =>
-          cache.match(req).then(cached => cached || cache.match("/index.html"))
+          // Repli index.html UNIQUEMENT pour les navigations (mode SPA offline) :
+          // pour un asset (script/css/img) échoué, ne pas renvoyer du HTML.
+          cache.match(req).then(cached =>
+            cached || (req.mode === "navigate" ? cache.match("/index.html") : Response.error())
+          )
         )
     )
   );
