@@ -2851,28 +2851,37 @@ const NexusAPISubscribeForm = ({ onClose }) => {
 
   const selPlan = NexusAPIPlans.find(p => p.id === plan);
 
-  const createSub = async (payMethod) => {
+  // Paiement via PayTech uniquement (Orange Money / Wave / carte gérés par PayTech).
+  const createSub = async () => {
     if (!form.contact_name || !form.contact_email) return;
     setBusy(true);
     try {
       const ref = 'API-' + Date.now().toString(36).toUpperCase();
       const ends = new Date(Date.now() + selPlan.period * 86400000).toISOString();
-      let newKey = '';
+      let subId = null, newKey = '';
       if (DataService._sb) {
-        const { data } = await DataService._sb.from('api_subscriptions').insert({
+        const { data, error } = await DataService._sb.from('api_subscriptions').insert({
           ...form, plan, price_fcfa: selPlan.price,
           ends_at: ends, payment_ref: ref,
           status: 'pending', payment_status: 'pending',
           user_id: DataService._user?.id || null,
-        }).select('api_key').single();
-        newKey = data?.api_key || '';
+        }).select('id,api_key').single();
+        if (error || !data) { alert('Erreur : ' + ((error && error.message) || 'inscription API')); setBusy(false); return; }
+        subId = data.id; newKey = data.api_key || '';
       }
-      const waveNum = NEXUS_CONFIG.payments?.wave?.number || '77XXXXXXX';
-      const omNum   = NEXUS_CONFIG.payments?.om?.number   || '77XXXXXXX';
-      if (payMethod === 'wave') window.open('https://pay.wave.com/m/' + waveNum + '/c/SN?amount=' + selPlan.price + '&note=NEXUS-' + ref, '_blank');
-      else alert('Orange Money : envoyez ' + selPlan.price.toLocaleString('fr-FR') + ' FCFA au ' + omNum + '\nRéférence : NEXUS-' + ref + '\nVotre clé API sera activée sous 1h.');
-      setApiKey(newKey);
-      setStep(3);
+      const origin = window.location.origin;
+      const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: 'api', api_id: subId, order_id: ref, amount: selPlan.price,
+          item_name: 'NEXUS Pro API — ' + (selPlan.label || ''),
+          success_url: origin + '/?api_return=success', cancel_url: origin + '/?api_return=cancel',
+          custom_field: JSON.stringify({ apiId: subId }),
+        }),
+      }).catch(e => ({ __err: e.message }));
+      if (initRes && initRes.redirect_url) { setApiKey(newKey); setTimeout(() => { window.location.href = initRes.redirect_url; }, 400); return; }
+      // PayTech indisponible : demande enregistrée, activation après validation admin.
+      setApiKey(newKey); setStep(3);
     } catch(e) { alert('Erreur : ' + e.message); }
     setBusy(false);
   };
@@ -2919,11 +2928,10 @@ const NexusAPISubscribeForm = ({ onClose }) => {
     step===2 && E(React.Fragment,null,
       E('div',{style:{textAlign:'center',marginBottom:'1.25rem'}},
         E('div',{style:{fontWeight:700,fontSize:'1rem'}},selPlan?.label,' — ',selPlan?.price.toLocaleString('fr-FR'),' FCFA'),
-        E('p',{style:{color:'#555',fontSize:'0.85rem',marginTop:'0.35rem'}},'Choisissez votre mode de paiement')
+        E('p',{style:{color:'#555',fontSize:'0.85rem',marginTop:'0.35rem'}},'Paiement sécurisé via PayTech (Orange Money · Wave · carte)')
       ),
       E('div',{style:{display:'flex',flexDirection:'column',gap:'0.75rem'}},
-        E('button',{className:'btn',style:{padding:'0.85rem',border:'1.5px solid #4FC3F7',borderRadius:10,background:'#E1F5FE',color:'#0277BD',cursor:'pointer'},onClick:()=>createSub('wave'),disabled:busy},'🌊 Payer avec Wave'),
-        E('button',{className:'btn',style:{padding:'0.85rem',border:'1.5px solid #FF9800',borderRadius:10,background:'#FFF3E0',color:'#E65100',cursor:'pointer'},onClick:()=>createSub('om'),disabled:busy},'🟠 Payer avec Orange Money')
+        E('button',{className:'btn btn-primary',style:{padding:'0.85rem',borderRadius:10,cursor:'pointer'},onClick:()=>createSub(),disabled:busy}, busy ? 'Redirection…' : '💳 Payer via PayTech')
       ),
       E('button',{onClick:()=>setStep(1),style:{marginTop:'1rem',background:'none',border:'none',color:'#888',cursor:'pointer',fontSize:'0.85rem'}},'← Retour')
     ),
@@ -24560,41 +24568,6 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     const [flashSelPlan,  setFlashSelPlan]  = React.useState(FLASH_SPONSORED_PLANS[1]);
     const [flashPayStep,  setFlashPayStep]  = React.useState('choose');
 
-    const _doSaveFlash = async (plan) => {
-      if (!vFlashForm.productId || !vFlashForm.discount) return;
-      const endsAt = new Date(Date.now() + plan.hours * 3600000).toISOString();
-      const ref = 'FS-' + Date.now().toString(36).toUpperCase();
-      if (DataService._sb) {
-        await DataService._sb.from('flash_sales').insert({
-          product_id: vFlashForm.productId, vendor_id: currentUser2.id,
-          discount: parseInt(vFlashForm.discount), ends_at: endsAt, active: false,
-          is_sponsored: true, price_fcfa: plan.price,
-          payment_ref: 'NEXUS-' + ref, payment_status: 'pending', created_by: currentUser2.id,
-        }).catch(() => {});
-        const _prod = products.find(p => p.id === vFlashForm.productId);
-        DataService._sb.from('notifications').insert({
-          id: crypto.randomUUID(), user_id: currentUser2.id,
-          type: 'flash_payment',
-          title: '💰 Paiement vente flash à valider',
-          message: (currentUser2.name||currentUser2.email) + ' — ' + plan.label + ' — NEXUS-' + ref + ' — ' + plan.price.toLocaleString('fr-FR') + ' FCFA',
-          link: '/?admin=flash_sales', read: false, created_at: new Date().toISOString(),
-        }).catch(() => {});
-      }
-      setFlashPayModal(false); setFlashPayStep('choose');
-      setVFlashForm({ productId: "", discount: "20", hours: "24" });
-      addToast('✅ Demande enregistrée (réf: NEXUS-' + ref + '). Activation dans < 1h après vérification.', "success", 8000);
-    };
-
-    const _payFlash = (plan, method) => {
-      const ref = 'FS-' + Date.now().toString(36).toUpperCase();
-      const waveNum = NEXUS_CONFIG.payments?.wave?.number || '77XXXXXXX';
-      const omNum   = NEXUS_CONFIG.payments?.om?.number   || '77XXXXXXX';
-      if (method === 'wave') window.open('https://pay.wave.com/m/' + waveNum + '/c/SN?amount=' + plan.price + '&note=NEXUS-' + ref, '_blank');
-      else alert('Orange Money : envoyez ' + plan.price.toLocaleString('fr-FR') + ' FCFA au ' + omNum + '\nRéférence : NEXUS-' + ref + '\n\nVotre vente flash sera activée dans l\'heure.');
-      setFlashPayStep('pending');
-      setTimeout(() => _doSaveFlash(plan), 800);
-    };
-
     // [PAYTECH] Paiement EN LIGNE (confirmation auto via IPN → activation immédiate).
     const _payFlashPaytech = async (plan) => {
       if (!vFlashForm.productId || !vFlashForm.discount) { addToast('Choisissez un produit et une remise', 'warning'); return; }
@@ -24709,16 +24682,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
                   /* @__PURE__ */ React.createElement("button", {
                     className: "btn", style: { padding: "0.85rem", fontSize: "1rem", border: "none", borderRadius: "10px", display: "flex", alignItems: "center", gap: "0.75rem", justifyContent: "center", background: "#00853E", color: "#fff", fontWeight: 700 },
                     onClick: () => _payFlashPaytech(flashSelPlan)
-                  }, "💳 Payer en ligne — activation immédiate"),
-                  /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", fontSize: "0.74rem", color: "var(--text-secondary)" } }, "ou paiement manuel (activation différée après vérification) :"),
-                  /* @__PURE__ */ React.createElement("button", {
-                    className: "btn", style: { padding: "0.85rem", fontSize: "1rem", border: "1.5px solid #4FC3F7", borderRadius: "10px", display: "flex", alignItems: "center", gap: "0.75rem", justifyContent: "center", background: "#E1F5FE", color: "#0277BD" },
-                    onClick: () => _payFlash(flashSelPlan, "wave")
-                  }, "🌊 Payer avec Wave"),
-                  /* @__PURE__ */ React.createElement("button", {
-                    className: "btn", style: { padding: "0.85rem", fontSize: "1rem", border: "1.5px solid #FF9800", borderRadius: "10px", display: "flex", alignItems: "center", gap: "0.75rem", justifyContent: "center", background: "#FFF3E0", color: "#E65100" },
-                    onClick: () => _payFlash(flashSelPlan, "om")
-                  }, "🟠 Payer avec Orange Money")
+                  }, "💳 Payer via PayTech — Orange Money · Wave · carte")
                 ),
                 /* @__PURE__ */ React.createElement("button", { onClick: () => setFlashPayStep("choose"), style: { marginTop: "1rem", background: "none", border: "none", color: "var(--text-secondary)", fontSize: "0.85rem", cursor: "pointer" } },
                   "← Changer de forfait"
@@ -28283,7 +28247,7 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
 
         if (initRes && initRes.__err) {
           if (DataService._sb) await DataService._sb.from('product_boosts').delete().eq('id', boostId);
-          addToast('\u26a0\ufe0f Backend PayTech non disponible \u2014 utilisez Wave ou Orange Money. R\xe9f : BOOST-' + boostId.slice(0,8).toUpperCase(), 'warning', 9000);
+          addToast('\u26a0\ufe0f Paiement PayTech momentan\u00e9ment indisponible \u2014 r\u00e9essayez. R\u00e9f : BOOST-' + boostId.slice(0,8).toUpperCase(), 'warning', 9000);
           setPaying(false); return;
         }
         if (initRes && initRes.redirect_url) {
@@ -28296,23 +28260,6 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
         setPaying(false); return;
       }
 
-      // 2b. Wave
-      if (payMethod === 'wave') {
-        const wNum = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.waveNumber) || '';
-        if (!wNum || wNum === '77XXXXXXX') { addToast('\u26a0\ufe0f Num\xe9ro Wave non configur\xe9.', 'warning', 8000); setPaying(false); return; }
-        const ref  = 'BOOST-' + boostId.slice(0,8).toUpperCase();
-        const note = encodeURIComponent('Boost "' + product.name + '" (' + plan.label + ') \u2014 ' + ref);
-        window.open('https://pay.wave.com/m/' + wNum + '?amount=' + plan.price + '&note=' + note, '_blank');
-        addToast('\ud83d\udcf1 Wave ouvert \u2014 ' + plan.price.toLocaleString('fr-FR') + ' FCFA \u00b7 R\xe9f\xa0: ' + ref + '. Votre boost sera activ\xe9 d\xe8s validation du paiement par l\u2019\xe9quipe NEXUS.', 'info', 12000);
-      }
-
-      // 2c. Orange Money
-      if (payMethod === 'orange_money') {
-        const omNum = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.orangeMoneyNumber) || '';
-        if (!omNum || omNum === '77XXXXXXX') { addToast('\u26a0\ufe0f Num\xe9ro Orange Money non configur\xe9.', 'warning', 8000); setPaying(false); return; }
-        const ref = 'BOOST-' + boostId.slice(0,8).toUpperCase();
-        addToast('\ud83d\udfe0 Envoyez ' + plan.price.toLocaleString('fr-FR') + ' FCFA au +221' + omNum + ' (OM NEXUS) \u2014 R\xe9f\xa0: ' + ref + '. Votre boost sera activ\xe9 d\xe8s validation du paiement par l\u2019\xe9quipe NEXUS.', 'info', 16000);
-      }
 
       // 3. Confirmation
       setStep(3); onBoostSuccess(boostRow);
@@ -28434,34 +28381,9 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
             )
           ),
 
-          E('div', { style: { marginBottom: '1.25rem' } },
-            E('div', { style: { fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.9rem' } }, 'Mode de paiement :'),
-            E('div', { style: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' } },
-              [
-                { id: 'wave',         label: 'Wave',         icon: '📱', color: '#00A3E0' },
-                { id: 'orange_money', label: 'Orange Money', icon: '🟠', color: '#FF6600' },
-              ].map(m => E('div', {
-                key: m.id,
-                onClick: () => setPayMethod(m.id),
-                style: {
-                  flex: '1 1 140px', padding: '0.85rem 1rem', borderRadius: 12, cursor: 'pointer',
-                  border: '2px solid ' + (payMethod === m.id ? m.color : 'var(--border)'),
-                  background: payMethod === m.id ? 'rgba(0,163,224,0.05)' : 'white',
-                  textAlign: 'center', fontWeight: 700, transition: 'all 0.18s',
-                }
-              },
-                E('div', { style: { fontSize: '1.5rem', marginBottom: '0.25rem' } }, m.icon),
-                E('div', { style: { color: m.color, fontSize: '0.9rem', fontWeight: 700 } }, m.label),
-                m.sub && E('div', { style: { fontSize: '0.68rem', color: 'var(--text-secondary)', marginTop: '0.1rem' } }, m.sub)
-              ))
-            )
-          ),
-
           E('div', { className: 'alert alert-info', style: { fontSize: '0.82rem', marginBottom: '1.25rem' } },
-            E('i', { className: 'fas fa-info-circle' }),
-            payMethod === 'wave'
-              ? E('span', null, ' Wave Business s\u2019ouvrira avec le montant pr\xe9-rempli. Effectuez le paiement et revenez confirmer.')
-              : E('span', null, ' Envoyez ', plan.price.toLocaleString('fr-FR'), ' FCFA au numéro Orange Money NEXUS indiqué. Votre boost sera activé après vérification (< 1h).')
+            E('i', { className: 'fas fa-shield-alt' }),
+            E('span', null, ' Paiement s\u00e9curis\u00e9 via PayTech (Orange Money \u00b7 Wave \u00b7 carte). Vous serez redirig\u00e9 pour finaliser ; le boost s\u2019active automatiquement apr\u00e8s confirmation.')
           ),
 
           E('div', { style: { display: 'flex', gap: '0.75rem' } },
@@ -30749,48 +30671,45 @@ const AxModal = ({ onClose, onPublished }) => {
     { id:'boost_mensuel',label:'Boost Mensuel',  get price(){ return nxMonet('boost_mensuel_price', 8000); },  duration:'30 jours', icon:'⭐', color:'#8b5cf6', desc:'Position haute garantie tout le mois' },
   ];
 
-  const activateBoost = async (plan) => {
-    if (!published) return;
+  // Paiement via PayTech uniquement (Orange Money / Wave / carte gérés par PayTech).
+  // Boost créé en attente, activé automatiquement par l'IPN PayTech après paiement.
+  const activateBoost = async () => {
+    if (!published || !boostType) return;
     setBoostPaying(true);
-    // Ouvrir Wave/OM pour paiement
-    const ref = 'BOOST-' + published.id.slice(0,8).toUpperCase();
-    const waveNum = NEXUS_CONFIG?.payments?.waveNumber || '';
-    const omNum   = NEXUS_CONFIG?.payments?.orangeMoneyNumber || '';
-
-    if (plan === 'wave' && waveNum && waveNum !== '77XXXXXXX') {
-      window.open(`https://pay.wave.com/m/${waveNum}/c/SN?amount=${boostType.price}&note=${ref}`, '_blank');
-    } else if (omNum && omNum !== '77XXXXXXX') {
-      alert(`Orange Money : envoyez ${boostType.price} FCFA au ${omNum}\nRéférence : ${ref}\n\nNous activerons votre boost dans l'heure.`);
-    } else {
-      alert(`Paiement Boost\nMontant : ${boostType.price} FCFA\nRéférence : ${ref}\n\nContactez-nous sur WhatsApp pour activer votre boost.`);
-    }
-
-    // Marquer le boost en attente dans Supabase / localStorage
     try {
+      const boostId = crypto.randomUUID();
+      const ref = 'BOOST-' + boostId.slice(0, 8).toUpperCase();
+      const days = boostType.id === 'top_3j' ? 3 : boostType.id === 'boost_semaine' ? 7 : 30;
       const boostRec = {
-        id:             crypto.randomUUID(),
+        id:             boostId,
         product_id:     published.id,
-        vendor_id:      null,
+        vendor_id:      (DataService._user && DataService._user.id) || null,
         boost_type:     boostType.id,
         price_fcfa:     boostType.price,
-        payment_method: plan,
+        payment_method: 'paytech',
         payment_ref:    ref,
         payment_status: 'pending',
         started_at:     new Date().toISOString(),
-        ends_at:        new Date(Date.now() + (boostType.id === 'top_3j' ? 3 : boostType.id === 'boost_semaine' ? 7 : 30) * 86400000).toISOString(),
+        ends_at:        new Date(Date.now() + days * 86400000).toISOString(),
         active:         false,
       };
-      if (DataService._sb) {
-        await DataService._sb.from('product_boosts').insert([boostRec]).catch(() => {});
-      }
-      const all = JSON.parse(localStorage.getItem('nexus_ax_boosts') || '[]');
-      all.unshift(boostRec);
-      localStorage.setItem('nexus_ax_boosts', JSON.stringify(all));
-    } catch(_) {}
-
-    setBoostPaying(false);
-    setShowBoost(false);
-    onClose();
+      if (DataService._sb) { await DataService._sb.from('product_boosts').insert([boostRec]).catch(() => {}); }
+      const origin = window.location.origin;
+      const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: 'boost', boost_id: boostId, order_id: ref, amount: boostType.price,
+          item_name: 'Boost annonce — ' + (boostType.label || ''),
+          success_url: origin + '/?boost_return=success&boostId=' + boostId,
+          cancel_url:  origin + '/?boost_return=cancel&boostId='  + boostId,
+          custom_field: JSON.stringify({ boostId, productId: published.id }),
+        }),
+      }).catch(e => ({ __err: e.message }));
+      if (initRes && initRes.redirect_url) { setTimeout(() => { window.location.href = initRes.redirect_url; }, 400); return; }
+      if (DataService._sb) await DataService._sb.from('product_boosts').delete().eq('id', boostId).catch(() => {});
+      alert('Paiement PayTech momentanément indisponible. Réessayez. Réf : ' + ref);
+    } catch (e) { alert('Erreur : ' + e.message); }
+    finally { setBoostPaying(false); }
   };
 
   const overlay = {
@@ -30883,21 +30802,15 @@ const AxModal = ({ onClose, onPublished }) => {
         ),
 
         E('div', { style:{ fontWeight:700, fontSize:'.88rem', marginBottom:'.75rem', textAlign:'center' } },
-          'Choisir le mode de paiement'
+          'Paiement sécurisé'
         ),
 
         E('div', { style:{ display:'flex', flexDirection:'column', gap:'.6rem', marginBottom:'1rem' } },
-          E('button', { onClick: () => activateBoost('wave'), disabled: boostPaying,
-            style:{ background:'#1F3E8F', color:'white', border:'none', borderRadius:12,
+          E('button', { onClick: () => activateBoost(), disabled: boostPaying,
+            style:{ background:'#00853E', color:'white', border:'none', borderRadius:12,
                     padding:'.85rem', fontWeight:800, fontSize:'.9rem', cursor:'pointer',
                     display:'flex', alignItems:'center', justifyContent:'center', gap:'.5rem' } },
-            E('span', { style:{ fontSize:'1.2rem' } }, '🔵'), 'Payer par Wave'
-          ),
-          E('button', { onClick: () => activateBoost('orange_money'), disabled: boostPaying,
-            style:{ background:'#FF6600', color:'white', border:'none', borderRadius:12,
-                    padding:'.85rem', fontWeight:800, fontSize:'.9rem', cursor:'pointer',
-                    display:'flex', alignItems:'center', justifyContent:'center', gap:'.5rem' } },
-            E('span', { style:{ fontSize:'1.2rem' } }, '🟠'), 'Payer par Orange Money'
+            E('span', { style:{ fontSize:'1.2rem' } }, '💳'), boostPaying ? 'Redirection…' : 'Payer via PayTech — Orange Money · Wave · carte'
           )
         ),
 
@@ -32752,22 +32665,16 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
       const ref = isPriority ? ('B2B-' + Date.now().toString(36).toUpperCase()) : null;
       const quoteId = await sendQuote(isPriority, ref);
       if (!isPriority || !quoteId) return;
-      // Priorité payante : PayTech par défaut (confirmation auto via IPN), Wave/OM en repli manuel.
-      if (prioPayMethod === 'paytech') {
-        try {
-          const origin = window.location.origin;
-          const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
-            method: 'POST',
-            body: JSON.stringify({ kind: 'b2b_priority', quote_id: quoteId, order_id: 'B2BPRIO-' + quoteId.slice(0, 12).toUpperCase(), amount: B2B_PRIORITY_PRICE, item_name: 'Traitement prioritaire devis B2B', success_url: origin + '/?b2b_return=success', cancel_url: origin + '/?b2b_return=cancel' }),
-          }).catch(e => ({ __err: e.message }));
-          if (initRes && initRes.redirect_url) { window.location.href = initRes.redirect_url; return; }
-          addToast('PayTech indisponible — payez par Wave/OM. Réf : ' + ref, 'warning', 9000);
-        } catch (e) { addToast('Erreur PayTech : ' + e.message, 'warning'); }
-      } else if (prioPayMethod === 'wave') {
-        window.open('https://pay.wave.com/m/' + wNum + '/c/SN?amount=' + B2B_PRIORITY_PRICE + '&note=NEXUS-' + ref, '_blank');
-      } else {
-        alert('Orange Money : envoyez ' + B2B_PRIORITY_PRICE.toLocaleString('fr-FR') + ' FCFA au ' + oNum + '\nRéférence : NEXUS-' + ref + '\n\nVotre devis sera traité en priorité.');
-      }
+      // Priorité payante : PayTech uniquement (Orange Money / Wave / carte via PayTech).
+      try {
+        const origin = window.location.origin;
+        const initRes = await DataService.paymentFetch('/api/payments/paytech/init', {
+          method: 'POST',
+          body: JSON.stringify({ kind: 'b2b_priority', quote_id: quoteId, order_id: 'B2BPRIO-' + quoteId.slice(0, 12).toUpperCase(), amount: B2B_PRIORITY_PRICE, item_name: 'Traitement prioritaire devis B2B', success_url: origin + '/?b2b_return=success', cancel_url: origin + '/?b2b_return=cancel' }),
+        }).catch(e => ({ __err: e.message }));
+        if (initRes && initRes.redirect_url) { window.location.href = initRes.redirect_url; return; }
+        addToast('Paiement PayTech momentanément indisponible — réessayez. Réf : ' + ref, 'warning', 9000);
+      } catch (e) { addToast('Erreur PayTech : ' + e.message, 'warning'); }
     };
 
     return E('div', {
@@ -32810,13 +32717,9 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
             E('span', { style: { background: '#00853E', color: 'white', padding: '0.3rem 0.85rem', borderRadius: 8, fontWeight: 700, fontSize: '0.9rem', whiteSpace: 'nowrap' } },
               B2B_PRIORITY_PRICE.toLocaleString('fr-FR') + ' FCFA')
           ),
-          E('div', { style: { display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' } },
-            ['paytech','wave','om'].map(m =>
-              E('label', { key: m, style: { display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.83rem', fontWeight: prioPayMethod === m ? 700 : 400 } },
-                E('input', { type: 'radio', name: 'prioMethod', checked: prioPayMethod === m, onChange: e => { e.stopPropagation(); setPrioPayMethod(m); } }),
-                m === 'paytech' ? '💳 En ligne (auto)' : m === 'wave' ? '🌊 Wave (manuel)' : '🟠 OM (manuel)'
-              )
-            )
+          E('div', { style: { display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.75rem', fontSize: '0.8rem', color: 'var(--text-secondary)' } },
+            E('i', { className: 'fas fa-shield-alt', style: { color: 'var(--primary)' } }),
+            E('span', null, 'Paiement sécurisé via PayTech — Orange Money · Wave · carte')
           )
         ),
 

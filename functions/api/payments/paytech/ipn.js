@@ -66,7 +66,7 @@ export async function onRequest({ request, env }) {
   }
 
   // 2. Extraire l'identifiant depuis custom_field (commande / boost / abo Pro)
-  let order_id = null, boostId = null, subId = null, storyId = null, flashId = null, quoteId = null;
+  let order_id = null, boostId = null, subId = null, storyId = null, flashId = null, quoteId = null, apiId = null;
   try {
     const cf = typeof custom_field === 'string' ? JSON.parse(custom_field) : custom_field;
     order_id = cf?.order_id;
@@ -75,6 +75,7 @@ export async function onRequest({ request, env }) {
     storyId  = cf?.storyId || cf?.story_id;
     flashId  = cf?.flash_id;
     quoteId  = cf?.quote_id;
+    apiId    = cf?.apiId   || cf?.api_id;
   } catch { /* ignore */ }
 
   const isPaid = type_event === 'sale_complete';
@@ -148,6 +149,15 @@ export async function onRequest({ request, env }) {
       payment_status: isPaid ? 'paid' : 'failed', active: !!isPaid, payment_ref: ref_command || null,
     });
     return jsonR({ ok: true, kind: 'flash', activated: isPaid });
+  }
+
+  // 2sexies-bis. ABONNEMENT API PRO → activation au paiement.
+  if (apiId && !order_id) {
+    await sbUpdate(env, 'api_subscriptions', `id=eq.${encodeURIComponent(apiId)}`, {
+      status: isPaid ? 'active' : 'pending', payment_status: isPaid ? 'paid' : 'failed',
+      payment_method: 'mobile', payment_ref: ref_command || null,
+    });
+    return jsonR({ ok: true, kind: 'api', activated: isPaid });
   }
 
   // 2sexies. PRIORITÉ B2B → marquage payé au paiement.
