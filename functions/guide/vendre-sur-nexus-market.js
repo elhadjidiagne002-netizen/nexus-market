@@ -14,6 +14,16 @@ export async function onRequest({ request, env }) {
 <h1>Vendre sur NEXUS Market : le guide du vendeur</h1>
 <p class="lead">Vous avez des produits à vendre, un stock à écouler ou une boutique physique à digitaliser ? NEXUS Market vous permet de toucher des milliers d’acheteurs au Sénégal, d’encaisser via Orange Money, Wave ou carte, et de tout piloter depuis un tableau de bord. Voici comment réussir vos ventes.</p>
 
+<div class="tldr">
+<h2>À retenir</h2>
+<ul>
+  <li><strong>Annonce express</strong> (sans compte, en 2 min) ou <strong>boutique vendeur</strong> (gestion complète).</li>
+  <li>Une <strong>fiche soignée</strong> (photos nettes + description honnête + bon prix) vend beaucoup plus vite.</li>
+  <li>Vous êtes payé sur Orange Money / Wave <strong>après confirmation</strong> de la livraison.</li>
+  <li>Publication gratuite ; commission uniquement sur les ventes conclues.</li>
+</ul>
+</div>
+
 <h2>1. Annonce express ou boutique vendeur ?</h2>
 <p>Deux façons de vendre, selon votre besoin :</p>
 <ul>

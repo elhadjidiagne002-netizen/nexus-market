@@ -14,6 +14,16 @@ export async function onRequest({ request, env }) {
 <h1>La livraison au Sénégal : délais, tarifs et bonnes pratiques</h1>
 <p class="lead">Bien livré, bien vendu. La logistique est un facteur clé du e-commerce au Sénégal. Entre Dakar et les régions, voici comment fonctionne la livraison sur NEXUS Market, et nos conseils pour la réussir des deux côtés.</p>
 
+<div class="tldr">
+<h2>À retenir</h2>
+<ul>
+  <li>3 modes : <strong>domicile</strong>, <strong>retrait</strong>, ou <strong>coursier à la demande</strong> (Dakar, géolocalisé).</li>
+  <li>Dakar : souvent le jour même ou sous 24–48 h. Régions : prévoir davantage.</li>
+  <li>Donnez un <strong>point de repère clair</strong> + un numéro WhatsApp : c’est la clé d’une livraison rapide.</li>
+  <li>Vérifiez le colis, puis <strong>confirmez la réception</strong> (cela débloque le paiement au vendeur).</li>
+</ul>
+</div>
+
 <h2>1. Les modes de livraison disponibles</h2>
 <ul>
   <li><strong>Livraison à domicile</strong> : le vendeur ou son livreur apporte la commande à votre adresse.</li>
@@ -22,7 +32,17 @@ export async function onRequest({ request, env }) {
 </ul>
 
 <h2>2. Délais : à quoi s’attendre</h2>
-<p>À Dakar et en proche banlieue, une livraison se fait généralement le jour même ou sous 24 à 48 h. Vers les régions (Thiès, Saint-Louis, Touba, Ziguinchor…), comptez davantage selon le transporteur et la disponibilité. Le délai exact est indiqué par le vendeur sur la fiche produit avant l’achat.</p>
+<p>Le délai exact est toujours indiqué par le vendeur sur la fiche produit avant l’achat. À titre indicatif :</p>
+<table>
+<thead><tr><th>Zone</th><th>Délai indicatif</th><th>Mode conseillé</th></tr></thead>
+<tbody>
+  <tr><td>Dakar & proche banlieue</td><td>Jour même → 24 h</td><td>Coursier à la demande</td></tr>
+  <tr><td>Grande banlieue (Rufisque, Keur Massar…)</td><td>24 → 48 h</td><td>Domicile / coursier</td></tr>
+  <tr><td>Villes régionales (Thiès, Mbour, Saint-Louis…)</td><td>2 → 4 jours</td><td>Transporteur / domicile</td></tr>
+  <tr><td>Zones éloignées (Casamance, est du pays…)</td><td>3 → 7 jours</td><td>Transporteur / retrait</td></tr>
+</tbody>
+</table>
+<p>Ces durées sont des ordres de grandeur : elles varient selon le transporteur, la disponibilité du produit et la période (les pics comme la Tabaski rallongent les délais).</p>
 
 <h2>3. Le défi de l’adressage</h2>
 <div class="box">

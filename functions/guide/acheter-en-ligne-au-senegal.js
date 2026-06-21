@@ -14,6 +14,16 @@ export async function onRequest({ request, env }) {
 <h1>Acheter en ligne au Sénégal en toute sécurité</h1>
 <p class="lead">Le commerce en ligne explose au Sénégal, porté par le mobile money et la livraison de proximité. Mais comment commander sans se faire arnaquer ? Voici le guide complet pour acheter sereinement sur NEXUS Market et, plus largement, sur Internet au Sénégal.</p>
 
+<div class="tldr">
+<h2>À retenir</h2>
+<ul>
+  <li><strong>Ne payez jamais en dehors de la plateforme</strong> — c’est la règle n°1 anti-arnaque.</li>
+  <li>Vérifiez la réputation du vendeur (note, avis, ancienneté).</li>
+  <li>La <strong>protection acheteur</strong> séquestre votre argent jusqu’à confirmation de réception.</li>
+  <li>Votre <strong>premier achat est garanti</strong> contre la fraude (réclamation sous 48 h).</li>
+</ul>
+</div>
+
 <h2>1. Pourquoi acheter en ligne plutôt qu’au marché ?</h2>
 <p>L’achat en ligne fait gagner du temps et permet de comparer les prix sans se déplacer entre Sandaga, Colobane ou les boutiques de quartier. Vous accédez à un catalogue beaucoup plus large, vous lisez les avis d’autres acheteurs, et vous payez avec les moyens que vous utilisez déjà au quotidien : Orange Money, Wave ou carte bancaire. La livraison vient à vous, à Dakar comme en région.</p>
 
