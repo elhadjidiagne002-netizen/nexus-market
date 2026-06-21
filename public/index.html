@@ -40430,28 +40430,13 @@ window.addEventListener('unhandledrejection', function(event) {
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
-     NEXUS — CHAT PUBLIC COMMUNAUTAIRE (salon global, accès visiteurs)
+     NEXUS — CHAT COMMUNAUTAIRE v2 (salons multiples, présence, réactions…)
      ──────────────────────────────────────────────────────────────────────────
-     · Salon unique public ouvert à tous (visiteurs comme membres).
-     · Inscription minimale : un pseudo libre (pré-rempli avec le nom si connecté).
-     · Persistance Supabase (table public_chat) + Realtime quand dispo,
-       sinon fallback localStorage pour la démo (mono-appareil).
-     · Module 100% autonome (IIFE), monté dans son propre root React.
-     · FAB en bas À DROITE pour ne pas chevaucher les FAB coursier (à gauche).
-
-     SQL Supabase à exécuter (une fois) pour activer le mode multi-appareils :
-     ─────────────────────────────────────────────────────────────────────────
-       CREATE TABLE IF NOT EXISTS public_chat (
-         id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-         nickname   text NOT NULL,
-         text       text NOT NULL,
-         user_id    uuid,
-         created_at timestamptz NOT NULL DEFAULT now()
-       );
-       ALTER TABLE public_chat ENABLE ROW LEVEL SECURITY;
-       CREATE POLICY "public_chat_read"   ON public_chat FOR SELECT USING (true);
-       CREATE POLICY "public_chat_insert" ON public_chat FOR INSERT WITH CHECK (true);
-       -- Realtime : activer la table dans Database → Replication.
+     Niveau « grands sites » : salons thématiques, présence temps réel (en ligne),
+     indicateur de saisie, réponses/citations, réactions emoji, mentions @,
+     avatars, sélecteur d'emoji, séparateurs de date, signalement + modération
+     admin, anti-spam, badge de messages non lus. Dégrade proprement si la
+     migration sql/2026_06_21_public_chat_v2.sql n'est pas appliquée.
      ════════════════════════════════════════════════════════════════════════ -->
 <script>
 (function () {
@@ -40459,327 +40444,394 @@ window.addEventListener('unhandledrejection', function(event) {
   if (!window.React || !window.ReactDOM) { console.warn('[NexusChat] React indisponible'); return; }
   var E = React.createElement;
 
-  // ── Constantes ────────────────────────────────────────────────────────────
-  var LS_NICK = 'nexus_chat_nick';
-  var LS_MSGS = 'nexus_chat_public_msgs';   // fallback localStorage
-  var MAX_MSGS = 200;                        // garde-fou affichage/stockage
-  var MAX_LEN  = 500;                        // longueur max d'un message
+  // ── Config ──────────────────────────────────────────────────────────────────
+  var ROOMS = [
+    { id: 'general',     label: 'Général',     emoji: '💬' },
+    { id: 'achat-vente', label: 'Achat-Vente', emoji: '🛒' },
+    { id: 'bons-plans',  label: 'Bons plans',  emoji: '🔥' },
+    { id: 'aide',        label: 'Aide',        emoji: '❓' }
+  ];
+  var QUICK = ['👍', '❤️', '😂', '🔥', '😮', '🙏'];
+  var EMOJIS = ['😀','😁','😂','🤣','😊','😍','😎','🤩','😘','😉','🙂','🤗','🤔','😅','😇','🥳','😋','😴','😭','😡','👍','👎','👏','🙏','💪','🔥','✨','🎉','❤️','💚','💛','💙','💜','🖤','✅','❌','⚡','🛒','🏪','🐏','🚚','💰','📦','📱','🇸🇳'];
+  var MAX_MSGS = 80, MAX_LEN = 600;
+  var LS_NICK = 'nexus_chat_nick', LS_CID = 'nexus_chat_cid', LS_SEEN = 'nexus_chat_seen_v2';
+  var currentUser = null;
 
-  var currentUser = null; // injecté via nexus:set-user
+  function getSb() { try { return (window.DataService && window.DataService._sb) || window.__nexusSupabaseClient || null; } catch (_) { return null; } }
+  function clientId() {
+    var c = '';
+    try { c = localStorage.getItem(LS_CID) || ''; if (!c) { c = 'c-' + Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem(LS_CID, c); } } catch (_) { c = 'c-' + Math.random().toString(36).slice(2); }
+    return c;
+  }
+  var CID = clientId();
+  function toast(m, bg) { try { (window.NexusUX && NexusUX.toast) ? NexusUX.toast(m, { bg: bg }) : 0; } catch (_) {} }
 
-  // ── Accès Supabase (optionnel) ──────────────────────────────────────────────
-  function getSb() {
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function fmtTime(iso) { try { return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } }
+  function dayKey(iso) { try { return new Date(iso).toDateString(); } catch (_) { return ''; } }
+  function dayLabel(iso) {
     try {
-      return (window.DataService && window.DataService._sb)
-          || window.__nexusSupabaseClient
-          || null;
-    } catch (_) { return null; }
+      var d = new Date(iso), t = new Date(), y = new Date(); y.setDate(t.getDate() - 1);
+      if (d.toDateString() === t.toDateString()) return "Aujourd'hui";
+      if (d.toDateString() === y.toDateString()) return 'Hier';
+      return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+    } catch (_) { return ''; }
+  }
+  function colorFor(name) { var h = 0, s = String(name || ''); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return 'hsl(' + h + ',55%,42%)'; }
+  function initials(name) { var p = String(name || '?').trim().split(/\s+/); return ((p[0] || '?')[0] + (p[1] ? p[1][0] : '')).toUpperCase(); }
+
+  // Rendu du texte : liens cliquables + mentions @pseudo surlignées (nodes React).
+  function renderText(text, myNick) {
+    var parts = String(text || '').split(/(https?:\/\/[^\s]+|@[\p{L}0-9_.-]{2,20})/u);
+    return parts.map(function (p, i) {
+      if (/^https?:\/\//.test(p)) return E('a', { key: i, href: p, target: '_blank', rel: 'noopener nofollow', style: { color: '#0aa05a', textDecoration: 'underline', wordBreak: 'break-all' } }, p);
+      if (p[0] === '@') {
+        var me = myNick && p.slice(1).toLowerCase() === String(myNick).toLowerCase();
+        return E('span', { key: i, style: { background: me ? '#FDEF42' : 'rgba(0,133,62,.12)', color: me ? '#1a1a1a' : '#00853E', borderRadius: 4, padding: '0 3px', fontWeight: 700 } }, p);
+      }
+      return p;
+    });
   }
 
-  // ── Persistance fallback (localStorage) ─────────────────────────────────────
-  function lsLoad() {
-    try { return JSON.parse(localStorage.getItem(LS_MSGS) || '[]'); } catch (_) { return []; }
-  }
-  function lsSave(arr) {
-    try { localStorage.setItem(LS_MSGS, JSON.stringify(arr.slice(-MAX_MSGS))); } catch (_) {}
-  }
+  // Style injecté (animations + scrollbar).
+  (function injectStyle() {
+    if (document.getElementById('nx-chat-style')) return;
+    var st = document.createElement('style'); st.id = 'nx-chat-style';
+    st.textContent = '#nexus-public-chat-root .nxc-scroll::-webkit-scrollbar{width:7px}#nexus-public-chat-root .nxc-scroll::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px}'
+      + '@keyframes nxcDot{0%,80%,100%{opacity:.2}40%{opacity:1}}'
+      + '.nxc-typing span{display:inline-block;width:5px;height:5px;border-radius:50%;background:#9CA3AF;margin:0 1px;animation:nxcDot 1.2s infinite}'
+      + '.nxc-typing span:nth-child(2){animation-delay:.2s}.nxc-typing span:nth-child(3){animation-delay:.4s}'
+      + '.nxc-msg-actions{opacity:0;transition:opacity .12s}.nxc-row:hover .nxc-msg-actions{opacity:1}'
+      + '.nxc-tab{transition:background .15s,color .15s}';
+    document.head.appendChild(st);
+  })();
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
-  function escapeHtml(s) {
-    return String(s || '')
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-  function fmtTime(iso) {
-    try { return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
-    catch (_) { return ''; }
-  }
-  // Couleur stable dérivée du pseudo (pour distinguer les interlocuteurs)
-  function colorFor(name) {
-    var h = 0, s = String(name || '');
-    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-    return 'hsl(' + h + ',55%,42%)';
-  }
-
-  // ════════════════════════════════════════════════════════════════════════
-  //  Composant principal
   // ════════════════════════════════════════════════════════════════════════
   function PublicChat(props) {
-    var savedNick = '';
-    try { savedNick = localStorage.getItem(LS_NICK) || ''; } catch (_) {}
-    // Pré-remplissage : pseudo sauvegardé > nom de l'utilisateur connecté
+    var savedNick = ''; try { savedNick = localStorage.getItem(LS_NICK) || ''; } catch (_) {}
     var initialNick = savedNick || (currentUser && currentUser.name) || '';
+    var isAdmin = !!(currentUser && currentUser.role === 'admin');
 
-    var st = React.useState(initialNick ? 'chat' : 'join'); var view = st[0], setView = st[1];
-    var nk = React.useState(initialNick); var nick = nk[0], setNick = nk[1];
-    var ms = React.useState([]);          var msgs = ms[0], setMsgs = ms[1];
-    var dr = React.useState('');          var draft = dr[0], setDraft = dr[1];
-    var er = React.useState('');          var err = er[0], setErr = er[1];
-    var on = React.useState(false);       var online = on[0], setOnline = on[1];
+    var a = React.useState(initialNick ? 'chat' : 'join'); var view = a[0], setView = a[1];
+    var b = React.useState(initialNick); var nick = b[0], setNick = b[1];
+    var c = React.useState('general'); var room = c[0], setRoom = c[1];
+    var d = React.useState([]); var msgs = d[0], setMsgs = d[1];
+    var e = React.useState({}); var reacts = e[0], setReacts = e[1];      // id -> {emoji:{count,mine}}
+    var f = React.useState(''); var draft = f[0], setDraft = f[1];
+    var g = React.useState(''); var errMsg = g[0], setErr = g[1];
+    var h = React.useState(true); var online = h[0], setOnline = h[1];
+    var k = React.useState(1); var onlineCount = k[0], setOnlineCount = k[1];
+    var l = React.useState([]); var typers = l[0], setTypers = l[1];
+    var m = React.useState(null); var reply = m[0], setReply = m[1];
+    var n = React.useState(false); var emojiOpen = n[0], setEmojiOpen = n[1];
+    var o = React.useState({}); var unread = o[0], setUnread = o[1];      // roomId -> count
+    var p = React.useState(false); var atBottom = p[0], setAtBottom = p[1];
 
-    var scrollRef = React.useRef(null);
-    var chanRef   = React.useRef(null);
+    var scrollRef = React.useRef(null), chanRef = React.useRef(null), roomRef = React.useRef(room);
+    var lastTypeRef = React.useRef(0), lastSendRef = React.useRef(0), sendCntRef = React.useRef([]);
+    roomRef.current = room;
 
-    // Normalise une ligne (Supabase row OU objet local) vers la shape d'affichage
-    function norm(r) {
-      return {
-        id:        r.id || (Date.now() + '-' + Math.random().toString(36).slice(2, 7)),
-        nickname:  r.nickname || r.nick || 'Anonyme',
-        text:      r.text || '',
-        user_id:   r.user_id || null,
-        created_at: r.created_at || r.date || new Date().toISOString(),
-      };
-    }
-    function mergeSorted(list) {
-      var seen = {}, out = [];
-      list.forEach(function (m) { if (!seen[m.id]) { seen[m.id] = 1; out.push(m); } });
-      out.sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); });
-      return out.slice(-MAX_MSGS);
-    }
+    function avatarOf() { return (currentUser && currentUser.avatar) || initials(nick); }
 
-    // ── Chargement initial + abonnement temps réel ────────────────────────────
-    React.useEffect(function () {
-      var mounted = true;
-      var sb = getSb();
+    function isNearBottom() { var el = scrollRef.current; if (!el) return true; return (el.scrollHeight - el.scrollTop - el.clientHeight) < 80; }
+    function scrollDown(force) { var el = scrollRef.current; if (el && (force || isNearBottom())) el.scrollTop = el.scrollHeight; }
 
-      function loadInitial() {
-        if (sb) {
-          sb.from('public_chat')
-            .select('id,nickname,text,user_id,created_at')
-            .order('created_at', { ascending: true })
-            .limit(MAX_MSGS)
-            .then(function (res) {
-              if (!mounted) return;
-              if (res.error) {
-                // Table absente / RLS → bascule localStorage silencieusement
-                console.info('[NexusChat] Supabase indispo, mode local:', res.error.message);
-                setMsgs(mergeSorted(lsLoad().map(norm)));
-                setOnline(false);
-              } else {
-                setMsgs(mergeSorted((res.data || []).map(norm)));
-                setOnline(true);
-              }
-            }, function () {
-              if (mounted) { setMsgs(mergeSorted(lsLoad().map(norm))); setOnline(false); }
+    // ── Réactions : chargement + agrégation ───────────────────────────────────
+    function loadReactions(sb, ids) {
+      if (!sb || !ids.length) return;
+      try {
+        sb.from('public_chat_reactions').select('message_id,emoji,client_id').in('message_id', ids)
+          .then(function (res) {
+            if (res.error || !res.data) return;
+            var map = {};
+            res.data.forEach(function (r) {
+              map[r.message_id] = map[r.message_id] || {};
+              var slot = map[r.message_id][r.emoji] = map[r.message_id][r.emoji] || { count: 0, mine: false };
+              slot.count++; if (r.client_id === CID) slot.mine = true;
             });
-        } else {
-          setMsgs(mergeSorted(lsLoad().map(norm)));
-          setOnline(false);
-        }
-      }
-      loadInitial();
+            setReacts(function (prev) { var nx = Object.assign({}, prev); Object.keys(map).forEach(function (id) { nx[id] = map[id]; }); return nx; });
+          }, function () {});
+      } catch (_) {}
+    }
 
-      // Realtime : nouveaux messages de tous les visiteurs
+    function applyReactionDelta(messageId, emoji, op, mine) {
+      setReacts(function (prev) {
+        var nx = Object.assign({}, prev);
+        var msg = Object.assign({}, nx[messageId] || {});
+        var slot = Object.assign({ count: 0, mine: false }, msg[emoji] || {});
+        slot.count = Math.max(0, slot.count + (op === 'add' ? 1 : -1));
+        if (mine) slot.mine = (op === 'add');
+        if (slot.count === 0) { delete msg[emoji]; } else { msg[emoji] = slot; }
+        nx[messageId] = msg; return nx;
+      });
+    }
+
+    function toggleReaction(msg, emoji) {
+      var sb = getSb();
+      var cur = (reacts[msg.id] && reacts[msg.id][emoji]) || { count: 0, mine: false };
+      var op = cur.mine ? 'remove' : 'add';
+      applyReactionDelta(msg.id, emoji, op, true);                 // optimiste
+      try {
+        if (chanRef.current) chanRef.current.send({ type: 'broadcast', event: 'react', payload: { id: msg.id, emoji: emoji, op: op, cid: CID } });
+      } catch (_) {}
+      if (sb && online) {
+        try {
+          if (op === 'add') sb.from('public_chat_reactions').insert({ message_id: msg.id, emoji: emoji, client_id: CID }).then(function () {}, function () {});
+          else sb.from('public_chat_reactions').delete().eq('message_id', msg.id).eq('emoji', emoji).eq('client_id', CID).then(function () {}, function () {});
+        } catch (_) {}
+      }
+    }
+
+    // ── Abonnement par salon (messages + présence + broadcast) ────────────────
+    React.useEffect(function () {
+      var mounted = true; var sb = getSb();
+      setMsgs([]); setReacts({}); setTypers([]);
+
+      function afterLoad(rows) {
+        if (!mounted) return;
+        var list = rows.slice().sort(function (x, y) { return new Date(x.created_at) - new Date(y.created_at); }).slice(-MAX_MSGS);
+        setMsgs(list); setTimeout(function () { scrollDown(true); }, 30);
+        loadReactions(sb, list.map(function (r) { return r.id; }));
+      }
+
+      if (sb) {
+        sb.from('public_chat').select('id,nickname,text,user_id,avatar,reply_to,reply_nick,reply_text,deleted,created_at')
+          .eq('room', room).order('created_at', { ascending: false }).limit(MAX_MSGS)
+          .then(function (res) {
+            if (!mounted) return;
+            if (res.error) { setOnline(false); afterLoad([]); }
+            else { setOnline(true); afterLoad(res.data || []); }
+          }, function () { if (mounted) { setOnline(false); afterLoad([]); } });
+      } else { setOnline(false); afterLoad([]); }
+
+      var chan = null;
       if (sb) {
         try {
-          var chan = sb.channel('public-chat-' + Math.random().toString(36).slice(2, 8))
-            .on('postgres_changes',
-              { event: 'INSERT', schema: 'public', table: 'public_chat' },
-              function (payload) {
-                if (!mounted || !payload.new) return;
-                setMsgs(function (prev) { return mergeSorted(prev.concat(norm(payload.new))); });
-              })
+          chan = sb.channel('chat:' + room, { config: { presence: { key: CID } } })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'public_chat', filter: 'room=eq.' + room }, function (payload) {
+              if (!mounted || !payload.new) return;
+              var row = payload.new;
+              setMsgs(function (prev) { if (prev.some(function (x) { return x.id === row.id; })) return prev; return prev.concat(row).slice(-MAX_MSGS); });
+              if (row.nickname !== nick) setTimeout(function () { scrollDown(false); }, 30);
+              // mention de moi ?
+              try { if (nick && new RegExp('@' + nick.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(row.text) && row.nickname !== nick) toast('💬 ' + row.nickname + ' vous a mentionné', '#00853E'); } catch (_) {}
+            })
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'public_chat', filter: 'room=eq.' + room }, function (payload) {
+              if (!mounted || !payload.new) return;
+              setMsgs(function (prev) { return prev.map(function (x) { return x.id === payload.new.id ? payload.new : x; }); });
+            })
+            .on('broadcast', { event: 'react' }, function (m2) {
+              var pl = m2.payload || {}; if (!mounted || pl.cid === CID) return;
+              applyReactionDelta(pl.id, pl.emoji, pl.op, false);
+            })
+            .on('broadcast', { event: 'typing' }, function (m2) {
+              var pl = m2.payload || {}; if (!mounted || pl.cid === CID || !pl.nick) return;
+              setTypers(function (prev) { return prev.indexOf(pl.nick) === -1 ? prev.concat(pl.nick) : prev; });
+              clearTimeout(window['__nxcТ' + pl.cid]);
+              window['__nxcТ' + pl.cid] = setTimeout(function () { setTypers(function (prev) { return prev.filter(function (x) { return x !== pl.nick; }); }); }, 3500);
+            })
+            .on('presence', { event: 'sync' }, function () {
+              try { var st2 = chan.presenceState(); setOnlineCount(Math.max(1, Object.keys(st2).length)); } catch (_) {}
+            })
             .subscribe(function (status) {
-              if (status === 'SUBSCRIBED' && mounted) setOnline(true);
+              if (status === 'SUBSCRIBED' && mounted) {
+                setOnline(true);
+                try { chan.track({ nick: nick || 'Visiteur', avatar: avatarOf(), cid: CID }); } catch (_) {}
+              }
             });
           chanRef.current = chan;
-        } catch (e) { console.info('[NexusChat] realtime off:', e.message); }
+        } catch (_) {}
       }
+      return function () { mounted = false; if (chan && sb) { try { sb.removeChannel(chan); } catch (_) {} } chanRef.current = null; };
+    }, [room, nick]);
 
-      return function () {
-        mounted = false;
-        if (chanRef.current && sb) { try { sb.removeChannel(chanRef.current); } catch (_) {} }
-      };
-    }, []);
+    // Marque le salon comme lu quand on le regarde
+    React.useEffect(function () { setUnread(function (u) { if (!u[room]) return u; var nx = Object.assign({}, u); nx[room] = 0; return nx; }); }, [room, msgs.length]);
 
-    // Auto-scroll vers le dernier message
-    React.useEffect(function () {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }, [msgs]);
+    function onScroll() { setAtBottom(isNearBottom()); }
 
-    // ── Validation du pseudo (inscription facile) ─────────────────────────────
+    // ── Join ──────────────────────────────────────────────────────────────────
     function joinChat() {
-      var n = (nick || '').trim();
-      if (n.length < 2)  { setErr('Pseudo trop court (min. 2 caractères)'); return; }
-      if (n.length > 20) { setErr('Pseudo trop long (max. 20 caractères)'); return; }
-      try { localStorage.setItem(LS_NICK, n); } catch (_) {}
-      setNick(n); setErr(''); setView('chat');
+      var nn = (nick || '').trim();
+      if (nn.length < 2) { setErr('Pseudo trop court (min. 2)'); return; }
+      if (nn.length > 20) { setErr('Pseudo trop long (max. 20)'); return; }
+      try { localStorage.setItem(LS_NICK, nn); } catch (_) {}
+      setNick(nn); setErr(''); setView('chat');
     }
 
-    // ── Envoi d'un message ────────────────────────────────────────────────────
+    // ── Envoi ───────────────────────────────────────────────────────────────
     function sendMsg() {
-      var t = (draft || '').trim();
-      if (!t) return;
+      var t = (draft || '').trim(); if (!t) return;
+      var now = Date.now();
+      // anti-spam : 1 msg / 1.5s, max 6 / 12s
+      sendCntRef.current = sendCntRef.current.filter(function (ts) { return now - ts < 12000; });
+      if (now - lastSendRef.current < 1500) { toast('Doucement 🙂 (anti-spam)', '#b45309'); return; }
+      if (sendCntRef.current.length >= 6) { toast('Trop de messages, patientez quelques secondes.', '#b45309'); return; }
       if (t.length > MAX_LEN) t = t.slice(0, MAX_LEN);
-      var row = {
-        id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-        nickname: nick,
-        text: t,
-        user_id: (currentUser && currentUser.id) || null,
-        created_at: new Date().toISOString(),
-      };
-      // Affichage optimiste
-      setMsgs(function (prev) { return mergeSorted(prev.concat(norm(row))); });
-      setDraft('');
+      lastSendRef.current = now; sendCntRef.current.push(now);
+
+      var rrow = { nickname: nick, text: t, user_id: (currentUser && currentUser.id) || null, room: room, avatar: avatarOf() };
+      if (reply) { rrow.reply_to = reply.id; rrow.reply_nick = reply.nickname; rrow.reply_text = (reply.text || '').slice(0, 120); }
+      setDraft(''); setReply(null); setEmojiOpen(false);
 
       var sb = getSb();
       if (sb && online) {
-        sb.from('public_chat')
-          .insert({ nickname: row.nickname, text: row.text, user_id: row.user_id })
-          .then(function (res) {
-            if (res && res.error) {
-              console.info('[NexusChat] insert échec, fallback local:', res.error.message);
-              var arr = lsLoad(); arr.push(row); lsSave(arr);
-            }
-          }, function () {
-            var arr = lsLoad(); arr.push(row); lsSave(arr);
-          });
+        sb.from('public_chat').insert(rrow).select().then(function (res) {
+          if (res && res.error) { toast('Envoi échoué.', '#b45309'); setDraft(t); }
+          else if (res && res.data && res.data[0]) {
+            var row = res.data[0];
+            setMsgs(function (prev) { return prev.some(function (x) { return x.id === row.id; }) ? prev : prev.concat(row).slice(-MAX_MSGS); });
+            setTimeout(function () { scrollDown(true); }, 20);
+          }
+        }, function () { toast('Envoi échoué.', '#b45309'); setDraft(t); });
       } else {
-        var arr = lsLoad(); arr.push(row); lsSave(arr);
+        // mode local (pas de backend) : affichage optimiste seul
+        var loc = Object.assign({ id: 'l-' + now, created_at: new Date().toISOString() }, rrow);
+        setMsgs(function (prev) { return prev.concat(loc).slice(-MAX_MSGS); }); setTimeout(function () { scrollDown(true); }, 20);
       }
     }
+    function onTyping(v) {
+      setDraft(v);
+      var now = Date.now();
+      if (chanRef.current && v && now - lastTypeRef.current > 1500) {
+        lastTypeRef.current = now;
+        try { chanRef.current.send({ type: 'broadcast', event: 'typing', payload: { nick: nick, cid: CID } }); } catch (_) {}
+      }
+    }
+    function onKey(ev) { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendMsg(); } }
 
-    function onKey(e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+    function reportMsg(msg) {
+      setMsgs(function (prev) { return prev.filter(function (x) { return x.id !== msg.id; }); });
+      toast('Message signalé et masqué. Merci 🙏', '#00853E');
+      try { var sb = getSb(); if (sb && currentUser && currentUser.id) sb.from('notifications').insert({ user_id: null, type: 'system', title: '🚩 Message signalé', message: 'Salon ' + room + ' — « ' + (msg.text || '').slice(0, 80) + ' » (par ' + (msg.nickname || '?') + ')', link: '/' }).then(function () {}, function () {}); } catch (_) {}
+    }
+    function adminDelete(msg) {
+      var sb = getSb(); if (!sb) return;
+      setMsgs(function (prev) { return prev.map(function (x) { return x.id === msg.id ? Object.assign({}, x, { deleted: true }) : x; }); });
+      try { sb.from('public_chat').update({ deleted: true }).eq('id', msg.id).then(function () {}, function () {}); } catch (_) {}
     }
 
     // ── Styles ────────────────────────────────────────────────────────────────
-    var panel = {
-      position: 'fixed', bottom: '10rem', left: '1.25rem', zIndex: 9999,
-      width: 'min(370px, calc(100vw - 2rem))', height: 'min(520px, calc(100vh - 12rem))',
-      background: '#fff', borderRadius: 16, boxShadow: '0 12px 40px rgba(0,0,0,.25)',
-      display: 'flex', flexDirection: 'column', overflow: 'hidden',
-      fontFamily: 'inherit', border: '1px solid #E5E7EB',
-    };
-    var header = {
-      background: 'linear-gradient(135deg,#00853E,#33A85A)', color: '#fff',
-      padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    };
+    var panel = { position: 'fixed', bottom: '1rem', left: '1.25rem', zIndex: 9999, width: 'min(420px, calc(100vw - 1.5rem))', height: 'min(640px, calc(100vh - 5rem))', background: '#fff', borderRadius: 16, boxShadow: '0 16px 50px rgba(0,0,0,.3)', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #E5E7EB', fontFamily: 'Inter,system-ui,sans-serif' };
+    var header = { background: 'linear-gradient(135deg,#00853E,#33A85A)', color: '#fff', padding: '12px 14px' };
 
-    // ── Rendu : écran "inscription pseudo" ────────────────────────────────────
     function renderJoin() {
       return E('div', { style: { padding: '28px 22px', display: 'flex', flexDirection: 'column', gap: 14, flex: 1, justifyContent: 'center' } },
-        E('div', { style: { textAlign: 'center', fontSize: '2.2rem' } }, '💬'),
-        E('h3', { style: { margin: 0, textAlign: 'center', fontSize: '1.15rem', color: '#1F2937' } }, 'Rejoindre le salon'),
-        E('p', { style: { margin: 0, textAlign: 'center', fontSize: '.85rem', color: '#6B7280', lineHeight: 1.5 } },
-          'Choisissez un pseudo pour discuter avec la communauté NEXUS Market. Aucune inscription requise.'),
-        E('input', {
-          type: 'text', value: nick, maxLength: 20, autoFocus: true,
-          placeholder: 'Votre pseudo…',
-          onChange: function (e) { setNick(e.target.value); setErr(''); },
-          onKeyDown: function (e) { if (e.key === 'Enter') joinChat(); },
-          style: { padding: '12px 14px', borderRadius: 10, border: '1px solid #D1D5DB', fontSize: '.95rem', outline: 'none' },
-        }),
-        err ? E('div', { style: { color: '#DC2626', fontSize: '.8rem', textAlign: 'center' } }, err) : null,
-        E('button', {
-          onClick: joinChat,
-          style: { padding: '12px', borderRadius: 10, border: 'none', background: '#00853E', color: '#fff', fontWeight: 700, fontSize: '.95rem', cursor: 'pointer' },
-        }, 'Entrer dans le salon →')
+        E('div', { style: { textAlign: 'center', fontSize: '2.4rem' } }, '💬'),
+        E('h3', { style: { margin: 0, textAlign: 'center', fontSize: '1.2rem', color: '#1F2937' } }, 'Rejoindre la communauté'),
+        E('p', { style: { margin: 0, textAlign: 'center', fontSize: '.85rem', color: '#6B7280', lineHeight: 1.5 } }, 'Choisissez un pseudo pour discuter en direct avec la communauté NEXUS Market — bons plans, achats, entraide. Sans inscription.'),
+        E('input', { type: 'text', value: nick, maxLength: 20, autoFocus: true, placeholder: 'Votre pseudo…', onChange: function (ev) { setNick(ev.target.value); setErr(''); }, onKeyDown: function (ev) { if (ev.key === 'Enter') joinChat(); }, style: { padding: '12px 14px', borderRadius: 10, border: '1px solid #D1D5DB', fontSize: '.95rem', outline: 'none' } }),
+        errMsg ? E('div', { style: { color: '#DC2626', fontSize: '.8rem', textAlign: 'center' } }, errMsg) : null,
+        E('button', { onClick: joinChat, style: { padding: '12px', borderRadius: 10, border: 'none', background: '#00853E', color: '#fff', fontWeight: 700, fontSize: '.95rem', cursor: 'pointer' } }, 'Entrer →')
       );
     }
 
-    // ── Rendu : écran "chat" ──────────────────────────────────────────────────
-    function renderChat() {
-      return E(React.Fragment, null,
-        // Liste des messages
-        E('div', {
-          ref: scrollRef,
-          style: { flex: 1, overflowY: 'auto', padding: '14px 14px 6px', background: '#F9FAFB', display: 'flex', flexDirection: 'column', gap: 10 },
-        },
-          msgs.length === 0
-            ? E('div', { style: { textAlign: 'center', color: '#9CA3AF', fontSize: '.85rem', marginTop: 20 } }, 'Soyez le premier à écrire 👋')
-            : msgs.map(function (m) {
-                var mine = (m.nickname === nick);
-                return E('div', { key: m.id, style: { display: 'flex', flexDirection: 'column', alignItems: mine ? 'flex-end' : 'flex-start' } },
-                  E('div', { style: { fontSize: '.7rem', color: mine ? '#00853E' : colorFor(m.nickname), fontWeight: 700, marginBottom: 2, padding: '0 4px' } },
-                    (mine ? 'Vous' : escapeHtml(m.nickname)) + ' · ' + fmtTime(m.created_at)),
-                  E('div', { style: {
-                    maxWidth: '80%', padding: '8px 12px', borderRadius: 12,
-                    background: mine ? '#00853E' : '#fff', color: mine ? '#fff' : '#1F2937',
-                    border: mine ? 'none' : '1px solid #E5E7EB', fontSize: '.88rem',
-                    lineHeight: 1.4, wordBreak: 'break-word', whiteSpace: 'pre-wrap',
-                  } }, escapeHtml(m.text))
-                );
-              })
-        ),
-        // Barre de saisie
-        E('div', { style: { display: 'flex', gap: 8, padding: '10px 12px', borderTop: '1px solid #E5E7EB', background: '#fff' } },
-          E('textarea', {
-            value: draft, rows: 1, maxLength: MAX_LEN, placeholder: 'Votre message…',
-            onChange: function (e) { setDraft(e.target.value); }, onKeyDown: onKey,
-            style: { flex: 1, resize: 'none', padding: '9px 12px', borderRadius: 20, border: '1px solid #D1D5DB', fontSize: '.88rem', outline: 'none', fontFamily: 'inherit', maxHeight: 80 },
-          }),
-          E('button', {
-            onClick: sendMsg, disabled: !draft.trim(), 'aria-label': 'Envoyer',
-            style: { width: 40, height: 40, flexShrink: 0, borderRadius: '50%', border: 'none', background: draft.trim() ? '#00853E' : '#9CA3AF', color: '#fff', cursor: draft.trim() ? 'pointer' : 'default', fontSize: '1rem' },
-          }, '➤')
-        )
-      );
+    function reactionRow(msg) {
+      var rs = reacts[msg.id]; if (!rs) return null;
+      var keys = Object.keys(rs).filter(function (em) { return rs[em].count > 0; });
+      if (!keys.length) return null;
+      return E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 } }, keys.map(function (em) {
+        var r = rs[em];
+        return E('button', { key: em, onClick: function () { toggleReaction(msg, em); }, title: 'Réagir', style: { display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: '.74rem', padding: '1px 7px', borderRadius: 11, cursor: 'pointer', border: '1px solid ' + (r.mine ? '#00853E' : '#E5E7EB'), background: r.mine ? 'rgba(0,133,62,.1)' : '#fff', color: '#374151' } }, em, E('b', { style: { fontWeight: 700 } }, r.count));
+      }));
     }
+
+    function renderMsgs() {
+      var out = [], lastDay = '', lastNick = '';
+      msgs.forEach(function (msg) {
+        var dk = dayKey(msg.created_at);
+        if (dk !== lastDay) { lastDay = dk; lastNick = ''; out.push(E('div', { key: 'd' + dk + msg.id, style: { textAlign: 'center', margin: '6px 0' } }, E('span', { style: { fontSize: '.68rem', color: '#9CA3AF', background: '#EEF2F7', borderRadius: 10, padding: '2px 10px' } }, dayLabel(msg.created_at)))); }
+        var mine = msg.nickname === nick;
+        var grouped = msg.nickname === lastNick; lastNick = msg.nickname;
+        var del = msg.deleted;
+        out.push(E('div', { key: msg.id, className: 'nxc-row', style: { display: 'flex', gap: 8, padding: '1px 2px', marginTop: grouped ? 1 : 7, flexDirection: mine ? 'row-reverse' : 'row' } },
+          grouped ? E('div', { style: { width: 30, flexShrink: 0 } }) : E('div', { title: msg.nickname, style: { width: 30, height: 30, flexShrink: 0, borderRadius: '50%', background: mine ? '#00853E' : colorFor(msg.nickname), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.72rem', fontWeight: 800 } }, esc(msg.avatar || initials(msg.nickname))),
+          E('div', { style: { maxWidth: '78%', display: 'flex', flexDirection: 'column', alignItems: mine ? 'flex-end' : 'flex-start' } },
+            grouped ? null : E('div', { style: { fontSize: '.7rem', color: mine ? '#00853E' : colorFor(msg.nickname), fontWeight: 700, margin: '0 4px 2px' } }, (mine ? 'Vous' : esc(msg.nickname)) + ' · ' + fmtTime(msg.created_at)),
+            msg.reply_to ? E('div', { style: { fontSize: '.72rem', color: '#6B7280', borderLeft: '3px solid #cbd5e1', padding: '1px 7px', margin: '0 0 2px', background: '#f1f5f9', borderRadius: 4, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, '↩ ' + esc(msg.reply_nick || '') + ' : ' + esc(msg.reply_text || '')) : null,
+            E('div', { style: { padding: '8px 12px', borderRadius: 13, background: del ? '#F3F4F6' : (mine ? '#00853E' : '#fff'), color: del ? '#9CA3AF' : (mine ? '#fff' : '#1F2937'), border: mine && !del ? 'none' : '1px solid #E5E7EB', fontSize: '.88rem', lineHeight: 1.45, wordBreak: 'break-word', whiteSpace: 'pre-wrap', fontStyle: del ? 'italic' : 'normal' } }, del ? 'message supprimé' : renderText(msg.text, nick)),
+            del ? null : reactionRow(msg),
+            del ? null : E('div', { className: 'nxc-msg-actions', style: { display: 'flex', gap: 2, marginTop: 2 } },
+              QUICK.slice(0, 3).map(function (em) { return E('button', { key: em, title: 'Réagir', onClick: function () { toggleReaction(msg, em); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.8rem', padding: '0 1px', opacity: .85 } }, em); }),
+              E('button', { title: 'Répondre', onClick: function () { setReply(msg); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#6B7280', padding: '0 3px' } }, '↩'),
+              E('button', { title: 'Signaler', onClick: function () { reportMsg(msg); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#9CA3AF', padding: '0 3px' } }, '🚩'),
+              isAdmin ? E('button', { title: 'Supprimer (admin)', onClick: function () { adminDelete(msg); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#DC2626', padding: '0 3px' } }, '🗑') : null
+            )
+          )
+        ));
+      });
+      return out;
+    }
+
+    var totalUnread = Object.keys(unread).reduce(function (s, r) { return s + (unread[r] || 0); }, 0);
 
     return E('div', { style: panel },
+      // Header
       E('div', { style: header },
-        E('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
-          E('span', { style: { fontSize: '1.1rem' } }, '💬'),
-          E('div', null,
-            E('div', { style: { fontWeight: 700, fontSize: '.95rem', lineHeight: 1.1 } }, 'Salon NEXUS'),
-            E('div', { style: { fontSize: '.7rem', opacity: .9 } },
-              (online ? '● En ligne' : '○ Mode local') + (view === 'chat' ? ' · ' + nick : ''))
+        E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+          E('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+            E('span', { style: { fontSize: '1.15rem' } }, '💬'),
+            E('div', null,
+              E('div', { style: { fontWeight: 800, fontSize: '.98rem', lineHeight: 1.1 } }, 'Communauté NEXUS'),
+              E('div', { style: { fontSize: '.7rem', opacity: .92, display: 'flex', alignItems: 'center', gap: 5 } },
+                E('span', { style: { width: 7, height: 7, borderRadius: '50%', background: online ? '#7CFFB0' : '#cbd5e1', display: 'inline-block' } }),
+                online ? (onlineCount + ' en ligne') : 'Mode local', view === 'chat' && nick ? ' · ' + nick : ''))
+          ),
+          E('div', { style: { display: 'flex', gap: 4 } },
+            view === 'chat' ? E('button', { title: 'Changer de pseudo', onClick: function () { setView('join'); }, style: { background: 'rgba(255,255,255,.2)', border: 'none', color: '#fff', borderRadius: 8, width: 30, height: 30, cursor: 'pointer' } }, '✎') : null,
+            E('button', { title: 'Fermer', onClick: props.onClose, style: { background: 'rgba(255,255,255,.2)', border: 'none', color: '#fff', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: '1rem' } }, '×')
           )
         ),
-        E('div', { style: { display: 'flex', gap: 4 } },
-          view === 'chat'
-            ? E('button', {
-                title: 'Changer de pseudo',
-                onClick: function () { setView('join'); },
-                style: { background: 'rgba(255,255,255,.2)', border: 'none', color: '#fff', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: '.85rem' },
-              }, '✎')
-            : null,
-          E('button', {
-            title: 'Fermer', onClick: props.onClose,
-            style: { background: 'rgba(255,255,255,.2)', border: 'none', color: '#fff', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: '1rem' },
-          }, '×')
+        // Onglets salons
+        view === 'chat' ? E('div', { style: { display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', paddingBottom: 2 } }, ROOMS.map(function (r) {
+          var act = r.id === room, u = unread[r.id] || 0;
+          return E('button', { key: r.id, className: 'nxc-tab', onClick: function () { setRoom(r.id); }, style: { flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4, border: 'none', borderRadius: 14, padding: '5px 11px', cursor: 'pointer', fontSize: '.78rem', fontWeight: 700, background: act ? '#fff' : 'rgba(255,255,255,.18)', color: act ? '#00853E' : '#fff' } },
+            r.emoji, r.label, u > 0 && !act ? E('span', { style: { background: '#FDEF42', color: '#1a1a1a', borderRadius: 9, fontSize: '.62rem', padding: '0 5px', fontWeight: 800 } }, u > 9 ? '9+' : u) : null);
+        })) : null
+      ),
+      view === 'join' ? renderJoin() : E(React.Fragment, null,
+        // Messages
+        E('div', { ref: scrollRef, onScroll: onScroll, className: 'nxc-scroll', style: { flex: 1, overflowY: 'auto', padding: '10px 12px 6px', background: '#F9FAFB', position: 'relative' } },
+          msgs.length === 0 ? E('div', { style: { textAlign: 'center', color: '#9CA3AF', fontSize: '.85rem', marginTop: 24 } }, 'Aucun message ici. Lancez la discussion 👋') : renderMsgs()
+        ),
+        // Indicateur saisie
+        typers.length ? E('div', { className: 'nxc-typing', style: { padding: '2px 14px', fontSize: '.72rem', color: '#6B7280', background: '#F9FAFB' } }, (typers.slice(0, 2).join(', ')) + (typers.length > 2 ? ' et d\'autres' : '') + ' écrit', E('span', null), E('span', null), E('span', null)) : null,
+        // Aperçu réponse
+        reply ? E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#EEF2F7', borderTop: '1px solid #E5E7EB' } },
+          E('div', { style: { flex: 1, minWidth: 0, fontSize: '.74rem', color: '#374151' } }, E('b', { style: { color: '#00853E' } }, '↩ ' + esc(reply.nickname)), E('div', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#6B7280' } }, esc(reply.text))),
+          E('button', { onClick: function () { setReply(null); }, style: { border: 'none', background: 'none', cursor: 'pointer', color: '#9CA3AF', fontSize: '1rem' } }, '×')) : null,
+        // Palette emoji
+        emojiOpen ? E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 2, padding: '6px 10px', borderTop: '1px solid #E5E7EB', background: '#fff', maxHeight: 130, overflowY: 'auto' } }, EMOJIS.map(function (em, i) {
+          return E('button', { key: i, onClick: function () { setDraft(function (x) { return (x || '') + em; }); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.25rem', padding: 2, lineHeight: 1 } }, em);
+        })) : null,
+        // Saisie
+        E('div', { style: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: '8px 10px', borderTop: '1px solid #E5E7EB', background: '#fff' } },
+          E('button', { onClick: function () { setEmojiOpen(!emojiOpen); }, title: 'Emoji', style: { width: 38, height: 38, flexShrink: 0, borderRadius: '50%', border: 'none', background: emojiOpen ? '#E5E7EB' : '#F3F4F6', cursor: 'pointer', fontSize: '1.1rem' } }, '😊'),
+          E('textarea', { value: draft, rows: 1, maxLength: MAX_LEN, placeholder: 'Écrire dans #' + room + '…  (@ pour mentionner)', onChange: function (ev) { onTyping(ev.target.value); }, onKeyDown: onKey, style: { flex: 1, resize: 'none', padding: '9px 13px', borderRadius: 18, border: '1px solid #D1D5DB', fontSize: '.88rem', outline: 'none', fontFamily: 'inherit', maxHeight: 90 } }),
+          E('button', { onClick: sendMsg, disabled: !draft.trim(), 'aria-label': 'Envoyer', style: { width: 40, height: 40, flexShrink: 0, borderRadius: '50%', border: 'none', background: draft.trim() ? '#00853E' : '#9CA3AF', color: '#fff', cursor: draft.trim() ? 'pointer' : 'default', fontSize: '1.05rem' } }, '➤')
         )
       ),
-      view === 'join' ? renderJoin() : renderChat()
+      // Bouton défiler en bas
+      (view === 'chat' && !atBottom) ? E('button', { onClick: function () { scrollDown(true); setAtBottom(true); }, title: 'Aller en bas', style: { position: 'absolute', right: 14, bottom: 76, width: 36, height: 36, borderRadius: '50%', border: '1px solid #E5E7EB', background: '#fff', boxShadow: '0 3px 10px rgba(0,0,0,.18)', cursor: 'pointer', fontSize: '1rem', color: '#00853E' } }, '↓') : null
     );
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  //  Montage + FAB
-  // ════════════════════════════════════════════════════════════════════════
   var mountEl = null, root = null, isOpen = false;
-
   function getMount() {
     if (!mountEl) { mountEl = document.createElement('div'); mountEl.id = 'nexus-public-chat-root'; document.body.appendChild(mountEl); }
     if (!root && window.ReactDOM && ReactDOM.createRoot) root = ReactDOM.createRoot(mountEl);
     return root;
   }
-
-  function closeChat() {
-    isOpen = false;
-    var r = getMount();
-    if (r) r.render(null); else if (mountEl) ReactDOM.unmountComponentAtNode(mountEl);
-    var fab = document.getElementById('nexus-public-chat-fab');
-    if (fab) fab.innerHTML = '💬';
-  }
-
-  function openChat() {
-    isOpen = true;
-    var r = getMount();
-    var el = E(PublicChat, { onClose: closeChat });
-    if (r) r.render(el); else ReactDOM.render(el, mountEl);
-    var fab = document.getElementById('nexus-public-chat-fab');
-    if (fab) fab.innerHTML = '×';
-  }
-
+  function closeChat() { isOpen = false; var r = getMount(); if (r) r.render(null); else if (mountEl) ReactDOM.unmountComponentAtNode(mountEl); var fab = document.getElementById('nexus-public-chat-fab'); if (fab) fab.innerHTML = '💬'; }
+  function openChat() { isOpen = true; var r = getMount(); var el = E(PublicChat, { onClose: closeChat }); if (r) r.render(el); else ReactDOM.render(el, mountEl); var fab = document.getElementById('nexus-public-chat-fab'); if (fab) fab.innerHTML = '×'; }
   function toggleChat() { isOpen ? closeChat() : openChat(); }
 
   function mountFab() {
     if (document.getElementById('nexus-public-chat-fab') || !document.body) return;
     var b = document.createElement('button');
-    b.id = 'nexus-public-chat-fab';
-    b.innerHTML = '💬';
-    b.setAttribute('aria-label', 'Ouvrir le salon de discussion');
+    b.id = 'nexus-public-chat-fab'; b.innerHTML = '💬';
+    b.setAttribute('aria-label', 'Ouvrir le chat communautaire');
     b.style.cssText = 'position:fixed;bottom:1rem;left:1.25rem;z-index:9980;width:52px;height:52px;border-radius:50%;background:#00853E;color:#fff;border:none;cursor:pointer;font-size:22px;box-shadow:0 4px 16px rgba(0,133,62,.4);font-family:inherit;display:flex;align-items:center;justify-content:center;transition:transform .15s';
     b.onmouseenter = function () { b.style.transform = 'scale(1.08)'; };
     b.onmouseleave = function () { b.style.transform = 'scale(1)'; };
@@ -40787,20 +40839,13 @@ window.addEventListener('unhandledrejection', function(event) {
     document.body.appendChild(b);
   }
 
-  // Récupère l'utilisateur courant (pour pré-remplir le pseudo si connecté)
-  window.addEventListener('nexus:set-user', function (e) { currentUser = e.detail || null; });
-  // Ouverture programmatique éventuelle (depuis un lien/menu)
+  window.addEventListener('nexus:set-user', function (ev) { currentUser = ev.detail || null; });
   window.addEventListener('nexus:open-public-chat', openChat);
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mountFab);
-  } else {
-    mountFab();
-  }
-
-  console.info('[NEXUS] Chat public communautaire chargé ✅');
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountFab); else mountFab();
+  console.info('[NEXUS] Chat communautaire v2 chargé ✅');
 })();
 </script>
+
 
 <!-- ============================================================
      NEXUS MARKET — LE LOUMA VIRTUEL DU VENDREDI
