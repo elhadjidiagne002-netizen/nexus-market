@@ -23,7 +23,8 @@ const CORS = {
 const jsonResp = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS } });
 
-export async function onRequest({ request, env }) {
+export async function onRequest(context) {
+  const { request, env } = context;
   try {
     const origin = env.SITE_URL || new URL(request.url).origin;
     const method = request.method.toUpperCase();
@@ -57,8 +58,13 @@ export async function onRequest({ request, env }) {
 
     if (!urls.length) return jsonResp({ submitted: 0, ok: false, skipped: 'no-urls' }, 400);
 
-    const result = await submitToIndexNow(env, urls, origin);
-    return jsonResp({ submitted: urls.length, ...result }, result.ok ? 200 : 502);
+    // Fire-and-forget : la sous-requête externe (api.indexnow.org) ne doit pas
+    // bloquer ni faire échouer la réponse (un échec plateforme du fetch sortant
+    // surfaçait en 502 brute non rattrapable). On répond 202 immédiatement et la
+    // soumission part en tâche de fond, best-effort.
+    const task = submitToIndexNow(env, urls, origin).catch(() => {});
+    if (typeof context.waitUntil === 'function') context.waitUntil(task);
+    return jsonResp({ submitted: urls.length, ok: true, queued: true }, 202);
   } catch (e) {
     return jsonResp({ ok: false, error: String((e && e.message) || e) }, 500);
   }
