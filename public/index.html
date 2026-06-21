@@ -31424,15 +31424,17 @@ const HomeStoriesRow = ({ user }) => {
     (async () => {
       try {
         if (!DataService._sb) return;
-        const nowIso = new Date().toISOString();
-        const { data } = await DataService._sb.from('stories')
+        // Stories actives. L'expiration (minuterie) est appliquée par la RLS
+        // (cf. sql/2026_06_21_stories_expiry.sql) — pas de filtre date côté client
+        // pour éviter tout échec du filtre PostgREST sur timestamp.
+        const { data, error } = await DataService._sb.from('stories')
           .select('id,title,vendor_name,product_id,video_url,mux_playback_id,price,created_at,expires_at')
           .eq('status', 'active')
-          .or('expires_at.is.null,expires_at.gt.' + nowIso)
           .order('created_at', { ascending: false })
           .limit(15);
+        if (error) { try { console.warn('[HomeStoriesRow]', error.message || error); } catch (_) {} }
         if (!cancelled) setStories(data || []);
-      } catch (_) {}
+      } catch (e) { try { console.warn('[HomeStoriesRow]', e && e.message); } catch (_) {} }
     })();
     return () => { cancelled = true; };
   }, []);
