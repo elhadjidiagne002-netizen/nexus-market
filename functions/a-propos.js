@@ -37,6 +37,18 @@ export async function onRequest({ request, env }) {
 <h2>Notre engagement</h2>
 <p>Nous croyons à un commerce numérique qui profite à l’économie locale : des revenus pour les vendeurs, des prix justes pour les acheteurs, des opportunités pour les livreurs et les artisans. Chaque fonctionnalité est pensée pour servir cet objectif, avec transparence et sans frais cachés.</p>
 
+<h2>Qui édite ce site ?</h2>
+<p>NEXUS Market est édité et exploité depuis <strong>Dakar, Sénégal</strong>. La plateforme est portée par une équipe de passionnés du numérique et du commerce local, convaincus que la technologie peut servir l’économie sénégalaise.</p>
+<ul>
+  <li><strong>Éditeur</strong> : NEXUS Market</li>
+  <li><strong>Siège</strong> : Dakar, Sénégal</li>
+  <li><strong>Immatriculation</strong> : RCCM et NINEA en cours d’obtention auprès des autorités compétentes</li>
+  <li><strong>Responsable de la publication</strong> : la direction de NEXUS Market</li>
+  <li><strong>Contact</strong> : <a href="mailto:elhadjidiagne002@gmail.com">elhadjidiagne002@gmail.com</a> — +221 77 625 48 95</li>
+  <li><strong>Hébergement</strong> : Cloudflare, Inc.</li>
+</ul>
+<p>Pour le détail de vos droits et du traitement de vos données, consultez notre <a href="${origin}/confidentialite">Politique de confidentialité</a> et nos <a href="${origin}/cgu">Conditions Générales d’Utilisation</a>.</p>
+
 <div class="box">
 <p><strong>NEXUS Market</strong> — Marketplace sécurisée au Sénégal. Une question, une suggestion, un partenariat ? Écrivez-nous sur la <a href="${origin}/contact">page Contact</a>.</p>
 </div>

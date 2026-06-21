@@ -73,6 +73,13 @@ export function renderContentPage(o) {
   const footHtml = FOOTER.map(([h, l]) =>
     `<a href="${esc(origin + h)}">${esc(l)}</a>`).join('');
 
+  // Signature + date VISIBLE (E-E-A-T : fraîcheur + attribution), injectée après le <h1>.
+  const moisFr = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  let dateFr = date;
+  try { const d = new Date(date); dateFr = d.getDate() + ' ' + moisFr[d.getMonth()] + ' ' + d.getFullYear(); } catch (e) {}
+  const byline = `<div class="byline">${o.isArticle ? '✍️ Par l’équipe éditoriale NEXUS Market · ' : ''}Mis à jour le <time datetime="${esc(date)}">${esc(dateFr)}</time></div>`;
+  const bodyWithByline = String(o.bodyHtml).replace('</h1>', '</h1>\n' + byline);
+
   return `<!DOCTYPE html><html lang="fr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(o.title)} · NEXUS Market Sénégal</title>
@@ -100,6 +107,8 @@ header.nx nav{display:flex;gap:1rem;flex-wrap:wrap;margin-left:auto}
 header.nx nav a{color:#fff;opacity:.95;font-size:.9rem;font-weight:600}
 main{max-width:760px;margin:0 auto;padding:1.2rem 1rem 2.5rem}
 .crumb{font-size:.8rem;color:var(--mut);margin:.6rem 0 1rem}
+.byline{color:var(--mut);font-size:.85rem;margin:-.3rem 0 1.3rem;padding-bottom:.8rem;border-bottom:1px solid var(--bd)}
+.byline time{font-weight:600}
 h1{font-size:clamp(1.5rem,4.5vw,2.1rem);color:var(--g);margin:.2rem 0 1rem;line-height:1.25}
 h2{font-size:1.25rem;margin:1.8rem 0 .6rem}
 h3{font-size:1.05rem;margin:1.2rem 0 .4rem}
@@ -122,7 +131,7 @@ footer.nx .cr{color:var(--mut);font-size:.8rem}
 <main>
 <nav class="crumb"><a href="${esc(origin)}/">Accueil</a> › <span>${esc(o.crumbName || o.title)}</span></nav>
 <article>
-${o.bodyHtml}
+${bodyWithByline}
 </article>
 </main>
 <footer class="nx"><div class="in">
