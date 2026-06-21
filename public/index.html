@@ -3853,6 +3853,20 @@ const NEXUS_TRANSLATIONS = {
       }
     }
   } catch(_) {}
+  // [MONÉTISATION] Chargement INCONDITIONNEL des tarifs réglés par l'admin
+  // (app_config.nexus_monetization_cfg, lecture publique via RLS dédiée). Alimente
+  // window.NEXUS_MONET → consommé par nxMonet() dans les plans (boosts/Pro/flash).
+  try {
+    NexusAdminConfig.get('nexus_monetization_cfg').then(function (m) {
+      if (!m || typeof m !== 'object') return;
+      window.NEXUS_MONET = Object.assign(window.NEXUS_MONET || {}, m);
+      if (typeof NEXUS_CONFIG !== 'undefined') {
+        if (m.wa_tracking_price   !== undefined) NEXUS_CONFIG.wa_tracking_price   = m.wa_tracking_price;
+        if (m.wa_tracking_enabled !== undefined) NEXUS_CONFIG.wa_tracking_enabled = m.wa_tracking_enabled;
+        if (m.commission_default  !== undefined) NEXUS_CONFIG.commission_default  = m.commission_default;
+      }
+    }).catch(function () {});
+  } catch (_) {}
   NEXUS_CONFIG.apiUrl = "";  // verrouille le mode tout-Supabase
   {
     // Mode tout-Supabase : aucun backend de donnees a verifier.
@@ -8194,11 +8208,18 @@ const useRecentlyViewed = () => {
   return { addViewed, getViewed };
 };
 // ── Tarifs ventes flash sponsorisées ─────────────────────────────────────
+// [MONÉTISATION] Tarif réglé par l'admin (window.NEXUS_MONET) avec repli sur la
+// valeur par défaut. Permet aux prix du tableau de bord de s'appliquer en live.
+function nxMonet(key, fallback) {
+  try { var v = Number(window.NEXUS_MONET && window.NEXUS_MONET[key]); return isFinite(v) && v > 0 ? v : fallback; }
+  catch (_) { return fallback; }
+}
+
 const FLASH_SPONSORED_PLANS = [
-  { id: 'flash_12h',  label: '⚡ Express 12h',   price: 1500,  hours: 12,  desc: 'Bandeau rouge + position 1 pendant 12h' },
-  { id: 'flash_24h',  label: '🔥 Flash 24h',     price: 3000,  hours: 24,  desc: 'Position 1 toute la journée — le plus populaire' },
-  { id: 'flash_48h',  label: '🚀 Mega 48h',      price: 5000,  hours: 48,  desc: 'Position 1 + notification push aux abonnés' },
-  { id: 'flash_week', label: '🏆 Semaine 7j',    price: 15000, hours: 168, desc: 'Bandeau homepage + catalogue toute la semaine' },
+  { id: 'flash_12h',  label: '⚡ Express 12h',   get price() { return nxMonet('flash_12h_price', 1500); },  hours: 12,  desc: 'Bandeau rouge + position 1 pendant 12h' },
+  { id: 'flash_24h',  label: '🔥 Flash 24h',     get price() { return nxMonet('flash_24h_price', 3000); },  hours: 24,  desc: 'Position 1 toute la journée — le plus populaire' },
+  { id: 'flash_48h',  label: '🚀 Mega 48h',      get price() { return nxMonet('flash_48h_price', 5000); },  hours: 48,  desc: 'Position 1 + notification push aux abonnés' },
+  { id: 'flash_week', label: '🏆 Semaine 7j',    get price() { return nxMonet('flash_7j_price', 15000); }, hours: 168, desc: 'Bandeau homepage + catalogue toute la semaine' },
 ];
 
 const FlashSaleBanner = ({ products, onAddToCart, onLoginClick }) => {
@@ -21258,6 +21279,22 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
     setEditRate(null);
   };
 
+  // Valider un boost payé en Wave/Orange Money : active le boost + marque le produit.
+  // (product_boosts n'a pas de colonne `status` → traitement dédié, pas validatePayment.)
+  const validateBoost = async (b) => {
+    if (!sb || !b) return;
+    const { error } = await sb.from('product_boosts')
+      .update({ active: true, payment_status: 'paid' }).eq('id', b.id);
+    if (error) { addToast('❌ ' + error.message, 'error'); console.error('[validateBoost]', error); return; }
+    if (b.product_id) {
+      await sb.from('products')
+        .update({ is_boosted: true, boost_ends_at: b.ends_at })
+        .eq('id', b.product_id).catch(() => {});
+    }
+    setData(d => ({ ...d, boostPaid: (d.boostPaid || []).map(x => x.id === b.id ? { ...x, active: true, payment_status: 'paid' } : x) }));
+    addToast('✅ Boost activé', 'success');
+  };
+
   // Valider un paiement (pub/API/flash/boost)
   const validatePayment = async (table, id, extraFields = {}) => {
     if (!sb) return;
@@ -21450,6 +21487,13 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
               style: { background: 'none', border: 'none', cursor: 'pointer', color: '#0277BD', textDecoration: 'underline', padding: 0, fontSize: '0.84rem' }
             }, g.list.length + ' ' + g.label)
           )
+        ),
+        pendingBoost.length > 0 && E('div', { style: { marginTop: '0.6rem', borderTop: '1px dashed #FFB300', paddingTop: '0.5rem' } },
+          E('div', { style: { fontWeight: 700, fontSize: '0.82rem', marginBottom: '0.35rem' } }, '🚀 Boosts à valider (paiement Wave/OM reçu ?)'),
+          pendingBoost.map(b => E('div', { key: b.id, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.8rem', padding: '0.3rem 0', flexWrap: 'wrap' } },
+            E('span', null, (b.boost_type || 'boost') + ' · ' + (b.price_fcfa || 0).toLocaleString('fr-FR') + ' FCFA · ' + (b.payment_method || '—') + ' · BOOST-' + String(b.id).slice(0, 8).toUpperCase()),
+            E('button', { className: 'btn btn-primary btn-sm', onClick: () => validateBoost(b) }, '✓ Valider le boost')
+          ))
         )
       );
     })()
@@ -28076,7 +28120,7 @@ const BOOST_PLANS = [
     type:     'category_top',
     label:    'Tête de gondole',
     emoji:    '🏆',
-    price:    2000,
+    get price() { return nxMonet('boost_cat_price', 2000); },
     days:     7,
     desc:     'Positions 1–3 dans votre catégorie pendant 7 jours',
     features: ['Positions 1-2-3 garanties dans la catégorie', 'Badge "Sponsorisé" visible', '10× plus de vues en moyenne', 'Ciblage acheteurs intéressés par la catégorie'],
@@ -28088,7 +28132,7 @@ const BOOST_PLANS = [
     type:     'top_3j',
     label:    'TOP Express',
     emoji:    '🥉',
-    price:    500,
+    get price() { return nxMonet('boost_top3j_price', 500); },
     days:     3,
     desc:     'Votre annonce en tête de liste pendant 3 jours',
     features: ['Position TOP garantie 3 jours', '2× plus de vues en moyenne', 'Badge "Annonce en vedette"'],
@@ -28098,7 +28142,7 @@ const BOOST_PLANS = [
     type:     'boost_semaine',
     label:    'Boost Semaine',
     emoji:    '🥈',
-    price:    1200,
+    get price() { return nxMonet('boost_semaine_price', 1200); },
     days:     7,
     desc:     'Remontée automatique 2× par jour pendant 7 jours',
     features: ['Remonte 2×/jour dans les résultats', '4× plus de vues en moyenne', 'Badge "Annonce vedette"', 'Apparaît dans "Similaires"'],
@@ -28109,7 +28153,7 @@ const BOOST_PLANS = [
     type:     'pro_mensuel',
     label:    'Pro Mensuel',
     emoji:    '🥇',
-    price:    8000,
+    get price() { return nxMonet('boost_mensuel_price', 8000); },
     days:     30,
     desc:     'Visibilité maximale pendant 30 jours',
     features: ['Remonte 4×/jour', '8× plus de vues', 'Badge "Pro NEXUS"', 'Support prioritaire', 'Statistiques avancées'],
@@ -28119,8 +28163,8 @@ const BOOST_PLANS = [
 
 // ── Boutique Pro — abonnement vendeur (mensuel/annuel) via PayTech ───────────
 const PRO_PLANS = [
-  { plan: 'pro_mensuel', label: 'Mensuel', price: 8000,  days: 30,  sub: 'Renouvelable chaque mois' },
-  { plan: 'pro_annuel',  label: 'Annuel',  price: 80000, days: 365, sub: '2 mois offerts', best: true },
+  { plan: 'pro_mensuel', label: 'Mensuel', get price() { return nxMonet('pro_mensuel_price', 8000); },  days: 30,  sub: 'Renouvelable chaque mois' },
+  { plan: 'pro_annuel',  label: 'Annuel',  get price() { return nxMonet('pro_annuel_price', 80000); }, days: 365, sub: '2 mois offerts', best: true },
 ];
 const BoutiqueProCard = ({ currentUser: currentUser2, addToast }) => {
   const E = React.createElement;
@@ -28208,18 +28252,17 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
         boost_type:      plan.type, price_fcfa: plan.price,
         target_category: plan.needsCat ? (targetCat || product.category || null) : null,
         started_at: now.toISOString(), ends_at: endsAt.toISOString(),
-        active: payMethod !== 'paytech', payment_method: payMethod, payment_status: 'pending',
+        // [ANTI-FRAUDE] Le boost n'est JAMAIS actif avant paiement confirmé.
+        // PayTech : activé par l'IPN (sale_complete). Wave/OM : activé par l'admin
+        // après vérification du paiement reçu (validateBoost). Plus d'activation
+        // immédiate sans paiement.
+        active: false, payment_method: payMethod, payment_status: 'pending',
       };
 
-      // 1. Sauvegarder en base (pending)
+      // 1. Sauvegarder en base (pending — aucun is_boosted tant que non payé)
       if (isSupabaseConfigured() && DataService._sb) {
         const { error } = await DataService._sb.from('product_boosts').insert(boostRow);
         if (error) console.warn('[Boost] insert:', error.message);
-        if (payMethod !== 'paytech') {
-          await DataService._sb.from('products')
-            .update({ is_boosted: true, boost_ends_at: endsAt.toISOString() })
-            .eq('id', product.id);
-        }
       }
 
       const origin = window.location.origin;
@@ -28262,7 +28305,7 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
         const ref  = 'BOOST-' + boostId.slice(0,8).toUpperCase();
         const note = encodeURIComponent('Boost "' + product.name + '" (' + plan.label + ') \u2014 ' + ref);
         window.open('https://pay.wave.com/m/' + wNum + '?amount=' + plan.price + '&note=' + note, '_blank');
-        addToast('\ud83d\udcf1 Wave ouvert \u2014 ' + plan.price.toLocaleString('fr-FR') + ' FCFA \u00b7 R\xe9f\xa0: ' + ref, 'info', 10000);
+        addToast('\ud83d\udcf1 Wave ouvert \u2014 ' + plan.price.toLocaleString('fr-FR') + ' FCFA \u00b7 R\xe9f\xa0: ' + ref + '. Votre boost sera activ\xe9 d\xe8s validation du paiement par l\u2019\xe9quipe NEXUS.', 'info', 12000);
       }
 
       // 2c. Orange Money
@@ -28270,7 +28313,7 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
         const omNum = (NEXUS_CONFIG.payments && NEXUS_CONFIG.payments.orangeMoneyNumber) || '';
         if (!omNum || omNum === '77XXXXXXX') { addToast('\u26a0\ufe0f Num\xe9ro Orange Money non configur\xe9.', 'warning', 8000); setPaying(false); return; }
         const ref = 'BOOST-' + boostId.slice(0,8).toUpperCase();
-        addToast('\ud83d\udfe0 Envoyez ' + plan.price.toLocaleString('fr-FR') + ' FCFA au +221' + omNum + ' (OM NEXUS) \u2014 R\xe9f\xa0: ' + ref, 'info', 14000);
+        addToast('\ud83d\udfe0 Envoyez ' + plan.price.toLocaleString('fr-FR') + ' FCFA au +221' + omNum + ' (OM NEXUS) \u2014 R\xe9f\xa0: ' + ref + '. Votre boost sera activ\xe9 d\xe8s validation du paiement par l\u2019\xe9quipe NEXUS.', 'info', 16000);
       }
 
       // 3. Confirmation
@@ -30709,9 +30752,9 @@ const AxModal = ({ onClose, onPublished }) => {
 
   // ── Boost de l'annonce publiée ────────────────────────────────────────
   const BOOST_PLANS = [
-    { id:'top_3j',       label:'TOP Express',    price:500,   duration:'3 jours',  icon:'⚡', color:'#3b82f6', desc:'Annonce en tête de sa catégorie 3 jours' },
-    { id:'boost_semaine',label:'Boost Semaine',  price:1200,  duration:'7 jours',  icon:'🚀', color:'#f59e0b', desc:'Rafraîchissement auto + visibilité x3', recommended:true },
-    { id:'boost_mensuel',label:'Boost Mensuel',  price:3500,  duration:'30 jours', icon:'⭐', color:'#8b5cf6', desc:'Position haute garantie tout le mois' },
+    { id:'top_3j',       label:'TOP Express',    get price(){ return nxMonet('boost_top3j_price', 500); },   duration:'3 jours',  icon:'⚡', color:'#3b82f6', desc:'Annonce en tête de sa catégorie 3 jours' },
+    { id:'boost_semaine',label:'Boost Semaine',  get price(){ return nxMonet('boost_semaine_price', 1200); },  duration:'7 jours',  icon:'🚀', color:'#f59e0b', desc:'Rafraîchissement auto + visibilité x3', recommended:true },
+    { id:'boost_mensuel',label:'Boost Mensuel',  get price(){ return nxMonet('boost_mensuel_price', 8000); },  duration:'30 jours', icon:'⭐', color:'#8b5cf6', desc:'Position haute garantie tout le mois' },
   ];
 
   const activateBoost = async (plan) => {
