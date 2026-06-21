@@ -6726,7 +6726,11 @@ async signOut() {
   async addLoyaltyPoints(userId, deltaOrAmount, { reason = "order", orderId, note, isEuros = false } = {}) {
     // [LOYALTY v3] La route /loyalty (Netlify legacy) n'existe pas sur Cloudflare.
     // On va directement chercher Supabase RPC, puis fallback table directe.
-    const delta = isEuros ? Math.floor(deltaOrAmount * 10) : deltaOrAmount;
+    // [FIDÉLITÉ] Taux piloté par l'admin (Monétisation → loyalty_earn_rate =
+    // points par 100 FCFA dépensés). deltaOrAmount en € converti en FCFA.
+    const delta = isEuros
+      ? Math.max(1, Math.round(deltaOrAmount * 655.957 / 100 * nxMonet('loyalty_earn_rate', 5)))
+      : deltaOrAmount;
 
     // Tentative 1 : RPC atomique add_loyalty_points (si elle existe en DB)
     if (this._sb) {
@@ -24293,22 +24297,16 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           }
 
           if (!alreadyCredited) {
-            // 3. Taux cashback selon palier fidélité (Bronze 1% → Platinum 5%)
-            let cashbackRate = 0.01; // Bronze par défaut
-            if (DataService._sb) {
-              let lp = null;
-              try { const r = await DataService._sb.from("loyalty_points").select("points").eq("user_id", buyerId).maybeSingle(); lp = r.data; } catch (_) {}
-              const pts = lp?.points || 0;
-              if      (pts >= 20000) cashbackRate = 0.05; // Platinum
-              else if (pts >=  5000) cashbackRate = 0.03; // Gold
-              else if (pts >=  1000) cashbackRate = 0.02; // Silver
-            }
-            const cashbackXof = Math.round(totalXof * cashbackRate);
+            // 3. Taux cashback piloté par l'admin (Monétisation → cashback_rate)
+            //    + montant minimum de commande (cashback_min_order).
+            const cbRate = nxMonet('cashback_rate', 2) / 100;
+            const cbMin  = nxMonet('cashback_min_order', 5000);
+            const cashbackXof = totalXof >= cbMin ? Math.round(totalXof * cbRate) : 0;
 
-            // 4. Créditer le cashback (non-bloquant)
-            await DataService.addCashback(
+            // 4. Créditer le cashback (non-bloquant) — seulement si éligible
+            if (cashbackXof > 0) await DataService.addCashback(
               buyerId, orderId, cashbackXof, "earn",
-              `Cashback ${(cashbackRate * 100).toFixed(0)}% — commande livrée`
+              `Cashback ${(cbRate * 100).toFixed(0)}% — commande livrée`
             ).catch(e => console.warn("[addCashback admin]", e));
 
             // 5. Créditer les points de fidélité (non-bloquant)
@@ -29756,22 +29754,16 @@ const VendorDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onT
           }
 
           if (!alreadyCredited) {
-            // 3. Taux selon palier fidélité (Bronze 1% → Platinum 5%)
-            let cashbackRate = 0.01;
-            if (DataService._sb) {
-              let lp = null;
-              try { const r = await DataService._sb.from("loyalty_points").select("points").eq("user_id", buyerId).maybeSingle(); lp = r.data; } catch (_) {}
-              const pts = lp?.points || 0;
-              if      (pts >= 20000) cashbackRate = 0.05;
-              else if (pts >=  5000) cashbackRate = 0.03;
-              else if (pts >=  1000) cashbackRate = 0.02;
-            }
-            const cashbackXof = Math.round(totalXof * cashbackRate);
+            // 3. Taux cashback piloté par l'admin (Monétisation → cashback_rate)
+            //    + montant minimum de commande (cashback_min_order).
+            const cbRate = nxMonet('cashback_rate', 2) / 100;
+            const cbMin  = nxMonet('cashback_min_order', 5000);
+            const cashbackXof = totalXof >= cbMin ? Math.round(totalXof * cbRate) : 0;
 
-            // 4. Cashback
-            await DataService.addCashback(
+            // 4. Cashback — seulement si éligible
+            if (cashbackXof > 0) await DataService.addCashback(
               buyerId, orderId, cashbackXof, "earn",
-              `Cashback ${(cashbackRate * 100).toFixed(0)}% — commande livrée`
+              `Cashback ${(cbRate * 100).toFixed(0)}% — commande livrée`
             ).catch(e => console.warn("[addCashback vendor]", e));
 
             // 5. Points de fidélité
