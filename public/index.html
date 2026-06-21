@@ -2010,17 +2010,20 @@
         .product-row-card {
             flex-shrink: 0; width: 170px; background: white;
             border-radius: 12px; overflow: hidden; cursor: pointer;
-            border: 1px solid var(--border); transition: all 0.15s;
+            border: 2px solid var(--border); transition: transform 0.15s, box-shadow 0.15s;
+            display: flex; flex-direction: column;
         }
-        .product-row-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.1); border-color: var(--primary); }
+        .product-row-card.in-grid { width: 100%; }
+        .product-row-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.12); }
         .product-row-img { width: 100%; height: 140px; object-fit: cover; background: #f5f5f5; display: flex; align-items: center; justify-content: center; }
-        .product-row-body { padding: 0.5rem; }
+        .product-row-body { padding: 0.5rem; flex: 1; display: flex; flex-direction: column; }
         .product-row-name { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.2rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
         .product-row-rating { display: flex; align-items: center; gap: 0.25rem; font-size: 0.68rem; color: var(--text-secondary); margin-bottom: 0.2rem; }
         .product-row-stars { color: #FDEF42; font-size: 0.68rem; }
         .product-row-price { font-size: 1.05rem; font-weight: 800; color: var(--primary); }
         .product-row-vendor { font-size: 0.72rem; color: var(--text-secondary); margin-bottom: 0.25rem; }
-        .product-row-add { width: 100%; margin-top: 0.5rem; background: var(--accent); color: #111; border: none; border-radius: 6px; padding: 0.4rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; transition: all 0.18s; }
+        .product-row-add { width: 100%; margin-top: auto; background: var(--accent); color: #111; border: none; border-radius: 6px; padding: 0.45rem; font-size: 0.8rem; font-weight: 700; cursor: pointer; transition: all 0.18s; }
+        .product-row-price { margin-top: 0.25rem; }
         .product-row-add:hover { background: #e8d100; }
 
         /* All products grid section */
@@ -30427,30 +30430,65 @@ React.createElement("div", { className: "form-group" },
 };
 // [FIX #310] RowCard extrait au niveau module — onSelect et onAddToCart passés en props
 // [UX #3] WishlistHeart ajouté sur les cartes horizontales
-const RowCard = ({ p, onSelect, onAddToCart, addToast, addedIds }) => React.createElement('div', {
-  className: 'product-row-card', onClick: () => onSelect(p)
-},
-  React.createElement('div', { style: { position: 'relative' } },
-    React.createElement('div', { className: 'product-row-img' },
-      React.createElement(ProductImg, { product: p, height: 155 })
+// ── NxCard — CARTE PRODUIT UNIQUE (carrousels + grille). Format compact :
+// image + nom + vendeur + note + prix + 1 bouton. Le STATUT du produit est
+// signale par la COULEUR DU CADRE (promo, boost, sponsorise, express, nouveau).
+const NX_STATUS = {
+  express:   { color: '#3b82f6', dashed: true,  label: 'Express'    },
+  sponsored: { color: '#00853E', dashed: false, label: 'Sponsorise' },
+  boosted:   { color: '#f59e0b', dashed: false, label: 'Booste'     },
+  flash:     { color: '#e74c3c', dashed: false, label: 'Promo'      },
+  nouveau:   { color: '#16a34a', dashed: false, label: 'Nouveau'    },
+  normal:    { color: 'var(--border)', dashed: false, label: '' },
+};
+const nxStatusOf = (p) => {
+  if (p._isExpress) return 'express';
+  if (p._isSponsored) return 'sponsored';
+  if (p.is_boosted || p._isBoosted) return 'boosted';
+  if (p.flashDiscount) return 'flash';
+  if (p.createdAt && (Date.now() - new Date(p.createdAt).getTime()) < 14 * 86400000) return 'nouveau';
+  return 'normal';
+};
+const NxCard = ({ p, inGrid, status, onSelect, onAddToCart, addToast, addedIds }) => {
+  const E = React.createElement;
+  const st = NX_STATUS[status || nxStatusOf(p)] || NX_STATUS.normal;
+  const isExpress = !!p._isExpress;
+  const added = addedIds && addedIds.has(p.id);
+  const badge = p.flashDiscount ? ('-' + p.flashDiscount + '%') : st.label;
+  return E('div', {
+    className: 'product-row-card nx-card' + (inGrid ? ' in-grid' : ''),
+    style: { border: '2px ' + (st.dashed ? 'dashed' : 'solid') + ' ' + st.color },
+    onClick: () => onSelect && onSelect(p),
+    role: 'listitem', tabIndex: 0,
+    onKeyDown: (e) => { if (e.key === 'Enter' && onSelect) onSelect(p); },
+    'data-share-url': (typeof window !== 'undefined' ? window.location.origin : '') + (isExpress ? '/annonce/' : '/produit/') + p.id,
+    'data-share-title': p.name || '',
+  },
+    E('div', { style: { position: 'relative' } },
+      E('div', { className: 'product-row-img' }, E(ProductImg, { product: p, height: 155 })),
+      badge && E('span', { style: { position: 'absolute', top: 6, left: 6, background: st.color, color: '#fff', fontSize: '.6rem', fontWeight: 800, padding: '2px 6px', borderRadius: 5, letterSpacing: '.02em', zIndex: 2 } }, badge),
+      (p.is_local || p.isLocal) && E('span', { title: 'Produit local', style: { position: 'absolute', bottom: 6, left: 6, background: '#fff', color: '#00853E', border: '1.5px solid #00853E', fontSize: '.58rem', fontWeight: 800, padding: '1px 5px', borderRadius: 5, zIndex: 2 } }, 'Local'),
+      (p.is_animal || p.isAnimal) && E('span', { title: 'NEXUS Elevage', style: { position: 'absolute', bottom: 6, right: 6, background: '#7c3f00', color: '#fff', fontSize: '.58rem', fontWeight: 800, padding: '1px 5px', borderRadius: 5, zIndex: 2 } }, 'Elevage'),
+      E(WishlistHeart, { product: p, currentUser: null, addToast: addToast || (() => {}) })
     ),
-    React.createElement(WishlistHeart, { product: p, currentUser: null, addToast: addToast || (() => {}) })
-  ),
-  React.createElement('div', { className: 'product-row-body' },
-    p.flashDiscount && React.createElement('span', { style: { background:'#e74c3c', color:'white', fontSize:'0.7rem', fontWeight:800, padding:'0.15rem 0.4rem', borderRadius:'4px', marginBottom:'0.3rem', display:'inline-block' } }, `-${p.flashDiscount}%`),
-    React.createElement('div', { className: 'product-row-name' }, p.name),
-    React.createElement('div', { className: 'product-row-vendor' }, '🏪 ', p.vendorName),
-    React.createElement('div', { className: 'product-row-rating' },
-      React.createElement('span', { className: 'product-row-stars' }, '★'.repeat(Math.round(p.rating || 0))),
-      React.createElement('span', null, `(${p.reviewsCount || 0})`)
-    ),
-    React.createElement('div', { className: 'product-row-price' }, formatPrice(p.price)),
-    React.createElement('button', {
-      className: `product-row-add${addedIds && addedIds.has(p.id) ? ' btn-cart-added' : ''}`,
-      onClick: (e) => { e.stopPropagation(); onAddToCart(p); }
-    }, addedIds && addedIds.has(p.id) ? '✓ Ajouté' : '🛒 Ajouter')
-  )
-);
+    E('div', { className: 'product-row-body' },
+      E('div', { className: 'product-row-name' }, p.name),
+      E('div', { className: 'product-row-vendor' }, '🏪 ', p.vendorName || ''),
+      !isExpress && E('div', { className: 'product-row-rating' },
+        E('span', { className: 'product-row-stars' }, '★'.repeat(Math.max(0, Math.min(5, Math.round(p.rating || 0))))),
+        E('span', null, '(' + (p.reviewsCount || 0) + ')')
+      ),
+      E('div', { className: 'product-row-price' }, isExpress ? ((p._priceFcfa || 0).toLocaleString('fr-FR') + ' FCFA') : formatPrice(p.price)),
+      isExpress
+        ? E('a', { href: 'https://wa.me/221' + String(p._phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent('Bonjour, je suis interesse par votre annonce NEXUS : ' + (p.name || '')), target: '_blank', rel: 'noopener noreferrer', className: 'product-row-add', style: { display: 'block', textAlign: 'center', textDecoration: 'none', background: '#25D366', color: '#fff' }, onClick: (e) => e.stopPropagation() }, '💬 Contacter')
+        : E('button', { className: 'product-row-add' + (added ? ' btn-cart-added' : ''), onClick: (e) => { e.stopPropagation(); onAddToCart && onAddToCart(p); } }, added ? '✓ Ajoute' : '🛒 Panier')
+    )
+  );
+};
+
+// RowCard = NxCard en mode carrousel (largeur fixe). Conserve l'API existante.
+const RowCard = ({ p, onSelect, onAddToCart, addToast, addedIds }) =>
+  React.createElement(NxCard, { p: p, inGrid: false, onSelect: onSelect, onAddToCart: onAddToCart, addToast: addToast, addedIds: addedIds });
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -32032,25 +32070,16 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
         React.createElement('div', { className: 'flash-scroll' },
           flashProducts.map((p, i) => {
             const disc = [10,15,20,25,30,35,40][i % 7];
-            const oldP = Math.round(p.price * (100 / (100 - disc)));
-            const sold = Math.floor(40 + Math.random() * 50);
-            return React.createElement('div', { key: p.id, className: 'flash-card', onClick: () => setSelectedProduct(p) },
-              React.createElement('div', { className: 'flash-card-img' },
-                React.createElement(ProductImg, { product: p, height: 140 })
-              ),
-              React.createElement('span', { className: 'flash-discount-badge' }, `-${disc}%`),
-              React.createElement('div', { className: 'flash-card-body' },
-                React.createElement('div', { className: 'flash-card-name' }, p.name),
-                React.createElement('div', { className: 'flash-card-prices' },
-                  React.createElement('span', { className: 'flash-price-new' }, formatPrice(p.price)),
-                  React.createElement('span', { className: 'flash-price-old' }, formatPrice(oldP))
-                ),
-                React.createElement('div', { className: 'flash-progress' },
-                  React.createElement('div', { className: 'flash-progress-bar', style: { width: `${sold}%` } })
-                ),
-                React.createElement('div', { style: { fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.3rem' } }, `${sold}% vendus`)
-              )
-            );
+            return React.createElement(NxCard, {
+              key: p.id,
+              p: Object.assign({}, p, { flashDiscount: p.flashDiscount || disc }),
+              inGrid: false,
+              status: 'flash',
+              onSelect: function (pp) { setSelectedProduct(pp); addViewedPub(pp); },
+              onAddToCart: function (pp) { addToCart(pp); },
+              addToast: addToast,
+              addedIds: addedToCartIds,
+            });
           })
         )
       )
@@ -32265,115 +32294,17 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                 currentItems.flatMap((product, idx) => {
                   const isExpress = !!product._isExpress;
                   const isBoosted = product.is_boosted || catalogBoostsPub.includes(product.id);
-                  const card = React.createElement('article', {
+                  const _nxStatus = isExpress ? 'express' : (product._isSponsored ? 'sponsored' : (isBoosted ? 'boosted' : (product.flashDiscount ? 'flash' : null)));
+                  const card = React.createElement(NxCard, {
                     key: product.id,
-                    // Lien profond partageable (lu par l'enhancer de partage WhatsApp).
-                    'data-share-url': (window.location.origin) + (isExpress ? '/annonce/' : '/produit/') + product.id,
-                    'data-share-title': product.name || '',
-                    className: 'product-card' + (isExpress ? ' product-card-express' : '') + (isBoosted ? ' product-card-boosted' : '') + (product._isSponsored ? ' product-card-sponsored' : ''),
-                    role: 'listitem',
-                    style: isExpress
-                      ? { borderColor:'#3b82f6', borderStyle:'dashed' }
-                      : product._isSponsored
-                        ? { borderColor:'#00853E', boxShadow:'0 0 0 1px rgba(0,133,62,.25)' }
-                        : isBoosted
-                          ? { borderColor:'#f59e0b', boxShadow:'0 0 0 1px #f59e0b33' }
-                          : {},
-                  onClick: () => { if(!isExpress){ setSelectedProduct(product); addViewedPub(product); } },
-                  tabIndex: 0,
-                  onKeyDown: e => e.key === 'Enter' && !isExpress && (setSelectedProduct(product), addViewedPub(product))
-                },
-                  React.createElement('div', { style: { position: 'relative' } },
-                    React.createElement(ProductImg, { product }),
-                    React.createElement(WishlistHeart, { product, currentUser: null, addToast }),
-                    product._isSponsored && !product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#00853E', color: '#fff', fontSize: '0.65rem', fontWeight: 800, padding: '0.18rem 0.5rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '🏆 Sponsorisé'),
-                    isBoosted && !product._isSponsored && !product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: 'linear-gradient(135deg,#FDEE42,#f5c800)', color: '#1a1a1a', fontSize: '0.65rem', fontWeight: 800, padding: '0.18rem 0.5rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '⚡ Boosté'),
-                    product.flashDiscount && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#e74c3c', color: 'white', fontSize: '0.68rem', fontWeight: 800, padding: '0.18rem 0.42rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, `-${product.flashDiscount}%`),
-                    !product.flashDiscount && !isBoosted && product.createdAt && (Date.now() - new Date(product.createdAt).getTime()) < 14 * 86400000 && React.createElement('span', { style: { position: 'absolute', top: '8px', left: '8px', background: '#16a34a', color: 'white', fontSize: '0.68rem', fontWeight: 800, padding: '0.18rem 0.42rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.04em' } }, 'NEW'),
-                    (product.is_local || product.isLocal) && React.createElement('span', { title: 'Produit local du Sénégal', style: { position: 'absolute', bottom: '8px', left: '8px', background: '#ffffff', color: '#00853E', border: '1.5px solid #00853E', fontSize: '0.62rem', fontWeight: 800, padding: '0.15rem 0.45rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em', boxShadow: '0 1px 4px rgba(0,0,0,.15)' } }, '🇸🇳 Local'),
-                    (product.is_animal || product.isAnimal) && React.createElement('span', { title: 'NEXUS Élevage', style: { position: 'absolute', bottom: '8px', right: '8px', background: '#7c3f00', color: '#fff', fontSize: '0.62rem', fontWeight: 800, padding: '0.15rem 0.45rem', borderRadius: '5px', zIndex: 2, letterSpacing: '0.02em' } }, '🐏 Élevage')
-                  ),
-                  React.createElement('div', { className: 'product-info' },
-                    React.createElement('div', { className: 'product-category' }, product.category),
-                    React.createElement('h3', { className: 'product-name' }, product.name),
-                    React.createElement('div', { className: 'product-vendor vendor-link', title: 'Voir la boutique de ' + product.vendorName, role: 'button', tabIndex: 0, onClick: (e) => { e.stopPropagation(); setShowVendorPagePub({ id: product.vendor||null, name: product.vendorName||'Boutique' }); }, onKeyDown: (e) => { if (e.key==='Enter') { e.stopPropagation(); setShowVendorPagePub({ id: product.vendor||null, name: product.vendorName||'Boutique' }); } } },
-                      React.createElement('i', { className: 'fas fa-store' }), ' ', product.vendorName,
-                      product.vendor && proVendors.has(product.vendor) && React.createElement('span', { className: 'pro-badge', title: 'Boutique Pro' }, '⭐ PRO'),
-                      product.vendor && trustedVendors.has(product.vendor) && React.createElement('span', { className: 'trust-badge', title: 'Vendeur de confiance — fiabilité vérifiée par NEXUS' }, React.createElement('i', { className: 'fas fa-shield-alt' }), ' Confiance')
-                    ),
-                    React.createElement('div', { className: 'product-rating' },
-                      React.createElement(Stars, { rating: product.rating }),
-                      React.createElement('span', null, product.rating),
-                      React.createElement('span', { className: 'text-muted' }, `(${product.reviewsCount || 0})`)
-                    ),
-                    React.createElement('div', { className: 'product-footer' },
-                      isExpress
-                        ? React.createElement('div', null,
-                            React.createElement('div', { style:{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'.3rem' } },
-                              React.createElement('span', { style:{ fontWeight:800, fontSize:'.9rem', color:'var(--primary)' } },
-                                `${(product._priceFcfa||0).toLocaleString('fr-FR')} FCFA`
-                              ),
-                              product.city && React.createElement('span', { style:{ fontSize:'.68rem', color:'var(--text-secondary)' } }, '📍 ', product.city)
-                            ),
-                            React.createElement('a', {
-                              href: `https://wa.me/221${(product._phone||'').replace(/\D/g,'')}?text=${encodeURIComponent('Bonjour, je suis intéressé par votre annonce sur NEXUS Market : '+product.name+' ('+product._priceFcfa+' FCFA)')}`,
-                              target: '_blank', rel: 'noopener noreferrer',
-                              className: 'btn btn-sm',
-                              style: { display:'flex', alignItems:'center', justifyContent:'center', gap:'.35rem', background:'#25D366', color:'white', border:'none', width:'100%', padding:'.4rem', borderRadius:8, textDecoration:'none', fontWeight:700, fontSize:'.75rem' },
-                              onClick: e => e.stopPropagation()
-                            },
-                              React.createElement('i', { className:'fab fa-whatsapp' }), ' Contacter le vendeur'
-                            )
-                          )
-                        : React.createElement('div', null,
-                            React.createElement('div', { className: 'flex-between mb-1' },
-                              React.createElement(PriceDisplay, { product, currentUser: null }),
-                              React.createElement('span', { className: `product-stock ${product.stock <= 5 ? 'low' : 'ok'}` },
-                                product.stock <= 5 ? `⚠️ ${product.stock} restants` : '✓ En stock'
-                              )
-                            ),
-                            React.createElement('div', { className: 'product-actions' },
-                              React.createElement('button', {
-                                className: `btn btn-primary btn-sm${addedToCartIds.has(product.id) ? ' btn-cart-added' : ''}`,
-                                onClick: e => { e.stopPropagation(); addToCart(product); }
-                              }, React.createElement('i', { className: `fas ${addedToCartIds.has(product.id) ? 'fa-check' : 'fa-cart-plus'}` }), addedToCartIds.has(product.id) ? ' Ajouté ✓' : ' Panier'),
-                              React.createElement('button', {
-                                className: 'btn btn-secondary btn-sm',
-                                onClick: e => { e.stopPropagation(); handleMakeOffer(product); }
-                              }, React.createElement('i', { className: 'fas fa-hand-holding-usd' }), ' Offre'),
-                              React.createElement('button', {
-                                className: `btn btn-sm ${compareList.includes(product.id) ? 'btn-success' : 'btn-outline'}`,
-                                title: compareList.includes(product.id) ? 'Retirer de la comparaison' : 'Comparer',
-                                onClick: e => { e.stopPropagation(); setCompareList(function(l){ return l.includes(product.id) ? l.filter(function(x){ return x !== product.id; }) : l.length < 3 ? [...l, product.id] : l; }); }
-                              }, React.createElement('i', { className: 'fas fa-columns' })),
-                              product.vendor && React.createElement('button', {
-                                className: 'btn btn-secondary btn-sm',
-                                title: 'Contacter le vendeur',
-                                onClick: e => { e.stopPropagation(); setComposeRecipient({ id: product.vendor, name: product.vendorName || 'Vendeur' }); setShowComposeMessage(true); }
-                              }, React.createElement('i', { className: 'fas fa-comment-dots' }))
-                            ),
-                            React.createElement('div', { className: 'product-actions-extra' },
-                              React.createElement('button', {
-                                className: 'btn btn-outline btn-sm',
-                                onClick: e => { e.stopPropagation(); shareOnWhatsApp(product); }
-                              }, React.createElement('i', { className: 'fab fa-whatsapp', style: { color: '#25D366' } }), ' Partager'),
-                              React.createElement('button', {
-                                className: 'btn btn-sm',
-                                style: { background: '#128C7E', color: 'white', border: 'none', flex: 1 },
-                                title: 'Commander via WhatsApp',
-                                onClick: e => { e.stopPropagation(); whatsappOrder(product); }
-                              }, React.createElement('i', { className: 'fab fa-whatsapp' }), ' Commander'),
-                              /* Bouton aperçu PDF si produit numérique */
-                              product.fileUrl && React.createElement('button', {
-                                className: 'btn btn-secondary btn-sm',
-                                title: 'Prévisualiser le fichier',
-                                onClick: e => { e.stopPropagation(); openDrivePdf(product.fileUrl); }
-                              }, React.createElement('i', { className: 'fab fa-google-drive', style: { color: '#4285f4' } }), ' Aperçu PDF')
-                            )
-                          )
-                        )
-                      )
-                    );
+                    p: product,
+                    inGrid: true,
+                    status: _nxStatus,
+                    onSelect: function (pp) { if (!pp._isExpress) { setSelectedProduct(pp); addViewedPub(pp); } },
+                    onAddToCart: function (pp) { addToCart(pp); },
+                    addToast: addToast,
+                    addedIds: addedToCartIds,
+                  });
                   // Injecter un bloc AdSense rectangle toutes les 8 cartes
                   // Uniquement si la page a assez de contenu (règles AdSense)
                   const items = [card];
