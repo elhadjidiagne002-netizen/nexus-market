@@ -40565,6 +40565,11 @@ window.addEventListener('unhandledrejection', function(event) {
       return p;
     });
   }
+  // Détecte un message qui n'est QU'une image (pour l'afficher en vignette).
+  function isImageUrl(t) {
+    var s = String(t || '').trim();
+    return /^https?:\/\/\S+$/.test(s) && (/\.(jpe?g|png|gif|webp|avif)(\?\S*)?$/i.test(s) || /nexus-images\//.test(s));
+  }
 
   // Style injecté (animations + scrollbar).
   (function injectStyle() {
@@ -40599,6 +40604,8 @@ window.addEventListener('unhandledrejection', function(event) {
     var n = React.useState(false); var emojiOpen = n[0], setEmojiOpen = n[1];
     var o = React.useState({}); var unread = o[0], setUnread = o[1];      // roomId -> count
     var p = React.useState(false); var atBottom = p[0], setAtBottom = p[1];
+    var q = React.useState(false); var uploading = q[0], setUploading = q[1];
+    var fileRef = React.useRef(null);
 
     var scrollRef = React.useRef(null), chanRef = React.useRef(null), roomRef = React.useRef(room);
     var lastTypeRef = React.useRef(0), lastSendRef = React.useRef(0), sendCntRef = React.useRef([]);
@@ -40773,6 +40780,41 @@ window.addEventListener('unhandledrejection', function(event) {
     }
     function onKey(ev) { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); sendMsg(); } }
 
+    function sendImage(url) {
+      var sb = getSb();
+      var rrow = { nickname: nick, text: url, user_id: (currentUser && currentUser.id) || null, room: room, avatar: avatarOf() };
+      if (reply) { rrow.reply_to = reply.id; rrow.reply_nick = reply.nickname; rrow.reply_text = (reply.text || '').slice(0, 120); }
+      setReply(null);
+      if (sb && online) {
+        sb.from('public_chat').insert(rrow).select().then(function (res) {
+          if (res && res.data && res.data[0]) { var row = res.data[0]; setMsgs(function (prev) { return prev.some(function (x) { return x.id === row.id; }) ? prev : prev.concat(row).slice(-MAX_MSGS); }); setTimeout(function () { scrollDown(true); }, 20); }
+        }, function () {});
+      } else {
+        var loc = Object.assign({ id: 'l-' + Date.now(), created_at: new Date().toISOString() }, rrow);
+        setMsgs(function (prev) { return prev.concat(loc).slice(-MAX_MSGS); }); setTimeout(function () { scrollDown(true); }, 20);
+      }
+    }
+    function onPickImage(ev) {
+      var file = ev.target && ev.target.files && ev.target.files[0]; if (ev.target) ev.target.value = '';
+      if (!file) return;
+      if (!/^image\//.test(file.type)) { toast('Choisissez une image.', '#b45309'); return; }
+      if (file.size > 5 * 1024 * 1024) { toast('Image trop lourde (max 5 Mo).', '#b45309'); return; }
+      var sb = getSb();
+      if (!sb || !online) { toast('Envoi d\'image indisponible hors-ligne.', '#b45309'); return; }
+      setUploading(true);
+      var ext = ((file.name || '').split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      var fn = 'chat/' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+      try {
+        sb.storage.from('nexus-images').upload(fn, file, { contentType: file.type || 'image/jpeg', upsert: true }).then(function (res) {
+          setUploading(false);
+          if (res && res.error) { toast('Upload échoué : ' + res.error.message, '#b45309'); return; }
+          var pub = sb.storage.from('nexus-images').getPublicUrl((res.data && res.data.path) || fn);
+          var url = pub && pub.data && pub.data.publicUrl;
+          if (url) sendImage(url); else toast('URL image introuvable.', '#b45309');
+        }, function () { setUploading(false); toast('Upload échoué.', '#b45309'); });
+      } catch (_) { setUploading(false); toast('Upload échoué.', '#b45309'); }
+    }
+
     function reportMsg(msg) {
       setMsgs(function (prev) { return prev.filter(function (x) { return x.id !== msg.id; }); });
       toast('Message signalé et masqué. Merci 🙏', '#00853E');
@@ -40828,7 +40870,9 @@ window.addEventListener('unhandledrejection', function(event) {
           E('div', { style: { maxWidth: '78%', display: 'flex', flexDirection: 'column', alignItems: mine ? 'flex-end' : 'flex-start' } },
             grouped ? null : E('div', { style: { fontSize: '.7rem', color: mine ? '#00853E' : colorFor(msg.nickname), fontWeight: 700, margin: '0 4px 2px' } }, (mine ? 'Vous' : esc(msg.nickname)) + ' · ' + fmtTime(msg.created_at)),
             msg.reply_to ? E('div', { style: { fontSize: '.72rem', color: '#6B7280', borderLeft: '3px solid #cbd5e1', padding: '1px 7px', margin: '0 0 2px', background: '#f1f5f9', borderRadius: 4, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, '↩ ' + esc(msg.reply_nick || '') + ' : ' + esc(msg.reply_text || '')) : null,
-            E('div', { style: { padding: '8px 12px', borderRadius: 13, background: del ? '#F3F4F6' : (mine ? '#00853E' : '#fff'), color: del ? '#9CA3AF' : (mine ? '#fff' : '#1F2937'), border: mine && !del ? 'none' : '1px solid #E5E7EB', fontSize: '.88rem', lineHeight: 1.45, wordBreak: 'break-word', whiteSpace: 'pre-wrap', fontStyle: del ? 'italic' : 'normal' } }, del ? 'message supprimé' : renderText(msg.text, nick)),
+            (!del && isImageUrl(msg.text))
+              ? E('a', { href: msg.text, target: '_blank', rel: 'noopener', style: { display: 'block' } }, E('img', { src: msg.text, alt: 'image partagée', loading: 'lazy', style: { maxWidth: 220, maxHeight: 260, borderRadius: 12, display: 'block', border: '1px solid #E5E7EB' } }))
+              : E('div', { style: { padding: '8px 12px', borderRadius: 13, background: del ? '#F3F4F6' : (mine ? '#00853E' : '#fff'), color: del ? '#9CA3AF' : (mine ? '#fff' : '#1F2937'), border: mine && !del ? 'none' : '1px solid #E5E7EB', fontSize: '.88rem', lineHeight: 1.45, wordBreak: 'break-word', whiteSpace: 'pre-wrap', fontStyle: del ? 'italic' : 'normal' } }, del ? 'message supprimé' : renderText(msg.text, nick)),
             del ? null : reactionRow(msg),
             del ? null : E('div', { className: 'nxc-msg-actions', style: { display: 'flex', gap: 2, marginTop: 2 } },
               QUICK.slice(0, 3).map(function (em) { return E('button', { key: em, title: 'Réagir', onClick: function () { toggleReaction(msg, em); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.8rem', padding: '0 1px', opacity: .85 } }, em); }),
@@ -40894,6 +40938,8 @@ window.addEventListener('unhandledrejection', function(event) {
         })) : null,
         // Saisie
         E('div', { style: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: '8px 10px', borderTop: '1px solid #E5E7EB', background: '#fff' } },
+          E('input', { ref: fileRef, type: 'file', accept: 'image/*', style: { display: 'none' }, onChange: onPickImage }),
+          E('button', { onClick: function () { if (fileRef.current) fileRef.current.click(); }, disabled: uploading, title: 'Envoyer une image', style: { width: 38, height: 38, flexShrink: 0, borderRadius: '50%', border: 'none', background: '#F3F4F6', cursor: uploading ? 'default' : 'pointer', fontSize: '1.05rem' } }, uploading ? '⏳' : '📎'),
           E('button', { onClick: function () { setEmojiOpen(!emojiOpen); }, title: 'Emoji', style: { width: 38, height: 38, flexShrink: 0, borderRadius: '50%', border: 'none', background: emojiOpen ? '#E5E7EB' : '#F3F4F6', cursor: 'pointer', fontSize: '1.1rem' } }, '😊'),
           E('textarea', { value: draft, rows: 1, maxLength: MAX_LEN, placeholder: 'Écrire dans #' + room + '…  (@ pour mentionner)', onChange: function (ev) { onTyping(ev.target.value); }, onKeyDown: onKey, style: { flex: 1, resize: 'none', padding: '9px 13px', borderRadius: 18, border: '1px solid #D1D5DB', fontSize: '.88rem', outline: 'none', fontFamily: 'inherit', maxHeight: 90 } }),
           E('button', { onClick: sendMsg, disabled: !draft.trim(), 'aria-label': 'Envoyer', style: { width: 40, height: 40, flexShrink: 0, borderRadius: '50%', border: 'none', background: draft.trim() ? '#00853E' : '#9CA3AF', color: '#fff', cursor: draft.trim() ? 'pointer' : 'default', fontSize: '1.05rem' } }, '➤')
