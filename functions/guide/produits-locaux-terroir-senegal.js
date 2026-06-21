@@ -14,6 +14,16 @@ export async function onRequest({ request, env }) {
 <h1>Produits locaux et du terroir : consommer sénégalais</h1>
 <p class="lead">Du « Mangue Diourbel » au mil, du bissap au miel de Casamance, le Sénégal regorge de produits du terroir. Acheter local, c’est soutenir nos producteurs, manger plus frais et faire vivre l’économie nationale. Voici comment trouver et valoriser ces produits sur NEXUS Market.</p>
 
+<div class="tldr">
+<h2>À retenir</h2>
+<ul>
+  <li>Consommer local = <strong>soutenir l’économie</strong>, plus de fraîcheur, et valoriser le savoir-faire sénégalais.</li>
+  <li>Repérez le label <strong>« Produit local 🇸🇳 »</strong> et les producteurs <strong>géolocalisés</strong> près de vous.</li>
+  <li>Achetez <strong>de saison</strong> : meilleur goût, meilleur prix ; vérifiez la fraîcheur pour les périssables.</li>
+  <li>Producteurs : <strong>référencez vos produits</strong> pour toucher des acheteurs qui veulent du local.</li>
+</ul>
+</div>
+
 <h2>1. Pourquoi privilégier le local ?</h2>
 <ul>
   <li><strong>Soutenir l’économie sénégalaise</strong> : chaque achat profite directement aux producteurs et transformateurs locaux.</li>

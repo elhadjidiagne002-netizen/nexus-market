@@ -14,6 +14,16 @@ export async function onRequest({ request, env }) {
 <h1>Vendre son téléphone d’occasion au Sénégal</h1>
 <p class="lead">Changer de téléphone ? Plutôt que de le laisser dormir dans un tiroir, revendez-le. Un smartphone d’occasion en bon état se vend vite au Sénégal. Voici comment en tirer le meilleur prix, en toute sécurité.</p>
 
+<div class="tldr">
+<h2>À retenir</h2>
+<ul>
+  <li><strong>Avant de vendre</strong> : sauvegardez, réinitialisez, et <strong>déconnectez vos comptes</strong> (iCloud/Google).</li>
+  <li>Le prix dépend du modèle, du stockage, de l’état, de la batterie et des accessoires/facture.</li>
+  <li>Photos <strong>réelles</strong> de votre appareil + état honnête = vente plus rapide.</li>
+  <li>Encaissez via le <strong>paiement sécurisé</strong> de la plateforme (évitez les faux reçus Wave/OM).</li>
+</ul>
+</div>
+
 <h2>1. Préparer le téléphone avant la vente</h2>
 <ul>
   <li><strong>Sauvegardez vos données</strong> (photos, contacts) puis faites une <strong>réinitialisation d’usine</strong>.</li>
@@ -24,6 +34,17 @@ export async function onRequest({ request, env }) {
 
 <h2>2. Fixer le bon prix</h2>
 <p>Le prix dépend de plusieurs facteurs : modèle, capacité de stockage, âge, état de l’écran et de la batterie, accessoires et facture d’origine. La bonne méthode : partez du prix du neuf, appliquez une décote réaliste, puis <strong>comparez avec les annonces similaires</strong> déjà en ligne. Un prix juste se vend en quelques jours.</p>
+<h3>Ce qui fait monter (ou baisser) le prix</h3>
+<table>
+<thead><tr><th>Facteur</th><th>Fait monter le prix ⬆️</th><th>Fait baisser le prix ⬇️</th></tr></thead>
+<tbody>
+  <tr><td>Âge du modèle</td><td>Récent (1–2 ans)</td><td>Ancien (4 ans+)</td></tr>
+  <tr><td>Stockage</td><td>128 Go et plus</td><td>32–64 Go</td></tr>
+  <tr><td>État écran</td><td>Impeccable</td><td>Rayures, impact, pixels morts</td></tr>
+  <tr><td>Batterie</td><td>Bonne santé / changée</td><td>Usée, se décharge vite</td></tr>
+  <tr><td>Accessoires & facture</td><td>Boîte + chargeur + facture</td><td>Téléphone seul</td></tr>
+</tbody>
+</table>
 
 <h2>3. Rédiger une annonce qui inspire confiance</h2>
 <ul>

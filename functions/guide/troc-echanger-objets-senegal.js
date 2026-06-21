@@ -14,6 +14,16 @@ export async function onRequest({ request, env }) {
 <h1>Le troc : échanger ses objets sans argent au Sénégal</h1>
 <p class="lead">Et si vous échangiez ce dont vous ne vous servez plus contre ce dont vous avez besoin ? Le troc revient en force, porté par l’envie de consommer malin et durable. Avec NEXUS Troc, échangez en toute simplicité, sans sortir un franc.</p>
 
+<div class="tldr">
+<h2>À retenir</h2>
+<ul>
+  <li><strong>Économique et écologique</strong> : obtenez un objet utile sans dépenser, et prolongez la vie des objets.</li>
+  <li>Visez un <strong>troc équilibré</strong> (estimez la valeur d’occasion ; ajoutez une soulte si besoin).</li>
+  <li>Remise dans un <strong>lieu public</strong> + <strong>inspection</strong> de l’objet avant de finaliser.</li>
+  <li>Objets propres, complets et bien photographiés = échange beaucoup plus rapide.</li>
+</ul>
+</div>
+
 <h2>1. Pourquoi trocquer ?</h2>
 <ul>
   <li><strong>Économique</strong> : vous obtenez un objet utile sans dépenser d’argent.</li>

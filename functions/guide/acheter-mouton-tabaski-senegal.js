@@ -14,6 +14,16 @@ export async function onRequest({ request, env }) {
 <h1>Acheter un mouton de Tabaski au Sénégal : le guide complet</h1>
 <p class="lead">La Tabaski (Aïd el-Kébir) est le moment le plus important de l’année pour des millions de familles sénégalaises. Bien choisir son mouton, au bon prix et au bon moment, demande un peu de méthode. Voici nos conseils pour un achat réussi — et comment trouver un éleveur de confiance près de chez vous.</p>
 
+<div class="tldr">
+<h2>À retenir</h2>
+<ul>
+  <li><strong>Achetez 2 à 4 semaines avant</strong> : plus de choix, prix maîtrisés (ils s’envolent les derniers jours).</li>
+  <li>Un bon mouton est <strong>vif</strong>, yeux et nez propres, bonne dentition, chair ferme.</li>
+  <li><strong>Négociez</strong> et comparez plusieurs éleveurs ; acheter en direct = meilleur prix.</li>
+  <li>Trouvez un <strong>éleveur géolocalisé</strong> de confiance sur NEXUS Élevage.</li>
+</ul>
+</div>
+
 <h2>1. Quand acheter ?</h2>
 <p>Les prix du bétail suivent une courbe très nette à l’approche de la fête : raisonnables plusieurs semaines avant, ils s’envolent dans les derniers jours quand la demande explose. Le bon compromis se situe <strong>2 à 4 semaines avant la Tabaski</strong> : vous avez encore du choix, des prix maîtrisés, et le temps de garder l’animal. Réserver auprès d’un éleveur en amont est souvent la meilleure stratégie.</p>
 
@@ -26,6 +36,18 @@ export async function onRequest({ request, env }) {
   <li><strong>Pelage</strong> : propre, sans plaques ni parasites visibles.</li>
 </ul>
 <p>Le <em>ladoum</em> reste la race la plus prisée pour son gabarit imposant, mais d’excellents moutons de races locales conviennent parfaitement et coûtent moins cher.</p>
+<h3>Checklist santé en un coup d’œil</h3>
+<table>
+<thead><tr><th>À vérifier</th><th>Bon signe ✅</th><th>À éviter ❌</th></tr></thead>
+<tbody>
+  <tr><td>Comportement</td><td>Vif, se tient droit, mange</td><td>Apathique, isolé, couché</td></tr>
+  <tr><td>Yeux & nez</td><td>Clairs, propres, secs</td><td>Écoulements, larmoiements</td></tr>
+  <tr><td>Démarche</td><td>Assurée</td><td>Boiterie</td></tr>
+  <tr><td>Respiration</td><td>Calme et régulière</td><td>Toux, halètement</td></tr>
+  <tr><td>Pelage & peau</td><td>Propre, dense</td><td>Plaques, parasites</td></tr>
+  <tr><td>Chair</td><td>Ferme, bien répartie</td><td>Maigreur, gonflement anormal</td></tr>
+</tbody>
+</table>
 
 <h2>3. Bien négocier le prix</h2>
 <p>La négociation fait partie de la tradition. Renseignez-vous sur les prix pratiqués cette année, fixez-vous un budget, et n’hésitez pas à comparer plusieurs éleveurs. Acheter directement auprès de l’éleveur, sans intermédiaire, permet souvent d’obtenir un meilleur tarif.</p>

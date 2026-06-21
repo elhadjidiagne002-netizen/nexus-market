@@ -14,6 +14,16 @@ export async function onRequest({ request, env }) {
 <h1>Devenir coursier / livreur à Dakar avec NEXUS</h1>
 <p class="lead">La livraison est l’un des métiers qui recrutent le plus avec l’essor du e-commerce au Sénégal. Avec une moto et une bonne connaissance de Dakar, vous pouvez gagner un revenu en livrant des commandes près de chez vous, à votre rythme. Voici comment démarrer.</p>
 
+<div class="tldr">
+<h2>À retenir</h2>
+<ul>
+  <li><strong>Prérequis</strong> : un moyen de déplacement (moto idéale à Dakar), un smartphone, et connaître la ville.</li>
+  <li>Vous recevez les <strong>courses proches</strong> de vous et acceptez celles qui vous arrangent.</li>
+  <li>Vous êtes payé sur <strong>Orange Money / Wave</strong> ; revenu flexible selon votre activité.</li>
+  <li>Ponctualité + bonnes notes = <strong>plus de courses</strong>.</li>
+</ul>
+</div>
+
 <h2>1. Pourquoi devenir coursier ?</h2>
 <ul>
   <li><strong>Revenu flexible</strong> : vous vous connectez quand vous voulez et acceptez les courses qui vous arrangent.</li>
