@@ -31421,13 +31421,12 @@ const HomeStoriesRow = ({ user }) => {
   const [stories, setStories] = React.useState([]);
   React.useEffect(() => {
     let cancelled = false;
-    (async () => {
+    // Stories actives. L'expiration (minuterie) est appliquée par la RLS
+    // (cf. sql/2026_06_21_stories_expiry.sql) — pas de filtre date côté client
+    // pour éviter tout échec du filtre PostgREST sur timestamp.
+    const fetchStories = async (sb) => {
       try {
-        if (!DataService._sb) return;
-        // Stories actives. L'expiration (minuterie) est appliquée par la RLS
-        // (cf. sql/2026_06_21_stories_expiry.sql) — pas de filtre date côté client
-        // pour éviter tout échec du filtre PostgREST sur timestamp.
-        const { data, error } = await DataService._sb.from('stories')
+        const { data, error } = await sb.from('stories')
           .select('id,title,vendor_name,product_id,video_url,mux_playback_id,price,created_at,expires_at')
           .eq('status', 'active')
           .order('created_at', { ascending: false })
@@ -31435,7 +31434,17 @@ const HomeStoriesRow = ({ user }) => {
         if (error) { try { console.warn('[HomeStoriesRow]', error.message || error); } catch (_) {} }
         if (!cancelled) setStories(data || []);
       } catch (e) { try { console.warn('[HomeStoriesRow]', e && e.message); } catch (_) {} }
-    })();
+    };
+    // Le client Supabase peut ne pas être prêt au montage (comme pour les produits) :
+    // on attend son initialisation (jusqu'à ~10s) avant de charger.
+    let tries = 0;
+    const tick = () => {
+      if (cancelled) return;
+      const sb = DataService._sb || (typeof window !== 'undefined' && window.__nexusSupabaseClient) || null;
+      if (sb) { if (!DataService._sb) DataService._sb = sb; fetchStories(sb); return; }
+      if (tries++ < 40) setTimeout(tick, 250);
+    };
+    tick();
     return () => { cancelled = true; };
   }, []);
   const open = (id) => { try { window.dispatchEvent(new CustomEvent('nexus:open-stories', id ? { detail: { id: id } } : undefined)); } catch (_) {} };
