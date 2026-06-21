@@ -14090,6 +14090,78 @@ const BreedersAdminPanel = ({ addToast }) => {
   );
 };
 
+// ── ChatModerationPanel — modération du chat communautaire (table public_chat) ──
+// Rendu dans AdminDashboard quand view === "chat_mod". Nécessite les migrations
+// sql/2026_06_21_public_chat_v2.sql + v3.sql.
+const ChatModerationPanel = ({ addToast }) => {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [busyId, setBusyId] = React.useState(null);
+  const [notReady, setNotReady] = React.useState(false);
+  const [onlyReported, setOnlyReported] = React.useState(false);
+  const [roomF, setRoomF] = React.useState('all');
+  const E = React.createElement;
+  const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const TABLE_MISSING = /could not find the table|pgrst205|does not exist|schema cache|column .* does not exist/i;
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await DataService._sb.from('public_chat')
+        .select('id,room,nickname,text,reports,pinned,deleted,created_at')
+        .order('created_at', { ascending: false }).limit(200);
+      if (error) {
+        if (TABLE_MISSING.test((error.message || '') + ' ' + (error.code || ''))) { setNotReady(true); setItems([]); }
+        else throw error;
+      } else { setNotReady(false); setItems(data || []); }
+    } catch (e) { toast('Lecture du chat échouée : ' + (e.message || e), 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { if (DataService._sb) load(); else setLoading(false); }, []);
+  const upd = async (it, patch, okMsg) => {
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('public_chat').update(patch).eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.map(x => x.id === it.id ? { ...x, ...patch } : x));
+      toast(okMsg, 'success');
+    } catch (e) { toast('Échec : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  const rooms = ['all', 'general', 'achat-vente', 'bons-plans', 'aide'];
+  const filtered = items.filter(x => (!onlyReported || (x.reports > 0)) && (roomF === 'all' || x.room === roomF));
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 } },
+      E('h2', { className: 'card-title' }, '💬 Modération du chat (' + filtered.length + ')'),
+      E('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+        E('select', { className: 'form-select', style: { width: 'auto', padding: '.3rem' }, value: roomF, onChange: e => setRoomF(e.target.value) }, rooms.map(r => E('option', { key: r, value: r }, r === 'all' ? 'Tous salons' : r))),
+        E('label', { style: { fontSize: '.85rem', display: 'flex', gap: 4, alignItems: 'center' } }, E('input', { type: 'checkbox', checked: onlyReported, onChange: e => setOnlyReported(e.target.checked) }), 'Signalés'),
+        E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻')
+      )
+    ),
+    loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : notReady ? E('div', { style: { padding: '1.2rem', margin: '1rem', background: '#FEF9C3', border: '1px solid #F59E0B', borderRadius: 10, color: '#78350F' } },
+          E('div', { style: { fontWeight: 800, marginBottom: 6 } }, '⚠️ Chat v2/v3 non encore activé'),
+          E('div', { style: { fontSize: '.9rem' } }, 'Exécutez ', E('code', null, 'sql/2026_06_21_public_chat_v2.sql'), ' puis ', E('code', null, 'sql/2026_06_21_public_chat_v3.sql'), ' dans Supabase, puis rafraîchissez.'))
+      : filtered.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-comments' }), E('h3', null, 'Aucun message'))
+        : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null, ['Salon', 'Pseudo', 'Message', '🚩', 'Date', 'Actions'].map((h, i) => E('th', { key: i }, h)))),
+          E('tbody', null, filtered.map(it => E('tr', { key: it.id, style: it.reports > 0 && !it.deleted ? { background: '#FEF2F2' } : undefined },
+            E('td', { 'data-label': 'Salon' }, it.room),
+            E('td', { 'data-label': 'Pseudo' }, E('strong', null, it.nickname || '—'), it.pinned ? ' 📌' : ''),
+            E('td', { 'data-label': 'Message', style: { maxWidth: 340 } }, it.deleted ? E('em', { style: { color: '#9CA3AF' } }, '(supprimé) ' + (it.text || '')) : (it.text || '')),
+            E('td', { 'data-label': '🚩' }, it.reports > 0 ? E('span', { className: 'badge badge-danger' }, it.reports) : '—'),
+            E('td', { 'data-label': 'Date' }, it.created_at ? new Date(it.created_at).toLocaleString('fr-FR') : '—'),
+            E('td', { 'data-label': 'Actions' }, E('div', { className: 'flex gap-1' },
+              it.deleted
+                ? E('button', { className: 'btn btn-sm btn-success', disabled: busyId === it.id, onClick: () => upd(it, { deleted: false }, 'Message restauré') }, 'Restaurer')
+                : E('button', { className: 'btn btn-sm btn-danger', disabled: busyId === it.id, onClick: () => upd(it, { deleted: true }, 'Message supprimé') }, 'Suppr.'),
+              E('button', { className: 'btn btn-sm btn-secondary', disabled: busyId === it.id, onClick: () => upd(it, { pinned: !it.pinned }, it.pinned ? 'Désépinglé' : 'Épinglé') }, it.pinned ? 'Désépingler' : 'Épingler'),
+              it.reports > 0 ? E('button', { className: 'btn btn-sm btn-secondary', disabled: busyId === it.id, onClick: () => upd(it, { reports: 0 }, 'Signalements effacés') }, 'Effacer 🚩') : null
+            ))
+          )))
+        ))
+  );
+};
+
 // [GRACE 72H] Bandeau global de compte à rebours, affiché en haut de l'app pour un
 // vendeur en accès provisoire (status pending dans la fenêtre de 72h).
 const VendorGraceBanner = ({ user }) => {
@@ -24213,6 +24285,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "stories", icon: "video", label: "🎬 Stories" },
     { id: "pros", icon: "hard-hat", label: "🔧 Pros (artisans)" },
     { id: "breeders", icon: "paw", label: "🐏 Éleveurs" },
+    { id: "chat_mod", icon: "comments", label: "💬 Chat communauté" },
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
     { id: "louma", icon: "store", label: "\uD83D\uDFE1 Louma du vendredi" },
     { id: "stock_alerts", icon: "bell", label: "Alertes stock", badge: stats.stockAlerts ?? (storage.getArray("stock_alerts")).length },
@@ -24342,7 +24415,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"),
       /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")
     )));
-  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "products" && (() => {
+  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "chat_mod" && /* @__PURE__ */ React.createElement(ChatModerationPanel, { addToast }), view === "products" && (() => {
     const pending = products.filter((p) => !p.moderated);
     const approved = products.filter((p) => p.moderated);
     const moderateProduct = async (pid, approve) => {
@@ -40595,7 +40668,7 @@ window.addEventListener('unhandledrejection', function(event) {
       }
 
       if (sb) {
-        sb.from('public_chat').select('id,nickname,text,user_id,avatar,reply_to,reply_nick,reply_text,deleted,created_at')
+        sb.from('public_chat').select('id,nickname,text,user_id,avatar,reply_to,reply_nick,reply_text,deleted,pinned,reports,created_at')
           .eq('room', room).order('created_at', { ascending: false }).limit(MAX_MSGS)
           .then(function (res) {
             if (!mounted) return;
@@ -40703,12 +40776,18 @@ window.addEventListener('unhandledrejection', function(event) {
     function reportMsg(msg) {
       setMsgs(function (prev) { return prev.filter(function (x) { return x.id !== msg.id; }); });
       toast('Message signalé et masqué. Merci 🙏', '#00853E');
-      try { var sb = getSb(); if (sb && currentUser && currentUser.id) sb.from('notifications').insert({ user_id: null, type: 'system', title: '🚩 Message signalé', message: 'Salon ' + room + ' — « ' + (msg.text || '').slice(0, 80) + ' » (par ' + (msg.nickname || '?') + ')', link: '/' }).then(function () {}, function () {}); } catch (_) {}
+      try { var sb = getSb(); if (sb) sb.rpc('chat_report', { p_id: msg.id }).then(function () {}, function () {}); } catch (_) {}
     }
     function adminDelete(msg) {
       var sb = getSb(); if (!sb) return;
       setMsgs(function (prev) { return prev.map(function (x) { return x.id === msg.id ? Object.assign({}, x, { deleted: true }) : x; }); });
       try { sb.from('public_chat').update({ deleted: true }).eq('id', msg.id).then(function () {}, function () {}); } catch (_) {}
+    }
+    function togglePin(msg) {
+      var sb = getSb(); if (!sb) return;
+      var np = !msg.pinned;
+      setMsgs(function (prev) { return prev.map(function (x) { return x.id === msg.id ? Object.assign({}, x, { pinned: np }) : x; }); });
+      try { sb.from('public_chat').update({ pinned: np }).eq('id', msg.id).then(function () {}, function () {}); } catch (_) {}
     }
 
     // ── Styles ────────────────────────────────────────────────────────────────
@@ -40755,6 +40834,7 @@ window.addEventListener('unhandledrejection', function(event) {
               QUICK.slice(0, 3).map(function (em) { return E('button', { key: em, title: 'Réagir', onClick: function () { toggleReaction(msg, em); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.8rem', padding: '0 1px', opacity: .85 } }, em); }),
               E('button', { title: 'Répondre', onClick: function () { setReply(msg); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#6B7280', padding: '0 3px' } }, '↩'),
               E('button', { title: 'Signaler', onClick: function () { reportMsg(msg); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#9CA3AF', padding: '0 3px' } }, '🚩'),
+              isAdmin ? E('button', { title: msg.pinned ? 'Désépingler' : 'Épingler (admin)', onClick: function () { togglePin(msg); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.72rem', color: msg.pinned ? '#00853E' : '#9CA3AF', padding: '0 3px' } }, '📌') : null,
               isAdmin ? E('button', { title: 'Supprimer (admin)', onClick: function () { adminDelete(msg); }, style: { border: 'none', background: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#DC2626', padding: '0 3px' } }, '🗑') : null
             )
           )
@@ -40764,6 +40844,8 @@ window.addEventListener('unhandledrejection', function(event) {
     }
 
     var totalUnread = Object.keys(unread).reduce(function (s, r) { return s + (unread[r] || 0); }, 0);
+    var pinnedList = msgs.filter(function (x) { return x.pinned && !x.deleted; });
+    var pinnedMsg = pinnedList.length ? pinnedList[pinnedList.length - 1] : null;
 
     return E('div', { style: panel },
       // Header
@@ -40790,6 +40872,12 @@ window.addEventListener('unhandledrejection', function(event) {
         })) : null
       ),
       view === 'join' ? renderJoin() : E(React.Fragment, null,
+        // Bannière message épinglé
+        pinnedMsg ? E('div', { style: { display: 'flex', alignItems: 'center', gap: 7, padding: '6px 12px', background: '#FEF9C3', borderBottom: '1px solid #FDE68A', fontSize: '.76rem', color: '#78350F' } },
+          E('span', null, '📌'),
+          E('div', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, E('b', null, esc(pinnedMsg.nickname) + ' : '), esc(pinnedMsg.text)),
+          isAdmin ? E('button', { title: 'Désépingler', onClick: function () { togglePin(pinnedMsg); }, style: { border: 'none', background: 'none', cursor: 'pointer', color: '#92400e', fontSize: '.95rem' } }, '×') : null
+        ) : null,
         // Messages
         E('div', { ref: scrollRef, onScroll: onScroll, className: 'nxc-scroll', style: { flex: 1, overflowY: 'auto', padding: '10px 12px 6px', background: '#F9FAFB', position: 'relative' } },
           msgs.length === 0 ? E('div', { style: { textAlign: 'center', color: '#9CA3AF', fontSize: '.85rem', marginTop: 24 } }, 'Aucun message ici. Lancez la discussion 👋') : renderMsgs()
