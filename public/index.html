@@ -7279,7 +7279,18 @@ async signOut() {
   async addCashback(userId, orderId, amountXof, type = "earn", desc = "") {
     const tx = { id: crypto.randomUUID(), user_id: userId, order_id: orderId, amount_xof: amountXof, type, description: desc, created_at: new Date().toISOString() };
     if (this._sb) {
-      try { await this._sb.from("cashback_transactions").insert(tx); } catch (_) {}
+      // [SÉCURITÉ] Crédit via RPC SECURITY DEFINER (autorisation serveur) : empêche
+      // un client de se créditer un cashback arbitraire. Fallback insert direct
+      // uniquement si la RPC n'est pas encore déployée (transition).
+      let handled = false;
+      try {
+        const { error } = await this._sb.rpc("add_cashback", {
+          p_user_id: userId, p_order_id: orderId, p_amount_xof: amountXof, p_type: type, p_desc: desc,
+        });
+        // RPC présente (succès OU refus d'autorisation) → on ne fait PAS d'insert direct.
+        if (!error || !/does not exist|not find|schema cache/i.test(error.message || "")) handled = true;
+      } catch (_) {}
+      if (!handled) { try { await this._sb.from("cashback_transactions").insert(tx); } catch (_) {} }
     }
     const all = storage.getArray("cashback_transactions");
     storage.set("cashback_transactions", [...all, tx]);
