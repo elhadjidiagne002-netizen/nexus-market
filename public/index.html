@@ -12655,7 +12655,9 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           buyerEmail:    customerInfo.email,
           vendor:        vendorOrder.vendor,
           vendorName:    vendorOrder.vendorName,
-          commission:    vendorTotal * NEXUS_CONFIG.commissionRate,
+          // Commission pilotée par l'admin (Monétisation → order_commission_pct, en %).
+          // Défaut 0 % = phase de lancement gratuite tant que l'admin ne fixe pas de taux.
+          commission:    vendorTotal * (nxMonet('order_commission_pct', 0) / 100),
           status:        "processing",
           shipping:      shippingEur > 0 ? "standard" : "gratuit",
           trackingNumber,
@@ -22330,7 +22332,8 @@ const MonetizationConfigPanel = ({ addToast }) => {
   // Valeurs par défaut
   const DEFAULTS = {
     // Commissions
-    commission_default:     15,    // % commission standard
+    commission_default:     15,    // % commission standard (cible affichée)
+    order_commission_pct:   0,     // % réellement prélevé sur chaque commande (0 = lancement gratuit)
     commission_vendor_new:  8,     // % commission vendeur parrain (3 mois)
     commission_b2b:         10,    // % commission B2B
     escrow_fee:             18,    // % frais de service inclus
@@ -22480,7 +22483,10 @@ const MonetizationConfigPanel = ({ addToast }) => {
     commissions: () => E(React.Fragment, null,
       Section({ title: 'Taux de commission', icon: 'percent', children: E(React.Fragment, null,
         Row({ children: [
-          Field({ label: 'Commission standard vendeur', k: 'commission_default', suffix: '%', hint: 'Appliqué sur chaque commande livrée' }),
+          Field({ label: '🟢 Commission prélevée sur commandes', k: 'order_commission_pct', suffix: '%', hint: '0 = lancement gratuit. C\'est le taux RÉELLEMENT appliqué à chaque commande payée.' }),
+          Field({ label: 'Commission standard (cible affichée)', k: 'commission_default', suffix: '%', hint: 'Montrée aux vendeurs (email, fiche). N\'impacte pas le calcul tant que le taux prélevé ci-contre vaut 0.' }),
+        ]}),
+        Row({ children: [
           Field({ label: 'Commission vendeur parrainé', k: 'commission_vendor_new', suffix: '% (3 mois)', hint: 'Réduit pour les filleuls vendeurs' }),
         ]}),
         Row({ children: [
