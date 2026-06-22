@@ -33643,6 +33643,113 @@ function nexusResetSEO() {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// [VENDEUR PARTICULIER] Permet à un compte « Acheteur / Vendeur particulier » de
+// publier occasionnellement des articles (produit lié à son compte). Formulaire
+// simple + liste de ses annonces. Réutilise DataService.saveProduct (vendor = soi).
+const ParticulierSellPanel = ({ currentUser, addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const CATS = ['Mode Femme','Mode Homme','Mode Enfant','Chaussures','Sacs & Maroquinerie','Téléphones & Accessoires','Ordinateurs & Tablettes','Électronique & Hi-Fi','Meubles & Décoration','Électroménager','Cuisine & Art de la table','Beauté & Cosmétiques','Jouets & Jeux','Sport & Fitness','Livres papier','Voitures','Motos & Scooters','Vélos & Trottinettes','Animaux de compagnie','Produits locaux','Autre'];
+  const [form, setForm] = React.useState({ name: '', category: '', priceFcfa: '', description: '', imageUrl: '' });
+  const [mine, setMine] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
+  const [uploading, setUploading] = React.useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const loadMine = React.useCallback(() => {
+    if (!sb || !currentUser?.id) return;
+    sb.from('products').select('id,name,price,image_url,active,created_at')
+      .eq('vendor_id', currentUser.id).order('created_at', { ascending: false }).limit(60)
+      .then(({ data }) => setMine(data || [])).catch(() => {});
+  }, [currentUser?.id]);
+  React.useEffect(() => { loadMine(); }, [loadMine]);
+
+  const onPhoto = async (file) => {
+    if (!file || !sb) return;
+    if (!/^image\//.test(file.type || '')) { addToast('Choisissez une image', 'warning'); return; }
+    if (file.size > 5 * 1024 * 1024) { addToast('Image trop lourde (max 5 Mo)', 'warning'); return; }
+    setUploading(true);
+    try {
+      const ext = ((file.name || '').split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      const path = 'particulier/' + currentUser.id + '/' + Date.now() + '.' + ext;
+      const { data: up, error } = await sb.storage.from('nexus-stories').upload(path, file, { contentType: file.type, upsert: true });
+      if (error || !up) throw new Error((error && error.message) || 'upload');
+      const url = sb.storage.from('nexus-stories').getPublicUrl(up.path).data.publicUrl;
+      setForm((f) => ({ ...f, imageUrl: url }));
+      addToast('📷 Photo ajoutée', 'success');
+    } catch (e) { addToast('Photo : ' + (e.message || e), 'error'); }
+    setUploading(false);
+  };
+
+  const publish = async () => {
+    if (!form.name.trim() || !form.category || !form.priceFcfa) { addToast('Nom, catégorie et prix requis', 'warning'); return; }
+    const fcfa = parseInt(String(form.priceFcfa).replace(/[^\d]/g, ''), 10);
+    if (!fcfa || fcfa < 100) { addToast('Prix invalide (min 100 FCFA)', 'warning'); return; }
+    setBusy(true);
+    try {
+      await DataService.saveProduct({
+        name: form.name.trim(), category: form.category,
+        price: fcfa / 655.957, stock: 1,
+        description: form.description || null, imageUrl: form.imageUrl || null,
+        vendor: currentUser.id, vendorName: currentUser.name || 'Vendeur particulier',
+        active: true, rating: 0, reviewsCount: 0,
+      });
+      addToast('✅ Article publié ! Il est visible dans le catalogue.', 'success', 6000);
+      setForm({ name: '', category: '', priceFcfa: '', description: '', imageUrl: '' });
+      setTimeout(loadMine, 600);
+    } catch (e) { addToast('Erreur : ' + (e.message || e), 'error'); }
+    setBusy(false);
+  };
+
+  const removeItem = async (id) => {
+    if (!sb || !window.confirm('Retirer cet article de la vente ?')) return;
+    try { await sb.from('products').delete().eq('id', id).eq('vendor_id', currentUser.id); } catch (_) {}
+    setMine((m) => m.filter((x) => x.id !== id));
+    addToast('Article retiré', 'info');
+  };
+
+  const inp = { className: 'form-input', style: { marginBottom: '0.7rem' } };
+  return E('div', null,
+    E('div', { className: 'card', style: { marginBottom: '1rem' } },
+      E('div', { className: 'card-header' }, E('h2', { className: 'card-title' }, '🏷️ Vendre un article')),
+      E('div', { style: { padding: '0.25rem 0' } },
+        E('p', { style: { color: 'var(--text-secondary)', fontSize: '0.86rem', marginBottom: '1rem' } },
+          'Vendez occasionnellement un article. Il apparaît dans le catalogue NEXUS, lié à votre compte particulier.'),
+        E('label', { className: 'form-label' }, 'Titre de l\'article *'),
+        E('input', { ...inp, value: form.name, onChange: set('name'), placeholder: 'Ex. iPhone 11 64 Go — bon état', maxLength: 90 }),
+        E('label', { className: 'form-label' }, 'Catégorie *'),
+        E('select', { className: 'form-select', style: { marginBottom: '0.7rem' }, value: form.category, onChange: set('category') },
+          E('option', { value: '' }, '— Choisir —'),
+          ...CATS.map((c) => E('option', { key: c, value: c }, c))),
+        E('label', { className: 'form-label' }, 'Prix (FCFA) *'),
+        E('input', { ...inp, type: 'number', min: 100, value: form.priceFcfa, onChange: set('priceFcfa'), placeholder: 'Ex. 75000' }),
+        E('label', { className: 'form-label' }, 'Description'),
+        E('textarea', { className: 'form-textarea', rows: 3, style: { marginBottom: '0.7rem', resize: 'vertical' }, value: form.description, onChange: set('description'), placeholder: 'État, détails, lieu…' }),
+        E('label', { className: 'form-label' }, 'Photo'),
+        E('div', { style: { display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.7rem', flexWrap: 'wrap' } },
+          E('input', { type: 'file', accept: 'image/*', onChange: (e) => { onPhoto(e.target.files && e.target.files[0]); e.target.value = ''; }, disabled: uploading }),
+          uploading && E('span', { style: { fontSize: '0.8rem', color: 'var(--text-secondary)' } }, '⏳ Envoi…'),
+          form.imageUrl && E('img', { src: form.imageUrl, alt: '', style: { width: 48, height: 48, objectFit: 'cover', borderRadius: 8 } })),
+        E('button', { className: 'btn btn-primary btn-lg', style: { width: '100%' }, onClick: publish, disabled: busy || uploading },
+          busy ? 'Publication…' : '✅ Publier l\'article')
+      )
+    ),
+    E('div', { className: 'card' },
+      E('div', { className: 'card-header' }, E('h2', { className: 'card-title' }, 'Mes articles en vente (' + mine.length + ')')),
+      mine.length === 0
+        ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-tag' }), E('h3', null, 'Aucun article'), E('p', null, 'Publiez votre premier article ci-dessus.'))
+        : E('div', { className: 'product-grid' }, mine.map((p) => E('div', { key: p.id, className: 'product-card' },
+            E('div', { className: 'product-image-placeholder', style: { backgroundImage: p.image_url ? 'url(' + p.image_url + ')' : 'none', backgroundSize: 'cover', backgroundPosition: 'center', height: 130 } }, !p.image_url && '🛍️'),
+            E('div', { className: 'product-info' },
+              E('h3', { className: 'product-name' }, p.name),
+              E('div', { className: 'product-price' }, formatPrice(p.price)),
+              E('button', { className: 'btn btn-outline btn-sm', style: { marginTop: '0.5rem', color: 'var(--danger)' }, onClick: () => removeItem(p.id) }, '🗑 Retirer')
+            )
+          )))
+    )
+  );
+};
+
 const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar, cartTrigger, wishlistTrigger }) => {
   const [view, setView] = useState("catalog");
   // Navigation externe vers un onglet acheteur (ex. menu « Programme ambassadeur »).
@@ -33939,6 +34046,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
         ]
       : [
           { id: "ondemand",    icon: "concierge-bell", label: "🛒 Commande sur mesure", badge: 0, highlight: true },
+          { id: "sell",        icon: "tag",          label: "🏷️ Vendre un article", highlight: true },
           { id: "loyalty",     icon: "star",         label: "Fidélité & Points" },
           { id: "ambassador",  icon: "award",        label: "Ambassadeur", badge: (() => {
       try {
@@ -34008,7 +34116,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setOfferProduct(product);
       setShowOfferModal(true);
     }, "aria-label": "Faire une offre" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd" }))
-  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: (p) => { setCurrentPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), !isLoading && view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), !isLoading && view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), !isLoading && view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => { const wishProds = products.filter(p => wishlist.includes(p.id) && p.stock > 0); let added = 0; wishProds.forEach(p => { if (!cart.find(i => i.id === p.id)) { addToCart(p); added++; } }); if (added > 0) addToast(`🛒 ${added} article${added > 1 ? 's' : ''} ajouté${added > 1 ? 's' : ''} au panier !`, "success"); else addToast("Tous les articles sont déjà dans votre panier.", "info"); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cart-plus" }), " Tout ajouter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager"))), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => setSelectedProduct(product) }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
+  ))))))), /* @__PURE__ */ React.createElement(Pagination, { currentPage, totalPages, onPageChange: (p) => { setCurrentPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); }, totalItems: filtered.length, itemsPerPage: ITEMS_PER_PAGE }))), !isLoading && view === "ondemand" && /* @__PURE__ */ React.createElement(OnDemandPanel, { currentUser: currentUser2, addToast, onBuy: (p) => { addToCart(p); addToast("Ajouté au panier !", "success"); } }), !isLoading && view === "sell" && /* @__PURE__ */ React.createElement(ParticulierSellPanel, { currentUser: currentUser2, addToast }), !isLoading && view === "ambassador" && /* @__PURE__ */ React.createElement(AmbassadorPanel, { currentUser: currentUser2, addToast }), !isLoading && view === "wishlist" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Ma Wishlist (", wishlist.length, ")"), wishlist.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", flexWrap: "wrap" } }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => { const wishProds = products.filter(p => wishlist.includes(p.id) && p.stock > 0); let added = 0; wishProds.forEach(p => { if (!cart.find(i => i.id === p.id)) { addToCart(p); added++; } }); if (added > 0) addToast(`🛒 ${added} article${added > 1 ? 's' : ''} ajouté${added > 1 ? 's' : ''} au panier !`, "success"); else addToast("Tous les articles sont déjà dans votre panier.", "info"); } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-cart-plus" }), " Tout ajouter"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => shareWishlist(currentUser2, products) }, /* @__PURE__ */ React.createElement("i", { className: "fab fa-whatsapp", style: { color: "#25D366" } }), " Partager"))), wishlist.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Votre wishlist est vide"), /* @__PURE__ */ React.createElement("p", null, "Ajoutez des produits en cliquant sur le c\u0153ur \u2665"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary", onClick: () => setView("catalog") }, "Explorer le catalogue")) : /* @__PURE__ */ React.createElement("div", { className: "product-grid" }, products.filter((p) => wishlist.includes(p.id)).map((product) => /* @__PURE__ */ React.createElement("div", { key: product.id, className: "product-card", onClick: () => setSelectedProduct(product) }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(ProductImg, { product }), /* @__PURE__ */ React.createElement("div", { className: "wishlist-heart active", onClick: (e) => {
     e.stopPropagation();
     toggleWishlist(product);
   } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-heart" }))), /* @__PURE__ */ React.createElement("div", { className: "product-info" }, /* @__PURE__ */ React.createElement("div", { className: "product-category" }, product.category), /* @__PURE__ */ React.createElement("div", { className: "product-name" }, product.name), /* @__PURE__ */ React.createElement(PriceDisplay, { product, currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: (e) => {
