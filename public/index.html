@@ -22323,14 +22323,20 @@ const MonetizationConfigPanel = ({ addToast }) => {
     setSaving(true);
     setSaveError('');
     try {
-      // Vérifier que l'admin est bien connecté
-      if (!DataService._sb || !DataService._user?.id) {
+      // Vérifier que l'admin est bien connecté. [FIX] DataService._user n'est
+      // peuplé que via les events de login ; sur session restaurée il peut être
+      // null alors que window.__nexusCurrentUser est défini → on résout l'id
+      // depuis plusieurs sources pour éviter un faux « session expirée ».
+      const _uid = (DataService._user && DataService._user.id)
+        || (typeof window !== 'undefined' && window.__nexusCurrentUser && window.__nexusCurrentUser.id)
+        || null;
+      if (!DataService._sb || !_uid) {
         setSaveError('Non connecté ou session expirée — rechargez la page');
         addToast('❌ Session expirée — reconnectez-vous', 'error');
         setSaving(false);
         return;
       }
-      const ok = await NexusAdminConfig.set('nexus_monetization_cfg', cfg, DataService._user.id);
+      const ok = await NexusAdminConfig.set('nexus_monetization_cfg', cfg, _uid);
       if (typeof NEXUS_CONFIG !== 'undefined') {
         NEXUS_CONFIG.wa_tracking_price   = cfg.wa_tracking_price;
         NEXUS_CONFIG.wa_tracking_enabled = cfg.wa_tracking_enabled;
