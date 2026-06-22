@@ -12738,108 +12738,18 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
         DataService.addCashback(currentUser2.id, createdOrders[0]?.id, -cashbackUsed, 'redeem', 'Cashback utilisé à la caisse').catch(() => {});
       }
 
-      // ── [AMBASSADOR v2] Commissions + remise filleul — 100% Supabase sans backend ────
-      if (currentUser2 && DataService._sb) {
+      // ── [PARRAINAGE] Crédits commission parrain + bonus filleul — CÔTÉ SERVEUR ──
+      // record_referral_sale (RPC SECURITY DEFINER) recalcule les montants depuis
+      // la commande réelle + le taux admin, crédite les cashbacks et notifie. Le
+      // client ne contrôle plus aucun montant. Idempotent (1ère commande du filleul).
+      if (currentUser2 && DataService._sb && createdOrders[0]?.id) {
         try {
-          const ambId  = sessionStorage.getItem("nexus_referred_by_amb");
-          const ambUid = sessionStorage.getItem("nexus_referred_by_uid");
-
-          if (ambId && ambUid) {
-            // C'est la 1ère commande via parrainage — on vérifie que c'est bien la 1ère
-            const { count: prevOrders } = await DataService._sb
-              .from("orders")
-              .select("id", { count: "exact", head: true })
-              .eq("user_id", currentUser2.id);
-
-            if (true) { // Commission on every order from referred user
-              // ── 1. Commission ambassadeur (5% de la commande) ────────────────
-              const orderTotal    = createdOrders.reduce((s, o) => s + (o.total || 0), 0);
-              const orderTotalXof = Math.round(orderTotal * EUR_TO_FCFA);
-              const commissionXof = Math.round(orderTotalXof * (nxMonet('ambassador_commission_pct', 5) / 100));
-              const mainOrderId   = createdOrders[0]?.id || null;
-
-              // Mettre à jour l'entrée ambassador_referrals
-              try {
-                await DataService._sb.from("ambassador_referrals")
-                  .update({
-                    order_id:     mainOrderId,
-                    order_amount: orderTotalXof,
-                    commission:   commissionXof,
-                    status:       "paid",
-                  })
-                  .eq("ambassador_id",    ambId)
-                  .eq("referred_user_id", currentUser2.id)
-                  .eq("status",           "pending");
-              } catch (_) {}
-
-              // Mettre à jour les totaux de l'ambassadeur
-              let ambCurrent = null;
-              try {
-                const r = await DataService._sb
-                  .from("ambassadors").select("total_sales,total_earned,level").eq("id", ambId).single();
-                ambCurrent = r.data;
-              } catch (_) {}
-              if (ambCurrent) {
-                const newSales  = (ambCurrent.total_sales  || 0) + orderTotalXof;
-                const newEarned = (ambCurrent.total_earned || 0) + commissionXof;
-                // Calcul du nouveau niveau
-                const newLevel  = newEarned >= 500000 ? "platinum"
-                                : newEarned >= 200000 ? "gold"
-                                : newEarned >= 50000  ? "silver"
-                                : "bronze";
-                try {
-                  await DataService._sb.from("ambassadors")
-                    .update({ total_sales: newSales, total_earned: newEarned, level: newLevel })
-                    .eq("id", ambId);
-                } catch (_) {}
-                // Notification de montée de niveau si changement
-                if (newLevel !== ambCurrent.level) {
-                  const LEVEL_LABEL = { bronze:"🥉 Bronze", silver:"🥈 Argent", gold:"🥇 Or", platinum:"💎 Platine" };
-                  DataService.addNotification(ambUid, {
-                    type: "system",
-                    title: "🏆 Nouveau niveau atteint !",
-                    message: `Félicitations ! Vous passez au niveau ${LEVEL_LABEL[newLevel]}. Continuez à parrainer pour encore plus de commissions !`
-                  });
-                }
-              }
-
-              // ── 2. Cashback filleul (2% sur sa 1ère commande) ───────────────
-              const cashbackFilleul = Math.round(orderTotalXof * 0.02);
-              await DataService.addCashback(currentUser2.id, mainOrderId, cashbackFilleul, "bonus",
-                "Bonus filleul – 1ère commande via parrainage").catch(() => {});
-
-              // ── 3. Créditer la commission en cashback ambassadeur ─────────────
-              await DataService.addCashback(ambUid, mainOrderId, commissionXof, "earn",
-                `Commission parrainage – commande ${(mainOrderId || "").slice(-8)}`).catch(() => {});
-
-              // ── 4. Notifications ────────────────────────────────────────────
-              DataService.addNotification(ambUid, {
-                type: "system",
-                title: "💰 Commission gagnée !",
-                message: `Votre filleul ${currentUser2.name || "un client"} vient de passer sa 1ère commande. Vous gagnez ${commissionXof.toLocaleString("fr-FR")} FCFA de commission !`
-              });
-              DataService.addNotification(currentUser2.id, {
-                type: "system",
-                title: "🎁 Bonus filleul !",
-                message: `${cashbackFilleul.toLocaleString("fr-FR")} FCFA de cashback crédités sur votre compte pour votre 1ère commande via parrainage.`
-              });
-
-              // ── 5. Nettoyer sessionStorage ──────────────────────────────────
-              sessionStorage.removeItem("nexus_referred_by_amb");
-              sessionStorage.removeItem("nexus_referred_by_uid");
-            }
-          }
-        } catch(eAmb) {
-          console.warn("[Ambassador commission]", eAmb);
-        }
-      } else if (currentUser2 && !NEXUS_CONFIG.apiUrl) {
-        // Fallback localStorage minimal (si Supabase aussi indisponible)
-        const refs = [];
-        const pendingRef = refs.find(r => r.newUserId === currentUser2.id && r.status === "pending");
-        if (pendingRef) {
-          DataService.addLoyaltyPoints(pendingRef.referrerId, 200).catch(()=>{});
-          DataService.addLoyaltyPoints(currentUser2.id, 50).catch(()=>{});
-        }
+          await DataService._sb.rpc("record_referral_sale", { p_order_id: createdOrders[0].id });
+        } catch (eAmb) { console.warn("[record_referral_sale]", eAmb); }
+        try {
+          sessionStorage.removeItem("nexus_referred_by_amb");
+          sessionStorage.removeItem("nexus_referred_by_uid");
+        } catch (_) {}
       }
       if (createdOrders.length > 0) {
         EmailService.sendOrderConfirmation(createdOrders[0], cart);
