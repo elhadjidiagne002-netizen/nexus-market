@@ -82,4 +82,21 @@ DROP POLICY IF EXISTS dispute_service_all ON public.disputes;
 -- payout_admin_all + payout_vendor_own + payout_insert_own couvrent les flux.
 DROP POLICY IF EXISTS payout_service_all ON public.payout_requests;
 
+-- ── 6. AD_CAMPAIGNS — empêche la pub gratuite (insertion déjà payée/active) ───
+-- ads_insert_anyone (INSERT/true) laissait insérer une campagne status='active' /
+-- payment_status='paid' → affichée gratuitement. On force l'insertion en attente.
+DROP POLICY IF EXISTS ads_insert_anyone ON public.ad_campaigns;
+DROP POLICY IF EXISTS ads_insert_pending ON public.ad_campaigns;
+CREATE POLICY ads_insert_pending ON public.ad_campaigns FOR INSERT
+  WITH CHECK (COALESCE(status, 'pending') = 'pending' AND COALESCE(payment_status, 'pending') = 'pending');
+-- (conserve ads_admin_all, ads_public_active)
+
+-- ── 7. API_SUBSCRIPTIONS — empêche l'abonnement API gratuit ──────────────────
+-- apisub_insert_any (INSERT/true) laissait insérer un abo status='active'/'paid'.
+DROP POLICY IF EXISTS apisub_insert_any ON public.api_subscriptions;
+DROP POLICY IF EXISTS apisub_insert_pending ON public.api_subscriptions;
+CREATE POLICY apisub_insert_pending ON public.api_subscriptions FOR INSERT
+  WITH CHECK (COALESCE(status, 'pending') = 'pending' AND COALESCE(payment_status, 'pending') = 'pending');
+-- (conserve apisub_admin_all, apisub_own)
+
 COMMIT;
