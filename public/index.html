@@ -26660,59 +26660,46 @@ CREATE POLICY "Service role only" ON invoice_sequences
     const refundPct = adminRefundPct; const setRefundPct = setAdminRefundPct;
 
     const resolveDispute = async (id, resolution, refundPercent) => {
-      // Appel API réel — remboursement Stripe déclenché côté serveur
+      // [REFONTE] Tout-Supabase : plus de backend Stripe. On résout le litige et,
+      // si remboursement, on crédite l'acheteur sur son portefeuille NEXUS (cashback).
+      const sb = DataService._sb;
+      if (!sb) { addToast('Connexion indisponible', 'error'); return; }
       try {
-        const res = await DataService.apiFetch(`/api/disputes/${id}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            status:        "resolved",
-            resolution,
-            adminNotes:    resolution,
-            refundPercent: refundPercent ?? null,
-          }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          addToast(err.error || "Erreur lors de la résolution du litige", "error");
-          return;
+        const { data: d } = await sb.from('disputes').select('order_id,buyer_id,buyer_name').eq('id', id).maybeSingle();
+        let refundXof = 0, buyerId = d && d.buyer_id;
+        if (d && d.order_id && (refundPercent || 0) > 0) {
+          const { data: o } = await sb.from('orders').select('total,buyer_id').eq('id', d.order_id).maybeSingle();
+          if (!buyerId) buyerId = (o && o.buyer_id) || null;
+          const totalEur = (o && Number(o.total)) || 0;
+          refundXof = Math.round(totalEur * EUR_TO_FCFA * (refundPercent / 100));
         }
-        const json = await res.json();
-        const stripeRefund = json._refund;
-
-        // Mise à jour locale optimiste
-        const all = storage.getArray("disputes");
-        const idx = all.findIndex((d) => d.id === id);
-        if (idx >= 0) {
-          all[idx].status = "resolved";
-          all[idx].resolution = resolution;
-          all[idx].resolvedAt = new Date().toISOString();
-          if (stripeRefund) {
-            all[idx].refundId     = stripeRefund.id;
-            all[idx].refundAmount = stripeRefund.amount;
-            all[idx].refundStatus = stripeRefund.status;
-          }
-          storage.set("disputes", all);
+        const { error } = await sb.from('disputes').update({
+          status: 'resolved', resolution: resolution, admin_notes: resolution,
+          refund_percent: refundPercent != null ? refundPercent : null,
+          refund_amount_xof: refundXof || null,
+          resolved_at: new Date().toISOString(),
+        }).eq('id', id);
+        if (error) { addToast('Erreur résolution litige : ' + error.message, 'error'); return; }
+        // Remboursement = crédit NEXUS (cashback) + mise à jour de la commande.
+        if (refundXof > 0 && buyerId) {
+          await DataService.addCashback(buyerId, d.order_id, refundXof, 'bonus', 'Remboursement litige ' + refundPercent + '% — crédit NEXUS').catch(() => {});
+          await sb.from('orders').update({ has_dispute: false, refunded_at: new Date().toISOString(), status: refundPercent >= 100 ? 'cancelled' : 'processing' }).eq('id', d.order_id).catch(() => {});
+        } else if (d && d.order_id) {
+          await sb.from('orders').update({ has_dispute: false }).eq('id', d.order_id).catch(() => {});
         }
-
+        if (buyerId) {
+          await sb.from('notifications').insert({
+            id: crypto.randomUUID(), user_id: buyerId, type: 'system',
+            title: '⚖️ Litige résolu',
+            message: resolution + (refundXof > 0 ? (' — ' + refundXof.toLocaleString('fr-FR') + ' FCFA crédités sur votre compte NEXUS.') : ''),
+            read: false, created_at: new Date().toISOString(),
+          }).catch(() => {});
+        }
         loadData();
         setActiveDispute(null);
-
-        if (stripeRefund) {
-          addToast(
-            `Litige résolu — Remboursement Stripe de ${stripeRefund.amount}€ (${refundPercent}%) initié ✓`,
-            "success"
-          );
-          if (window.nexusPush) window.nexusPush.sendLocal(
-            "Litige résolu + remboursement",
-            `${stripeRefund.amount}€ remboursés via Stripe. Réf : ${stripeRefund.id}`,
-            "/"
-          );
-        } else {
-          addToast(`Litige résolu — ${resolution}`, "success");
-          if (window.nexusPush) window.nexusPush.sendLocal("Litige résolu", `#${id} : ${resolution}`, "/");
-        }
-      } catch (networkErr) {
-        addToast("Erreur réseau — impossible de résoudre le litige. Réessayez.", "error");
+        addToast('Litige résolu' + (refundXof > 0 ? (' — ' + refundXof.toLocaleString('fr-FR') + ' FCFA remboursés (crédit NEXUS)') : ''), 'success');
+      } catch (e) {
+        addToast('Erreur — impossible de résoudre le litige : ' + (e.message || e), 'error');
       }
     };
 
