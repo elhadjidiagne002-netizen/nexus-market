@@ -11983,6 +11983,84 @@ function buildShareMessage(product) {
 }
 
 /**
+ * [AFFICHE PRODUIT] Génère une affiche partageable (PNG 1080×1350) : entête NEXUS,
+ * photo, nom, prix, vendeur, CTA. Partage via l'API Web Share (fichier) si dispo,
+ * sinon téléchargement. Best-effort : photo chargée en CORS (sinon cadre de repli,
+ * le canvas n'est jamais « tainted »).
+ */
+function generateProductPoster(product, toast) {
+  const say = (m, t) => { try { (toast || window.__nexusToast || function () {})(m, t || 'info'); } catch (_) {} };
+  if (!product) return;
+  const W = 1080, H = 1350;
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const priceFcfa = Math.round((product.price || 0) * EUR_TO_FCFA).toLocaleString('fr-FR') + ' FCFA';
+
+  const wrap = (text, x, y, maxW, lh, maxLines) => {
+    const words = String(text || '').split(/\s+/); let line = '', n = 0;
+    for (let i = 0; i < words.length; i++) {
+      const test = line ? line + ' ' + words[i] : words[i];
+      if (ctx.measureText(test).width > maxW && line) {
+        ctx.fillText(line, x, y); y += lh; line = words[i]; n++;
+        if (n >= maxLines - 1) { line = words.slice(i).join(' '); break; }
+      } else line = test;
+    }
+    if (n < maxLines && line) {
+      while (ctx.measureText(line + '…').width > maxW && line.length > 1) line = line.slice(0, -1);
+      ctx.fillText(line + (n === maxLines - 1 && ctx.measureText(line).width >= maxW ? '…' : ''), x, y);
+    }
+  };
+
+  const draw = (img) => {
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#00853E'; ctx.fillRect(0, 0, W, 150);
+    ctx.fillStyle = '#FDEF42'; ctx.font = '900 70px Arial'; ctx.textBaseline = 'middle';
+    ctx.fillText('NEXUS', 48, 80);
+    ctx.fillStyle = '#ffffff'; ctx.font = '600 30px Arial'; ctx.fillText('Market Sénégal', 300, 86);
+    const IX = 40, IY = 190, IW = W - 80, IH = 700;
+    ctx.fillStyle = '#eef2f5'; ctx.fillRect(IX, IY, IW, IH);
+    if (img) {
+      const r = Math.max(IW / img.width, IH / img.height), w = img.width * r, h = img.height * r;
+      ctx.save(); ctx.beginPath(); ctx.rect(IX, IY, IW, IH); ctx.clip();
+      ctx.drawImage(img, IX + (IW - w) / 2, IY + (IH - h) / 2, w, h); ctx.restore();
+    } else {
+      ctx.fillStyle = '#9aa7b4'; ctx.font = '160px Arial'; ctx.textAlign = 'center';
+      ctx.fillText('🛍', W / 2, IY + IH / 2 + 50); ctx.textAlign = 'left';
+    }
+    ctx.textBaseline = 'alphabetic'; ctx.fillStyle = '#0f172a'; ctx.font = 'bold 54px Arial';
+    wrap(product.name || 'Produit', 48, 985, W - 96, 64, 2);
+    ctx.fillStyle = '#00853E'; ctx.font = '900 84px Arial'; ctx.fillText(priceFcfa, 48, 1135);
+    ctx.fillStyle = '#64748b'; ctx.font = '34px Arial'; ctx.fillText(product.vendorName || 'NEXUS Market', 48, 1188);
+    ctx.fillStyle = '#E11B22'; ctx.fillRect(0, H - 120, W, 120);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 40px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Commandez sur nexusmarket.sn', W / 2, H - 60);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    canvas.toBlob(function (blob) {
+      if (!blob) { say('Affiche : échec de génération', 'error'); return; }
+      const file = new File([blob], 'nexus-' + (product.id || 'produit') + '.png', { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file], title: product.name || 'NEXUS', text: buildShareMessage(product) }).catch(function () {});
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = file.name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 8000);
+        say('🖼️ Affiche téléchargée', 'success');
+      }
+    }, 'image/png', 0.92);
+  };
+
+  say('🖼️ Génération de l\'affiche…', 'info');
+  const src = product.image_url || product.image || product.imageUrl || '';
+  if (src) {
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    img.onload = function () { draw(img); };
+    img.onerror = function () { draw(null); };
+    img.src = src;
+  } else draw(null);
+}
+
+/**
  * Construit le message de commande WhatsApp pour contacter un vendeur.
  * Utilisé par whatsappOrder() — le vendeur reçoit les détails du produit.
  */
@@ -22615,6 +22693,8 @@ const CourierApp = ({ currentUser, addToast }) => {
   const [available, setAvailable] = React.useState(false);
   const [regForm, setRegForm]   = React.useState({ name:'', phone:'', vehicle_type:'moto', zones:['Dakar'] });
   const [regStep, setRegStep]   = React.useState('check'); // check|register|pending|active
+  const [staleWarn, setStaleWarn] = React.useState(false); // visible localement mais invisible en base
+  const _warnedRef = React.useRef(false);
 
   const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
 
@@ -22665,7 +22745,44 @@ const CourierApp = ({ currentUser, addToast }) => {
     const newVal = !available;
     await sb.from('couriers').update({ is_available: newVal }).eq('id', courier.id);
     setAvailable(newVal);
+    if (newVal) { setStaleWarn(false); _warnedRef.current = false; }
     addToast(newVal ? '🟢 Vous êtes disponible' : '🔴 Vous êtes hors ligne', 'info');
+  };
+
+  // [VISIBILITÉ] Le dispatch peut remettre is_available=false (après une course /
+  // offre expirée). Le coursier se croit en ligne (état local) mais n'apparaît plus
+  // aux clients. On re-lit le statut réel (périodiquement + au retour sur l'onglet)
+  // et on l'avertit s'il doit se remettre en ligne manuellement.
+  React.useEffect(() => {
+    if (!sb || !courier?.id) return;
+    let stop = false;
+    const check = async () => {
+      if (stop || document.visibilityState === 'hidden') return;
+      try {
+        const { data } = await sb.from('couriers').select('is_available').eq('id', courier.id).maybeSingle();
+        if (stop || !data) return;
+        const invisible = available && data.is_available === false;
+        setStaleWarn(invisible);
+        if (invisible && !_warnedRef.current) {
+          _warnedRef.current = true;
+          addToast('⚠️ Vous n\'apparaissez plus aux clients — remettez-vous en ligne.', 'warning', 9000);
+        }
+        if (!invisible) _warnedRef.current = false;
+      } catch (_) {}
+    };
+    check();
+    const iv = setInterval(check, 45000);
+    const onVis = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { stop = true; clearInterval(iv); document.removeEventListener('visibilitychange', onVis); };
+  }, [courier?.id, available]);
+
+  // Se remettre visible (re-affirme is_available=true).
+  const goLiveAgain = async () => {
+    if (!courier?.id) return;
+    try { await sb.from('couriers').update({ is_available: true }).eq('id', courier.id); } catch (_) {}
+    setAvailable(true); setStaleWarn(false); _warnedRef.current = false;
+    addToast('🟢 Vous êtes de nouveau visible par les clients', 'success');
   };
 
   // Accepter une mission
@@ -22731,6 +22848,15 @@ const CourierApp = ({ currentUser, addToast }) => {
   const pendingPay  = earnings.filter(e=>e.status==='pending').reduce((s,e)=>s+(e.amount||0),0);
 
   return E('div', null,
+    // [VISIBILITÉ] Bannière d'alerte : visible mais invisible aux clients.
+    staleWarn && E('div', { style:{ background:'#FEF3C7', border:'1.5px solid #F59E0B', color:'#92400e', borderRadius:12, padding:'.85rem 1rem', marginBottom:'1rem', display:'flex', alignItems:'center', gap:'.75rem', flexWrap:'wrap' } },
+      E('div', { style:{ fontSize:'1.5rem' } }, '⚠️'),
+      E('div', { style:{ flex:1, minWidth:140 } },
+        E('div', { style:{ fontWeight:800, fontSize:'.92rem' } }, 'Vous n\'apparaissez plus aux clients'),
+        E('div', { style:{ fontSize:'.8rem', lineHeight:1.35 } }, 'Votre statut « disponible » a été suspendu (souvent après une course). Remettez-vous en ligne pour recevoir de nouvelles courses.')
+      ),
+      E('button', { onClick: goLiveAgain, style:{ background:'#00853E', color:'#fff', border:'none', borderRadius:9, padding:'.6rem 1rem', fontWeight:800, cursor:'pointer', whiteSpace:'nowrap' } }, '🔄 Me remettre en ligne')
+    ),
     // Header avec statut disponibilité
     E('div', { style:{ background:'var(--primary)', color:'#fff', padding:'1rem 1.25rem', borderRadius:12, marginBottom:'1rem', display:'flex', justifyContent:'space-between', alignItems:'center' } },
       E('div', null,
@@ -32295,6 +32421,18 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                 title: 'Contacter le vendeur',
                 onClick: () => { setComposeRecipient({ id: selectedProduct.vendor, name: selectedProduct.vendorName || 'Vendeur' }); setShowComposeMessage(true); }
               }, React.createElement('i', { className: 'fas fa-comment-dots' }))
+            ),
+            /* [PARTAGE] Visible uniquement dans la fiche produit (au clic sur le produit). */
+            React.createElement('div', { style: { display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' } },
+              React.createElement('button', { className: 'btn btn-sm', style: { flex: '1 1 30%', background: '#25D366', color: '#fff', border: 'none' }, onClick: () => shareOnWhatsApp(selectedProduct) },
+                React.createElement('i', { className: 'fab fa-whatsapp' }), ' Partager WhatsApp'),
+              React.createElement('button', { className: 'btn btn-outline btn-sm', style: { flex: '1 1 30%' }, onClick: () => {
+                const url = window.location.origin + '/produit/' + selectedProduct.id;
+                if (navigator.share) { navigator.share({ title: selectedProduct.name, text: buildShareMessage(selectedProduct), url }).catch(() => {}); }
+                else { try { navigator.clipboard.writeText(url); addToast('🔗 Lien copié — envoyez-le à un ami', 'success'); } catch (_) { window.prompt('Copiez le lien :', url); } }
+              } }, React.createElement('i', { className: 'fas fa-user-friends' }), ' Envoyer à un ami'),
+              React.createElement('button', { className: 'btn btn-outline btn-sm', style: { flex: '1 1 30%' }, onClick: () => generateProductPoster(selectedProduct, addToast) },
+                React.createElement('i', { className: 'fas fa-image' }), ' Affiche produit')
             ),
             React.createElement('div', { style: { display: 'flex', gap: '1rem', marginTop: '1rem', fontSize: '0.82rem', color: 'var(--text-secondary)', justifyContent: 'center' } },
               React.createElement('span', null, React.createElement('i', { className: 'fas fa-shield-alt text-success' }), ' Achat protégé'),
