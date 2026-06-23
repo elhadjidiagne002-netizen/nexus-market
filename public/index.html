@@ -4231,13 +4231,14 @@ const initSupabase = () => {
           persistSession: true,
           autoRefreshToken: true,
           storageKey: "nexus-auth-token",
-          detectSessionInUrl: true,
-          // [FIX OAuth] Flux PKCE : le retour OAuth utilise ?code=... (échange
-          // serveur) au lieu de #access_token. PKCE n'a PAS le garde anti-rejeu
-          // "issued over 120s ago" du flux implicit qui bloquait la connexion
-          // Facebook/Google (retour lent ou horloge client décalée). Flux
-          // recommandé par Supabase. Le fallback hash plus bas reste utile pour
-          // les liens de confirmation email (qui restent en #access_token).
+          // [FIX OAuth] detectSessionInUrl DÉSACTIVÉ : en prod, l'échange auto du
+          // SDK obtenait bien /token 200 côté serveur mais ne persistait PAS la
+          // session dans nexus-auth-token (UI restait déconnectée). On prend le
+          // contrôle explicite de l'échange du ?code (cf. handler PKCE dans Root)
+          // via exchangeCodeForSession() + handleLogin() forcé.
+          detectSessionInUrl: false,
+          // Flux PKCE : le retour OAuth utilise ?code=... (échange serveur) au lieu
+          // de #access_token, et n'a pas le garde anti-rejeu "issued over 120s ago".
           flowType: "pkce",
           lock: undefined
         },
@@ -35810,6 +35811,56 @@ const Root = () => {
       } catch(_hashErr) {
         console.warn("[Auth] Hash parse error:", _hashErr.message);
       }
+    }
+
+    // ── [FIX] Échange PKCE explicite du ?code (OAuth Facebook/Google/GitHub) ──────
+    // Le retour OAuth en flux PKCE atterrit sur SITE_URL/?code=xxx (parfois suivi de
+    // #_=_ ajouté par Facebook). detectSessionInUrl étant désactivé, c'est NOUS qui
+    // échangeons le code contre une session via exchangeCodeForSession(), de façon
+    // déterministe : on await, on vérifie la session, on nettoie l'URL. La MAJ de
+    // l'UI est portée par l'événement SIGNED_IN émis par exchangeCodeForSession()
+    // (capté par DataService.onAuthStateChange dans App). Logs explicites pour diag.
+    const _qcode = new URLSearchParams(window.location.search).get("code");
+    if (_qcode && DataService._sb) {
+      console.info("[Auth] PKCE: ?code détecté, échange en cours…");
+      (async () => {
+        try {
+          let session = null;
+          try {
+            const { data, error } = await DataService._sb.auth.exchangeCodeForSession(_qcode);
+            if (error) { console.warn("[Auth] PKCE exchangeCodeForSession error:", error.message); }
+            session = (data && data.session) || null;
+          } catch (e) {
+            console.warn("[Auth] PKCE exchange exception:", e && e.message);
+          }
+          // Filet : si l'échange a tout de même créé la session en interne.
+          if (!session) {
+            try { session = (await DataService._sb.auth.getSession()).data?.session || null; } catch (_) {}
+          }
+          if (!session) {
+            console.warn("[Auth] PKCE: échec — aucune session obtenue après échange du code.");
+            return;
+          }
+          console.info("[Auth] ✅ PKCE: session établie pour", session.user?.email);
+          // Synchroniser la couche custom (utile pour apiFetch / checks divers).
+          try {
+            DataService._token = session.access_token;
+            DataService._refreshToken = session.refresh_token || "";
+          } catch (_) {}
+          // Nettoyer le ?code (+ hash #_=_ de Facebook) de l'URL.
+          if (window.history?.replaceState) {
+            window.history.replaceState(null, "", window.location.pathname);
+          }
+          // La mise à jour de l'UI est portée par l'événement SIGNED_IN que
+          // exchangeCodeForSession() émet → DataService.onAuthStateChange (App)
+          // appelle handleLogin(). NB : handleLogin n'est PAS dans la portée de Root.
+          window.dispatchEvent(new CustomEvent("nexus:toast", {
+            detail: { message: "Connexion réussie ! Bienvenue sur NEXUS Market 🎉", type: "success", duration: 5000 }
+          }));
+        } catch (_pkceErr) {
+          console.warn("[Auth] PKCE handler error:", _pkceErr && _pkceErr.message);
+        }
+      })();
     }
 
     // ?confirmed=1 depuis notre Function /api/auth/confirm
