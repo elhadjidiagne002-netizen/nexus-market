@@ -22,6 +22,17 @@
       window.plausible=window.plausible||function(){(window.plausible.q=window.plausible.q||[]).push(arguments)};
       window.plausible.init=window.plausible.init||function(){};
     </script>
+    <!-- ══════════════════════════════════════════════════════════════════════
+         FACEBOOK / META PIXEL — suivi des conversions pour la pub (Priorité #1).
+         L'ID se configure dans NEXUS_CONFIG.analytics.facebookPixelId.
+         Le script Meta n'est chargé qu'APRÈS consentement cookies "all" (RGPD) ;
+         voir le loader plus bas. Ici on n'expose qu'un wrapper sûr appelable
+         partout dans l'app — no-op tant que le Pixel n'est pas chargé. -->
+    <script>
+      window.nexusTrackFb = function(event, params){
+        try { if (window.fbq) window.fbq('track', event, params || {}); } catch(e){}
+      };
+    </script>
     <!-- PERF FIX: preconnect CDNs & fonts early -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2582,7 +2593,11 @@ const NEXUS_CONFIG = {
   },
   sms: { enabled: true, defaultCountryCode: '+221', senderId: 'NEXUS', alwaysSmsAboveFcfa: 5000 },
   analytics: {
-    ga4Id: "G-2N3MPBQ6Z8"  // Google Analytics 4 Measurement ID — ex: "G-XXXXXXXXXX" (gratuit sur analytics.google.com)
+    ga4Id: "G-2N3MPBQ6Z8",  // Google Analytics 4 Measurement ID — ex: "G-XXXXXXXXXX" (gratuit sur analytics.google.com)
+    // [FACEBOOK PIXEL] ID numérique du Pixel Meta — copiez-le depuis le Gestionnaire
+    // d'événements Meta (business.facebook.com/events_manager). Vide = désactivé.
+    // Ne se charge qu'après consentement cookies "all" (cf. CookieBanner / RGPD).
+    facebookPixelId: "2469174573569735"
   },
   // ── Taux de change EUR → FCFA (XOF) ────────────────────────────────────────
   // Taux fixe officiel de la zone CFA (arrimage à l'euro depuis 1999).
@@ -31692,6 +31707,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     }
     setCart(newCart);
     storage.set("guest_cart", newCart);
+    try { window.nexusAnalytics && window.nexusAnalytics.trackAddToCart(product); } catch (_) {}
     addToast(`${product.name} ajout\xE9 au panier`, "success");
     // [UX #3] Animation bouton "Ajouter au panier"
     setAddedToCartIds(prev => { const s = new Set(prev); s.add(product.id); return s; });
@@ -32492,7 +32508,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       products,
       onUpdateQty: updateQty,
       onRemove: removeFromCart,
-      onCheckout: () => { setShowCart(false); setShowCheckout(true); },
+      onCheckout: () => { try { window.nexusAnalytics && window.nexusAnalytics.trackInitiateCheckout(cart); } catch (_) {} setShowCart(false); setShowCheckout(true); },
       onClose: () => setShowCart(false),
       currentUser: null,
       addToast,
@@ -33787,6 +33803,8 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
         const v = window.nexusAB.getVariant('product_card_price_pos');
         window.nexusAB.track('product_card_price_pos', v, 'exposure');
       }
+      // Facebook Pixel — vue produit (ViewContent), dédupliqué par id de produit
+      try { window.nexusAnalytics && window.nexusAnalytics.trackViewContent(selectedProduct); } catch (_) {}
     } else {
       nexusResetSEO();
     }
@@ -33934,6 +33952,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     }
     setCart(newCart);
     DataService.saveCart(currentUser2.id, newCart);
+    try { window.nexusAnalytics && window.nexusAnalytics.trackAddToCart(product); } catch (_) {}
     addToast(`${product.name} ajout\xE9 !`, "success");
   };
   const updateQty = (id, qty) => {
@@ -34249,6 +34268,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       onUpdateQty: updateQty,
       onRemove: removeFromCart,
       onCheckout: () => {
+        try { window.nexusAnalytics && window.nexusAnalytics.trackInitiateCheckout(cart); } catch (_) {}
         setShowCart(false);
         setShowCheckout(true);
       },
@@ -36745,6 +36765,38 @@ window.addEventListener("beforeinstallprompt", (e) => {
   };
 })();
 
+// ══════════════════════════════════════════════════════════════════
+// FACEBOOK / META PIXEL — chargé sur consentement, calqué sur le loader GA4
+// ══════════════════════════════════════════════════════════════════
+(function() {
+  const FB_ID = (NEXUS_CONFIG.analytics && NEXUS_CONFIG.analytics.facebookPixelId) || '';
+
+  // Charger fbevents.js si un Pixel ID valide est configuré ET cookies acceptés
+  function loadPixel() {
+    if (!FB_ID || !/^\d{6,}$/.test(FB_ID)) return;        // ID absent/invalide → désactivé
+    if (storage.get('cookie_consent') !== 'all') return;   // RGPD : Pixel = non-essentiel
+    if (window.__nexusFbpLoaded) return;
+    window.__nexusFbpLoaded = true;
+    // Snippet officiel Meta Pixel (initialise window.fbq + charge fbevents.js)
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script',
+    'https://connect.facebook.net/en_US/fbevents.js');
+    window.fbq('init', FB_ID);
+    window.fbq('track', 'PageView');
+    console.log('[Analytics] Facebook Pixel activé (' + FB_ID + ')');
+  }
+  loadPixel();
+
+  // Recharger au changement de consentement (CookieBanner) — chaîne avec le wrapper GA4
+  const _origSetFb = storage.set.bind(storage);
+  storage.set = function(key, value) {
+    _origSetFb(key, value);
+    if (key === 'cookie_consent' && value === 'all') loadPixel();
+  };
+})();
+
 // Collecte locale des événements (Analytics admin — indépendant de GA4)
 const _localAnalyticsKey = 'nexus_analytics_events';
 function _pushLocalEvent(category, action, label, value) {
@@ -36803,15 +36855,55 @@ window.nexusAnalytics = {
         }))
       });
     }
+    // Facebook Pixel — conversion d'achat (LA conversion clé pour l'optimisation pub)
+    window.nexusTrackFb('Purchase', {
+      value: Number(total) || 0,
+      currency: 'XOF',
+      content_type: 'product',
+      content_ids: (items || []).map(i => i.id),
+      contents: (items || []).map(i => ({ id: i.id, quantity: i.quantity || 1, item_price: i.price })),
+      num_items: (items || []).reduce((s, i) => s + (i.quantity || 1), 0),
+    });
   },
   trackAddToCart(product) {
     trackEvent('ecommerce', 'add_to_cart', product.name, product.price);
+    window.nexusTrackFb('AddToCart', {
+      value: Number(product.price) || 0,
+      currency: 'XOF',
+      content_type: 'product',
+      content_ids: [product.id],
+      content_name: product.name,
+    });
+  },
+  trackViewContent(product) {
+    trackEvent('ecommerce', 'view_item', product.name, product.price);
+    window.nexusTrackFb('ViewContent', {
+      value: Number(product.price) || 0,
+      currency: 'XOF',
+      content_type: 'product',
+      content_ids: [product.id],
+      content_name: product.name,
+    });
+  },
+  trackInitiateCheckout(cart) {
+    const items = cart || [];
+    const value = items.reduce((s, i) => s + (Number(i.price) || 0) * (i.quantity || 1), 0);
+    trackEvent('ecommerce', 'begin_checkout', 'cart', value);
+    window.nexusTrackFb('InitiateCheckout', {
+      value: value,
+      currency: 'XOF',
+      content_type: 'product',
+      content_ids: items.map(i => i.id),
+      num_items: items.reduce((s, i) => s + (i.quantity || 1), 0),
+    });
   },
   trackSearch(query, resultsCount) {
     trackEvent('engagement', 'search', query, resultsCount);
+    window.nexusTrackFb('Search', { search_string: query });
   },
   trackSignUp(role) {
     trackEvent('user', 'sign_up', role);
+    window.nexusTrackFb('CompleteRegistration', { content_name: role, status: true });
   },
   trackLogin(role) {
     trackEvent('user', 'login', role);
