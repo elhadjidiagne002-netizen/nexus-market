@@ -2480,7 +2480,11 @@ const { useState, useEffect, useRef, createContext, useContext, useCallback, use
 (function() {
   try {
     const params = new URLSearchParams(window.location.search);
-    const ref = params.get("ref") || params.get("referral") || params.get("code");
+    // [FIX collision] NE PAS lire ?code : c'est le paramètre standard du retour
+    // OAuth PKCE (Facebook/Google), pas un code de parrainage. Le capter ici le
+    // stockait en nexus_ref_code et polluait le checkout (faux filleul). Les liens
+    // de parrainage utilisent ?ref= (cf. /?ref=CODE).
+    const ref = params.get("ref") || params.get("referral");
     if (ref && ref.length >= 4) {
       sessionStorage.setItem("nexus_ref_code", ref.toUpperCase().trim());
       sessionStorage.setItem("nexus_ref_ts",   Date.now().toString());
@@ -35820,18 +35824,23 @@ const Root = () => {
     // déterministe : on await, on vérifie la session, on nettoie l'URL. La MAJ de
     // l'UI est portée par l'événement SIGNED_IN émis par exchangeCodeForSession()
     // (capté par DataService.onAuthStateChange dans App). Logs explicites pour diag.
+    // [DIAG] Mouchard localStorage : écrit le résultat de l'échange PKCE pour
+    // diagnostic (les logs console sont souvent coupés au moment de la redirection).
+    const _pkceDbg = (o) => { try { localStorage.setItem("nexus_pkce_debug", JSON.stringify({ ...o, at: new Date().toISOString(), now: Date.now() })); } catch (_) {} };
     const _qcode = new URLSearchParams(window.location.search).get("code");
     if (_qcode && DataService._sb) {
       console.info("[Auth] PKCE: ?code détecté, échange en cours…");
+      _pkceDbg({ step: "start", code: _qcode.slice(0, 8) });
       (async () => {
         try {
-          let session = null;
+          let session = null, exErr = null;
           try {
             const { data, error } = await DataService._sb.auth.exchangeCodeForSession(_qcode);
-            if (error) { console.warn("[Auth] PKCE exchangeCodeForSession error:", error.message); }
+            if (error) { exErr = error.message; console.warn("[Auth] PKCE exchangeCodeForSession error:", error.message); }
             session = (data && data.session) || null;
           } catch (e) {
-            console.warn("[Auth] PKCE exchange exception:", e && e.message);
+            exErr = (e && e.message) || String(e);
+            console.warn("[Auth] PKCE exchange exception:", exErr);
           }
           // Filet : si l'échange a tout de même créé la session en interne.
           if (!session) {
@@ -35839,8 +35848,10 @@ const Root = () => {
           }
           if (!session) {
             console.warn("[Auth] PKCE: échec — aucune session obtenue après échange du code.");
+            _pkceDbg({ step: "FAIL", error: exErr || "no_session", hadVerifier: !!localStorage.getItem("nexus-auth-token-code-verifier") });
             return;
           }
+          _pkceDbg({ step: "OK", email: session.user?.email, expires_at: session.expires_at, skew_s: session.expires_at ? Math.round(session.expires_at - Date.now()/1000 - 3600) : null });
           console.info("[Auth] ✅ PKCE: session établie pour", session.user?.email);
           // Synchroniser la couche custom (utile pour apiFetch / checks divers).
           try {
