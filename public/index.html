@@ -35750,28 +35750,56 @@ const Root = () => {
     EmailService.init();
     initStripe();
 
-    // ── [FIX RACE] Confirmation email / OAuth via hash Supabase ──────────────────
+    // ── [FIX] Confirmation email / OAuth via hash Supabase ───────────────────────
     // Supabase redirige vers SITE_URL/#access_token=xxx&refresh_token=xxx&type=...
-    // ⚠️ NE PAS consommer ni effacer le hash ici. Le SDK Supabase
-    // (detectSessionInUrl:true) lit #access_token de façon ASYNCHRONE, crée la
-    // session, émet SIGNED_IN (→ handleLogin) et nettoie l'URL lui-même
-    // (cf. onAuthStateChange). L'ancien code appelait setSession() + replaceState()
-    // de façon SYNCHRONE : le hash était effacé AVANT que le SDK ne le lise, et le
-    // setSession manuel entrait en conflit avec detectSessionInUrl (rotation du
-    // refresh_token) → l'utilisateur restait DÉCONNECTÉ malgré un compte créé.
-    // On se contente ici de lire 'type' (lecture seule, aucun effet de bord) pour
-    // afficher le bon toast. La session est garantie soit par l'événement SIGNED_IN,
-    // soit par restoreSupabaseSession() (getSession) appelé plus bas.
+    //
+    // ⚠️ PIÈGE détecté en prod : le SDK (detectSessionInUrl:true) REFUSE la session
+    // si le token de l'URL a été émis il y a > 120 s (garde anti-rejeu gotrue :
+    // "Session as retrieved from URL was issued over 120s ago"). Cela arrive quand le
+    // retour OAuth est lent OU quand l'horloge du PC a un décalage > 2 min → la
+    // session n'est jamais persistée et l'utilisateur reste DÉCONNECTÉ.
+    //
+    // Stratégie : on laisse d'abord le SDK tenter (cas rapide, < 120 s). Si APRÈS son
+    // initialisation aucune session n'existe alors que l'URL porte un access_token,
+    // on rétablit la session via setSession() — qui NE FAIT PAS le contrôle 120 s.
+    // C'est un FALLBACK : on n'appelle setSession que si le SDK a échoué, donc aucun
+    // conflit de rotation du refresh_token avec detectSessionInUrl.
     const _hash = window.location.hash;
-    if (_hash && _hash.includes("access_token")) {
+    if (_hash && _hash.includes("access_token") && DataService._sb) {
       try {
-        const _type = new URLSearchParams(_hash.replace(/^#/, "")).get("type");
-        // 'recovery' est géré par l'événement PASSWORD_RECOVERY (ouvre la modal reset).
-        if (_type !== "recovery") {
-          window.dispatchEvent(new CustomEvent("nexus:toast", {
-            detail: { message: "Connexion réussie ! Bienvenue sur NEXUS Market 🎉", type: "success", duration: 5000 }
-          }));
-        }
+        const _hp   = new URLSearchParams(_hash.replace(/^#/, ""));
+        const _at   = _hp.get("access_token");
+        const _rt   = _hp.get("refresh_token");
+        const _type = _hp.get("type"); // undefined (OAuth) | "signup"/"email" | "recovery"
+        (async () => {
+          // getSession() attend la fin de l'init du SDK (donc de detectSessionInUrl).
+          let session = null;
+          try { session = (await DataService._sb.auth.getSession()).data?.session || null; } catch (_) {}
+          // Fallback : le SDK a rejeté l'URL (stale/horloge) → on force la session.
+          if (!session && _at && _rt) {
+            try {
+              const { data: sd, error: se } = await DataService._sb.auth.setSession({
+                access_token: _at, refresh_token: _rt
+              });
+              if (se) { console.warn("[Auth] setSession fallback:", se.message); }
+              session = sd?.session || null;
+              if (session) console.info("[Auth] ✅ Session rétablie via fallback setSession (URL stale)");
+            } catch (e) { console.warn("[Auth] setSession fallback err:", e.message); }
+          }
+          if (!session) return; // échec total → on laisse l'UI en déconnecté
+          // Nettoyer le hash (le SDK ne l'a pas fait s'il a rejeté l'URL).
+          if (window.history?.replaceState) {
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+          }
+          // Toast / modal selon le type. 'recovery' = ouverture modal reset.
+          if (_type === "recovery") {
+            window.dispatchEvent(new CustomEvent("nexus:show-reset-password"));
+          } else {
+            window.dispatchEvent(new CustomEvent("nexus:toast", {
+              detail: { message: "Connexion réussie ! Bienvenue sur NEXUS Market 🎉", type: "success", duration: 5000 }
+            }));
+          }
+        })();
       } catch(_hashErr) {
         console.warn("[Auth] Hash parse error:", _hashErr.message);
       }
