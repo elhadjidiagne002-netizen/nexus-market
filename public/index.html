@@ -35353,6 +35353,14 @@ const App = ({ onUserChange }) => {
       // ou par l'écouteur nexus:session-expired pour les déconnexions forcées
     });
 
+    // [FIX OAuth] Pont déterministe Root→App. Après un échange PKCE réussi, le
+    // handler PKCE (dans Root) émet 'nexus:force-session-restore'. La session étant
+    // alors persistée dans nexus-auth-token, on relit getSession() → handleLogin
+    // pour rafraîchir l'UI — SANS dépendre du timing de l'événement SIGNED_IN ni du
+    // succès de _fetchProfile (cas observé : session OK mais UI restée déconnectée).
+    const _forceRestore = () => { restoreSupabaseSession().catch(() => {}); };
+    window.addEventListener("nexus:force-session-restore", _forceRestore);
+
     // [PERF FIX] Afficher l'app immédiatement, restaurer la session en arrière-plan
     setIsLoading(false);
     updateGuestCart();
@@ -35366,7 +35374,7 @@ const App = ({ onUserChange }) => {
       }
     });
 
-    return () => { if (subscription) subscription.unsubscribe(); };
+    return () => { if (subscription) subscription.unsubscribe(); window.removeEventListener("nexus:force-session-restore", _forceRestore); };
   }, []);
 
   // ── Feature 7 : Surveillance expiration session JWT ──────────────────────
@@ -35862,9 +35870,10 @@ const Root = () => {
           if (window.history?.replaceState) {
             window.history.replaceState(null, "", window.location.pathname);
           }
-          // La mise à jour de l'UI est portée par l'événement SIGNED_IN que
-          // exchangeCodeForSession() émet → DataService.onAuthStateChange (App)
-          // appelle handleLogin(). NB : handleLogin n'est PAS dans la portée de Root.
+          // MAJ de l'UI : on ne dépend PAS uniquement de l'événement SIGNED_IN
+          // (cas observé : session persistée mais UI restée déconnectée). On émet un
+          // signal déterministe que App écoute pour relire la session → handleLogin.
+          window.dispatchEvent(new CustomEvent("nexus:force-session-restore"));
           window.dispatchEvent(new CustomEvent("nexus:toast", {
             detail: { message: "Connexion réussie ! Bienvenue sur NEXUS Market 🎉", type: "success", duration: 5000 }
           }));
