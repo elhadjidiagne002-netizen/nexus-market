@@ -2649,6 +2649,18 @@ const NEXUS_CONFIG = {
     // le frontend n'a besoin que de provider:'facebook'.
     appId: "",
   },
+  messenger: {
+    // ── Plugin de chat Facebook Messenger (bulle de support en bas à droite) ──
+    enabled: true,
+    pageId: "1233022656551601", // ID de la Page Facebook NEXUS Market
+    locale: "fr_FR",
+    themeColor: "#00853E",      // vert NEXUS
+    greetingLoggedIn:  "Bonjour 👋 Une question sur votre commande ?",
+    greetingLoggedOut: "Bonjour 👋 Bienvenue sur NEXUS Market ! Comment pouvons-nous vous aider ?",
+    // ⚠️ OBLIGATOIRE côté Facebook : autoriser le domaine, sinon la bulle n'apparaît pas.
+    // Meta Business Suite → Boîte de réception → Paramètres → Plug-in de chat →
+    // « Domaines du site web » → ajouter https://nexusmarket.sn
+  },
   // ═══════════════════════════════════════════════════════════════════════
   //  MENTIONS LÉGALES — OBLIGATOIRES POUR LA PRODUCTION
   // ───────────────────────────────────────────────────────────────────────
@@ -36981,6 +36993,57 @@ window.addEventListener("beforeinstallprompt", (e) => {
     _origSetFb(key, value);
     if (key === 'cookie_consent' && value === 'all') loadPixel();
   };
+})();
+
+// ══════════════════════════════════════════════════════════════════
+// FACEBOOK MESSENGER — plug-in de chat (bulle de support liée à la Page FB)
+// ⚠️ Le domaine nexusmarket.sn DOIT être autorisé côté Facebook, sinon la bulle
+//    ne s'affiche jamais : Meta Business Suite → Boîte de réception → Paramètres
+//    → Plug-in de chat → « Domaines du site web ». Bloqué par les ad-blockers
+//    (charge connect.facebook.net). Calqué sur le loader Pixel ci-dessus.
+// ══════════════════════════════════════════════════════════════════
+(function() {
+  const cfg = NEXUS_CONFIG.messenger || {};
+  if (cfg.enabled === false || !cfg.pageId || !/^\d{6,}$/.test(cfg.pageId)) return;
+
+  const mount = () => {
+    if (window.__nexusMessengerLoaded) return;
+    window.__nexusMessengerLoaded = true;
+
+    // Conteneurs requis par le SDK Messenger
+    if (!document.getElementById('fb-root')) {
+      const root = document.createElement('div'); root.id = 'fb-root';
+      document.body.appendChild(root);
+    }
+    let chatbox = document.getElementById('fb-customer-chat');
+    if (!chatbox) {
+      chatbox = document.createElement('div');
+      chatbox.id = 'fb-customer-chat';
+      chatbox.className = 'fb-customerchat';
+      document.body.appendChild(chatbox);
+    }
+    chatbox.setAttribute('page_id', cfg.pageId);
+    chatbox.setAttribute('attribution', 'biz_inbox');
+    if (cfg.themeColor)        chatbox.setAttribute('theme_color', cfg.themeColor);
+    if (cfg.greetingLoggedIn)  chatbox.setAttribute('logged_in_greeting',  cfg.greetingLoggedIn);
+    if (cfg.greetingLoggedOut) chatbox.setAttribute('logged_out_greeting', cfg.greetingLoggedOut);
+
+    window.fbAsyncInit = function() {
+      try { FB.init({ xfbml: true, version: 'v19.0' }); } catch (_) {}
+    };
+    // Charger le SDK xfbml.customerchat (idempotent via l'id facebook-jssdk)
+    (function(d, s, id) {
+      if (d.getElementById(id)) { try { window.FB && window.FB.XFBML.parse(); } catch (_) {} return; }
+      const fjs = d.getElementsByTagName(s)[0];
+      const js = d.createElement(s); js.id = id;
+      js.src = 'https://connect.facebook.net/' + (cfg.locale || 'fr_FR') + '/sdk/xfbml.customerchat.js';
+      js.onerror = function() { console.warn('[Messenger] SDK non chargé (ad-blocker ?)'); };
+      fjs.parentNode.insertBefore(js, fjs);
+    })(document, 'script', 'facebook-jssdk');
+  };
+
+  if (document.body) mount();
+  else document.addEventListener('DOMContentLoaded', mount, { once: true });
 })();
 
 // Collecte locale des événements (Analytics admin — indépendant de GA4)
