@@ -2632,6 +2632,19 @@ const NEXUS_CONFIG = {
     // Coller ici le Client ID (format : XXXXXX.apps.googleusercontent.com)
     clientId: "414348896532-sg5avclus8r3qrstijo65lqggabptuc6.apps.googleusercontent.com",
   },
+  facebook: {
+    enabled: true, // Bouton "Continuer avec Facebook" affiché (s'auto-désactive si Supabase n'a pas le provider)
+    // Facebook Login via Supabase — GRATUIT.
+    // 1) developers.facebook.com → Créer une app → produit "Connexion Facebook"
+    //    → Valid OAuth Redirect URIs : https://pqcqbstbdujzaclsiosv.supabase.co/auth/v1/callback
+    //    → App Domains : nexusmarket.sn (+ le domaine preview Cloudflare si besoin)
+    //    → Passer l'app en mode "Live" (sinon seuls les testeurs peuvent se connecter)
+    // 2) Supabase Dashboard → Authentication → Providers → Facebook → activer
+    //    + coller App ID (Client ID) et App Secret (Client Secret)
+    // L'App ID ci-dessous est purement documentaire : le flow OAuth passe par Supabase,
+    // le frontend n'a besoin que de provider:'facebook'.
+    appId: "",
+  },
   // ═══════════════════════════════════════════════════════════════════════
   //  MENTIONS LÉGALES — OBLIGATOIRES POUR LA PRODUCTION
   // ───────────────────────────────────────────────────────────────────────
@@ -5541,6 +5554,22 @@ const DataService = {
       options: {
         redirectTo: window.location.origin + window.location.pathname,
         queryParams: { access_type: 'offline', prompt: 'consent' },
+      },
+    });
+    if (error) throw error;
+    return data;
+  },
+
+  // ── Connexion Facebook OAuth via Supabase ──────────────────────────────────
+  // Config requise : Supabase Dashboard → Auth → Providers → Facebook → activer
+  // (App ID + App Secret depuis developers.facebook.com, produit "Connexion Facebook").
+  async signInWithFacebook() {
+    if (!this._sb) throw new Error("Supabase requis pour la connexion Facebook");
+    const { data, error } = await this._sb.auth.signInWithOAuth({
+      provider: 'facebook',
+      options: {
+        redirectTo: window.location.origin + window.location.pathname,
+        scopes: 'email,public_profile',
       },
     });
     if (error) throw error;
@@ -14622,6 +14651,90 @@ const GoogleSignInButton = ({ label }) => {
   );
 };
 
+// Bouton "Continuer avec Facebook" (composant partagé) — calqué sur Google
+const FacebookSignInButton = ({ label }) => {
+  const { addToast } = useToast();
+  const [loading, setLoading] = React.useState(false);
+  // Ne pas afficher si Facebook OAuth est désactivé dans NEXUS_CONFIG
+  if (NEXUS_CONFIG.facebook?.enabled === false) return null;
+
+  // Détecter les erreurs Supabase indiquant un provider non configuré
+  const _isProviderError = (msg) => {
+    const m = (msg || '').toLowerCase();
+    return m.includes('provider') || m.includes('unexpected_failure') ||
+           m.includes('unsupported') || m.includes('not enabled') ||
+           m.includes('not configured') || m.includes('unauthorized_client');
+  };
+
+  const handleFacebookLogin = async () => {
+    setLoading(true);
+    if (isSupabaseConfigured() && DataService._sb) {
+      try {
+        const { error } = await DataService._sb.auth.signInWithOAuth({
+          provider: 'facebook',
+          options: {
+            redirectTo: window.location.origin + window.location.pathname,
+            scopes: 'email,public_profile',
+          },
+        });
+        if (error) throw error;
+        return; // redirection en cours
+      } catch (e) {
+        // Si Supabase dit que le provider n'est pas activé, on le désactive pour la
+        // session et on affiche un message d'aide (et non une erreur rouge).
+        if (_isProviderError(e.message)) {
+          if (NEXUS_CONFIG.facebook) NEXUS_CONFIG.facebook.enabled = false;
+          addToast(
+            'Facebook Login non activé. '
+            + 'Configurez-le dans Supabase Dashboard → Authentication → Providers → Facebook.',
+            'info', 9000
+          );
+          setLoading(false);
+          return;
+        }
+        console.warn('[Facebook OAuth] Failed:', e.message);
+        addToast('Erreur connexion Facebook : ' + (e.message || 'Inconnue'), 'error');
+        setLoading(false);
+        return;
+      }
+    }
+    if (NEXUS_CONFIG.facebook) NEXUS_CONFIG.facebook.enabled = false;
+    addToast(
+      'Facebook Login non configuré. '
+      + 'Activez le provider dans Supabase Dashboard → Authentication → Providers → Facebook.',
+      'info', 9000
+    );
+    setLoading(false);
+  };
+
+  return React.createElement('button', {
+    type: 'button',
+    onClick: handleFacebookLogin,
+    disabled: loading,
+    style: {
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      gap: '0.6rem', width: '100%', padding: '0.7rem 1rem',
+      border: '1.5px solid #1877F2', borderRadius: '8px',
+      background: loading ? '#cdddf7' : '#1877F2',
+      cursor: loading ? 'not-allowed' : 'pointer',
+      fontSize: '0.92rem', fontWeight: 600, color: '#ffffff',
+      transition: 'all 0.15s',
+      opacity: loading ? 0.7 : 1,
+      marginTop: '0.5rem',
+    },
+    onMouseEnter: e => { if (!loading) e.currentTarget.style.background = '#166fe0'; },
+    onMouseLeave: e => { if (!loading) e.currentTarget.style.background = '#1877F2'; },
+    'aria-busy': loading,
+  },
+    loading
+      ? React.createElement('div', { className: 'spinner', style: { width: '20px', height: '20px', borderWidth: '2px', borderTopColor: '#ffffff' } })
+      : React.createElement('svg', { width: '20', height: '20', viewBox: '0 0 24 24', 'aria-hidden': 'true' },
+          React.createElement('path', { fill: '#ffffff', d: 'M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z' })
+        ),
+    React.createElement('span', null, loading ? 'Redirection vers Facebook...' : (label || 'Continuer avec Facebook'))
+  );
+};
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // GOOGLE ONE TAP — Connexion 1 clic sans popup ni redirection
@@ -14817,7 +14930,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
     !targetRole && /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginTop: "1.25rem", fontSize: "0.88rem", color: "var(--text-secondary)" } },
       "Pas encore de compte ? ",
       /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onSwitchToRegister, style: { background: "none", border: "none", cursor: "pointer", color: "var(--primary)", fontWeight: 700, fontSize: "inherit", padding: 0 } }, "S’inscrire gratuitement →")
-    ), (NEXUS_CONFIG.github?.enabled !== false || NEXUS_CONFIG.google?.enabled !== false) && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.25rem 0 1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" } }, "ou"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } })), /* @__PURE__ */ React.createElement(GoogleSignInButton, null), /* @__PURE__ */ React.createElement(GitHubSignInButton, null))
+    ), (NEXUS_CONFIG.facebook?.enabled !== false || NEXUS_CONFIG.github?.enabled !== false || NEXUS_CONFIG.google?.enabled !== false) && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem", margin: "1.25rem 0 1rem" } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" } }, "ou"), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, height: "1px", background: "var(--border)" } })), /* @__PURE__ */ React.createElement(FacebookSignInButton, null), /* @__PURE__ */ React.createElement(GoogleSignInButton, null), /* @__PURE__ */ React.createElement(GitHubSignInButton, null))
   );
 };
 // [FIX #310] RoleHeader extrait au niveau module — défini dans RegisterForm causait un remontage à chaque render
@@ -15290,8 +15403,9 @@ if (json.token || json.accessToken) {
           React.createElement("i",{className:"fas fa-chevron-right",style:{color:"var(--text-secondary)",fontSize:"0.85rem"}})
         ))
       ),
-      (NEXUS_CONFIG.github?.enabled !== false || NEXUS_CONFIG.google?.enabled !== false) && React.createElement(React.Fragment,null,
+      (NEXUS_CONFIG.facebook?.enabled !== false || NEXUS_CONFIG.github?.enabled !== false || NEXUS_CONFIG.google?.enabled !== false) && React.createElement(React.Fragment,null,
         React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",margin:"1.25rem 0 1rem"}},React.createElement("div",{style:{flex:1,height:"1px",background:"var(--border)"}}),React.createElement("span",{style:{fontSize:"0.8rem",color:"var(--text-secondary)",whiteSpace:"nowrap"}},"ou"),React.createElement("div",{style:{flex:1,height:"1px",background:"var(--border)"}})),
+        React.createElement(FacebookSignInButton,null),
         React.createElement(GoogleSignInButton,null),
         React.createElement(GitHubSignInButton,null),
         React.createElement("div",{style:{textAlign:"center",marginTop:"1rem",fontSize:"0.85rem",color:"var(--text-secondary)"}},
