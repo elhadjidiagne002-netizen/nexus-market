@@ -35750,58 +35750,27 @@ const Root = () => {
     EmailService.init();
     initStripe();
 
-    // ── [FIX] Confirmation email via hash Supabase — DOIT être AVANT le return ──
-    // Supabase redirige vers SITE_URL/#access_token=xxx&refresh_token=xxx&type=email
-    // On lit le fragment, on restaure la session, on affiche un toast de succès.
+    // ── [FIX RACE] Confirmation email / OAuth via hash Supabase ──────────────────
+    // Supabase redirige vers SITE_URL/#access_token=xxx&refresh_token=xxx&type=...
+    // ⚠️ NE PAS consommer ni effacer le hash ici. Le SDK Supabase
+    // (detectSessionInUrl:true) lit #access_token de façon ASYNCHRONE, crée la
+    // session, émet SIGNED_IN (→ handleLogin) et nettoie l'URL lui-même
+    // (cf. onAuthStateChange). L'ancien code appelait setSession() + replaceState()
+    // de façon SYNCHRONE : le hash était effacé AVANT que le SDK ne le lise, et le
+    // setSession manuel entrait en conflit avec detectSessionInUrl (rotation du
+    // refresh_token) → l'utilisateur restait DÉCONNECTÉ malgré un compte créé.
+    // On se contente ici de lire 'type' (lecture seule, aucun effet de bord) pour
+    // afficher le bon toast. La session est garantie soit par l'événement SIGNED_IN,
+    // soit par restoreSupabaseSession() (getSession) appelé plus bas.
     const _hash = window.location.hash;
     if (_hash && _hash.includes("access_token")) {
       try {
-        const _hp = new URLSearchParams(_hash.replace(/^#/, ""));
-        const _at  = _hp.get("access_token");
-        const _rt  = _hp.get("refresh_token");
-        const _type = _hp.get("type"); // "email" | "recovery" | ...
-        if (_at) {
-          // 1. Restaurer la session Supabase
-          if (DataService._sb) {
-            DataService._sb.auth.setSession({ access_token: _at, refresh_token: _rt || "" })
-              .then(({ data: sd, error: se }) => {
-                if (se) { console.warn("[Auth] setSession error:", se.message); return; }
-                const u = sd?.session?.user || sd?.user;
-                if (u) {
-                  // 2. Sauvegarder les tokens JWT
-                  try {
-                    const _exp = Date.now() + 3600 * 1000;
-                    localStorage.setItem("nexus_jwt",     _at);
-                    localStorage.setItem("nexus_jwt_exp", String(_exp));
-                    if (_rt) {
-                      localStorage.setItem("nexus_refresh_token", _rt);
-                      localStorage.setItem("nexus_refresh_exp",   String(Date.now() + 7 * 86400000));
-                    }
-                  } catch(_) {}
-                  // 3. Mettre à jour DataService
-                  DataService._token        = _at;
-                  DataService._refreshToken = _rt || "";
-                  DataService._user         = u;
-                  console.log("[Auth] ✅ Session restaurée pour", u.email, "— type:", _type);
-                  // 4. Toast + ouverture modal reset si recovery
-                  if (_type === "recovery") {
-                    window.dispatchEvent(new CustomEvent("nexus:show-reset-password"));
-                    window.dispatchEvent(new CustomEvent("nexus:toast", {
-                      detail: { message: "Définissez votre nouveau mot de passe.", type: "info", duration: 5000 }
-                    }));
-                  } else {
-                    window.dispatchEvent(new CustomEvent("nexus:toast", {
-                      detail: { message: "Email confirmé ! Bienvenue sur NEXUS Market 🎉", type: "success", duration: 5000 }
-                    }));
-                  }
-                }
-              })
-              .catch(err => console.warn("[Auth] Confirmation email error:", err.message));
-          }
-          // 5. Nettoyer le hash de l'URL
-          if (window.history?.replaceState) {
-            window.history.replaceState(null, "", window.location.pathname + window.location.search);
-          }
+        const _type = new URLSearchParams(_hash.replace(/^#/, "")).get("type");
+        // 'recovery' est géré par l'événement PASSWORD_RECOVERY (ouvre la modal reset).
+        if (_type !== "recovery") {
+          window.dispatchEvent(new CustomEvent("nexus:toast", {
+            detail: { message: "Connexion réussie ! Bienvenue sur NEXUS Market 🎉", type: "success", duration: 5000 }
+          }));
         }
       } catch(_hashErr) {
         console.warn("[Auth] Hash parse error:", _hashErr.message);
