@@ -23,5 +23,6 @@ DROP POLICY IF EXISTS "Buyers insert orders" ON public.orders;
 --    dédiée. main_config / wa_cfg -> admin & service_role uniquement.
 --    ⚠️ Ces secrets ayant été exposés, ils DOIVENT être révoqués/rotés.
 DROP POLICY IF EXISTS "app_config_auth_select" ON public.app_config;
+DROP POLICY IF EXISTS "app_config_auth_select_safe" ON public.app_config;  -- idempotent : migration rejouable
 CREATE POLICY "app_config_auth_select_safe" ON public.app_config FOR SELECT
   USING (auth.role() = 'authenticated' AND key NOT IN ('nexus_main_config','nexus_wa_cfg'));
