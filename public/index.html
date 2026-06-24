@@ -23001,6 +23001,13 @@ const CourierApp = ({ currentUser, addToast }) => {
   // ── Interface coursier actif ────────────────────────────────────────────
   const totalEarned = earnings.reduce((s,e)=>s+(e.amount||0),0);
   const pendingPay  = earnings.filter(e=>e.status==='pending').reduce((s,e)=>s+(e.amount||0),0);
+  // KPIs du jour (mode pro)
+  const _today      = new Date().toISOString().slice(0,10);
+  const todayEarn   = earnings.filter(e=>String(e.created_at||'').slice(0,10)===_today).reduce((s,e)=>s+(e.amount||0),0);
+  const todayCount  = earnings.filter(e=>String(e.created_at||'').slice(0,10)===_today && e.type==='delivery').length;
+  // Itinéraire Google Maps vers la cible courante (retrait tant que non récupéré, sinon livraison)
+  const _navUrl = (job) => 'https://www.google.com/maps/dir/?api=1&destination=' +
+    encodeURIComponent((job.status==='accepted' ? job.pickup_address : job.delivery_address) || '');
 
   return E('div', null,
     // [VISIBILITÉ] Bannière d'alerte : visible mais invisible aux clients.
@@ -23025,6 +23032,22 @@ const CourierApp = ({ currentUser, addToast }) => {
           E('div', { style:{ width:22, height:22, borderRadius:'50%', background:'#fff', position:'absolute', top:2, left:available?24:2, transition:'left .2s' } })
         ),
         E('span', { style:{ fontSize:'.82rem', fontWeight:600 } }, available?'Disponible':'Hors ligne')
+      )
+    ),
+
+    // ── KPIs du jour (mode pro) ───────────────────────────────────────────
+    E('div', { style:{ display:'flex', gap:'.6rem', marginBottom:'1rem' } },
+      E('div', { style:{ flex:1, background:'var(--bg-light)', borderRadius:10, padding:'.7rem .5rem', textAlign:'center' } },
+        E('div', { style:{ fontSize:'1.25rem', fontWeight:800, color:'var(--primary)' } }, todayCount),
+        E('div', { style:{ fontSize:'.68rem', color:'var(--text-secondary)', textTransform:'uppercase', marginTop:'.15rem' } }, 'Courses du jour')
+      ),
+      E('div', { style:{ flex:1, background:'var(--bg-light)', borderRadius:10, padding:'.7rem .5rem', textAlign:'center' } },
+        E('div', { style:{ fontSize:'1.1rem', fontWeight:800, color:'var(--primary)' } }, FCFA(todayEarn)),
+        E('div', { style:{ fontSize:'.68rem', color:'var(--text-secondary)', textTransform:'uppercase', marginTop:'.15rem' } }, 'Gains du jour')
+      ),
+      (courier.rating!=null) && E('div', { style:{ flex:1, background:'var(--bg-light)', borderRadius:10, padding:'.7rem .5rem', textAlign:'center' } },
+        E('div', { style:{ fontSize:'1.1rem', fontWeight:800, color:'#f59e0b' } }, '⭐ '+Number(courier.rating).toFixed(1)),
+        E('div', { style:{ fontSize:'.68rem', color:'var(--text-secondary)', textTransform:'uppercase', marginTop:'.15rem' } }, 'Note moyenne')
       )
     ),
 
@@ -23091,6 +23114,7 @@ const CourierApp = ({ currentUser, addToast }) => {
               job.buyer_phone && E('a',{href:'https://wa.me/'+String(job.buyer_phone).replace(/\D/g,''),target:'_blank',rel:'noopener',style:{fontSize:'.82rem',color:'#25D366',fontWeight:600,display:'block',marginBottom:'.75rem'}},'💬 WhatsApp client'),
               // Boutons d'action selon statut
               E('div',{style:{display:'flex',gap:'.5rem',flexWrap:'wrap'}},
+                E('a',{href:_navUrl(job),target:'_blank',rel:'noopener',className:'btn btn-secondary',style:{textDecoration:'none',display:'inline-flex',alignItems:'center',justifyContent:'center'}},'🧭 Itinéraire'),
                 job.status==='accepted' && E('button',{className:'btn btn-primary',style:{flex:1},onClick:()=>updateStatus(job,'picked_up')},'📦 Colis récupéré'),
                 job.status==='picked_up' && E('button',{className:'btn btn-primary',style:{flex:1},onClick:()=>updateStatus(job,'in_transit')},'🚛 En route'),
                 job.status==='in_transit' && E('button',{className:'btn btn-primary',style:{flex:1},onClick:()=>updateStatus(job,'delivered')},'✅ Livré'),
@@ -23124,8 +23148,8 @@ const CourierApp = ({ currentUser, addToast }) => {
               E('div',{style:{fontSize:'.75rem',color:'var(--text-secondary)'}},new Date(e.created_at).toLocaleDateString('fr-FR'))
             ),
             E('div',{style:{textAlign:'right'}},
-              E('div',{style:{fontWeight:700,color:'var(--primary)'}}),FCFA(e.amount),
-              E('span',{style:{fontSize:'.72rem',marginLeft:'.4rem',color:e.status==='paid'?'#059669':'#d97706'}},e.status==='paid'?'✅ Payé':'⏳ En attente')
+              E('div',{style:{fontWeight:700,color:'var(--primary)'}}, FCFA(e.amount)),
+              E('span',{style:{fontSize:'.72rem',color:e.status==='paid'?'#059669':'#d97706'}},e.status==='paid'?'✅ Payé':'⏳ En attente')
             )
           ))
         )
