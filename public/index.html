@@ -2440,6 +2440,11 @@
             <a href="/?cat=alimentation" style="display:block;color:#00853E;text-decoration:none;font-size:.9rem;margin:.25rem 0">Alimentation &amp; Épicerie</a>
             <a href="/?cat=maison" style="display:block;color:#00853E;text-decoration:none;font-size:.9rem;margin:.25rem 0">Maison &amp; Décoration</a>
           </nav>
+          <nav aria-label="Réseaux sociaux">
+            <div style="font-weight:800;font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;color:#6B7280;margin-bottom:.5rem">Suivez-nous</div>
+            <iframe title="Page Facebook NEXUS Market" src="https://www.facebook.com/plugins/page.php?href=https%3A%2F%2Fwww.facebook.com%2F1233022656551601&amp;tabs&amp;width=280&amp;height=130&amp;small_header=true&amp;adapt_container_width=true&amp;hide_cover=true&amp;show_facepile=true" width="280" height="130" style="border:none;overflow:hidden;max-width:100%" scrolling="no" frameborder="0" allowfullscreen="true" allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share" loading="lazy"></iframe>
+            <a href="https://www.facebook.com/1233022656551601" target="_blank" rel="noopener" style="display:block;color:#00853E;text-decoration:none;font-size:.9rem;margin:.45rem 0 0">👍 Voir notre page Facebook</a>
+          </nav>
         </div>
         <div style="margin-top:1.4rem;display:flex;flex-wrap:wrap;gap:.4rem 1.2rem">
           <a href="/cgu" style="color:#6B7280;text-decoration:none;font-size:.85rem">Conditions Générales d'Utilisation</a>
@@ -2650,16 +2655,12 @@ const NEXUS_CONFIG = {
     appId: "",
   },
   messenger: {
-    // ── Plugin de chat Facebook Messenger (bulle de support en bas à droite) ──
-    enabled: true,
-    pageId: "1233022656551601", // ID de la Page Facebook NEXUS Market
-    locale: "fr_FR",
-    themeColor: "#00853E",      // vert NEXUS
-    greetingLoggedIn:  "Bonjour 👋 Une question sur votre commande ?",
-    greetingLoggedOut: "Bonjour 👋 Bienvenue sur NEXUS Market ! Comment pouvons-nous vous aider ?",
-    // ⚠️ OBLIGATOIRE côté Facebook : autoriser le domaine, sinon la bulle n'apparaît pas.
-    // Meta Business Suite → Boîte de réception → Paramètres → Plug-in de chat →
-    // « Domaines du site web » → ajouter https://nexusmarket.sn
+    // ── Bouton "Discuter sur Messenger" (lien m.me — AUCUN réglage Facebook requis) ──
+    enabled:  true,
+    pageId:   "1233022656551601", // ID de la Page Facebook NEXUS Market
+    username: "",                  // Optionnel : nom d'utilisateur de la Page → m.me/<username> (plus joli). Vide = utilise pageId.
+    // bottom: "bottom:160px",     // Optionnel : remonter le bouton (déf. bottom:88px, au-dessus du chat).
+    // Le Page Plugin (encadré de la Page dans le footer) lit aussi messenger.pageId.
   },
   // ═══════════════════════════════════════════════════════════════════════
   //  MENTIONS LÉGALES — OBLIGATOIRES POUR LA PRODUCTION
@@ -32586,7 +32587,11 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                 else { try { navigator.clipboard.writeText(url); addToast('🔗 Lien copié — envoyez-le à un ami', 'success'); } catch (_) { window.prompt('Copiez le lien :', url); } }
               } }, React.createElement('i', { className: 'fas fa-user-friends' }), ' Envoyer à un ami'),
               React.createElement('button', { className: 'btn btn-outline btn-sm', style: { flex: '1 1 30%' }, onClick: () => generateProductPoster(selectedProduct, addToast) },
-                React.createElement('i', { className: 'fas fa-image' }), ' Affiche produit')
+                React.createElement('i', { className: 'fas fa-image' }), ' Affiche produit'),
+              React.createElement('button', { className: 'btn btn-sm', style: { flex: '1 1 30%', background: '#1877F2', color: '#fff', border: 'none' }, title: 'Partager sur Facebook', onClick: () => {
+                const url = window.location.origin + '/produit/' + selectedProduct.id;
+                window.open('https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(url), 'fb-share', 'width=600,height=560,noopener,noreferrer');
+              } }, React.createElement('i', { className: 'fab fa-facebook-f' }), ' Partager Facebook')
             ),
             React.createElement('div', { style: { display: 'flex', gap: '1rem', marginTop: '1rem', fontSize: '0.82rem', color: 'var(--text-secondary)', justifyContent: 'center' } },
               React.createElement('span', null, React.createElement('i', { className: 'fas fa-shield-alt text-success' }), ' Achat protégé'),
@@ -36996,52 +37001,41 @@ window.addEventListener("beforeinstallprompt", (e) => {
 })();
 
 // ══════════════════════════════════════════════════════════════════
-// FACEBOOK MESSENGER — plug-in de chat (bulle de support liée à la Page FB)
-// ⚠️ Le domaine nexusmarket.sn DOIT être autorisé côté Facebook, sinon la bulle
-//    ne s'affiche jamais : Meta Business Suite → Boîte de réception → Paramètres
-//    → Plug-in de chat → « Domaines du site web ». Bloqué par les ad-blockers
-//    (charge connect.facebook.net). Calqué sur le loader Pixel ci-dessus.
+// FACEBOOK MESSENGER — bouton de chat "m.me" (ouvre la conversation Messenger)
+// Remplace l'ancien plug-in xfbml.customerchat : déprécié par Meta + il exigeait
+// le whitelisting du domaine. Le lien m.me ne demande AUCUN réglage Facebook et
+// marche pour tout le monde (c'est un simple lien, non bloqué par les ad-blockers).
 // ══════════════════════════════════════════════════════════════════
 (function() {
   const cfg = NEXUS_CONFIG.messenger || {};
-  if (cfg.enabled === false || !cfg.pageId || !/^\d{6,}$/.test(cfg.pageId)) return;
+  if (cfg.enabled === false) return;
+  const handle = cfg.username || cfg.pageId; // m.me/<username> (joli) ou m.me/<pageId>
+  if (!handle) return;
+  const mmeUrl = 'https://m.me/' + handle;
 
   const mount = () => {
-    if (window.__nexusMessengerLoaded) return;
-    window.__nexusMessengerLoaded = true;
-
-    // Conteneurs requis par le SDK Messenger
-    if (!document.getElementById('fb-root')) {
-      const root = document.createElement('div'); root.id = 'fb-root';
-      document.body.appendChild(root);
-    }
-    let chatbox = document.getElementById('fb-customer-chat');
-    if (!chatbox) {
-      chatbox = document.createElement('div');
-      chatbox.id = 'fb-customer-chat';
-      chatbox.className = 'fb-customerchat';
-      document.body.appendChild(chatbox);
-    }
-    chatbox.setAttribute('page_id', cfg.pageId);
-    chatbox.setAttribute('attribution', 'biz_inbox');
-    if (cfg.themeColor)        chatbox.setAttribute('theme_color', cfg.themeColor);
-    if (cfg.greetingLoggedIn)  chatbox.setAttribute('logged_in_greeting',  cfg.greetingLoggedIn);
-    if (cfg.greetingLoggedOut) chatbox.setAttribute('logged_out_greeting', cfg.greetingLoggedOut);
-
-    window.fbAsyncInit = function() {
-      try { FB.init({ xfbml: true, version: 'v19.0' }); } catch (_) {}
-    };
-    // Charger le SDK xfbml.customerchat (idempotent via l'id facebook-jssdk)
-    (function(d, s, id) {
-      if (d.getElementById(id)) { try { window.FB && window.FB.XFBML.parse(); } catch (_) {} return; }
-      const fjs = d.getElementsByTagName(s)[0];
-      const js = d.createElement(s); js.id = id;
-      js.src = 'https://connect.facebook.net/' + (cfg.locale || 'fr_FR') + '/sdk/xfbml.customerchat.js';
-      js.onerror = function() { console.warn('[Messenger] SDK non chargé (ad-blocker ?)'); };
-      fjs.parentNode.insertBefore(js, fjs);
-    })(document, 'script', 'facebook-jssdk');
+    if (window.__nexusMessengerBtn) return;
+    window.__nexusMessengerBtn = true;
+    const a = document.createElement('a');
+    a.href = mmeUrl;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.setAttribute('aria-label', 'Discuter sur Messenger');
+    a.title = 'Discuter sur Messenger';
+    a.style.cssText = [
+      'position:fixed', 'right:20px', (cfg.bottom || 'bottom:88px'), 'z-index:2147483000',
+      'width:56px', 'height:56px', 'border-radius:50%',
+      'background:linear-gradient(135deg,#00B2FF,#006AFF)',
+      'box-shadow:0 4px 14px rgba(0,106,255,.45)',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'cursor:pointer', 'transition:transform .15s', 'text-decoration:none'
+    ].join(';');
+    a.onmouseenter = function(){ a.style.transform = 'scale(1.08)'; };
+    a.onmouseleave = function(){ a.style.transform = 'scale(1)'; };
+    // Logo Messenger (SVG inline, blanc)
+    a.innerHTML = '<svg width="30" height="30" viewBox="0 0 36 36" fill="#fff" aria-hidden="true"><path d="M18 2C9.16 2 2 8.69 2 17.02c0 4.6 2.13 8.7 5.53 11.46V34l5.07-2.78c1.36.38 2.81.58 4.4.58 8.84 0 16-6.69 16-15.02S26.84 2 18 2zm1.62 19.86l-4.13-4.4-7.96 4.4 8.74-9.28 4.21 4.4 7.88-4.4-8.74 9.28z"/></svg>';
+    document.body.appendChild(a);
   };
-
   if (document.body) mount();
   else document.addEventListener('DOMContentLoaded', mount, { once: true });
 })();
