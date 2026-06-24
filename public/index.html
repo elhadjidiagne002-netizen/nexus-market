@@ -23827,6 +23827,96 @@ const _hpPreviewBlock = (node) => React.createElement('div', { style: { marginBo
   node
 );
 
+// ── AdminBroadcastPanel — Campagne email de masse vers les inscrits ──────────
+// Rendu dans AdminDashboard quand view === "broadcast".
+// POST /api/admin/broadcast (admin only, batch Resend, pied de page désinscription).
+const AdminBroadcastPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const [subject, setSubject]     = React.useState('');
+  const [message, setMessage]     = React.useState('');
+  const [link, setLink]           = React.useState('');
+  const [linkLabel, setLinkLabel] = React.useState('');
+  const [audience, setAudience]   = React.useState('all');
+  const [sending, setSending]     = React.useState(false);
+  const [result, setResult]       = React.useState(null);
+
+  const AUDIENCES = [
+    { v: 'all',       l: 'Tous les inscrits' },
+    { v: 'buyer',     l: 'Acheteurs / particuliers' },
+    { v: 'buyer_pro', l: 'Acheteurs Pro (B2B)' },
+    { v: 'vendor',    l: 'Vendeurs' },
+    { v: 'pro',       l: 'Artisans (NEXUS Pro)' },
+    { v: 'breeder',   l: 'Éleveurs' },
+    { v: 'courier',   l: 'Livreurs' },
+  ];
+
+  const send = async (test) => {
+    if (!subject.trim() || !message.trim()) { addToast('Sujet et message requis', 'warning'); return; }
+    if (!test && !window.confirm('Envoyer cet email à « ' + ((AUDIENCES.find(a => a.v === audience) || {}).l || '') + ' » ? Cette action est irréversible.')) return;
+    setSending(true); setResult(null);
+    try {
+      const res = await DataService.paymentFetch('/api/admin/broadcast', {
+        method: 'POST',
+        body: JSON.stringify({ subject, message, link: link || undefined, linkLabel: linkLabel || undefined, audience, test: !!test }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        if (test) addToast('✅ Email de test envoyé à votre adresse admin', 'success');
+        else { setResult(data); addToast('✅ Campagne envoyée : ' + data.sent + '/' + data.total, 'success'); }
+      } else {
+        addToast('❌ ' + (data.error || 'Échec de l\'envoi'), 'error');
+      }
+    } catch (e) {
+      addToast('❌ ' + (e.message === 'AUTH_REQUIRED' ? 'Reconnectez-vous en tant qu\'admin' : e.message), 'error');
+    } finally { setSending(false); }
+  };
+
+  const inp = { width: '100%', padding: '0.7rem', border: '1px solid var(--border)', borderRadius: 8, fontSize: '0.92rem', fontFamily: 'inherit', boxSizing: 'border-box' };
+  const lbl = { fontWeight: 700, fontSize: '0.85rem', display: 'block', marginBottom: '0.3rem' };
+
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header' }, E('h2', { className: 'card-title' }, '📣 Campagne email — envoi en masse')),
+    E('p', { style: { color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '-0.5rem' } },
+      'Envoie un email à tes inscrits (newsletter, promo, annonce). Chaque destinataire reçoit un email individuel avec un pied de page de désinscription. Teste d\'abord avec « Envoyer un test ».'),
+    E('div', { style: { display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '1rem' } },
+      E('div', null,
+        E('label', { style: lbl }, 'Destinataires'),
+        E('select', { value: audience, onChange: (e) => setAudience(e.target.value), style: inp },
+          AUDIENCES.map((a) => E('option', { key: a.v, value: a.v }, a.l)))
+      ),
+      E('div', null,
+        E('label', { style: lbl }, 'Sujet de l\'email'),
+        E('input', { value: subject, onChange: (e) => setSubject(e.target.value), maxLength: 200, placeholder: 'Ex. Nouveautés de la semaine sur NEXUS Market', style: inp })
+      ),
+      E('div', null,
+        E('label', { style: lbl }, 'Message'),
+        E('textarea', { value: message, onChange: (e) => setMessage(e.target.value), maxLength: 20000, rows: 8, placeholder: 'Votre message… (les sauts de ligne sont conservés)', style: { ...inp, resize: 'vertical' } })
+      ),
+      E('div', { style: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap' } },
+        E('div', { style: { flex: '1 1 240px' } },
+          E('label', { style: lbl }, 'Lien du bouton — optionnel'),
+          E('input', { value: link, onChange: (e) => setLink(e.target.value), placeholder: 'https://nexusmarket.sn/...', style: inp })
+        ),
+        E('div', { style: { flex: '1 1 160px' } },
+          E('label', { style: lbl }, 'Texte du bouton'),
+          E('input', { value: linkLabel, onChange: (e) => setLinkLabel(e.target.value), placeholder: 'Découvrir', style: inp })
+        )
+      ),
+      E('div', { style: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.5rem' } },
+        E('button', { className: 'btn btn-secondary', disabled: sending, onClick: () => send(true) },
+          E('i', { className: 'fas fa-vial' }), ' Envoyer un test (à moi)'),
+        E('button', { className: 'btn btn-primary', disabled: sending, onClick: () => send(false) },
+          E('i', { className: sending ? 'fas fa-spinner fa-spin' : 'fas fa-paper-plane' }), sending ? ' Envoi…' : ' Envoyer à tous')
+      ),
+      result && E('div', { style: { marginTop: '0.5rem', padding: '0.8rem 1rem', background: 'var(--bg-light)', borderRadius: 8, fontSize: '0.9rem' } },
+        E('strong', null, 'Résultat : '), (result.sent + ' envoyés / ' + result.total + ' destinataires'),
+        result.failed ? E('span', { style: { color: 'var(--danger)' } }, ' · ' + result.failed + ' échecs') : null,
+        result.note ? E('div', { style: { color: 'var(--text-secondary)', marginTop: '0.3rem' } }, result.note) : null
+      )
+    )
+  );
+};
+
 const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onToggleSidebar }) => {
   // [FIX] _downloadStatement défini ici (était uniquement dans VendorDashboard → ReferenceError)
   const _downloadStatement = window.__nexusDownloadMonthlyStatement || ((m) => (window.__nexusToast || alert)("Relevé mensuel " + m + " : connectez-vous au serveur NEXUS.", "error"));
@@ -24591,6 +24681,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "email_templates", icon: "file-alt", label: "Templates email" },
     { id: "sms",    icon: "sms",      label: "SMS" },
     { id: "emails", icon: "envelope", label: "Emails envoy\xE9s" },
+    { id: "broadcast", icon: "bullhorn", label: "📣 Campagne email" },
     { id: "revenue", icon: "crown", label: "💰 Revenus & Commissions" },
     { id: "payouts", icon: "money-bill-wave", label: "Paiements vendeurs" },
     { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: stats.pendingPayouts ?? _payoutReqs.filter((r) => r.status === "pending").length },
@@ -26013,6 +26104,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
   })(),
 
   view === "validations" && React.createElement(AdminValidationPanel, { addToast }),
+  view === "broadcast" && React.createElement(AdminBroadcastPanel, { addToast }),
   view === "livraison_admin" && React.createElement(AdminLivraisonPanel, { addToast }),
   view === "monetization" && React.createElement(MonetizationConfigPanel, { addToast }),
   view === "popups"  && React.createElement(PopupsAdminPanel, { addToast }),
