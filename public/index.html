@@ -3310,11 +3310,11 @@ const NexusWA = {
     } catch(e) { console.warn('[NexusWA] saveConfig error:', e.message); }
   },
 
-  // Envoyer un message via /api/whatsapp (Cloudflare Function)
+  // Envoyer un message via /api/whatsapp (Cloudflare Function).
+  // [SÉCURITÉ] Le token Green API reste 100% côté SERVEUR (variables d'env). Plus
+  // aucun token/secret Green API dans le bundle ni lu depuis app_config (qui a fui).
+  // Auth de l'appel = JWT Supabase de l'utilisateur connecté.
   async send(phone, message, template = null) {
-    // [FIX] Service désactivé via Admin → on n'envoie pas. L'ancien test
-    // (!enabled && !instanceId) ne sautait que si les DEUX étaient faux : comme
-    // instanceId est codé en dur, le message partait même avec enabled === false.
     if (this._cfg.enabled === false) {
       console.info('[NexusWA] Service désactivé — message non envoyé:', template);
       return { ok: false, skipped: true };
@@ -3324,51 +3324,42 @@ const NexusWA = {
       console.info('[NexusWA] événement désactivé par l\'admin :', template);
       return { ok: false, skipped: true };
     }
-    // [FIX] Pas de credentials → non configuré (on ne tente même pas l'appel API).
-    if (!this._cfg.instanceId || !this._cfg.apiToken) {
-      console.info('[NexusWA] Non configuré — message non envoyé:', template);
-      return { ok: false, skipped: true };
-    }
-    // [FIX] Numéro destinataire manquant → on n'envoie pas.
     if (!phone) {
       console.warn('[NexusWA] Numéro destinataire manquant — message non envoyé:', template);
       return { ok: false, skipped: true };
     }
-    // Normaliser le numéro (format sénégalais)
-    const rawPhone = String(phone).replace(/\D/g, '');
+    const rawPhone  = String(phone).replace(/\D/g, '');
     const intlPhone = rawPhone.startsWith('221') ? rawPhone
                     : rawPhone.length === 9      ? '221' + rawPhone
                     : rawPhone;
-
-    // Appel direct Green API — instance URL custom https://7107.api.greenapi.com
-    const _gaBase    = this._cfg.apiUrl     || 'https://api.green-api.com';
-    const _gaInst    = this._cfg.instanceId || '';
-    const _gaToken   = this._cfg.apiToken   || '';
-    const _chatId    = intlPhone + '@c.us';
-
-    if (!_gaInst || !_gaToken) {
-      console.warn('[NexusWA] Credentials manquants — message non envoyé');
-      return { ok: false, skipped: true };
-    }
+    const _logW = (status, extra) => { try { if (typeof NexusNotif !== 'undefined') NexusNotif.logWhatsApp({ phone: intlPhone, message, template: template || null, status, ...(extra || {}) }); } catch(_){} };
 
     try {
-      const res = await fetch(
-        `${_gaBase}/waInstance${_gaInst}/sendMessage/${_gaToken}`,
-        {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ chatId: _chatId, message }),
-        }
-      );
+      // JWT Supabase pour authentifier l'appel serveur (le token Green API est en env).
+      let _tk = '';
+      try {
+        const s = await (DataService._sb && DataService._sb.auth.getSession());
+        _tk = (s && s.data && s.data.session && s.data.session.access_token) || sessionStorage.getItem('nexus_jwt') || '';
+      } catch (_) {}
+      const res = await fetch('/api/whatsapp', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', ...(_tk ? { Authorization: 'Bearer ' + _tk } : {}) },
+        body:    JSON.stringify({ phone: intlPhone, message, event: template || undefined }),
+      });
       const data = await res.json().catch(() => ({}));
-      const _logW = (status, extra) => { try { if (typeof NexusNotif !== 'undefined') NexusNotif.logWhatsApp({ phone: intlPhone, message, template: template || null, status, ...(extra || {}) }); } catch(_){} };
-      if (!res.ok) { console.warn('[NexusWA] API error:', res.status, data); _logW('failed', { error_msg: data.message || data.error || ('Green API ' + res.status) }); return { ok: false, error: data.message || data.error || 'erreur Green API' }; }
-      console.info('[NexusWA] ✅ Message envoyé →', intlPhone, '| template:', template, '| id:', data.idMessage);
+      if (res.status === 401) { console.info('[NexusWA] non authentifié — envoi réservé au serveur/utilisateur connecté'); return { ok: false, skipped: true }; }
+      if (data && data.skipped) return { ok: false, skipped: true };
+      if (!res.ok || (data && data.ok === false)) {
+        console.warn('[NexusWA] erreur serveur:', res.status, data);
+        _logW('failed', { error_msg: (data && data.error) || ('HTTP ' + res.status) });
+        return { ok: false, error: (data && data.error) || 'erreur serveur WhatsApp' };
+      }
+      console.info('[NexusWA] ✅ Message envoyé (serveur) →', intlPhone, '| template:', template, '| id:', data.idMessage);
       _logW('sent', { green_id: data.idMessage || null });
       return { ok: true, idMessage: data.idMessage };
-    } catch(err) {
+    } catch (err) {
       console.warn('[NexusWA] fetch error:', err.message);
-      try { if (typeof NexusNotif !== 'undefined') NexusNotif.logWhatsApp({ phone: intlPhone, message, template: template || null, status: 'failed', error_msg: err.message }); } catch(_){}
+      _logW('failed', { error_msg: err.message });
       return { ok: false, error: err.message };
     }
   },
@@ -7884,19 +7875,10 @@ const EmailService = {
         if (r.ok) { const j = await r.json(); if (j.ok) { console.log("[EmailService] ✅ backend (Resend/Brevo)", to); return true; } }  // serveur journalise déjà (provider_id)
       } catch(e) { console.warn("[EmailService] backend:", e.message); }
     }
-    // ── 2. BREVO client (SECOURS) ─────────────────────────────────────────
-    if (NEXUS_CONFIG.brevo?.apiKey) {
-      try {
-        const r = await fetch("https://api.brevo.com/v3/smtp/email", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "api-key": NEXUS_CONFIG.brevo.apiKey },
-          body: JSON.stringify({ sender: { name: NEXUS_CONFIG.brevo.senderName||"NEXUS Market", email: NEXUS_CONFIG.brevo.senderEmail||"nx@nexusmarket.sn" }, to: [{ email: to }], subject, htmlContent: htmlBody })
-        });
-        if (r.ok) { console.log("[Brevo] ✅", to, "—", subject); _logE("sent"); return true; }
-        const err = await r.json().catch(()=>({}));
-        console.warn("[Brevo] ⚠️", r.status, err.message || JSON.stringify(err));
-      } catch(e) { console.warn("[Brevo] réseau:", e.message); }
-    }
+    // ── 2. BREVO client SUPPRIMÉ (sécurité) ───────────────────────────────
+    // La clé API Brevo ne doit JAMAIS être côté client (elle a fui via app_config
+    // — RLS corrigée). La redondance Resend → Brevo est gérée CÔTÉ SERVEUR (env
+    // BREVO_API_KEY) dans /api/email/send. Plus aucun envoi Brevo direct ici.
     // ── 3. EmailJS fallback (SECOURS) ─────────────────────────────────────
     const uTpl = NEXUS_CONFIG.emailjs.universalTemplateId;
     if (!this._initialized && window.emailjs && isEmailjsConfigured()) { window.emailjs.init({ publicKey: NEXUS_CONFIG.emailjs.publicKey }); this._initialized = true; }
