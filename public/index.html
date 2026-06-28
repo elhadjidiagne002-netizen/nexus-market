@@ -44680,7 +44680,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
         <div id="nxp-searchPanel" class="hidden absolute left-0 right-0 top-full mt-1 bg-white rounded-lg shadow-2xl border border-surface-container z-50 overflow-hidden max-h-[70vh] overflow-y-auto"></div>
       </div>
       <div class="flex items-center gap-md">
-        <div class="hidden lg:flex items-center gap-sm mr-2">
+        <div id="nxp-authArea" class="hidden lg:flex items-center gap-sm mr-2">
           <button id="nxp-loginBtn" class="text-on-surface-variant hover:text-primary font-semibold text-sm transition-colors">Connexion</button>
           <button id="nxp-registerBtn" class="bg-primary text-on-primary px-4 py-2 rounded-lg font-bold text-sm premium-glow transition-all">S'inscrire</button>
         </div>
@@ -45127,6 +45127,55 @@ function flashCard(name,price,oldPrice,disc,img){
     +'</div>';
 }
 
+/* ─── Supabase REST (clé publique anon) ─── */
+var SB_URL='https://pqcqbstbdujzaclsiosv.supabase.co';
+var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE';
+function sbFetch(path){
+  return fetch(SB_URL+'/rest/v1/'+path,{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Accept':'application/json'}})
+    .then(function(r){return r.ok?r.json():null;}).catch(function(){return null;});
+}
+
+/* Convertit un produit Supabase en objet produit overlay + HTML card */
+function sbCard(p){
+  if(!p||!p.id) return '';
+  var imgs=p.images;
+  if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
+  var img=(Array.isArray(imgs)&&imgs[0])||IMGS[hash(String(p.id))%IMGS.length];
+  var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
+  var priceStr=fcfa.toLocaleString('fr-FR');
+  var rat=Math.min(5,Math.max(1,Math.round(parseFloat(p.rating)||4)));
+  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat};
+  NXP_PRODS[pObj.id]=pObj;
+  return card(pObj);
+}
+
+/* Loader squelette pendant le fetch */
+function skeletonCards(n){
+  var s='';
+  for(var i=0;i<n;i++) s+='<div class="min-w-[210px] w-[210px] shrink-0 bg-white rounded-xl border border-outline-variant p-3 animate-pulse"><div class="h-36 bg-surface-container rounded-lg mb-2"></div><div class="h-3 bg-surface-container rounded w-2/3 mb-2"></div><div class="h-3 bg-surface-container rounded w-full mb-2"></div><div class="h-6 bg-surface-container rounded w-1/2"></div></div>';
+  return s;
+}
+
+/* Sync état auth dans le header overlay */
+function syncAuthState(){
+  var area=document.getElementById('nxp-authArea');if(!area) return;
+  var u=window.__nexusCurrentUser;
+  if(u&&u.id){
+    var label=u.first_name||(u.email&&u.email.split('@')[0])||'Mon compte';
+    var dest=u.role==='vendor'?'Boutique':u.role==='admin'?'Admin':'Tableau de bord';
+    area.innerHTML='<div class="flex items-center gap-sm">'
+      +'<span class="text-sm font-semibold text-on-surface truncate max-w-[120px]" title="'+u.email+'">'+label+'</span>'
+      +'<button class="bg-primary text-on-primary px-3 py-1.5 rounded-lg font-bold text-sm hover:brightness-110 transition-all" '
+        +'onclick="try{window.dispatchEvent(new CustomEvent(\'nexus:hide-public-home\'));}catch(e){}">'+dest+'</button>'
+      +'</div>';
+  } else {
+    area.innerHTML='<button id="nxp-loginBtn" class="text-on-surface-variant hover:text-primary font-semibold text-sm transition-colors">Connexion</button>'
+      +'<button id="nxp-registerBtn" class="bg-primary text-on-primary px-4 py-2 rounded-lg font-bold text-sm premium-glow transition-all">S\'inscrire</button>';
+    var lb=document.getElementById('nxp-loginBtn');if(lb)lb.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-login'));}catch(e){}});
+    var rb=document.getElementById('nxp-registerBtn');if(rb)rb.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-login'));}catch(e){}});
+  }
+}
+
 function showProto(){
   var ov=document.getElementById('nx-proto-overlay');
   if(!ov) return;
@@ -45134,6 +45183,7 @@ function showProto(){
   document.body.classList.add('nx-on-home');
   if(!INITED){INITED=true;initProto();}
   syncCartCount();
+  syncAuthState();
 }
 function hideProto(){
   var ov=document.getElementById('nx-proto-overlay');
@@ -45149,19 +45199,46 @@ function syncCartCount(){
 }
 
 function initProto(){
-  /* Produits */
+  /* Produits démo (fallback immédiat pendant le fetch Supabase) */
   var best=[P('nxp-hespresso','Machine Hespresso','85 000',4,0),P('nxp-sony','Sony WH-1000XM5','225 000',5,1),P('nxp-jordan','Nike Air Jordan 1','145 000',4,2),P('nxp-levis','Levi\'s 501','48 000',3,3),P('nxp-dyson','Aspirateur Dyson V15','320 000',5,4),P('nxp-mac','MacBook Air M3','850 000',4,5),P('nxp-qled','Samsung QLED 65"','540 000',4,6),P('nxp-montre','Montre de Luxe','200 000',5,7)];
   var arrivals=[P('nxp-arr1','Dyson V15 Detect','320 000',4,4),P('nxp-arr2','MacBook Air M3','850 000',5,5),P('nxp-arr3','Samsung Neo QLED','540 000',4,6),P('nxp-arr4','Machine Hespresso','85 000',4,0),P('nxp-arr5','Sony WH-1000XM5','225 000',5,1),P('nxp-arr6','Nike Air Jordan 1','145 000',4,2),P('nxp-arr7','Levi\'s 501','48 000',3,3),P('nxp-arr8','Sac en Cuir Premium','101 000',5,7)];
   var recommended=[P('nxp-r1','Casque Gaming Pro','75 000',4,1),P('nxp-r2','Sneakers Urbaines','62 000',5,2),P('nxp-r3','Cafetière Italienne','29 000',4,0),P('nxp-r4','TV LED 50"','310 000',4,6),P('nxp-r5','Sac à Dos Voyage','45 000',5,7),P('nxp-r6','Jean Slim Premium','39 000',3,3),P('nxp-r7','Enceinte Bluetooth','55 000',4,5),P('nxp-r8','Montre Connectée','120 000',5,4)];
 
-  /* Remplir carrousels */
-  var bsEl=document.getElementById('nxp-bestSellers');if(bsEl)bsEl.innerHTML=best.map(card).join('');
-  var naEl=document.getElementById('nxp-newArrivals');if(naEl)naEl.innerHTML=arrivals.map(card).join('');
-  var rcEl=document.getElementById('nxp-recommended');if(rcEl)rcEl.innerHTML=recommended.map(card).join('');
+  /* Squelettes immédiats */
+  var bsEl=document.getElementById('nxp-bestSellers');if(bsEl)bsEl.innerHTML=skeletonCards(6);
+  var naEl=document.getElementById('nxp-newArrivals');if(naEl)naEl.innerHTML=skeletonCards(6);
+  var rcEl=document.getElementById('nxp-recommended');if(rcEl)rcEl.innerHTML=skeletonCards(6);
 
-  /* Flash Sales */
-  var flash=[['Dyson V15 Detect Premium','320 000','450 000','-30%',IMGS[4]],['MacBook Air M3 Midnight','850 000','1 000 000','-15%',IMGS[5]],['Samsung Neo QLED 65"','540 000','675 000','-20%',IMGS[6]]];
-  var fsEl=document.getElementById('nxp-flashSales');if(fsEl)fsEl.innerHTML=flash.map(function(p){return flashCard(p[0],p[1],p[2],p[3],p[4]);}).join('');
+  /* Fetch vrais produits Supabase → remplace les squelettes */
+  var Q='select=id,name,price,images,rating,category,stock&active=eq.true&stock=gt.0&limit=12';
+  sbFetch('products?'+Q+'&order=sold_count.desc.nullslast').then(function(data){
+    if(bsEl) bsEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):best.map(card).join('');
+  });
+  sbFetch('products?'+Q+'&order=created_at.desc').then(function(data){
+    if(naEl) naEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):arrivals.map(card).join('');
+  });
+  sbFetch('products?'+Q+'&order=rating.desc.nullslast').then(function(data){
+    if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):recommended.map(card).join('');
+  });
+
+  /* Flash Sales — top 3 produits avec le plus grand écart prix / stock */
+  sbFetch('products?select=id,name,price,images,rating,stock&active=eq.true&stock=gt.0&order=sold_count.desc.nullslast&limit=3').then(function(data){
+    var fsEl=document.getElementById('nxp-flashSales');
+    if(!fsEl) return;
+    if(data&&data.length){
+      fsEl.innerHTML=data.map(function(p,i){
+        var imgs=p.images;if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
+        var img=(Array.isArray(imgs)&&imgs[0])||IMGS[i%IMGS.length];
+        var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
+        var old=Math.round(fcfa*[1.3,1.15,1.2][i]);
+        var disc=['-30%','-15%','-20%'][i];
+        return flashCard(p.name,fcfa.toLocaleString('fr-FR'),old.toLocaleString('fr-FR'),disc,img);
+      }).join('');
+    } else {
+      var flash=[['Dyson V15 Detect Premium','320 000','450 000','-30%',IMGS[4]],['MacBook Air M3 Midnight','850 000','1 000 000','-15%',IMGS[5]],['Samsung Neo QLED 65"','540 000','675 000','-20%',IMGS[6]]];
+      fsEl.innerHTML=flash.map(function(p){return flashCard(p[0],p[1],p[2],p[3],p[4]);}).join('');
+    }
+  });
 
   /* Countdown Flash */
   (function(){
@@ -45295,9 +45372,7 @@ function initProto(){
   var cr=document.getElementById('nxp-clearRecent');if(cr)cr.addEventListener('click',function(){localStorage.removeItem('nx_recent');renderRecent();});
   renderRecent();
 
-  /* Câblage auth */
-  var loginBtn=document.getElementById('nxp-loginBtn');if(loginBtn)loginBtn.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-login'));}catch(e){}});
-  var regBtn=document.getElementById('nxp-registerBtn');if(regBtn)regBtn.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-login'));}catch(e){}});
+  /* Câblage boutons statiques (auth géré par syncAuthState) */
   var vendreBtn=document.getElementById('nxp-vendreBtn');if(vendreBtn)vendreBtn.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-login'));}catch(e){}});
   var cartBtn=document.getElementById('nxp-cartBtn');if(cartBtn)cartBtn.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-cart'));}catch(e){}});
 
