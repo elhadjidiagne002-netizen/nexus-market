@@ -30744,10 +30744,17 @@ const NxCard = ({ p, inGrid, status, onSelect, onAddToCart, addToast, addedIds }
     ),
     E('div', { className: 'product-row-body' },
       E('div', { className: 'product-row-name' }, p.name),
-      E('div', { className: 'product-row-vendor' }, '🏪 ', p.vendorName || ''),
+      E('div', { className: 'product-row-vendor' }, '🏪 ', p.vendorName || '',
+        (p.vendorName) && E('span', { title: 'Vendeur vérifié', style: { color: 'var(--primary)', fontWeight: 900, marginLeft: 4 } }, '✓')
+      ),
       !isExpress && E('div', { className: 'product-row-rating' },
         E('span', { className: 'product-row-stars' }, '★'.repeat(Math.max(0, Math.min(5, Math.round(p.rating || 0))))),
         E('span', null, '(' + (p.reviewsCount || 0) + ')')
+      ),
+      !isExpress && E('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: '.58rem', color: 'var(--text-secondary)', margin: '1px 0 3px' } },
+        E('span', { style: { color: 'var(--primary)', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 2 } }, '🛡️ Protégé'),
+        E('span', null, '·'),
+        E('span', null, '🚚 Livraison Sénégal')
       ),
       E('div', { className: 'product-row-price' }, isExpress ? ((p._priceFcfa || 0).toLocaleString('fr-FR') + ' FCFA') : formatPrice(p.price)),
       isExpress
@@ -32312,6 +32319,21 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
 
 
 
+    // ── BANDE RÉASSURANCE (refonte) ──
+    React.createElement('div', { className: 'home-section', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: '0.6rem', margin: '0.5rem 0 0.25rem' } },
+      [['🛡️', 'Protection acheteur', 'Payé au vendeur après réception'],
+       ['💳', 'Wave · Orange Money', '& carte bancaire'],
+       ['🚚', 'Livraison partout', 'Dakar & toutes les régions'],
+       ['🏪', 'Vendeurs vérifiés', 'Boutiques contrôlées']].map(function (it, i) {
+        return React.createElement('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#fff', border: '1px solid var(--border)', borderRadius: 12, padding: '0.55rem 0.8rem' } },
+          React.createElement('span', { style: { fontSize: '1.35rem', lineHeight: 1 } }, it[0]),
+          React.createElement('div', null,
+            React.createElement('div', { style: { fontWeight: 800, fontSize: '.8rem', color: 'var(--text-primary)' } }, it[1]),
+            React.createElement('div', { style: { fontSize: '.68rem', color: 'var(--text-secondary)' } }, it[2])
+          )
+        );
+      })
+    ),
     React.createElement(HomeStoriesRow, { user: currentUser2 }),
     // ── FLASH SALES ──
     flashProducts.length > 0 && React.createElement('div', { className: 'home-section' },
@@ -44461,6 +44483,42 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
 
   window.NexusFabLauncher = { open: open, close: close, toggle: toggle, items: ITEMS };
   console.info('[NEXUS] Menu de raccourcis prêt ✅');
+})();
+</script>
+
+<!-- ── [REFONTE] Barre de navigation mobile (mobile-first, non-invasif) ── -->
+<script>
+(function(){
+  function init(){
+    if (document.getElementById('nx-mnav')) return;
+    var st = document.createElement('style');
+    st.textContent = '#nx-mnav{position:fixed;left:0;right:0;bottom:0;z-index:9981;display:flex;background:#fff;border-top:1px solid var(--border);box-shadow:0 -2px 10px rgba(0,0,0,.06);height:60px}'
+      + '#nx-mnav button{flex:1;border:none;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:.62rem;font-weight:700;color:var(--text-secondary);cursor:pointer;font-family:inherit}'
+      + '#nx-mnav button.active{color:var(--primary)}'
+      + '#nx-mnav button i{font-size:1.15rem}'
+      + '@media(min-width:1024px){#nx-mnav{display:none}}'
+      + '@media(max-width:1023px){body{padding-bottom:60px}}';
+    document.head.appendChild(st);
+    function isLogged(){ try { for (var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); if (/sb-.*-auth-token/.test(k) && localStorage.getItem(k)) return true; } } catch(e){} return false; }
+    function emit(n,d){ try { window.dispatchEvent(new CustomEvent(n, d!==undefined?{detail:d}:undefined)); } catch(e){} }
+    var nav = document.createElement('nav'); nav.id = 'nx-mnav'; nav.setAttribute('aria-label','Navigation mobile');
+    var items = [
+      { ic:'fa-home',          lb:'Accueil',    fn:function(){ emit('nexus:show-public-home'); } },
+      { ic:'fa-th-large',      lb:'Catégories', fn:function(){ emit('nexus:open-menu'); } },
+      { ic:'fa-shopping-cart', lb:'Panier',     fn:function(){ emit('nexus:open-cart'); } },
+      { ic:'fa-user',          lb:'Compte',     fn:function(){ if (isLogged()) emit('nexus:hide-public-home'); else emit('nexus:open-login'); } }
+    ];
+    items.forEach(function(it,i){
+      var b = document.createElement('button');
+      b.innerHTML = '<i class="fas '+it.ic+'"></i><span>'+it.lb+'</span>';
+      if (i===0) b.classList.add('active');
+      b.addEventListener('click', function(){ nav.querySelectorAll('button').forEach(function(x){ x.classList.remove('active'); }); b.classList.add('active'); it.fn(); });
+      nav.appendChild(b);
+    });
+    document.body.appendChild(nav);
+    console.info('[NEXUS] Nav mobile prête ✅');
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 </script>
 
