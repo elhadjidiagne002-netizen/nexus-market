@@ -14087,14 +14087,6 @@ const NexusMegaMenu = ({ user, inDashboard }) => {
         )),
         sec((user && user.id) ? 'Mon espace' : 'Mon compte', E(React.Fragment, null,
           (user && user.id) ? item('↩ Retour au tableau de bord', () => emit('nexus:hide-public-home'), '📊') : item('Se connecter / S’inscrire', () => emit('nexus:open-login'), '👤'),
-          (user && user.id) && item('Mon espace ✨', () => {
-            const r = user.role;
-            const url = r === 'admin' ? '/dashboard-admin.html'
-              : r === 'vendor' ? '/dashboard-vendeur.html'
-              : r === 'courier' ? '/dashboard-coursier.html'
-              : '/dashboard-acheteur.html';
-            window.location.href = url;
-          }, '✨'),
           (user && user.id) && item('Mes livraisons', () => emit('nexus:open-my-deliveries'), '📦'),
           (user && user.id) && item('Messagerie', () => emit('nexus:open-messaging'), '💬'),
           item('Mon panier', () => emit('nexus:open-cart'), '🛒'),
@@ -32150,6 +32142,39 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     setAddedToCartIds(prev => { const s = new Set(prev); s.add(product.id); return s; });
     setTimeout(() => setAddedToCartIds(prev => { const s = new Set(prev); s.delete(product.id); return s; }), 1300);
   };
+  // [NOUVELLE INTERFACE] Écoute l'événement global 'nexus:add-to-cart' émis par
+  // l'overlay d'accueil (nx-proto-overlay), la bande Louma, etc. — sans listener
+  // l'ajout au panier depuis ces interfaces ne faisait rien. Résout le produit
+  // (objet complet, id, ou champs ad hoc) puis réutilise addToCart (panier invité).
+  React.useEffect(() => {
+    const onAdd = (e) => {
+      const d = (e && e.detail) || {};
+      let prod = d.product || null;
+      const pid = d.id || d.productId || (prod && prod.id);
+      if (!prod && pid) prod = (products || []).find(p => String(p.id) === String(pid)) || null;
+      if (!prod) prod = { id: pid || ('ext-' + Date.now()), name: d.name || 'Produit', price: (d.loumaPrice != null ? d.loumaPrice : d.price) || 0, stock: d.stock || 99, imageUrl: d.img || d.imageUrl || '' };
+      addToCart(prod, 1);
+      try { const n = (storage.get('guest_cart') || []).reduce((s, i) => s + (i.quantity || 1), 0); window.dispatchEvent(new CustomEvent('nexus:cart-updated', { detail: n })); } catch (_) {}
+    };
+    window.addEventListener('nexus:add-to-cart', onAdd);
+    return () => window.removeEventListener('nexus:add-to-cart', onAdd);
+  }, [cart, products]);
+  // [NOUVELLE INTERFACE] Lit les filtres passés en URL par l'overlay d'accueil
+  // (recherche, catégorie, prix) → applique le filtrage du catalogue puis scrolle
+  // vers la grille. Sans ça, /?q= et /?cat= ne filtraient rien.
+  React.useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const q = sp.get('q'); const cat = sp.get('cat');
+      const pmin = sp.get('pmin'); const pmax = sp.get('pmax');
+      if (q) setSearchTerm(q);
+      if (cat) setFilterCategory(cat);
+      if (pmin || pmax) setPriceRange([pmin ? +pmin : 0, pmax ? +pmax : 1e7]);
+      if (q || cat || pmin || pmax) {
+        setTimeout(() => { try { const a = document.getElementById('all-products-anchor'); if (a) a.scrollIntoView({ behavior: 'smooth' }); } catch (_) {} }, 500);
+      }
+    } catch (_) {}
+  }, []);
   const updateQty = (id, qty) => {
     if (qty <= 0) {
       removeFromCart(id);
@@ -35481,15 +35506,6 @@ const App = ({ onUserChange }) => {
       const allowed = ["buyer", "buyer_pro", "vendor", "courier", "pro", "breeder"];
       const role = allowed.indexOf(reg) !== -1 ? reg : null;
       setTimeout(() => { try { window.dispatchEvent(new CustomEvent("nexus:open-auth", { detail: { tab: "register", preselectedRole: role } })); } catch (_) {} }, 500);
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, []);
-  // Deep-link connexion : ?login=1 (utilisé par les dashboards statiques
-  // dashboard-*.html qui redirigent ici quand aucune session n'est active).
-  React.useEffect(() => {
-    const _p = new URLSearchParams(window.location.search);
-    if (_p.get("login") === "1") {
-      setTimeout(() => { try { window.dispatchEvent(new CustomEvent("nexus:open-auth", { detail: { tab: "login" } })); } catch (_) {} }, 500);
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -44901,7 +44917,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
         <h2 class="font-bold text-xl flex items-center gap-2"><span class="material-symbols-outlined text-primary">play_circle</span> STORIES</h2>
         <a class="text-primary text-sm font-bold hover:underline" href="#">Tout voir</a>
       </div>
-      <div class="flex gap-lg scrolling-wrapper overflow-x-auto pb-4">
+      <div id="nxp-storiesRow" class="flex gap-lg scrolling-wrapper overflow-x-auto pb-4">
         <div class="flex flex-col items-center gap-sm min-w-[110px] group cursor-pointer">
           <div class="relative w-24 h-24 rounded-full gold-border-gradient p-1 group-hover:scale-105 transition-transform shadow-md">
             <img class="w-full h-full object-cover rounded-full" src="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=200&h=200&fit=crop" loading="lazy"/>
@@ -45013,8 +45029,8 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       </div>
     </section>
 
-    <!-- Louma Banner -->
-    <section class="bg-primary rounded-xl p-md flex flex-col md:flex-row items-center justify-between gap-md text-white overflow-hidden relative shadow-lg">
+    <!-- Louma Banner (affichée le vendredi uniquement) -->
+    <section id="nxp-loumaBanner" class="hidden bg-primary rounded-xl p-md flex flex-col md:flex-row items-center justify-between gap-md text-white overflow-hidden relative shadow-lg">
       <div class="absolute -right-10 -bottom-10 w-48 h-48 bg-white/10 rounded-full blur-3xl"></div>
       <div class="flex-1 space-y-2 relative z-10">
         <h3 class="text-2xl font-bold">Louma NEXUS : Le Marché du Vendredi</h3>
@@ -45107,12 +45123,12 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
 <div class="fixed left-6 z-[9979] flex flex-col items-start gap-3" style="bottom:80px">
   <div id="nxp-widgetStack" class="flex flex-col items-start gap-3 hidden">
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-courier'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">delivery_dining</span> Coursier Express</button>
-    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-pro'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</button>
-    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-elevage'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</button>
+    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-pros'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</button>
+    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-local-elevage'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-troc'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> Troc</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-public-chat'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">forum</span> Chat en direct</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-assistant'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">smart_toy</span> Assistant IA</button>
-    <button class="widget-item bg-white text-tertiary border border-tertiary px-4 py-2.5 rounded-full shadow-lg hover:bg-tertiary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-flash'))}catch(e){}"><span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">bolt</span> Ventes Flash</button>
+    <button class="widget-item bg-white text-tertiary border border-tertiary px-4 py-2.5 rounded-full shadow-lg hover:bg-tertiary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{var f=document.getElementById('nxp-flashSales');if(f)f.scrollIntoView({behavior:'smooth',block:'center'});}catch(e){}"><span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">bolt</span> Ventes Flash</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-annonce'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">add_box</span> Déposer une annonce</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-accessibility'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">accessibility_new</span> Accessibilité</button>
   </div>
@@ -45229,7 +45245,7 @@ function sbCard(p){
   if(!p||!p.id) return '';
   var imgs=p.images;
   if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
-  var img=(Array.isArray(imgs)&&imgs[0])||IMGS[hash(String(p.id))%IMGS.length];
+  var img=p.image_url||(Array.isArray(imgs)&&imgs[0])||IMGS[hash(String(p.id))%IMGS.length];
   var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
   var priceStr=fcfa.toLocaleString('fr-FR');
   var rat=Math.min(5,Math.max(1,Math.round(parseFloat(p.rating)||4)));
@@ -45260,14 +45276,20 @@ function syncAuthState(){
   } else {
     area.innerHTML='<button id="nxp-loginBtn" class="text-on-surface-variant hover:text-primary font-semibold text-sm transition-colors">Connexion</button>'
       +'<button id="nxp-registerBtn" class="bg-primary text-on-primary px-4 py-2 rounded-lg font-bold text-sm premium-glow transition-all">S\'inscrire</button>';
-    var lb=document.getElementById('nxp-loginBtn');if(lb)lb.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-login'));}catch(e){}});
-    var rb=document.getElementById('nxp-registerBtn');if(rb)rb.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-login'));}catch(e){}});
+    var lb=document.getElementById('nxp-loginBtn');if(lb)lb.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-auth',{detail:{tab:'login'}}));}catch(e){}});
+    var rb=document.getElementById('nxp-registerBtn');if(rb)rb.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-auth',{detail:{tab:'register'}}));}catch(e){}});
   }
 }
 
+/* Quand l'URL porte un filtre (recherche/catégorie/prix/produit), on laisse voir
+   le catalogue React filtré dessous au lieu de couvrir avec l'overlay d'accueil. */
+function hasCatalogParams(){
+  try{var sp=new URLSearchParams(location.search);return !!(sp.get('q')||sp.get('cat')||sp.get('pmin')||sp.get('pmax')||sp.get('product'));}catch(e){return false;}
+}
 function showProto(){
   var ov=document.getElementById('nx-proto-overlay');
   if(!ov) return;
+  if(hasCatalogParams()){hideProto();return;}
   ov.style.display='block';
   document.body.classList.add('nx-on-home');
   if(!INITED){INITED=true;initProto();}
@@ -45298,20 +45320,22 @@ function initProto(){
   var naEl=document.getElementById('nxp-newArrivals');if(naEl)naEl.innerHTML=skeletonCards(6);
   var rcEl=document.getElementById('nxp-recommended');if(rcEl)rcEl.innerHTML=skeletonCards(6);
 
-  /* Fetch vrais produits Supabase → remplace les squelettes */
-  var Q='select=id,name,price,images,rating,category,stock&active=eq.true&stock=gt.0&limit=12';
-  sbFetch('products?'+Q+'&order=sold_count.desc.nullslast').then(function(data){
+  /* Fetch vrais produits Supabase → remplace les squelettes.
+     NB: on ordonne par created_at/rating uniquement (colonnes sûres) ;
+     active peut être NULL → on filtre active=not.is.false plutôt que eq.true. */
+  var Q='select=id,name,price,images,image_url,rating,category,stock&active=not.is.false&limit=12';
+  sbFetch('products?'+Q+'&order=rating.desc.nullslast').then(function(data){
     if(bsEl) bsEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):best.map(card).join('');
   });
   sbFetch('products?'+Q+'&order=created_at.desc').then(function(data){
     if(naEl) naEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):arrivals.map(card).join('');
   });
-  sbFetch('products?'+Q+'&order=rating.desc.nullslast').then(function(data){
+  sbFetch('products?'+Q+'&order=rating.desc.nullslast,created_at.desc').then(function(data){
     if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):recommended.map(card).join('');
   });
 
-  /* Flash Sales — top 3 produits avec le plus grand écart prix / stock */
-  sbFetch('products?select=id,name,price,images,rating,stock&active=eq.true&stock=gt.0&order=sold_count.desc.nullslast&limit=3').then(function(data){
+  /* Flash Sales — 3 produits (repli démo si base injoignable) */
+  sbFetch('products?select=id,name,price,images,image_url,rating,stock&active=not.is.false&order=created_at.desc&limit=3').then(function(data){
     var fsEl=document.getElementById('nxp-flashSales');
     if(!fsEl) return;
     if(data&&data.length){
@@ -45338,42 +45362,56 @@ function initProto(){
     tick();setInterval(tick,1000);
   })();
 
-  /* Hero Carousel */
+  /* Hero Carousel — bannières depuis la base (table banners), repli éditorial */
   var SLIDES=[
-    {tag:'PARTENARIAT PREMIUM',title:'Tout le Sénégal dans une seule appli',cta:"Découvrir l'offre",img:'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=1280&h=500&fit=crop',sponsored:true},
-    {tag:'LOUMA DU VENDREDI',title:"Jusqu'à -70% sur les produits frais & locaux",cta:"J'en profite",img:'https://images.unsplash.com/photo-1542838132-92c53300491e?w=1280&h=500&fit=crop',sponsored:false},
-    {tag:'NEXUS PRO',title:'Un artisan vérifié près de chez vous',cta:'Trouver un pro',img:'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=1280&h=500&fit=crop',sponsored:false},
-    {tag:'PAIEMENT SÉCURISÉ',title:'Payez avec Wave, Orange Money ou carte',cta:'En savoir plus',img:'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1280&h=500&fit=crop',sponsored:false}
+    {tag:'PARTENARIAT PREMIUM',title:'Tout le Sénégal dans une seule appli',cta:"Découvrir l'offre",action:'url:/',img:'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=1280&h=500&fit=crop',sponsored:true},
+    {tag:'LOUMA DU VENDREDI',title:"Jusqu'à -70% sur les produits frais & locaux",cta:"J'en profite",action:'louma',img:'https://images.unsplash.com/photo-1542838132-92c53300491e?w=1280&h=500&fit=crop',sponsored:false},
+    {tag:'NEXUS PRO',title:'Un artisan vérifié près de chez vous',cta:'Trouver un pro',action:'pros',img:'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=1280&h=500&fit=crop',sponsored:false},
+    {tag:'PAIEMENT SÉCURISÉ',title:'Payez avec Wave, Orange Money ou carte',cta:'En savoir plus',action:'url:/faq',img:'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1280&h=500&fit=crop',sponsored:false}
   ];
   var heroTrack=document.getElementById('nxp-heroTrack');
   var heroDots=document.getElementById('nxp-heroDots');
-  var heroIdx=0,heroTimer=null;
-  if(heroTrack){
-    heroTrack.innerHTML=SLIDES.map(function(s){
+  var heroIdx=0,heroTimer=null,slides=SLIDES;
+  function buildHero(){
+    if(heroTrack){heroTrack.innerHTML=slides.map(function(s){
       return '<div class="relative min-w-full h-full">'
-        +'<div class="absolute inset-0 bg-cover bg-center" style="background-image:url(\''+s.img+'\')" loading="lazy"></div>'
+        +'<div class="absolute inset-0 bg-cover bg-center" style="background-image:url(\''+(s.img||'')+'\')"></div>'
         +'<div class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/30 to-transparent flex flex-col justify-center px-6 md:px-10">'
-          +'<span class="text-secondary font-bold text-sm mb-2 tracking-widest">'+s.tag+'</span>'
-          +'<h1 class="text-white font-bold leading-tight mb-6" style="font-size:clamp(1.4rem,4vw,3rem);max-width:36rem">'+s.title+'</h1>'
-          +'<button class="w-fit bg-primary text-on-primary px-6 md:px-8 py-3 rounded-lg font-bold text-base premium-glow transition-transform hover:-translate-y-1">'+s.cta+'</button>'
+          +'<span class="text-secondary font-bold text-sm mb-2 tracking-widest">'+(s.tag||'')+'</span>'
+          +'<h1 class="text-white font-bold leading-tight mb-6" style="font-size:clamp(1.4rem,4vw,3rem);max-width:36rem">'+(s.title||'')+'</h1>'
+          +(s.cta?'<button data-hero-action="'+(s.action||'')+'" class="w-fit bg-primary text-on-primary px-6 md:px-8 py-3 rounded-lg font-bold text-base premium-glow transition-transform hover:-translate-y-1">'+s.cta+'</button>':'')
         +'</div>'
         +(s.sponsored?'<div class="absolute bottom-4 right-4 bg-black/50 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded">SPONSORISÉ</div>':'')
         +'</div>';
-    }).join('');
-  }
-  if(heroDots){
-    heroDots.innerHTML=SLIDES.map(function(_,i){return'<button data-hd="'+i+'" aria-label="Slide '+(i+1)+'" class="h-2.5 rounded-full transition-all '+(i===0?'bg-white w-6':'bg-white/50 w-2.5')+'"></button>';}).join('');
+    }).join('');}
+    if(heroDots){heroDots.innerHTML=slides.map(function(_,i){return'<button data-hd="'+i+'" aria-label="Slide '+(i+1)+'" class="h-2.5 rounded-full transition-all '+(i===0?'bg-white w-6':'bg-white/50 w-2.5')+'"></button>';}).join('');}
   }
   function heroGo(i){
-    heroIdx=(i+SLIDES.length)%SLIDES.length;
+    heroIdx=(i+slides.length)%slides.length;
     if(heroTrack)heroTrack.style.transform='translateX(-'+(heroIdx*100)+'%)';
     if(heroDots)[].forEach.call(heroDots.children,function(d,di){d.className='h-2.5 rounded-full transition-all '+(di===heroIdx?'bg-white w-6':'bg-white/50 w-2.5');});
   }
   function heroAuto(){clearInterval(heroTimer);heroTimer=setInterval(function(){heroGo(heroIdx+1);},5000);}
+  function heroAction(a){
+    if(!a)return;
+    if(a.indexOf('url:')===0){nav(a.slice(4));return;}
+    if(a.indexOf('cat:')===0){nav('/?cat='+encodeURIComponent(a.slice(4)));return;}
+    if(a.indexOf('q:')===0){nav('/?q='+encodeURIComponent(a.slice(2)));return;}
+    var map={louma:'nexus:open-louma',pros:'nexus:open-pros',courier:'nexus:open-courier',troc:'nexus:open-troc',stories:'nexus:open-stories',assistant:'nexus:open-assistant'};
+    if(map[a])evt(map[a]);
+  }
+  buildHero();
   var hn=document.getElementById('nxp-heroNext');if(hn)hn.addEventListener('click',function(){heroGo(heroIdx+1);heroAuto();});
   var hp=document.getElementById('nxp-heroPrev');if(hp)hp.addEventListener('click',function(){heroGo(heroIdx-1);heroAuto();});
   if(heroDots)heroDots.addEventListener('click',function(e){var b=e.target.closest('[data-hd]');if(b){heroGo(+b.getAttribute('data-hd'));heroAuto();}});
+  if(heroTrack)heroTrack.addEventListener('click',function(e){var b=e.target.closest('[data-hero-action]');if(b){e.preventDefault();e.stopPropagation();heroAction(b.getAttribute('data-hero-action'));}});
   heroGo(0);heroAuto();
+  /* Bannières réelles depuis la base (table banners) → remplacent le repli */
+  sbFetch('banners?select=tag,title,cta_label,cta_action,image_url,sponsored&active=eq.true&order=sort_order.asc').then(function(data){
+    if(!data||!data.length)return;
+    slides=data.map(function(b){return {tag:b.tag,title:b.title,cta:b.cta_label,action:b.cta_action,img:b.image_url,sponsored:!!b.sponsored};});
+    buildHero();heroGo(0);heroAuto();
+  });
 
   /* Hamburger Drawer */
   var drawer=document.getElementById('nxp-drawer');
@@ -45439,13 +45477,16 @@ function initProto(){
     else{var cats=CATS.filter(function(c){return c.toLowerCase().indexOf(q)>=0;});var prods=ALL_PRODS.filter(function(p){return p.name.toLowerCase().indexOf(q)>=0;}).slice(0,6);if(cats.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+cats.map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}if(prods.length){html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Produits</p>'+prods.map(function(p){return'<button data-sq="'+p.name+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-3"><img src="'+p.img+'" class="w-9 h-9 object-contain rounded bg-surface-container-low"/><span class="flex-1">'+p.name+'</span><span class="text-primary font-bold text-xs">'+p.price+' F</span></button>';}).join('')+'</div>';}if(!cats.length&&!prods.length){html='<div class="p-4 text-sm text-on-surface-variant text-center">Aucun résultat pour « '+q+' »</div>';}}
     if(sp)sp.innerHTML=html;
   }
+  function doSearch(v){ v=(v||'').trim(); if(!v) return; pushRecentSearch(v); window.location.href='/?q='+encodeURIComponent(v); }
   if(si){
     si.addEventListener('focus',function(){renderSearch(si.value);if(sp)sp.classList.remove('hidden');});
     si.addEventListener('input',function(){renderSearch(si.value);if(sp)sp.classList.remove('hidden');});
-    si.addEventListener('keydown',function(e){if(e.key==='Enter'){var v=si.value.trim();if(v)pushRecentSearch(v);if(sp)sp.classList.add('hidden');}});
+    si.addEventListener('keydown',function(e){if(e.key==='Enter'){doSearch(si.value);}});
+    var sBtn=si.closest('.flex')?si.closest('.flex').querySelector('button'):null;
+    if(sBtn)sBtn.addEventListener('click',function(){doSearch(si.value);});
   }
   if(sp){
-    sp.addEventListener('click',function(e){var b=e.target.closest('[data-sq]');if(b){if(si)si.value=b.getAttribute('data-sq');pushRecentSearch(b.getAttribute('data-sq'));sp.classList.add('hidden');}});
+    sp.addEventListener('click',function(e){var b=e.target.closest('[data-sq]');if(b){doSearch(b.getAttribute('data-sq'));}});
   }
   document.addEventListener('click',function(e){if(sp&&!e.target.closest('#nxp-searchInput')&&!e.target.closest('#nxp-searchPanel'))sp.classList.add('hidden');});
 
@@ -45462,7 +45503,7 @@ function initProto(){
   renderRecent();
 
   /* Câblage boutons statiques (auth géré par syncAuthState) */
-  var vendreBtn=document.getElementById('nxp-vendreBtn');if(vendreBtn)vendreBtn.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-login'));}catch(e){}});
+  var vendreBtn=document.getElementById('nxp-vendreBtn');if(vendreBtn)vendreBtn.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-auth',{detail:{tab:'register',preselectedRole:'vendor'}}));}catch(e){}});
   var cartBtn=document.getElementById('nxp-cartBtn');if(cartBtn)cartBtn.addEventListener('click',function(){try{window.dispatchEvent(new CustomEvent('nexus:open-cart'));}catch(e){}});
 
   /* Ajouter au panier */
@@ -45472,6 +45513,136 @@ function initProto(){
     if(p){try{window.dispatchEvent(new CustomEvent('nexus:add-to-cart',{detail:{id:pid,name:p.name,price:parseFloat(p.price.replace(/\s/g,''))/655.957,img:p.img,stock:10}}));}catch(e2){}}
     b.textContent='✓ Ajouté';b.classList.add('bg-primary','text-white');setTimeout(function(){b.textContent='AU PANIER';b.classList.remove('bg-primary','text-white');},1500);
   });
+
+  /* ════════════════════════════════════════════════════════════════════
+     CÂBLAGE COMPLET — relie tous les liens/boutons statiques de l'overlay
+     aux vraies fonctionnalités React (événements nexus:*) ou aux pages.
+     ════════════════════════════════════════════════════════════════════ */
+  function evt(name,detail){try{window.dispatchEvent(new CustomEvent(name,detail!==undefined?{detail:detail}:undefined));}catch(e){}}
+  function nav(url){window.location.href=url;}
+  function closeDrawerNow(){var d=document.getElementById('nxp-drawer');if(d){d.classList.remove('open');setTimeout(function(){d.classList.add('hidden');},300);}}
+  var REG=function(role){return function(){evt('nexus:open-auth',{tab:'register',preselectedRole:role});};};
+  var EVT=function(name){return function(){evt(name);};};
+  var NAV=function(url){return function(){nav(url);};};
+  var CAT=function(name){return function(){nav('/?cat='+encodeURIComponent(name));};};
+  /* table : texte du lien (normalisé) → action */
+  var ROUTES={
+    'coursier express':EVT('nexus:open-courier'),'coursier à la demande':EVT('nexus:open-courier'),
+    'nexus pro':EVT('nexus:open-pros'),'nexus pro — artisans proches':EVT('nexus:open-pros'),'devenir artisan (nexus pro)':REG('pro'),
+    'élevage & terroir':EVT('nexus:open-local-elevage'),'élevage & produits locaux':EVT('nexus:open-local-elevage'),'devenir éleveur / producteur':REG('breeder'),
+    'troc':EVT('nexus:open-troc'),'nexus troc — échanger sans argent':EVT('nexus:open-troc'),
+    'chat en direct':EVT('nexus:open-public-chat'),
+    'assistant ia':EVT('nexus:open-assistant'),
+    'ventes flash':function(){var f=document.getElementById('nxp-flashSales');if(f)f.scrollIntoView({behavior:'smooth',block:'center'});},
+    'louma — le marché en ligne':EVT('nexus:open-louma'),"j'en profite":EVT('nexus:open-louma'),
+    'nexus stories — vidéos produit':EVT('nexus:open-stories'),
+    'programme ambassadeur':function(){var u=window.__nexusCurrentUser;if(u&&u.id){evt('nexus:hide-public-home');setTimeout(function(){evt('nexus:goto-buyer-view','ambassador');},350);}else{evt('nexus:open-auth',{tab:'register'});}},
+    'accueil':function(){closeDrawerNow();window.scrollTo({top:0,behavior:'smooth'});},
+    'toutes les catégories':EVT('nexus:open-menu'),
+    'devenir vendeur':REG('vendor'),'vendre sur nexus':REG('vendor'),
+    'trouver un pro':EVT('nexus:open-pros'),
+    'tous les guides':EVT('nexus:open-tutorials'),'acheter en ligne en sécurité':EVT('nexus:open-tutorials'),'payer avec orange money & wave':EVT('nexus:open-tutorials'),'la livraison au sénégal':EVT('nexus:open-tutorials'),
+    'questions fréquentes':NAV('/faq'),'faq':NAV('/faq'),
+    "conditions générales d'utilisation":NAV('/cgu'),'politique de confidentialité & cookies':NAV('/confidentialite'),'contact':NAV('/contact'),
+    'électronique':CAT('Électronique'),'électronique & high-tech':CAT('Électronique'),
+    'mode':CAT('Mode'),'mode & vêtements':CAT('Mode'),
+    'maison & déco':CAT('Maison'),'maison & décoration':CAT('Maison'),
+    'beauté & santé':CAT('Beauté'),
+    'alimentation':CAT('Alimentation'),'alimentation & épicerie':CAT('Alimentation'),
+    'auto & moto':CAT('Auto')
+  };
+  /* texte d'un lien SANS le nom des icônes Material (ligatures) */
+  function labelText(el){
+    var c=el.cloneNode(true);
+    var ic=c.querySelectorAll('.material-symbols-outlined');
+    for(var i=0;i<ic.length;i++)ic[i].parentNode.removeChild(ic[i]);
+    return (c.textContent||'').replace(/\s+/g,' ').trim().toLowerCase();
+  }
+  if(ov)ov.addEventListener('click',function(e){
+    var a=e.target.closest('a, button');if(!a)return;
+    /* ignorer les contrôles déjà gérés ailleurs */
+    if(a.id&&/^nxp-/.test(a.id))return;
+    if(a.closest('#nxp-widgetStack, .nxp-mnav, [data-fav], [data-qv], .nxp-atc, .carousel-arrow, [data-sq], #nxp-searchPanel, aside'))return;
+    var t=labelText(a);
+    if(t.indexOf('facebook')>=0){e.preventDefault();window.open('https://www.facebook.com/1233022656551601','_blank','noopener');return;}
+    var fn=ROUTES[t];
+    if(fn){e.preventDefault();closeDrawerNow();fn();}
+  });
+
+  /* Clic sur une carte produit (hors boutons) → ouvre la fiche dans l'app */
+  if(ov)ov.addEventListener('click',function(e){
+    if(e.target.closest('.nx-heart, .nx-quickview, .nxp-atc'))return;
+    var c=e.target.closest('.nx-prodcard');if(!c)return;
+    var pid=c.getAttribute('data-id');
+    if(pid&&pid.indexOf('nxp-')!==0){evt('nexus:open-product',pid);}
+  });
+
+  /* Quick View : "Ajouter au panier" → vrai panier */
+  (function(){
+    var qvAdd=document.querySelector('#nxp-qvModal .bg-primary');
+    /* le bouton AddToCart de la QV est le 1er .bg-primary du modal */
+    var modal=document.getElementById('nxp-qvModal');
+    if(modal){var btns=modal.querySelectorAll('button');btns.forEach&&btns.forEach(function(bt){
+      if((bt.textContent||'').trim().toLowerCase()==='ajouter au panier'){
+        bt.addEventListener('click',function(){
+          var name=(document.getElementById('nxp-qvName')||{}).textContent||'';
+          var priceTxt=(document.getElementById('nxp-qvPrice')||{}).textContent||'';
+          var price=parseFloat((priceTxt+'').replace(/[^\d]/g,''))/655.957||0;
+          evt('nexus:add-to-cart',{name:name,price:price,stock:10});
+          bt.textContent='✓ Ajouté';setTimeout(function(){bt.textContent='Ajouter au panier';},1500);
+        });
+      }
+    });}
+  })();
+
+  /* Filtres : Appliquer (catégorie + prix) / Réinitialiser */
+  (function(){
+    var aside=ov?ov.querySelector('aside'):null;if(!aside)return;
+    var CATNAME={'élevage & terroir':'Alimentation','électronique':'Électronique','mode':'Mode','alimentation':'Alimentation','maison & déco':'Maison','beauté & santé':'Beauté','auto & moto':'Auto'};
+    aside.querySelectorAll('button').forEach(function(bt){
+      var t=(bt.textContent||'').trim().toLowerCase();
+      if(t==='appliquer'){bt.addEventListener('click',function(){
+        var chosen=null;
+        aside.querySelectorAll('label').forEach(function(l){var cb=l.querySelector('input[type=checkbox]');if(cb&&cb.checked&&!chosen){var lt=(l.textContent||'').replace(/\(.*\)/,'').replace(/\s+/g,' ').trim().toLowerCase();chosen=CATNAME[lt]||null;}});
+        var pin=aside.querySelectorAll('input[type=text]');
+        var fmin=pin[0]?parseInt((pin[0].value||'').replace(/\D/g,''),10):0;
+        var fmax=pin[1]?parseInt((pin[1].value||'').replace(/\D/g,''),10):0;
+        var qs=[];
+        if(chosen)qs.push('cat='+encodeURIComponent(chosen));
+        if(fmin>0)qs.push('pmin='+(fmin/655.957).toFixed(2));
+        if(fmax>0&&fmax<500000)qs.push('pmax='+(fmax/655.957).toFixed(2));
+        nav(qs.length?'/?'+qs.join('&'):'/');
+      });}
+      else if(t==='réinitialiser'){bt.addEventListener('click',function(){aside.querySelectorAll('input[type=checkbox]').forEach(function(cb,i){cb.checked=(i===0);});});}
+    });
+  })();
+
+  /* Louma : afficher la bannière le vendredi uniquement (réglage commerçant).
+     Le bouton « J'EN PROFITE » est déjà relié via ROUTES → nexus:open-louma. */
+  (function(){
+    var lb=document.getElementById('nxp-loumaBanner');if(!lb)return;
+    if(new Date().getDay()===5) lb.classList.remove('hidden');
+  })();
+
+  /* Stories réelles depuis la base (table stories) */
+  (function(){
+    var row=document.getElementById('nxp-storiesRow');if(!row)return;
+    sbFetch('stories?select=id,title,vendor_name,product_id,video_url,mux_playback_id,price&status=eq.active&order=created_at.desc&limit=15').then(function(data){
+      if(!data||!data.length)return; /* garde la démo */
+      row.innerHTML=data.map(function(s){
+        var thumb=s.mux_playback_id?'https://image.mux.com/'+s.mux_playback_id+'/thumbnail.jpg?width=200&height=200&fit_mode=smartcrop':(s.video_url||'');
+        var media=s.mux_playback_id
+          ? '<img class="w-full h-full object-cover rounded-full" src="'+thumb+'" loading="lazy"/>'
+          : (s.video_url?'<video class="w-full h-full object-cover rounded-full" src="'+s.video_url+'#t=0.1" muted playsinline preload="metadata"></video>':'<div class="w-full h-full rounded-full bg-surface-container flex items-center justify-center text-3xl">🎬</div>');
+        var price=(s.price!=null)?'<span class="bg-primary text-white text-[9px] font-bold px-2 py-0.5 rounded-full -mt-3 z-10 shadow-sm relative">'+Math.round(s.price*655.957).toLocaleString('fr-FR')+' FCFA</span>':'';
+        return '<div class="nxp-story flex flex-col items-center gap-sm min-w-[110px] group cursor-pointer" data-story="'+s.id+'">'
+          +'<div class="relative w-24 h-24 rounded-full gold-border-gradient p-1 group-hover:scale-105 transition-transform shadow-md">'+media
+          +'<div class="absolute inset-0 flex items-center justify-center text-white/80 pointer-events-none"><span class="material-symbols-outlined" style="font-size:32px">play_circle</span></div></div>'
+          +price+'<p class="text-xs font-bold text-center mt-1 group-hover:text-primary transition-colors max-w-[100px] truncate">'+(s.title||s.vendor_name||'Story')+'</p></div>';
+      }).join('');
+    });
+    row.addEventListener('click',function(e){var c=e.target.closest('[data-story]');if(c)evt('nexus:open-stories',{id:c.getAttribute('data-story')});});
+  })();
 }
 
 /* ─── Écouter les événements React ─── */
