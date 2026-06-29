@@ -45166,6 +45166,42 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
   </button>
 </nav>
 
+<!-- ══ BOUTON FILTRES (mobile) ══ -->
+<button id="nxp-filterFab" class="lg:hidden fixed left-1/2 -translate-x-1/2 bg-primary text-white px-5 py-2.5 rounded-full shadow-lg font-bold text-sm flex items-center gap-2" style="bottom:5rem;z-index:9971">
+  <span class="material-symbols-outlined text-[18px]">filter_alt</span> Filtres
+</button>
+
+<!-- ══ TIROIR FILTRES (mobile, bottom sheet) ══ -->
+<div id="nxp-filterDrawer" class="fixed inset-0 hidden lg:hidden" style="z-index:9982">
+  <div id="nxp-filterBackdrop" class="absolute inset-0 bg-black/45"></div>
+  <div id="nxp-filterPanel" class="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl max-h-[85vh] overflow-y-auto p-md" style="transform:translateY(100%);transition:transform .3s cubic-bezier(.4,0,.2,1)">
+    <div class="flex items-center justify-between mb-md">
+      <h2 class="font-bold text-lg flex items-center gap-2"><span class="material-symbols-outlined text-primary">filter_alt</span> Filtres</h2>
+      <button id="nxp-filterClose" aria-label="Fermer" class="text-2xl leading-none text-on-surface-variant w-9 h-9 rounded-full hover:bg-surface-container">&times;</button>
+    </div>
+    <h3 class="text-xs font-bold text-on-surface-variant uppercase mb-2">Catégories</h3>
+    <div class="space-y-1 mb-lg">
+      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Électronique" class="rounded border-outline-variant text-primary focus:ring-primary"/> Électronique</label>
+      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Mode &amp; Vêtements" class="rounded border-outline-variant text-primary focus:ring-primary"/> Mode &amp; Vêtements</label>
+      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Maison &amp; Déco" class="rounded border-outline-variant text-primary focus:ring-primary"/> Maison &amp; Déco</label>
+      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Beauté &amp; Santé" class="rounded border-outline-variant text-primary focus:ring-primary"/> Beauté &amp; Santé</label>
+      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Alimentation" class="rounded border-outline-variant text-primary focus:ring-primary"/> Alimentation</label>
+      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Informatique" class="rounded border-outline-variant text-primary focus:ring-primary"/> Informatique</label>
+      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Produits locaux" class="rounded border-outline-variant text-primary focus:ring-primary"/> Produits locaux</label>
+    </div>
+    <h3 class="text-xs font-bold text-on-surface-variant uppercase mb-2">Prix (FCFA)</h3>
+    <div class="flex items-center gap-2 mb-lg">
+      <input id="nxp-fMin" type="number" inputmode="numeric" placeholder="Min" class="w-full border border-outline-variant rounded-lg p-2.5 text-sm bg-surface-container-low"/>
+      <span class="text-on-surface-variant">à</span>
+      <input id="nxp-fMax" type="number" inputmode="numeric" placeholder="Max" class="w-full border border-outline-variant rounded-lg p-2.5 text-sm bg-surface-container-low"/>
+    </div>
+    <div class="flex gap-2 pb-2">
+      <button id="nxp-filterReset" class="flex-1 border border-outline-variant rounded-lg py-3 font-bold text-sm">Réinitialiser</button>
+      <button id="nxp-filterApply" class="flex-1 bg-primary text-on-primary rounded-lg py-3 font-bold text-sm hover:brightness-110">Appliquer</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODALE QUICK VIEW ══ -->
 <div id="nxp-qvModal" class="fixed inset-0 hidden opacity-0 items-center justify-center p-4" style="z-index:9995">
   <div id="nxp-qvBackdrop" class="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
@@ -45680,6 +45716,38 @@ function initProto(){
     }
     btn.addEventListener('click',subscribe);
     email.addEventListener('keydown',function(e){ if(e.key==='Enter')subscribe(); });
+  })();
+
+  /* Tiroir de filtres mobile (bottom sheet) → navigue vers le catalogue filtré */
+  (function(){
+    var fab=document.getElementById('nxp-filterFab');
+    var dr=document.getElementById('nxp-filterDrawer');
+    var panel=document.getElementById('nxp-filterPanel');
+    var bk=document.getElementById('nxp-filterBackdrop');
+    if(!fab||!dr||!panel)return;
+    function openFD(){ dr.classList.remove('hidden'); void panel.offsetWidth; panel.style.transform='translateY(0)'; }
+    function closeFD(){ panel.style.transform='translateY(100%)'; setTimeout(function(){ dr.classList.add('hidden'); },300); }
+    fab.addEventListener('click',openFD);
+    var fc=document.getElementById('nxp-filterClose'); if(fc)fc.addEventListener('click',closeFD);
+    if(bk)bk.addEventListener('click',closeFD);
+    var fr=document.getElementById('nxp-filterReset');
+    if(fr)fr.addEventListener('click',function(){
+      dr.querySelectorAll('input[type=checkbox]').forEach(function(c){c.checked=false;});
+      var mn=document.getElementById('nxp-fMin'),mx=document.getElementById('nxp-fMax'); if(mn)mn.value=''; if(mx)mx.value='';
+    });
+    var fa=document.getElementById('nxp-filterApply');
+    if(fa)fa.addEventListener('click',function(){
+      var chosen=null;
+      dr.querySelectorAll('input[type=checkbox]:checked').forEach(function(c){ if(!chosen)chosen=c.getAttribute('data-cat'); });
+      var mn=document.getElementById('nxp-fMin'),mx=document.getElementById('nxp-fMax');
+      var fmin=mn?parseInt((mn.value||'').replace(/\D/g,''),10):0;
+      var fmax=mx?parseInt((mx.value||'').replace(/\D/g,''),10):0;
+      var qs=[];
+      if(chosen)qs.push('cat='+encodeURIComponent(chosen));
+      if(fmin>0)qs.push('pmin='+(fmin/655.957).toFixed(2));
+      if(fmax>0)qs.push('pmax='+(fmax/655.957).toFixed(2));
+      nav(qs.length?'/?'+qs.join('&'):'/');
+    });
   })();
 
   /* Logo → retour accueil (scroll haut, ou recharge l'accueil si on est filtré) */
