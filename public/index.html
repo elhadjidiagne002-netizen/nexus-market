@@ -1119,7 +1119,10 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 2000;
+            /* 9996 : au-dessus de l'overlay d'accueil #nx-proto-overlay (9955) et de
+               ses éléments internes (header 9960, tiroir 9970, nav 9980, quick-view 9995),
+               sous les toasts (10000). Sinon connexion/panier s'ouvrent DERRIÈRE l'accueil. */
+            z-index: 9996;
             backdrop-filter: blur(4px);
             animation: fadeIn 0.2s ease;
             padding: 1rem;
@@ -45545,11 +45548,11 @@ function initProto(){
     'questions fréquentes':NAV('/faq'),'faq':NAV('/faq'),
     "conditions générales d'utilisation":NAV('/cgu'),'politique de confidentialité & cookies':NAV('/confidentialite'),'contact':NAV('/contact'),
     'électronique':CAT('Électronique'),'électronique & high-tech':CAT('Électronique'),
-    'mode':CAT('Mode'),'mode & vêtements':CAT('Mode'),
-    'maison & déco':CAT('Maison'),'maison & décoration':CAT('Maison'),
-    'beauté & santé':CAT('Beauté'),
+    'mode':CAT('Mode & Vêtements'),'mode & vêtements':CAT('Mode & Vêtements'),
+    'maison & déco':CAT('Maison & Déco'),'maison & décoration':CAT('Maison & Déco'),
+    'beauté & santé':CAT('Beauté & Santé'),
     'alimentation':CAT('Alimentation'),'alimentation & épicerie':CAT('Alimentation'),
-    'auto & moto':CAT('Auto')
+    'auto & moto':CAT('Auto & Moto')
   };
   /* texte d'un lien SANS le nom des icônes Material (ligatures) */
   function labelText(el){
@@ -45598,7 +45601,7 @@ function initProto(){
   /* Filtres : Appliquer (catégorie + prix) / Réinitialiser */
   (function(){
     var aside=ov?ov.querySelector('aside'):null;if(!aside)return;
-    var CATNAME={'élevage & terroir':'Alimentation','électronique':'Électronique','mode':'Mode','alimentation':'Alimentation','maison & déco':'Maison','beauté & santé':'Beauté','auto & moto':'Auto'};
+    var CATNAME={'élevage & terroir':'Produits locaux','électronique':'Électronique','mode':'Mode & Vêtements','alimentation':'Alimentation','maison & déco':'Maison & Déco','beauté & santé':'Beauté & Santé','auto & moto':'Auto & Moto'};
     aside.querySelectorAll('button').forEach(function(bt){
       var t=(bt.textContent||'').trim().toLowerCase();
       if(t==='appliquer'){bt.addEventListener('click',function(){
@@ -45624,6 +45627,17 @@ function initProto(){
     if(new Date().getDay()===5) lb.classList.remove('hidden');
   })();
 
+  /* Logo → retour accueil (scroll haut, ou recharge l'accueil si on est filtré) */
+  (function(){
+    var logo=ov?ov.querySelector('header img'):null;if(!logo)return;
+    logo.style.cursor='pointer';
+    logo.addEventListener('click',function(){
+      if(hasCatalogParams()){nav('/');return;}
+      closeDrawerNow();
+      try{window.scrollTo({top:0,behavior:'smooth'});}catch(e){window.scrollTo(0,0);}
+    });
+  })();
+
   /* Stories réelles depuis la base (table stories) */
   (function(){
     var row=document.getElementById('nxp-storiesRow');if(!row)return;
@@ -45646,7 +45660,12 @@ function initProto(){
 }
 
 /* ─── Écouter les événements React ─── */
-window.addEventListener('nexus:show-public-home', showProto);
+/* show-public-home = action explicite (logo, retour accueil) → on efface tout
+   filtre d'URL (?q/?cat/?pmin/?pmax/?product) puis on affiche l'accueil. */
+window.addEventListener('nexus:show-public-home', function(){
+  try{ if(hasCatalogParams()){ history.replaceState({}, '', location.pathname); } }catch(e){}
+  showProto();
+});
 window.addEventListener('nexus:hide-public-home', hideProto);
 
 /* Sync cart depuis React */
