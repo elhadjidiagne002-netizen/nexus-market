@@ -2538,6 +2538,9 @@
     box-shadow: 0 0 0 1px #006d40;
   }
   /* Masquer chrome existant quand overlay actif + supprimer la barre de scroll du body */
+  /* [RETOUR PROD] Panier flottant conditionnel retiré : on garde le panier
+     permanent du header (overlay #nxp-cartBtn / header React). */
+  .floating-cart { display: none !important; }
   body.nx-on-home { overflow: hidden; }
   body.nx-on-home #nexus-fab-launcher,
   body.nx-on-home .nx-fab-launcher,
@@ -10693,12 +10696,12 @@ Réponds uniquement aux questions liées à NEXUS Market ou au commerce en ligne
     React.createElement("button", {
       id: "nexus-ai-fab",
       onClick: () => setOpen(o => !o),
-      style: { position: "fixed", bottom: "5.75rem", right: "1.5rem", width: "52px", height: "52px", borderRadius: "50%", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", border: "none", color: "white", cursor: "pointer", boxShadow: "0 4px 20px rgba(0,109,64,0.4)", zIndex: 599, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.3rem", transition: "transform 0.25s" },
+      style: { position: "fixed", bottom: "5.75rem", right: "1.5rem", width: "52px", height: "52px", borderRadius: "50%", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", border: "none", color: "white", cursor: "pointer", boxShadow: "0 4px 20px rgba(0,109,64,0.4)", zIndex: 9985, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.3rem", transition: "transform 0.25s" },
       "aria-label": "Chat support IA",
       onMouseEnter: e => e.currentTarget.style.transform = "scale(1.1)",
       onMouseLeave: e => e.currentTarget.style.transform = "scale(1)"
     }, React.createElement("i", { className: `fas fa-${open ? "times" : "comment-dots"}` })),
-    open && React.createElement("div", { style: { position: "fixed", bottom: "9rem", right: "1.5rem", width: "min(330px, calc(100vw - 1.5rem))", background: "white", borderRadius: "16px", boxShadow: "0 8px 40px rgba(0,0,0,0.18)", border: "1px solid var(--border)", zIndex: 598, display: "flex", flexDirection: "column", maxHeight: "min(430px, 65vh)" } },
+    open && React.createElement("div", { style: { position: "fixed", bottom: "9rem", right: "1.5rem", width: "min(330px, calc(100vw - 1.5rem))", background: "white", borderRadius: "16px", boxShadow: "0 8px 40px rgba(0,0,0,0.18)", border: "1px solid var(--border)", zIndex: 9986, display: "flex", flexDirection: "column", maxHeight: "min(430px, 65vh)" } },
       React.createElement("div", { style: { padding: "0.85rem 1rem", background: "linear-gradient(135deg, var(--primary), var(--primary-light))", borderRadius: "16px 16px 0 0", color: "white", display: "flex", alignItems: "center", gap: "0.6rem" } },
         React.createElement("div", { style: { width: "32px", height: "32px", borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem" } }, "\uD83E\uDD16"),
         React.createElement("div", { style: { flex: 1 } },
@@ -45343,24 +45346,40 @@ function initProto(){
     if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):recommended.map(card).join('');
   });
 
-  /* Flash Sales — 3 produits (repli démo si base injoignable) */
-  sbFetch('products?select=id,name,price,images,image_url,rating,stock&active=not.is.false&order=created_at.desc&limit=3').then(function(data){
-    var fsEl=document.getElementById('nxp-flashSales');
-    if(!fsEl) return;
-    if(data&&data.length){
-      fsEl.innerHTML=data.map(function(p,i){
-        var imgs=p.images;if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
-        var img=(Array.isArray(imgs)&&imgs[0])||IMGS[i%IMGS.length];
-        var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
-        var old=Math.round(fcfa*[1.3,1.15,1.2][i]);
-        var disc=['-30%','-15%','-20%'][i];
-        return flashCard(p.name,fcfa.toLocaleString('fr-FR'),old.toLocaleString('fr-FR'),disc,img);
-      }).join('');
-    } else {
-      var flash=[['Dyson V15 Detect Premium','320 000','450 000','-30%',IMGS[4]],['MacBook Air M3 Midnight','850 000','1 000 000','-15%',IMGS[5]],['Samsung Neo QLED 65"','540 000','675 000','-20%',IMGS[6]]];
-      fsEl.innerHTML=flash.map(function(p){return flashCard(p[0],p[1],p[2],p[3],p[4]);}).join('');
-    }
-  });
+  /* Ventes Flash — issues de la table flash_sales (produit réel + remise réelle).
+     Aucune vente flash active → on masque toute la section (pas de fausses promos). */
+  (function(){
+    var fsEl=document.getElementById('nxp-flashSales'); if(!fsEl) return;
+    var section=fsEl.closest('section');
+    function hide(){ if(section)section.style.display='none'; }
+    sbFetch('flash_sales?select=product_id,discount,ends_at&active=eq.true&ends_at=gt.'+encodeURIComponent(new Date().toISOString())+'&limit=6').then(function(fs){
+      if(!fs||!fs.length){ hide(); return; }
+      var ids=fs.map(function(x){return '"'+x.product_id+'"';}).join(',');
+      sbFetch('products?select=id,name,price,images,image_url,rating&id=in.('+ids+')').then(function(prods){
+        prods=prods||[]; var byId={}; prods.forEach(function(p){byId[String(p.id)]=p;});
+        var cards=fs.map(function(s){
+          var p=byId[String(s.product_id)]; if(!p) return '';
+          var imgs=p.images; if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
+          var img=p.image_url||(Array.isArray(imgs)&&imgs[0])||IMGS[0];
+          var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
+          var d=parseFloat(s.discount)||0;
+          var oldp=d>0?Math.round(fcfa/(1-d/100)):0;
+          var pid=String(p.id);
+          /* enregistre le produit pour l'ajout panier / quick view */
+          NXP_PRODS[pid]={id:pid,name:p.name||'Produit',price:fcfa.toLocaleString('fr-FR'),img:img,rating:Math.min(5,Math.max(1,Math.round(parseFloat(p.rating)||4)))};
+          return '<div class="relative bg-surface-container-low rounded-xl p-md flex flex-col" data-id="'+pid+'">'
+            +(d>0?'<span class="absolute top-3 left-3 bg-tertiary text-white text-xs font-bold px-2 py-1 rounded z-10">-'+d+'%</span>':'')
+            +'<div class="h-44 flex items-center justify-center mb-3 overflow-hidden group"><img class="max-h-full object-contain group-hover:scale-105 transition-transform" src="'+img+'"/></div>'
+            +'<h4 class="text-sm font-semibold mb-1 truncate">'+(p.name||'Produit')+'</h4>'
+            +'<p class="text-primary font-bold text-xl">'+fcfa.toLocaleString('fr-FR')+' F</p>'
+            +(oldp?'<p class="text-on-surface-variant text-sm line-through mb-3">'+oldp.toLocaleString('fr-FR')+' F</p>':'<div class="mb-3"></div>')
+            +'<button class="mt-auto w-full bg-primary text-on-primary py-2.5 rounded-lg font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all nxp-atc" data-pid="'+pid+'">Ajouter au panier</button>'
+            +'</div>';
+        }).filter(Boolean).join('');
+        if(cards){ fsEl.innerHTML=cards; if(section)section.style.display=''; } else hide();
+      });
+    });
+  })();
 
   /* Countdown Flash */
   (function(){
@@ -45371,24 +45390,32 @@ function initProto(){
     tick();setInterval(tick,1000);
   })();
 
-  /* Hero Carousel — bannières depuis la base (table banners), repli éditorial */
+  /* Hero Carousel — MÊMES bannières que l'app (gérées dans l'admin → nexus_admin_banners),
+     repli = bannières par défaut de l'app (dégradés Coursier/Pro/Élevage…). */
   var SLIDES=[
-    {tag:'PARTENARIAT PREMIUM',title:'Tout le Sénégal dans une seule appli',cta:"Découvrir l'offre",action:'url:/',img:'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=1280&h=500&fit=crop',sponsored:true},
-    {tag:'LOUMA DU VENDREDI',title:"Jusqu'à -70% sur les produits frais & locaux",cta:"J'en profite",action:'louma',img:'https://images.unsplash.com/photo-1542838132-92c53300491e?w=1280&h=500&fit=crop',sponsored:false},
-    {tag:'NEXUS PRO',title:'Un artisan vérifié près de chez vous',cta:'Trouver un pro',action:'pros',img:'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=1280&h=500&fit=crop',sponsored:false},
-    {tag:'PAIEMENT SÉCURISÉ',title:'Payez avec Wave, Orange Money ou carte',cta:'En savoir plus',action:'url:/faq',img:'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1280&h=500&fit=crop',sponsored:false}
+    {cls:'slide-0',badge:'🛵 Livraison express',title:'Un coursier\nà la demande',sub:'Faites livrer en quelques minutes · suivi GPS en direct',action:'nexus:open-courier',cta:'Commander un coursier'},
+    {cls:'slide-2',badge:'🔧 NEXUS Pro',title:'Un pro près\nde chez vous',sub:'Maçon, plombier, électricien… trouvez et contactez un artisan',action:'nexus:open-pros',cta:'Trouver un pro'},
+    {cls:'slide-3',badge:'🇸🇳 Local & Élevage',title:'Produits locaux\n& NEXUS Élevage',sub:'Soutenez le Sénégal · moutons Tabaski, volaille, bétail',action:'nexus:open-local-elevage',cta:'Découvrir'},
+    {cls:'slide-2',badge:'🎬 NEXUS Stories',title:'Les produits\nen vidéo',sub:'Découvrez les vendeurs et leurs articles en stories',action:'nexus:open-stories',cta:'Regarder'},
+    {cls:'slide-1',badge:'⚡ Vente Flash',title:"Jusqu'à -60%\nsur l'Électronique",sub:'Offres limitées, profitez-en maintenant'},
+    {cls:'slide-0',badge:'🌿 Marketplace',title:'Des milliers de\nProduits vérifiés',sub:'Paiement Orange Money & Wave · Protection acheteur'}
   ];
   var heroTrack=document.getElementById('nxp-heroTrack');
   var heroDots=document.getElementById('nxp-heroDots');
   var heroIdx=0,heroTimer=null,slides=SLIDES;
+  function esc(t){return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function buildHero(){
     if(heroTrack){heroTrack.innerHTML=slides.map(function(s){
+      var bg = s.img
+        ? '<div class="absolute inset-0 bg-cover bg-center" style="background-image:url(\''+s.img+'\')"></div><div class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/30 to-transparent"></div>'
+        : '<div class="hero-banner-slide '+(s.cls||'slide-0')+'" style="position:absolute;inset:0;border-radius:0;height:auto;padding:0"></div><div class="absolute inset-0 bg-black/10"></div>';
       return '<div class="relative min-w-full h-full">'
-        +'<div class="absolute inset-0 bg-cover bg-center" style="background-image:url(\''+(s.img||'')+'\')"></div>'
-        +'<div class="absolute inset-0 bg-gradient-to-r from-black/70 via-black/30 to-transparent flex flex-col justify-center px-6 md:px-10">'
-          +'<span class="text-secondary font-bold text-sm mb-2 tracking-widest">'+(s.tag||'')+'</span>'
-          +'<h1 class="text-white font-bold leading-tight mb-6" style="font-size:clamp(1.4rem,4vw,3rem);max-width:36rem">'+(s.title||'')+'</h1>'
-          +(s.cta?'<button data-hero-action="'+(s.action||'')+'" class="w-fit bg-primary text-on-primary px-6 md:px-8 py-3 rounded-lg font-bold text-base premium-glow transition-transform hover:-translate-y-1">'+s.cta+'</button>':'')
+        + bg
+        + '<div class="absolute inset-0 flex flex-col justify-center px-6 md:px-10">'
+          + (s.badge?'<span class="text-white font-bold text-sm mb-2 tracking-widest" style="text-shadow:0 1px 4px rgba(0,0,0,.4)">'+esc(s.badge)+'</span>':'')
+          + '<h1 class="text-white font-bold leading-tight mb-3" style="font-size:clamp(1.4rem,4vw,2.8rem);max-width:36rem;white-space:pre-line;text-shadow:0 2px 8px rgba(0,0,0,.4)">'+esc(s.title)+'</h1>'
+          + (s.sub?'<p class="text-white/90 mb-5 max-w-lg text-sm md:text-base" style="text-shadow:0 1px 4px rgba(0,0,0,.4)">'+esc(s.sub)+'</p>':'')
+          + (s.cta?'<button data-hero-action="'+esc(s.action||'')+'" class="w-fit bg-white text-primary px-6 md:px-8 py-3 rounded-lg font-bold text-base shadow-md transition-transform hover:-translate-y-1">'+esc(s.cta)+'</button>':'')
         +'</div>'
         +(s.sponsored?'<div class="absolute bottom-4 right-4 bg-black/50 backdrop-blur-md text-white text-[10px] px-2 py-1 rounded">SPONSORISÉ</div>':'')
         +'</div>';
@@ -45403,6 +45430,7 @@ function initProto(){
   function heroAuto(){clearInterval(heroTimer);heroTimer=setInterval(function(){heroGo(heroIdx+1);},5000);}
   function heroAction(a){
     if(!a)return;
+    if(a.indexOf('nexus:')===0){evt(a);return;}
     if(a.indexOf('url:')===0){nav(a.slice(4));return;}
     if(a.indexOf('cat:')===0){nav('/?cat='+encodeURIComponent(a.slice(4)));return;}
     if(a.indexOf('q:')===0){nav('/?q='+encodeURIComponent(a.slice(2)));return;}
@@ -45415,12 +45443,14 @@ function initProto(){
   if(heroDots)heroDots.addEventListener('click',function(e){var b=e.target.closest('[data-hd]');if(b){heroGo(+b.getAttribute('data-hd'));heroAuto();}});
   if(heroTrack)heroTrack.addEventListener('click',function(e){var b=e.target.closest('[data-hero-action]');if(b){e.preventDefault();e.stopPropagation();heroAction(b.getAttribute('data-hero-action'));}});
   heroGo(0);heroAuto();
-  /* Bannières réelles depuis la base (table banners) → remplacent le repli */
-  sbFetch('banners?select=tag,title,cta_label,cta_action,image_url,sponsored&active=eq.true&order=sort_order.asc').then(function(data){
-    if(!data||!data.length)return;
-    slides=data.map(function(b){return {tag:b.tag,title:b.title,cta:b.cta_label,action:b.cta_action,img:b.image_url,sponsored:!!b.sponsored};});
+  /* Bannières publiées par l'admin (nexus_admin_banners) → remplacent le repli */
+  function applyAdminBanners(arr){
+    var v=(arr||[]).filter(function(x){return x&&x.active!==false&&(x.title||x.img);});
+    if(!v.length)return;
+    slides=v.map(function(x){return {cls:x.cls,badge:x.badge,title:x.title,sub:x.sub,cta:x.cta,action:x.action,img:x.img,sponsored:x.sponsored};});
     buildHero();heroGo(0);heroAuto();
-  });
+  }
+  try{ if(typeof NexusAdminConfig!=='undefined'&&NexusAdminConfig.get){ NexusAdminConfig.get('nexus_admin_banners').then(applyAdminBanners).catch(function(){}); } }catch(e){}
 
   /* Hamburger Drawer */
   var drawer=document.getElementById('nxp-drawer');
@@ -45631,6 +45661,25 @@ function initProto(){
   (function(){
     var lb=document.getElementById('nxp-loumaBanner');if(!lb)return;
     if(new Date().getDay()===5) lb.classList.remove('hidden');
+  })();
+
+  /* Newsletter : insertion publique dans newsletter_subscribers */
+  (function(){
+    var foot=ov?ov.querySelector('footer'):null;if(!foot)return;
+    var email=foot.querySelector('input[type=email]');
+    var btn=[].slice.call(foot.querySelectorAll('button')).find(function(b){return /s'abonner/i.test((b.textContent||'').trim());});
+    if(!email||!btn)return;
+    function subscribe(){
+      var v=(email.value||'').trim();
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)){ email.focus(); email.style.borderColor='#bd0014'; return; }
+      btn.disabled=true; var old=btn.textContent; btn.textContent='…';
+      fetch(SB_URL+'/rest/v1/newsletter_subscribers',{method:'POST',headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json','Prefer':'return=minimal,resolution=ignore-duplicates'},body:JSON.stringify({email:v,source:'home'})})
+        .then(function(r){ btn.textContent=(r.ok||r.status===409)?'✓ Inscrit !':'Réessayer'; email.value=''; })
+        .catch(function(){ btn.textContent='Réessayer'; })
+        .finally(function(){ setTimeout(function(){ btn.disabled=false; btn.textContent=old; },2500); });
+    }
+    btn.addEventListener('click',subscribe);
+    email.addEventListener('keydown',function(e){ if(e.key==='Enter')subscribe(); });
   })();
 
   /* Logo → retour accueil (scroll haut, ou recharge l'accueil si on est filtré) */
