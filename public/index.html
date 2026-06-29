@@ -715,17 +715,18 @@
             gap: 1.5rem;
             margin-bottom: 2rem;
         }
+        /* [RELOOK] Cartes KPI plates Material (bordure fine, ombre au survol). */
         .stat-card {
             background: white;
             border-radius: 16px;
             padding: 1.5rem;
-            box-shadow: 0 4px 20px var(--shadow);
+            box-shadow: none;
             position: relative;
             overflow: hidden;
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
             border: 1px solid var(--border);
         }
-        .stat-card:hover { transform: translateY(-4px); box-shadow: 0 8px 30px var(--shadow-lg); }
+        .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.08); border-color: var(--primary); }
         .stat-card::before {
             content: '';
             position: absolute;
@@ -858,12 +859,14 @@
             border-spacing: 0;
             min-width: 600px;
         }
-        .data-table thead { background: linear-gradient(135deg, var(--primary), var(--primary-light)); color: white; }
+        /* [RELOOK] En-tête de tableau Material : surface claire + texte discret
+           (au lieu d'un aplat dégradé vert), comme les maquettes des dashboards. */
+        .data-table thead { background: var(--bg-light); color: var(--text-secondary); border-bottom: 1px solid var(--border); }
         .data-table th {
-            padding: 0.9rem 1rem;
+            padding: 0.8rem 1rem;
             text-align: left;
-            font-weight: 600;
-            font-size: 0.85rem;
+            font-weight: 700;
+            font-size: 0.72rem;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
@@ -2553,6 +2556,20 @@
   #nx-proto-overlay footer a:hover { color: #fff; }
   /* Padding bas sur mobile (proto a son propre bottom nav) */
   @media (max-width:1023px){ #nx-proto-overlay { padding-bottom:64px; } }
+  /* [OPTIM MOBILE] Affichage smartphone de la nouvelle interface */
+  @media (max-width:640px){
+    #nx-proto-overlay .px-container-margin { padding-left:12px; padding-right:12px; }
+    #nx-proto-overlay #nxp-hero { height:210px !important; }
+    #nx-proto-overlay #nxp-hero h1 { font-size:1.5rem; line-height:1.15; margin-bottom:.6rem; }
+    #nx-proto-overlay #nxp-hero p { font-size:.8rem; margin-bottom:.8rem; }
+    #nx-proto-overlay main { gap:1rem; padding-top:1rem; padding-bottom:1rem; }
+    #nx-proto-overlay section h2 { font-size:1.05rem; }
+    #nx-proto-overlay .nx-prodcard { min-width:150px; width:150px; }
+    #nx-proto-overlay header img { height:2rem; }
+    /* en-tête : la recherche passe sur sa propre ligne, pleine largeur */
+    #nx-proto-overlay header .flex.items-center.justify-between { flex-wrap:wrap; }
+    #nx-proto-overlay header .flex-1.max-w-xl { order:3; flex-basis:100%; max-width:100%; margin-top:.5rem; }
+  }
   /* Tiroir : fond blanc forcé pour les éléments de nav */
   #nxp-drawer .drawer-panel { background-color: #fff; }
 </style>
@@ -44811,6 +44828,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">forum</span> Chat en direct</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">smart_toy</span> Assistant IA</a>
       <a class="text-tertiary flex items-center gap-xs pb-2 hover:brightness-110 transition-all" href="#"><span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">bolt</span> Ventes Flash</a>
+      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">add_box</span> Déposer une annonce</a>
     </div>
   </div>
 </header>
@@ -45382,37 +45400,53 @@ function initProto(){
     if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):recommended.map(card).join('');
   });
 
-  /* Ventes Flash — issues de la table flash_sales (produit réel + remise réelle).
-     Aucune vente flash active → on masque toute la section (pas de fausses promos). */
+  /* Ventes Flash — 1) table flash_sales (admin) ; 2) repli = produits en promo
+     (original_price > price) ; sinon section masquée. Toujours de vraies données. */
   (function(){
     var fsEl=document.getElementById('nxp-flashSales'); if(!fsEl) return;
     var section=fsEl.closest('section');
     function hide(){ if(section)section.style.display='none'; }
+    function flashCardHtml(p,fcfa,oldp,d){
+      var imgs=p.images; if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
+      var img=p.image_url||(Array.isArray(imgs)&&imgs[0])||IMGS[0];
+      var pid=String(p.id);
+      NXP_PRODS[pid]={id:pid,name:p.name||'Produit',price:fcfa.toLocaleString('fr-FR'),img:img,rating:Math.min(5,Math.max(1,Math.round(parseFloat(p.rating)||4)))};
+      return '<div class="relative bg-surface-container-low rounded-xl p-md flex flex-col" data-id="'+pid+'">'
+        +(d>0?'<span class="absolute top-3 left-3 bg-tertiary text-white text-xs font-bold px-2 py-1 rounded z-10">-'+d+'%</span>':'')
+        +'<div class="h-44 flex items-center justify-center mb-3 overflow-hidden group"><img class="max-h-full object-contain group-hover:scale-105 transition-transform" src="'+img+'"/></div>'
+        +'<h4 class="text-sm font-semibold mb-1 truncate">'+(p.name||'Produit')+'</h4>'
+        +'<p class="text-primary font-bold text-xl">'+fcfa.toLocaleString('fr-FR')+' F</p>'
+        +(oldp?'<p class="text-on-surface-variant text-sm line-through mb-3">'+oldp.toLocaleString('fr-FR')+' F</p>':'<div class="mb-3"></div>')
+        +'<button class="mt-auto w-full bg-primary text-on-primary py-2.5 rounded-lg font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all nxp-atc" data-pid="'+pid+'">Ajouter au panier</button>'
+        +'</div>';
+    }
+    function render(cards){ if(cards){ fsEl.innerHTML=cards; if(section)section.style.display=''; } else hide(); }
+    /* Repli : produits en promotion (original_price > price) */
+    function loadPromo(){
+      sbFetch('products?select=id,name,price,original_price,images,image_url,rating&original_price=not.is.null&active=not.is.false&limit=10').then(function(ps){
+        ps=(ps||[]).filter(function(p){return parseFloat(p.original_price)>parseFloat(p.price);}).slice(0,6);
+        if(!ps.length){ hide(); return; }
+        render(ps.map(function(p){
+          var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
+          var oldf=Math.round((parseFloat(p.original_price)||0)*655.957);
+          var d=Math.round((1-parseFloat(p.price)/parseFloat(p.original_price))*100);
+          return flashCardHtml(p,fcfa,oldf,d);
+        }).join(''));
+      });
+    }
+    /* 1) flash_sales gérées par l'admin */
     sbFetch('flash_sales?select=product_id,discount,ends_at&active=eq.true&ends_at=gt.'+encodeURIComponent(new Date().toISOString())+'&limit=6').then(function(fs){
-      if(!fs||!fs.length){ hide(); return; }
+      if(!fs||!fs.length){ loadPromo(); return; }
       var ids=fs.map(function(x){return '"'+x.product_id+'"';}).join(',');
       sbFetch('products?select=id,name,price,images,image_url,rating&id=in.('+ids+')').then(function(prods){
         prods=prods||[]; var byId={}; prods.forEach(function(p){byId[String(p.id)]=p;});
         var cards=fs.map(function(s){
           var p=byId[String(s.product_id)]; if(!p) return '';
-          var imgs=p.images; if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
-          var img=p.image_url||(Array.isArray(imgs)&&imgs[0])||IMGS[0];
           var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
-          var d=parseFloat(s.discount)||0;
-          var oldp=d>0?Math.round(fcfa/(1-d/100)):0;
-          var pid=String(p.id);
-          /* enregistre le produit pour l'ajout panier / quick view */
-          NXP_PRODS[pid]={id:pid,name:p.name||'Produit',price:fcfa.toLocaleString('fr-FR'),img:img,rating:Math.min(5,Math.max(1,Math.round(parseFloat(p.rating)||4)))};
-          return '<div class="relative bg-surface-container-low rounded-xl p-md flex flex-col" data-id="'+pid+'">'
-            +(d>0?'<span class="absolute top-3 left-3 bg-tertiary text-white text-xs font-bold px-2 py-1 rounded z-10">-'+d+'%</span>':'')
-            +'<div class="h-44 flex items-center justify-center mb-3 overflow-hidden group"><img class="max-h-full object-contain group-hover:scale-105 transition-transform" src="'+img+'"/></div>'
-            +'<h4 class="text-sm font-semibold mb-1 truncate">'+(p.name||'Produit')+'</h4>'
-            +'<p class="text-primary font-bold text-xl">'+fcfa.toLocaleString('fr-FR')+' F</p>'
-            +(oldp?'<p class="text-on-surface-variant text-sm line-through mb-3">'+oldp.toLocaleString('fr-FR')+' F</p>':'<div class="mb-3"></div>')
-            +'<button class="mt-auto w-full bg-primary text-on-primary py-2.5 rounded-lg font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all nxp-atc" data-pid="'+pid+'">Ajouter au panier</button>'
-            +'</div>';
+          var d=parseFloat(s.discount)||0; var oldp=d>0?Math.round(fcfa/(1-d/100)):0;
+          return flashCardHtml(p,fcfa,oldp,d);
         }).filter(Boolean).join('');
-        if(cards){ fsEl.innerHTML=cards; if(section)section.style.display=''; } else hide();
+        if(cards)render(cards); else loadPromo();
       });
     });
   })();
@@ -45608,6 +45642,7 @@ function initProto(){
     'troc':EVT('nexus:open-troc'),'nexus troc — échanger sans argent':EVT('nexus:open-troc'),
     'chat en direct':EVT('nexus:open-public-chat'),
     'assistant ia':EVT('nexus:open-assistant'),
+    'déposer une annonce':EVT('nexus:open-annonce'),'deposer une annonce':EVT('nexus:open-annonce'),
     'ventes flash':function(){var f=document.getElementById('nxp-flashSales');if(f)f.scrollIntoView({behavior:'smooth',block:'center'});},
     'louma — le marché en ligne':EVT('nexus:open-louma'),"j'en profite":EVT('nexus:open-louma'),
     'nexus stories — vidéos produit':EVT('nexus:open-stories'),
