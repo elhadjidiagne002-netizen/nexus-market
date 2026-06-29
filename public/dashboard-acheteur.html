@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html class="light" lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>NEXUS Market | Mon espace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script>
+  tailwind.config = { darkMode:"class", theme:{ extend:{
+    colors:{ primary:"#006d40","on-primary":"#ffffff","primary-container":"#e8f5ed","on-primary-container":"#002110",
+      secondary:"#e9c176","on-secondary":"#261900","secondary-container":"#ffdea5",tertiary:"#bd0014","on-tertiary":"#ffffff",
+      background:"#f9f9fc","on-background":"#1a1c1e",surface:"#f9f9fc","on-surface":"#1a1c1e","surface-variant":"#e2e2e5",
+      "on-surface-variant":"#3e4a41",outline:"#6e7a70","outline-variant":"#bdcabe","surface-container-low":"#f3f3f6",
+      "surface-container":"#eeeef0","surface-container-high":"#e8e8ea","surface-container-highest":"#e2e2e5" },
+    borderRadius:{ DEFAULT:"0.5rem",lg:"0.5rem",xl:"1rem",full:"9999px" },
+    spacing:{ xs:"4px",sm:"8px",md:"16px",lg:"24px",xl:"40px" },
+    fontFamily:{ body:["Plus Jakarta Sans","sans-serif"],display:["Plus Jakarta Sans","sans-serif"] } } } }
+</script>
+<style>
+  body { font-family:'Plus Jakarta Sans',sans-serif; }
+  .material-symbols-outlined { font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24; }
+  .hexagon-bg { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cpath fill='%23006d40' fill-opacity='0.03' d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9l11-6.35 11 6.35v12.7l-11 6.35-11-6.35V17.9z'/%3E%3C/svg%3E"); }
+  #sidebar { transition:transform .3s cubic-bezier(.4,0,.2,1); }
+  @media (max-width:1023px){ #sidebar{ position:fixed; z-index:50; transform:translateX(-100%); } #sidebar.open{ transform:translateX(0); } }
+  .view { display:none; } .view.active { display:block; }
+  .nav-active { background-color:#e8f5ed; color:#006d40; }
+  .nav-inactive { color:#3e4a41; }
+  .nav-inactive:hover { background-color:#eeeef0; }
+  .skeleton { background: linear-gradient(90deg,#eee 25%,#f5f5f5 50%,#eee 75%); background-size:200%; animation: shimmer 1.4s infinite; border-radius:6px; }
+  @keyframes shimmer { 0%{background-position:200%} 100%{background-position:-200%} }
+</style>
+</head>
+<body class="bg-background text-on-surface hexagon-bg min-h-screen">
+
+<header class="bg-white sticky top-0 z-40 border-b border-surface-container shadow-sm">
+  <div class="px-4 md:px-6 h-16 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <button id="hamburgerBtn" aria-label="Menu" class="flex flex-col justify-center gap-1 w-10 h-10 rounded-lg hover:bg-surface-container items-center text-on-surface-variant"><span class="block h-0.5 w-5 bg-current rounded"></span><span class="block h-0.5 w-5 bg-current rounded"></span><span class="block h-0.5 w-5 bg-current rounded"></span></button>
+      <a href="/"><img src="/assets/nexus-logo.png" alt="NEXUS Market" class="h-8 md:h-9 w-auto object-contain"/></a>
+      <span class="hidden md:inline text-sm font-bold text-on-surface-variant border-l border-surface-container pl-3 ml-1">Mon espace</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <a href="/" class="hidden sm:flex items-center gap-1 text-sm font-bold text-primary hover:underline"><span class="material-symbols-outlined text-[18px]">storefront</span> Boutique</a>
+      <button onclick="showView('orders')" class="relative w-10 h-10 rounded-full hover:bg-surface-container flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined">shopping_cart</span></button>
+      <div class="flex items-center gap-2">
+        <div id="userAvatar" class="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center font-bold text-sm">—</div>
+        <div class="hidden sm:block leading-tight">
+          <p id="userName" class="text-sm font-bold">Chargement…</p>
+          <p id="userTier" class="text-[11px] text-on-surface-variant">Membre</p>
+        </div>
+      </div>
+      <button onclick="signOut()" title="Se déconnecter" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[20px]">logout</span></button>
+    </div>
+  </div>
+</header>
+
+<div class="flex">
+  <aside id="sidebar" class="w-64 shrink-0 bg-white border-r border-surface-container min-h-[calc(100vh-4rem)] p-3">
+    <nav class="space-y-1 text-sm font-semibold">
+      <button data-view="overview" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-active"><span class="material-symbols-outlined">dashboard</span> Vue d'ensemble</button>
+      <button data-view="orders" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">receipt_long</span> Mes commandes</button>
+      <button data-view="tracking" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">local_shipping</span> Suivi livraison</button>
+      <button data-view="favorites" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">favorite</span> Mes favoris</button>
+      <button data-view="loyalty" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">loyalty</span> Points fidélité</button>
+      <a href="/" class="flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">handshake</span> Ambassadeur</a>
+      <button data-view="addresses" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">location_on</span> Mes adresses</button>
+      <button data-view="settings" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">settings</span> Paramètres</button>
+    </nav>
+  </aside>
+  <div id="overlay" class="hidden fixed inset-0 bg-black/40 z-40 lg:hidden"></div>
+
+  <main class="flex-1 p-4 md:p-6 min-w-0">
+
+    <!-- VUE D'ENSEMBLE -->
+    <section class="view active space-y-6" data-view="overview">
+      <div><h1 id="greetName" class="text-2xl font-bold">Bonjour 👋</h1><p class="text-on-surface-variant text-sm">Suivez vos commandes et vos avantages.</p></div>
+
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-primary bg-primary-container rounded-lg p-1.5 inline-block mb-2">local_shipping</span><p id="kpiActive" class="text-2xl font-bold skeleton h-8 w-12 mb-1"> </p><p class="text-xs text-on-surface-variant">Commandes en cours</p></div>
+        <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-secondary bg-secondary-container rounded-lg p-1.5 inline-block mb-2">loyalty</span><p id="kpiPoints" class="text-2xl font-bold skeleton h-8 w-16 mb-1"> </p><p class="text-xs text-on-surface-variant">Points fidélité</p></div>
+        <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-tertiary bg-tertiary/10 rounded-lg p-1.5 inline-block mb-2">favorite</span><p id="kpiFavs" class="text-2xl font-bold skeleton h-8 w-10 mb-1"> </p><p class="text-xs text-on-surface-variant">Favoris</p></div>
+        <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-primary bg-primary-container rounded-lg p-1.5 inline-block mb-2">receipt_long</span><p id="kpiTotal" class="text-2xl font-bold skeleton h-8 w-20 mb-1"> </p><p class="text-xs text-on-surface-variant">Commandes totales</p></div>
+      </div>
+
+      <!-- Carte fidélité -->
+      <div class="bg-primary rounded-xl p-5 text-white flex items-center justify-between flex-wrap gap-4 relative overflow-hidden">
+        <div class="absolute -right-8 -top-8 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
+        <div class="relative z-10">
+          <p id="loyaltyLabel" class="text-sm text-white/80 mb-1">Chargement…</p>
+          <div class="w-64 max-w-full h-2 bg-white/20 rounded-full mt-2"><div id="loyaltyBar" class="h-full bg-secondary rounded-full transition-all" style="width:0%"></div></div>
+        </div>
+        <button onclick="showView('loyalty')" class="relative z-10 bg-secondary text-on-secondary px-5 py-2.5 rounded-lg font-bold text-sm">Utiliser mes points</button>
+      </div>
+
+      <div class="grid lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 bg-white rounded-xl border border-outline-variant overflow-hidden">
+          <div class="flex items-center justify-between p-5 border-b border-surface-container"><h2 class="font-bold">Mes commandes récentes</h2><button onclick="showView('orders')" class="text-primary text-sm font-bold hover:underline">Voir tout</button></div>
+          <div id="recentOrders" class="divide-y divide-surface-container"><div class="p-5 text-center text-on-surface-variant text-sm skeleton h-32"></div></div>
+        </div>
+        <div class="bg-white rounded-xl border border-outline-variant p-5">
+          <h2 class="font-bold mb-4">Vos favoris</h2>
+          <div id="favsList" class="space-y-3 text-sm"><div class="skeleton h-10 mb-2"></div><div class="skeleton h-10 mb-2"></div><div class="skeleton h-10"></div></div>
+          <button onclick="window.location='/'" class="mt-4 w-full text-primary text-sm font-bold hover:underline">Explorer la boutique →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- MES COMMANDES -->
+    <section class="view space-y-6" data-view="orders">
+      <div><h1 class="text-2xl font-bold">Mes commandes</h1><p class="text-on-surface-variant text-sm">Toutes vos commandes passées sur NEXUS.</p></div>
+      <div class="bg-white rounded-xl border border-outline-variant overflow-hidden">
+        <div id="allOrders" class="divide-y divide-surface-container"><div class="p-5 text-center text-on-surface-variant text-sm">Chargement…</div></div>
+      </div>
+    </section>
+
+    <!-- SUIVI LIVRAISON -->
+    <section class="view space-y-6" data-view="tracking">
+      <div><h1 class="text-2xl font-bold">Suivi livraison</h1><p class="text-on-surface-variant text-sm">Vos commandes en cours de livraison.</p></div>
+      <div id="trackingList" class="space-y-4"></div>
+    </section>
+
+    <!-- FAVORIS -->
+    <section class="view space-y-6" data-view="favorites">
+      <div><h1 class="text-2xl font-bold">Mes favoris</h1><p class="text-on-surface-variant text-sm">Produits que vous avez sauvegardés.</p></div>
+      <div id="favsPage" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"><div class="text-on-surface-variant text-sm p-4">Chargement…</div></div>
+    </section>
+
+    <!-- POINTS FIDÉLITÉ -->
+    <section class="view space-y-6" data-view="loyalty">
+      <div><h1 class="text-2xl font-bold">Points fidélité</h1><p class="text-on-surface-variant text-sm">Gagnez des points et obtenez des réductions.</p></div>
+      <div class="grid md:grid-cols-2 gap-6">
+        <div class="bg-primary rounded-xl p-6 text-white">
+          <p class="text-sm text-white/80 mb-1">Votre solde</p>
+          <p id="loyaltyPointsBig" class="text-5xl font-bold mb-2">—</p>
+          <p class="text-sm text-white/80">points</p>
+          <div id="loyaltyTierBig" class="mt-4 text-sm font-bold"></div>
+        </div>
+        <div class="bg-white rounded-xl border border-outline-variant p-6">
+          <h3 class="font-bold mb-4">Comment gagner des points ?</h3>
+          <ul class="space-y-3 text-sm text-on-surface-variant">
+            <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-[18px]">shopping_bag</span> 1 point par 100 FCFA dépensés</li>
+            <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-[18px]">rate_review</span> 50 points par avis laissé</li>
+            <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-[18px]">group_add</span> 200 points par parrainage</li>
+            <li class="flex items-center gap-2"><span class="material-symbols-outlined text-primary text-[18px]">celebration</span> 100 points pour votre anniversaire</li>
+          </ul>
+          <a href="/" class="mt-6 block bg-primary text-white text-center py-2.5 rounded-lg font-bold text-sm hover:brightness-110">Faire un achat</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ADRESSES -->
+    <section class="view space-y-6" data-view="addresses">
+      <div><h1 class="text-2xl font-bold">Mes adresses</h1><p class="text-on-surface-variant text-sm">Vos adresses de livraison sauvegardées.</p></div>
+      <div id="addressesList" class="grid md:grid-cols-2 gap-4"><div class="text-on-surface-variant text-sm p-4">Chargement…</div></div>
+    </section>
+
+    <!-- PARAMÈTRES -->
+    <section class="view space-y-6" data-view="settings">
+      <div><h1 class="text-2xl font-bold">Paramètres</h1><p class="text-on-surface-variant text-sm">Gérez votre compte NEXUS.</p></div>
+      <div class="bg-white rounded-xl border border-outline-variant divide-y divide-surface-container">
+        <div class="p-5 flex items-center justify-between">
+          <div><p class="font-bold text-sm">Nom affiché</p><p id="settingName" class="text-on-surface-variant text-sm mt-0.5">—</p></div>
+          <a href="/" class="text-primary text-sm font-bold hover:underline">Modifier</a>
+        </div>
+        <div class="p-5 flex items-center justify-between">
+          <div><p class="font-bold text-sm">Email</p><p id="settingEmail" class="text-on-surface-variant text-sm mt-0.5">—</p></div>
+        </div>
+        <div class="p-5 flex items-center justify-between">
+          <div><p class="font-bold text-sm">Rôle</p><p id="settingRole" class="text-on-surface-variant text-sm mt-0.5">—</p></div>
+        </div>
+        <div class="p-5">
+          <button onclick="signOut()" class="bg-tertiary/10 text-tertiary px-5 py-2.5 rounded-lg font-bold text-sm hover:bg-tertiary/20">Se déconnecter</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+const SB_URL  = 'https://pqcqbstbdujzaclsiosv.supabase.co';
+const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE';
+const sb = supabase.createClient(SB_URL, SB_KEY);
+
+const FCFA = (eur) => Math.round((eur||0) * 655.957).toLocaleString('fr-FR') + ' F';
+
+const STATUS_MAP = {
+  pending:         { label:'En attente',       cls:'bg-surface-container text-on-surface-variant', pct:10 },
+  pending_payment: { label:'Paiement en attente', cls:'bg-secondary-container text-on-secondary-container', pct:15 },
+  processing:      { label:'En préparation',   cls:'bg-secondary-container text-on-secondary-container', pct:33 },
+  in_transit:      { label:'En route',         cls:'bg-primary-container text-primary', pct:66 },
+  delivered:       { label:'Livrée',           cls:'bg-primary text-white', pct:100 },
+  cancelled:       { label:'Annulée',          cls:'bg-tertiary/10 text-tertiary', pct:0 },
+};
+
+const TIER_THRESHOLDS = [
+  { name:'Bronze', min:0,    next:500,  color:'#cd7f32' },
+  { name:'Argent', min:500,  next:1000, color:'#aaa' },
+  { name:'Or',     min:1000, next:2000, color:'#e9c176' },
+  { name:'Platine',min:2000, next:null, color:'#b0c4de' },
+];
+
+function getTier(pts) {
+  for (let i = TIER_THRESHOLDS.length-1; i >= 0; i--) {
+    if (pts >= TIER_THRESHOLDS[i].min) return TIER_THRESHOLDS[i];
+  }
+  return TIER_THRESHOLDS[0];
+}
+
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
+
+function orderCard(o) {
+  const s = STATUS_MAP[o.status] || STATUS_MAP.pending;
+  const prods = Array.isArray(o.products) ? o.products : [];
+  const desc  = prods.length ? (prods[0].name + (prods.length>1 ? ' + '+(prods.length-1)+' article'+(prods.length>2?'s':'') : '')) : 'Commande';
+  const id    = '#NX-' + (o.id||'').toString().slice(0,8).toUpperCase();
+  const date  = new Date(o.created_at).toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
+  return `<div class="p-5">
+    <div class="flex items-center justify-between mb-2">
+      <div><p class="font-bold text-sm">${id}</p><p class="text-xs text-on-surface-variant">${desc}</p></div>
+      <span class="px-2 py-1 rounded-full text-[11px] font-bold ${s.cls}">${s.label}</span>
+    </div>
+    <div class="h-1.5 bg-surface-container rounded-full mb-2"><div class="h-full bg-primary rounded-full" style="width:${s.pct}%"></div></div>
+    <div class="flex items-center justify-between text-xs">
+      <span class="text-on-surface-variant flex items-center gap-1"><span class="material-symbols-outlined text-[15px]">calendar_today</span>${date}</span>
+      <span class="font-bold">${FCFA(o.total)}</span>
+    </div>
+  </div>`;
+}
+
+function showView(v) {
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.dataset.view === v));
+  document.querySelectorAll('.navbtn').forEach(b => {
+    const active = b.dataset.view === v;
+    b.classList.toggle('nav-active', active);
+    b.classList.toggle('nav-inactive', !active);
+  });
+  if (window.innerWidth < 1024) {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('overlay').classList.add('hidden');
+  }
+}
+
+async function signOut() {
+  await sb.auth.signOut();
+  window.location.href = '/';
+}
+
+async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href = '/?login=1'; return; }
+  const user = session.user;
+
+  // Profil
+  const { data: profile } = await sb.from('profiles').select('*').eq('id', user.id).maybeSingle();
+  const name = profile?.name || user.email?.split('@')[0] || 'Utilisateur';
+
+  document.getElementById('userName').textContent = name;
+  document.getElementById('userAvatar').textContent = initials(name);
+  document.getElementById('greetName').textContent = `Bonjour, ${name.split(' ')[0]} 👋`;
+  document.getElementById('settingName').textContent = name;
+  document.getElementById('settingEmail').textContent = user.email || '—';
+  document.getElementById('settingRole').textContent = profile?.role || 'buyer';
+
+  // Commandes
+  const { data: orders } = await sb.from('orders')
+    .select('id,status,total,created_at,products,shipping_city')
+    .eq('buyer_id', user.id)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  const ords = orders || [];
+  const active = ords.filter(o => ['processing','in_transit','pending','pending_payment'].includes(o.status));
+
+  document.getElementById('kpiActive').textContent = active.length;
+  document.getElementById('kpiActive').classList.remove('skeleton');
+  document.getElementById('kpiTotal').textContent = ords.length;
+  document.getElementById('kpiTotal').classList.remove('skeleton');
+
+  const recent = ords.slice(0,3);
+  document.getElementById('recentOrders').innerHTML = recent.length
+    ? recent.map(orderCard).join('')
+    : '<div class="p-10 text-center text-on-surface-variant text-sm"><span class="material-symbols-outlined text-4xl mb-2 block">shopping_bag</span>Aucune commande pour l\'instant.<br><a href="/" class="text-primary font-bold hover:underline mt-2 inline-block">Explorer la boutique</a></div>';
+
+  document.getElementById('allOrders').innerHTML = ords.length
+    ? ords.map(orderCard).join('')
+    : '<div class="p-10 text-center text-on-surface-variant text-sm"><span class="material-symbols-outlined text-4xl mb-2 block">shopping_bag</span>Aucune commande pour l\'instant.<br><a href="/" class="text-primary font-bold hover:underline mt-2 inline-block">Explorer la boutique</a></div>';
+
+  // Livraisons en cours
+  const inTransit = ords.filter(o => o.status === 'in_transit');
+  document.getElementById('trackingList').innerHTML = inTransit.length
+    ? inTransit.map(o => {
+        const id = '#NX-' + (o.id||'').toString().slice(0,8).toUpperCase();
+        return `<div class="bg-white rounded-xl border border-outline-variant p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div><p class="font-bold">${id}</p><p class="text-xs text-on-surface-variant">${o.shipping_city||'Dakar'}</p></div>
+            <span class="px-3 py-1 rounded-full text-xs font-bold bg-primary-container text-primary">En route</span>
+          </div>
+          <div class="h-2 bg-surface-container rounded-full"><div class="h-full bg-primary rounded-full" style="width:66%"></div></div>
+        </div>`;
+      }).join('')
+    : '<div class="bg-white rounded-xl border border-outline-variant p-10 text-center text-on-surface-variant text-sm">Aucune livraison en cours.</div>';
+
+  // Fidélité
+  const { data: loyaltyRow } = await sb.from('loyalty_points').select('points').eq('user_id', user.id).maybeSingle();
+  const pts = loyaltyRow?.points || 0;
+  const tier = getTier(pts);
+  const pct = tier.next ? Math.min(100, Math.round((pts - tier.min) / (tier.next - tier.min) * 100)) : 100;
+
+  document.getElementById('kpiPoints').textContent = pts.toLocaleString('fr-FR');
+  document.getElementById('kpiPoints').classList.remove('skeleton');
+  document.getElementById('loyaltyBar').style.width = pct + '%';
+  document.getElementById('loyaltyLabel').textContent = tier.next
+    ? `Membre ${tier.name} — plus que ${(tier.next - pts).toLocaleString('fr-FR')} pts avant ${TIER_THRESHOLDS[TIER_THRESHOLDS.indexOf(tier)+1]?.name||'Platine'}`
+    : `Membre Platine ✨ — niveau maximum atteint !`;
+  document.getElementById('userTier').textContent = `Membre ${tier.name}`;
+  document.getElementById('loyaltyPointsBig').textContent = pts.toLocaleString('fr-FR');
+  document.getElementById('loyaltyTierBig').textContent = `Niveau ${tier.name}`;
+
+  // Favoris depuis localStorage (le main app les y stocke)
+  let favs = [];
+  try { favs = JSON.parse(localStorage.getItem('nx_favorites') || '[]'); } catch(e) {}
+  document.getElementById('kpiFavs').textContent = favs.length;
+  document.getElementById('kpiFavs').classList.remove('skeleton');
+  if (favs.length) {
+    const favsHtml = favs.slice(0,4).map(f => `<div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-lg bg-surface-container-low flex items-center justify-center overflow-hidden">
+        ${f.image ? `<img src="${f.image}" class="w-full h-full object-cover"/>` : '<span class="material-symbols-outlined text-on-surface-variant">image</span>'}
+      </div>
+      <div class="flex-1 min-w-0"><p class="font-semibold truncate text-sm">${f.name||'Produit'}</p><p class="text-xs text-primary font-bold">${f.price ? FCFA(f.price) : '—'}</p></div>
+      <a href="/" class="text-tertiary"><span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1;">favorite</span></a>
+    </div>`).join('');
+    document.getElementById('favsList').innerHTML = favsHtml;
+    document.getElementById('favsPage').innerHTML = favs.map(f => `<div class="bg-white rounded-xl border border-outline-variant overflow-hidden">
+      <div class="h-32 bg-surface-container-low flex items-center justify-center">${f.image ? `<img src="${f.image}" class="h-full w-full object-cover"/>` : '<span class="material-symbols-outlined text-on-surface-variant text-4xl">image</span>'}</div>
+      <div class="p-3"><p class="font-semibold text-sm truncate">${f.name||'Produit'}</p><p class="text-primary font-bold text-sm mt-1">${f.price ? FCFA(f.price) : '—'}</p><a href="/" class="mt-2 block text-center bg-primary text-white text-xs font-bold py-2 rounded-lg">Voir</a></div>
+    </div>`).join('');
+  } else {
+    document.getElementById('favsList').innerHTML = '<p class="text-on-surface-variant text-xs text-center py-4">Aucun favori sauvegardé.<br><a href="/" class="text-primary font-bold">Explorer →</a></p>';
+    document.getElementById('favsPage').innerHTML = '<div class="col-span-full text-center text-on-surface-variant text-sm py-10"><span class="material-symbols-outlined text-4xl mb-2 block">favorite_border</span>Aucun favori pour l\'instant.<br><a href="/" class="text-primary font-bold hover:underline mt-2 inline-block">Explorer la boutique</a></div>';
+  }
+
+  // Adresses depuis commandes récentes
+  const cities = [...new Set(ords.filter(o=>o.shipping_city).map(o=>o.shipping_city))];
+  document.getElementById('addressesList').innerHTML = cities.length
+    ? cities.map(c => `<div class="bg-white rounded-xl border border-outline-variant p-5 flex items-center gap-4">
+        <span class="material-symbols-outlined text-primary bg-primary-container rounded-lg p-2">location_on</span>
+        <div><p class="font-bold text-sm">${c}</p><p class="text-xs text-on-surface-variant">Adresse de livraison</p></div>
+      </div>`).join('')
+    : '<div class="bg-white rounded-xl border border-outline-variant p-8 text-center text-on-surface-variant text-sm col-span-full">Aucune adresse sauvegardée.</div>';
+}
+
+// Sidebar + nav
+document.querySelectorAll('.navbtn').forEach(b => {
+  b.addEventListener('click', () => showView(b.dataset.view));
+});
+var sb2=document.getElementById('sidebar'),ov=document.getElementById('overlay');
+document.getElementById('hamburgerBtn').addEventListener('click',function(){sb2.classList.toggle('open');ov.classList.toggle('hidden',!sb2.classList.contains('open'));});
+ov.addEventListener('click',function(){sb2.classList.remove('open');ov.classList.add('hidden');});
+
+init().catch(console.error);
+</script>
+</body>
+</html>

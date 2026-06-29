@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html class="light" lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>NEXUS Market | Console Admin</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script>
+  tailwind.config = { darkMode:"class", theme:{ extend:{
+    colors:{ primary:"#006d40","on-primary":"#ffffff","primary-container":"#e8f5ed","on-primary-container":"#002110",
+      secondary:"#e9c176","on-secondary":"#261900","secondary-container":"#ffdea5",tertiary:"#bd0014","on-tertiary":"#ffffff",
+      background:"#f9f9fc","on-background":"#1a1c1e",surface:"#f9f9fc","on-surface":"#1a1c1e","surface-variant":"#e2e2e5",
+      "on-surface-variant":"#3e4a41",outline:"#6e7a70","outline-variant":"#bdcabe","surface-container-low":"#f3f3f6",
+      "surface-container":"#eeeef0","surface-container-high":"#e8e8ea","surface-container-highest":"#e2e2e5" },
+    borderRadius:{ DEFAULT:"0.5rem",lg:"0.5rem",xl:"1rem",full:"9999px" },
+    spacing:{ xs:"4px",sm:"8px",md:"16px",lg:"24px",xl:"40px" },
+    fontFamily:{ body:["Plus Jakarta Sans","sans-serif"],display:["Plus Jakarta Sans","sans-serif"] } } } }
+</script>
+<style>
+  body { font-family:'Plus Jakarta Sans',sans-serif; }
+  .material-symbols-outlined { font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24; }
+  .hexagon-bg { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cpath fill='%23006d40' fill-opacity='0.03' d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9l11-6.35 11 6.35v12.7l-11 6.35-11-6.35V17.9z'/%3E%3C/svg%3E"); }
+  #sidebar { transition:transform .3s cubic-bezier(.4,0,.2,1); }
+  @media (max-width:1023px){ #sidebar{ position:fixed; z-index:50; transform:translateX(-100%); } #sidebar.open{ transform:translateX(0); } }
+  .view { display:none; } .view.active { display:block; }
+  .nav-active { background-color:#e8f5ed; color:#006d40; }
+  .nav-inactive { color:#3e4a41; }
+  .nav-inactive:hover { background-color:#eeeef0; }
+  .skeleton { background: linear-gradient(90deg,#eee 25%,#f5f5f5 50%,#eee 75%); background-size:200%; animation: shimmer 1.4s infinite; border-radius:6px; }
+  @keyframes shimmer { 0%{background-position:200%} 100%{background-position:-200%} }
+  #toastBox { position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; display:flex; flex-direction:column; gap:.5rem; }
+  .toast { padding:.75rem 1.25rem; border-radius:.5rem; font-size:.875rem; font-weight:600; color:#fff; box-shadow:0 4px 14px rgba(0,0,0,.15); }
+</style>
+</head>
+<body class="bg-background text-on-surface hexagon-bg min-h-screen">
+<div id="toastBox"></div>
+
+<header class="bg-white sticky top-0 z-40 border-b border-surface-container shadow-sm">
+  <div class="px-4 md:px-6 h-16 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <button id="hamburgerBtn" aria-label="Menu" class="flex flex-col justify-center gap-1 w-10 h-10 rounded-lg hover:bg-surface-container items-center text-on-surface-variant"><span class="block h-0.5 w-5 bg-current rounded"></span><span class="block h-0.5 w-5 bg-current rounded"></span><span class="block h-0.5 w-5 bg-current rounded"></span></button>
+      <a href="/"><img src="/assets/nexus-logo.png" alt="NEXUS Market" class="h-8 md:h-9 w-auto object-contain"/></a>
+      <span class="hidden md:inline text-sm font-bold text-white bg-tertiary px-2 py-0.5 rounded ml-1">ADMIN</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <div id="notifBell" class="relative w-10 h-10 rounded-full hover:bg-surface-container flex items-center justify-center text-on-surface-variant cursor-pointer" onclick="showView('vendors')"><span class="material-symbols-outlined">notifications</span><span id="notifDot" class="hidden absolute top-2 right-2 w-2 h-2 bg-tertiary rounded-full"></span></div>
+      <div id="userAvatar" class="w-9 h-9 rounded-full bg-on-surface text-white flex items-center justify-center font-bold text-sm">—</div>
+      <button onclick="signOut()" title="Déconnexion" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[20px]">logout</span></button>
+    </div>
+  </div>
+</header>
+
+<div class="flex">
+  <aside id="sidebar" class="w-64 shrink-0 bg-white border-r border-surface-container min-h-[calc(100vh-4rem)] p-3">
+    <nav class="space-y-1 text-sm font-semibold" id="adminNav">
+      <button data-view="overview" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-active"><span class="material-symbols-outlined">monitoring</span> Vue d'ensemble</button>
+      <button data-view="vendors" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">storefront</span> Vendeurs <span id="vendorBadge" class="ml-auto hidden bg-secondary text-on-secondary text-[10px] px-2 py-0.5 rounded-full">0</span></button>
+      <button data-view="users" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">group</span> Utilisateurs</button>
+      <button data-view="moderation" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">gavel</span> Modération</button>
+      <button data-view="orders" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">receipt_long</span> Commandes</button>
+      <button data-view="disputes" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">report</span> Litiges <span id="disputeBadge" class="ml-auto hidden bg-tertiary text-white text-[10px] px-2 py-0.5 rounded-full">0</span></button>
+      <button data-view="payouts" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">account_balance_wallet</span> Retraits <span id="payoutBadge" class="ml-auto hidden bg-tertiary text-white text-[10px] px-2 py-0.5 rounded-full">0</span></button>
+      <button data-view="couriers" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">two_wheeler</span> Coursiers</button>
+      <button data-view="newsletter" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">mail</span> Newsletter</button>
+      <button data-view="config" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">settings</span> Configuration</button>
+    </nav>
+  </aside>
+  <div id="overlay" class="hidden fixed inset-0 bg-black/40 z-40 lg:hidden"></div>
+
+  <main class="flex-1 p-4 md:p-6 min-w-0">
+
+    <!-- VUE D'ENSEMBLE -->
+    <section class="view active" data-view="overview">
+      <h1 class="text-2xl font-bold mb-1">Vue d'ensemble</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Pilotage de la marketplace NEXUS.</p>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-primary bg-primary-container rounded-lg p-1.5 inline-block mb-2">payments</span><p id="kpiGMV" class="text-2xl font-bold skeleton h-8 mb-1"> </p><p class="text-xs text-on-surface-variant">GMV total (FCFA)</p></div>
+        <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-secondary bg-secondary-container rounded-lg p-1.5 inline-block mb-2">group</span><p id="kpiUsers" class="text-2xl font-bold skeleton h-8 mb-1"> </p><p class="text-xs text-on-surface-variant">Utilisateurs</p></div>
+        <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-on-surface bg-surface-container rounded-lg p-1.5 inline-block mb-2">receipt_long</span><p id="kpiOrders" class="text-2xl font-bold skeleton h-8 mb-1"> </p><p class="text-xs text-on-surface-variant">Commandes</p></div>
+        <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-tertiary bg-tertiary/10 rounded-lg p-1.5 inline-block mb-2">report</span><p id="kpiDisputes" class="text-2xl font-bold skeleton h-8 mb-1"> </p><p class="text-xs text-on-surface-variant">Litiges ouverts</p></div>
+      </div>
+      <div class="grid lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 bg-white rounded-xl border border-outline-variant p-5">
+          <h2 class="font-bold mb-5">Revenus (6 mois)</h2>
+          <div id="adChart" class="flex items-end justify-between gap-3 h-48"></div>
+          <div id="adChartLbl" class="flex justify-between mt-2 text-[11px] text-on-surface-variant font-semibold"></div>
+        </div>
+        <div class="bg-white rounded-xl border border-outline-variant p-5">
+          <h2 class="font-bold mb-4">À traiter</h2>
+          <div class="space-y-3 text-sm">
+            <button onclick="showView('vendors')" class="w-full flex items-center gap-3 p-2 rounded-lg bg-surface-container-low hover:bg-surface-container text-left"><span class="material-symbols-outlined text-secondary">storefront</span><span class="flex-1">Vendeurs à valider</span><span id="todoVendors" class="font-bold">—</span></button>
+            <button onclick="showView('disputes')" class="w-full flex items-center gap-3 p-2 rounded-lg bg-surface-container-low hover:bg-surface-container text-left"><span class="material-symbols-outlined text-tertiary">report</span><span class="flex-1">Litiges ouverts</span><span id="todoDisputes" class="font-bold">—</span></button>
+            <button onclick="showView('moderation')" class="w-full flex items-center gap-3 p-2 rounded-lg bg-surface-container-low hover:bg-surface-container text-left"><span class="material-symbols-outlined text-on-surface-variant">flag</span><span class="flex-1">Produits signalés</span><span id="todoProducts" class="font-bold">—</span></button>
+            <button onclick="showView('payouts')" class="w-full flex items-center gap-3 p-2 rounded-lg bg-surface-container-low hover:bg-surface-container text-left"><span class="material-symbols-outlined text-primary">account_balance_wallet</span><span class="flex-1">Retraits en attente</span><span id="todoPayouts" class="font-bold">—</span></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VENDEURS -->
+    <section class="view" data-view="vendors">
+      <h1 class="text-2xl font-bold mb-1">Vendeurs à valider</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Examinez et approuvez les nouvelles boutiques.</p>
+      <div class="bg-white rounded-xl border border-outline-variant overflow-hidden">
+        <div class="overflow-x-auto"><table class="w-full text-sm">
+          <thead class="bg-surface-container-low text-on-surface-variant text-left text-xs uppercase"><tr><th class="px-5 py-3 font-bold">Utilisateur</th><th class="px-5 py-3 font-bold">Email</th><th class="px-5 py-3 font-bold">Inscription</th><th class="px-5 py-3 font-bold">Rôle actuel</th><th class="px-5 py-3 font-bold">Actions</th></tr></thead>
+          <tbody id="vendorsBody" class="divide-y divide-surface-container"><tr><td colspan="5" class="px-5 py-8 text-center text-on-surface-variant">Chargement…</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- UTILISATEURS -->
+    <section class="view" data-view="users">
+      <h1 class="text-2xl font-bold mb-1">Utilisateurs</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Tous les membres de la plateforme.</p>
+      <div class="mb-4"><input id="userSearch" type="text" placeholder="Rechercher par nom ou email…" class="w-full max-w-sm border border-outline-variant rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-primary"/></div>
+      <div class="bg-white rounded-xl border border-outline-variant overflow-hidden">
+        <div class="overflow-x-auto"><table class="w-full text-sm">
+          <thead class="bg-surface-container-low text-on-surface-variant text-left text-xs uppercase"><tr><th class="px-5 py-3 font-bold">Nom</th><th class="px-5 py-3 font-bold">Email</th><th class="px-5 py-3 font-bold">Rôle</th><th class="px-5 py-3 font-bold">Inscription</th></tr></thead>
+          <tbody id="usersBody" class="divide-y divide-surface-container"><tr><td colspan="4" class="px-5 py-8 text-center text-on-surface-variant">Chargement…</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- MODERATION -->
+    <section class="view" data-view="moderation">
+      <h1 class="text-2xl font-bold mb-1">Modération produits</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Produits signalés ou en attente de validation.</p>
+      <div id="moderationList" class="space-y-3"><div class="text-on-surface-variant text-sm p-4">Chargement…</div></div>
+    </section>
+
+    <!-- COMMANDES -->
+    <section class="view" data-view="orders">
+      <h1 class="text-2xl font-bold mb-1">Commandes</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Vue globale de toutes les commandes.</p>
+      <div class="bg-white rounded-xl border border-outline-variant overflow-hidden">
+        <div class="overflow-x-auto"><table class="w-full text-sm">
+          <thead class="bg-surface-container-low text-on-surface-variant text-left text-xs uppercase"><tr><th class="px-5 py-3 font-bold">ID</th><th class="px-5 py-3 font-bold">Acheteur</th><th class="px-5 py-3 font-bold">Vendeur</th><th class="px-5 py-3 font-bold">Montant</th><th class="px-5 py-3 font-bold">Statut</th><th class="px-5 py-3 font-bold">Date</th></tr></thead>
+          <tbody id="ordersBody" class="divide-y divide-surface-container"><tr><td colspan="6" class="px-5 py-8 text-center text-on-surface-variant">Chargement…</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- LITIGES -->
+    <section class="view" data-view="disputes">
+      <h1 class="text-2xl font-bold mb-1">Litiges</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Conflits acheteur/vendeur à arbitrer.</p>
+      <div id="disputesList" class="space-y-4"><div class="text-on-surface-variant text-sm p-4">Chargement…</div></div>
+    </section>
+
+    <!-- RETRAITS -->
+    <section class="view" data-view="payouts">
+      <h1 class="text-2xl font-bold mb-1">Demandes de retrait</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Retraits vendeurs en attente de traitement.</p>
+      <div id="payoutsList" class="space-y-3"><div class="text-on-surface-variant text-sm p-4">Chargement…</div></div>
+    </section>
+
+    <!-- COURSIERS -->
+    <section class="view" data-view="couriers">
+      <h1 class="text-2xl font-bold mb-1">Coursiers</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Flotte &amp; statuts des coursiers.</p>
+      <div id="couriersList" class="space-y-3"><div class="text-on-surface-variant text-sm p-4">Chargement…</div></div>
+    </section>
+
+    <!-- NEWSLETTER -->
+    <section class="view" data-view="newsletter">
+      <div class="flex items-center justify-between flex-wrap gap-3 mb-6">
+        <div><h1 class="text-2xl font-bold mb-1">Newsletter</h1><p class="text-on-surface-variant text-sm">Composez et envoyez une campagne aux membres NEXUS.</p></div>
+      </div>
+      <div class="grid lg:grid-cols-2 gap-6">
+        <div class="bg-white rounded-xl border border-outline-variant p-5 space-y-4">
+          <div><label class="text-xs font-bold uppercase text-on-surface-variant">Objet de l'email</label><input id="nlSubject" value="🔥 Vos offres de la semaine sur NEXUS Market" class="mt-1 w-full border border-outline-variant rounded-lg bg-surface-container-low px-3 py-2.5 text-sm focus:ring-1 focus:ring-primary"/></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="text-xs font-bold uppercase text-on-surface-variant">Audience</label>
+              <select id="nlSegment" class="mt-1 w-full border border-outline-variant rounded-lg bg-surface-container-low px-3 py-2.5 text-sm">
+                <option value="all">Tous les inscrits</option>
+                <option value="buyer">Acheteurs</option>
+                <option value="vendor">Vendeurs</option>
+                <option value="courier">Coursiers</option>
+              </select>
+            </div>
+            <div><label class="text-xs font-bold uppercase text-on-surface-variant">Envoi</label>
+              <select id="nlWhen" class="mt-1 w-full border border-outline-variant rounded-lg bg-surface-container-low px-3 py-2.5 text-sm"><option>Maintenant</option></select>
+            </div>
+          </div>
+          <div><label class="text-xs font-bold uppercase text-on-surface-variant">Titre principal</label><input id="nlTitle" value="Les meilleures affaires du vendredi" class="mt-1 w-full border border-outline-variant rounded-lg bg-surface-container-low px-3 py-2.5 text-sm focus:ring-1 focus:ring-primary"/></div>
+          <div><label class="text-xs font-bold uppercase text-on-surface-variant">Message</label><textarea id="nlBody" rows="4" class="mt-1 w-full border border-outline-variant rounded-lg bg-surface-container-low px-3 py-2.5 text-sm focus:ring-1 focus:ring-primary">Profitez de -70% sur une sélection de produits frais et locaux pour le Louma du vendredi.</textarea></div>
+          <div><label class="text-xs font-bold uppercase text-on-surface-variant">Lien CTA (optionnel)</label><input id="nlLink" placeholder="https://nexusmarket.sn/…" class="mt-1 w-full border border-outline-variant rounded-lg bg-surface-container-low px-3 py-2.5 text-sm focus:ring-1 focus:ring-primary"/></div>
+          <div><label class="text-xs font-bold uppercase text-on-surface-variant">Texte du bouton</label><input id="nlCta" value="J'en profite" class="mt-1 w-full border border-outline-variant rounded-lg bg-surface-container-low px-3 py-2.5 text-sm focus:ring-1 focus:ring-primary"/></div>
+          <div class="flex items-center gap-2 pt-2">
+            <button onclick="sendNewsletterTest()" class="bg-white border border-outline-variant px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-surface-container flex items-center gap-2"><span class="material-symbols-outlined text-[18px]">send</span> Envoyer un test</button>
+            <button id="nlSend" onclick="sendNewsletter()" class="bg-primary text-on-primary px-5 py-2.5 rounded-lg text-sm font-bold hover:brightness-110 flex items-center gap-2 ml-auto"><span class="material-symbols-outlined text-[18px]">campaign</span> Envoyer la campagne</button>
+          </div>
+          <div id="nlResult" class="hidden text-sm font-semibold rounded-lg p-3"></div>
+        </div>
+        <!-- Aperçu -->
+        <div>
+          <p class="text-xs font-bold uppercase text-on-surface-variant mb-2 flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">visibility</span> Aperçu en direct</p>
+          <div class="rounded-xl overflow-hidden border border-outline-variant shadow-sm bg-surface-container-low">
+            <div style="max-width:480px;margin:0 auto;background:#ffffff;">
+              <div style="background:#006d40;padding:18px;text-align:center;"><img src="/assets/nexus-logo.png" alt="NEXUS" style="height:34px;filter:brightness(0) invert(1);"/></div>
+              <div style="background:#e9c176;color:#261900;text-align:center;font-weight:800;font-size:12px;padding:8px;letter-spacing:.05em;">NEXUS MARKET</div>
+              <div style="padding:24px;">
+                <h2 id="pvTitle" style="margin:0 0 10px;font-size:22px;color:#1a1c1e;">Les meilleures affaires du vendredi</h2>
+                <p id="pvBody" style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#3e4a41;">Profitez de -70% sur une sélection de produits…</p>
+                <a id="pvCta" href="#" style="display:inline-block;background:#006d40;color:#fff;text-decoration:none;font-weight:700;padding:12px 28px;border-radius:8px;font-size:14px;">J'en profite</a>
+              </div>
+              <div style="background:#006d40;color:rgba(255,255,255,.8);padding:18px;text-align:center;font-size:11px;">NEXUS Market — © 2026</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONFIG -->
+    <section class="view" data-view="config">
+      <h1 class="text-2xl font-bold mb-1">Configuration</h1>
+      <p class="text-on-surface-variant text-sm mb-6">Paramètres globaux de la plateforme.</p>
+      <div class="bg-white rounded-xl border border-outline-variant divide-y divide-surface-container">
+        <div class="p-5 flex items-center justify-between"><div><p class="font-bold">Commission plateforme</p><p class="text-on-surface-variant text-sm">Prélevée sur chaque vente</p></div><span class="font-bold text-primary" id="cfgCommission">—</span></div>
+        <div class="p-5 flex items-center justify-between"><div><p class="font-bold">Utilisateurs total</p></div><span id="cfgUsers" class="font-bold">—</span></div>
+        <div class="p-5 flex items-center justify-between"><div><p class="font-bold">Vendeurs actifs</p></div><span id="cfgVendors" class="font-bold">—</span></div>
+        <div class="p-5 flex items-center justify-between"><div><p class="font-bold">Coursiers actifs</p></div><span id="cfgCouriers" class="font-bold">—</span></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+const SB_URL = 'https://pqcqbstbdujzaclsiosv.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE';
+const sb = supabase.createClient(SB_URL, SB_KEY);
+const FCFA = (eur) => Math.round((eur||0) * 655.957).toLocaleString('fr-FR') + ' F';
+
+const STATUS_MAP = {
+  pending:'En attente', pending_payment:'Paiement en attente', processing:'En préparation',
+  in_transit:'En route', delivered:'Livrée', cancelled:'Annulée',
+};
+const STATUS_CLS = {
+  pending:'bg-surface-container text-on-surface-variant', pending_payment:'bg-secondary-container text-on-secondary-container',
+  processing:'bg-secondary-container text-on-secondary-container', in_transit:'bg-primary-container text-primary',
+  delivered:'bg-primary text-white', cancelled:'bg-tertiary/10 text-tertiary',
+};
+
+let allUsers = [];
+
+function toast(msg, ok=true) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.style.background = ok ? '#006d40' : '#bd0014';
+  t.textContent = msg;
+  document.getElementById('toastBox').appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
+
+function showView(v) {
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.dataset.view === v));
+  document.querySelectorAll('.navbtn').forEach(b => {
+    const active = b.dataset.view === v;
+    b.classList.toggle('nav-active', active);
+    b.classList.toggle('nav-inactive', !active);
+  });
+  if (window.innerWidth < 1024) {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('overlay').classList.add('hidden');
+  }
+}
+
+async function approveVendor(uid) {
+  // RPC canonique (comme l'app), repli direct si la fonction manque.
+  const { error } = await sb.rpc('admin_approve_user', { p_user_id: uid, p_approved: true });
+  if (error) {
+    const { error: e2 } = await sb.from('profiles').update({ status: 'approved', admin_approved: true }).eq('id', uid);
+    if (e2) { toast('Erreur : ' + e2.message, false); return; }
+  }
+  toast('Vendeur approuvé ✓');
+  loadVendors();
+}
+
+async function rejectVendor(uid) {
+  const { error } = await sb.rpc('admin_approve_user', { p_user_id: uid, p_approved: false });
+  if (error) {
+    const { error: e2 } = await sb.from('profiles').update({ status: 'rejected' }).eq('id', uid);
+    if (e2) { toast('Erreur : ' + e2.message, false); return; }
+  }
+  toast('Demande rejetée');
+  loadVendors();
+}
+
+async function loadVendors() {
+  const { data } = await sb.from('profiles').select('*')
+    .eq('role', 'vendor').in('status', ['pending','en_attente','submitted'])
+    .order('created_at', { ascending: false }).limit(50);
+  const rows = data || [];
+  document.getElementById('vendorBadge').textContent = rows.length;
+  document.getElementById('vendorBadge').classList.toggle('hidden', rows.length === 0);
+  if (rows.length) document.getElementById('notifDot').classList.remove('hidden');
+  document.getElementById('todoVendors').textContent = rows.length;
+
+  document.getElementById('vendorsBody').innerHTML = rows.length
+    ? rows.map(v => `<tr class="hover:bg-surface-container-low">
+        <td class="px-5 py-3 font-bold flex items-center gap-2"><span class="w-8 h-8 rounded-full bg-primary-container text-primary flex items-center justify-center text-xs font-bold">${initials(v.name||v.email)}</span>${v.name||'—'}</td>
+        <td class="px-5 py-3">${v.email||'—'}</td>
+        <td class="px-5 py-3 text-on-surface-variant">${new Date(v.created_at).toLocaleDateString('fr-FR')}</td>
+        <td class="px-5 py-3"><span class="px-2 py-1 bg-secondary-container text-on-secondary-container rounded-full text-[11px] font-bold">En attente</span></td>
+        <td class="px-5 py-3"><div class="flex gap-2">
+          <button onclick="approveVendor('${v.id}')" class="bg-primary text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:brightness-110">Approuver</button>
+          <button onclick="rejectVendor('${v.id}')" class="bg-tertiary/10 text-tertiary px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-tertiary/20">Rejeter</button>
+        </div></td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="px-5 py-10 text-center text-on-surface-variant">Aucun vendeur en attente de validation. ✓</td></tr>';
+}
+
+function renderUsers(users) {
+  const ROLE_CLS = { admin:'bg-tertiary text-white', vendor:'bg-primary-container text-primary', courier:'bg-secondary-container text-on-secondary-container', buyer:'bg-surface-container text-on-surface-variant' };
+  document.getElementById('usersBody').innerHTML = users.length
+    ? users.map(u => `<tr class="hover:bg-surface-container-low">
+        <td class="px-5 py-3 font-bold">${u.name||'—'}</td>
+        <td class="px-5 py-3">${u.email||'—'}</td>
+        <td class="px-5 py-3"><span class="px-2 py-1 rounded-full text-[11px] font-bold ${ROLE_CLS[u.role]||ROLE_CLS.buyer}">${u.role||'buyer'}</span></td>
+        <td class="px-5 py-3 text-on-surface-variant">${new Date(u.created_at).toLocaleDateString('fr-FR')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" class="px-5 py-10 text-center text-on-surface-variant">Aucun utilisateur trouvé.</td></tr>';
+}
+
+async function sendNewsletterTest() {
+  const btn = document.getElementById('nlSend');
+  btn.disabled = true;
+  const body = { subject: document.getElementById('nlSubject').value, message: document.getElementById('nlBody').value, link: document.getElementById('nlLink').value, linkLabel: document.getElementById('nlCta').value, audience: document.getElementById('nlSegment').value, test: true };
+  const { data: { session } } = await sb.auth.getSession();
+  try {
+    const r = await fetch('/api/admin/broadcast', { method:'POST', headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${session.access_token}` }, body: JSON.stringify(body) });
+    const res = await r.json();
+    if (res.ok) toast(`Test envoyé à ${res.to} ✓`);
+    else toast('Erreur envoi test : ' + (res.error||'inconnue'), false);
+  } catch(e) { toast('Erreur réseau : ' + e.message, false); }
+  btn.disabled = false;
+}
+
+async function sendNewsletter() {
+  if (!confirm(`Envoyer la campagne à tous les "${document.getElementById('nlSegment').options[document.getElementById('nlSegment').selectedIndex].text}" ?`)) return;
+  const btn = document.getElementById('nlSend');
+  btn.disabled = true; btn.textContent = 'Envoi en cours…';
+  const body = { subject: document.getElementById('nlSubject').value, message: document.getElementById('nlBody').value, link: document.getElementById('nlLink').value, linkLabel: document.getElementById('nlCta').value, audience: document.getElementById('nlSegment').value };
+  const { data: { session } } = await sb.auth.getSession();
+  const res_el = document.getElementById('nlResult');
+  try {
+    const r = await fetch('/api/admin/broadcast', { method:'POST', headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${session.access_token}` }, body: JSON.stringify(body) });
+    const res = await r.json();
+    res_el.classList.remove('hidden');
+    if (res.ok) {
+      res_el.className = 'text-sm font-semibold rounded-lg p-3 bg-primary-container text-primary';
+      res_el.textContent = `✓ Campagne envoyée — ${res.sent}/${res.total} emails envoyés (${res.failed} échecs).`;
+      toast(`${res.sent} emails envoyés ✓`);
+    } else {
+      res_el.className = 'text-sm font-semibold rounded-lg p-3 bg-tertiary/10 text-tertiary';
+      res_el.textContent = 'Erreur : ' + (res.error||'inconnue');
+      toast('Erreur envoi', false);
+    }
+  } catch(e) {
+    res_el.classList.remove('hidden');
+    res_el.className = 'text-sm font-semibold rounded-lg p-3 bg-tertiary/10 text-tertiary';
+    res_el.textContent = 'Erreur réseau : ' + e.message;
+    toast('Erreur réseau', false);
+  }
+  btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">campaign</span> Envoyer la campagne';
+}
+
+async function signOut() { await sb.auth.signOut(); window.location.href = '/'; }
+
+async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href = '/?login=1'; return; }
+
+  const { data: profile } = await sb.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+  if (!profile || profile.role !== 'admin') {
+    window.location.href = profile?.role === 'vendor' ? '/dashboard-vendeur.html' : '/dashboard-acheteur.html';
+    return;
+  }
+  document.getElementById('userAvatar').textContent = initials(profile.name || session.user.email);
+
+  // Stats en parallèle
+  const [usersRes, ordersRes, disputesRes, payoutsRes] = await Promise.all([
+    sb.from('profiles').select('*', { count: 'exact', head: false }).limit(200),
+    sb.from('orders').select('id,status,total,created_at,buyer_name,vendor_name', { count: 'exact' }).order('created_at', { ascending: false }).limit(100),
+    sb.from('orders').select('id,status,total,created_at,buyer_name,vendor_name,cancel_reason', { count: 'exact' }).eq('status', 'cancelled').limit(50),
+    sb.from('payout_requests').select('*').eq('status', 'pending').limit(50),
+  ]);
+
+  allUsers = usersRes.data || [];
+  const orders = ordersRes.data || [];
+  const disputes = disputesRes.data || [];
+  const payouts = payoutsRes.data || [];
+
+  const vendors = allUsers.filter(u => u.role === 'vendor');
+  const couriers = allUsers.filter(u => u.role === 'courier');
+  const gmv = orders.filter(o=>o.status==='delivered').reduce((s,o)=>s+(o.total||0),0);
+
+  document.getElementById('kpiGMV').textContent = FCFA(gmv); document.getElementById('kpiGMV').classList.remove('skeleton');
+  document.getElementById('kpiUsers').textContent = (usersRes.count||allUsers.length).toLocaleString('fr-FR'); document.getElementById('kpiUsers').classList.remove('skeleton');
+  document.getElementById('kpiOrders').textContent = (ordersRes.count||orders.length).toLocaleString('fr-FR'); document.getElementById('kpiOrders').classList.remove('skeleton');
+  document.getElementById('kpiDisputes').textContent = disputes.length; document.getElementById('kpiDisputes').classList.remove('skeleton');
+  document.getElementById('todoDisputes').textContent = disputes.length;
+  document.getElementById('todoPayouts').textContent = payouts.length;
+  document.getElementById('todoProducts').textContent = '—';
+  document.getElementById('cfgCommission').textContent = '10%';
+  document.getElementById('cfgUsers').textContent = (usersRes.count||allUsers.length).toLocaleString('fr-FR');
+  document.getElementById('cfgVendors').textContent = vendors.length;
+  document.getElementById('cfgCouriers').textContent = couriers.length;
+
+  if (payouts.length) { document.getElementById('payoutBadge').textContent = payouts.length; document.getElementById('payoutBadge').classList.remove('hidden'); }
+  if (disputes.length) { document.getElementById('disputeBadge').textContent = disputes.length; document.getElementById('disputeBadge').classList.remove('hidden'); }
+
+  // Chart 6 mois
+  const months = []; const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    months.push({ label: d.toLocaleDateString('fr-FR',{month:'short'}), start: d, end: new Date(d.getFullYear(), d.getMonth()+1, 1) });
+  }
+  const monthRevs = months.map(m => orders.filter(o=>o.status==='delivered'&&new Date(o.created_at)>=m.start&&new Date(o.created_at)<m.end).reduce((s,o)=>s+(o.total||0),0));
+  const mx = Math.max(...monthRevs, 1);
+  document.getElementById('adChart').innerHTML = monthRevs.map((v,i) => `<div class="flex-1 flex items-end h-full"><div class="w-full rounded-t-md ${i===5?'bg-primary':'bg-primary/30'}" style="height:${Math.round(v/mx*100)||4}%"></div></div>`).join('');
+  document.getElementById('adChartLbl').innerHTML = months.map(m => `<span class="flex-1 text-center">${m.label}</span>`).join('');
+
+  // Commandes table
+  document.getElementById('ordersBody').innerHTML = orders.length
+    ? orders.slice(0,50).map(o => `<tr class="hover:bg-surface-container-low">
+        <td class="px-5 py-3 font-bold">#NX-${(o.id||'').toString().slice(0,8).toUpperCase()}</td>
+        <td class="px-5 py-3">${o.buyer_name||'—'}</td>
+        <td class="px-5 py-3">${o.vendor_name||'—'}</td>
+        <td class="px-5 py-3 font-semibold">${FCFA(o.total)}</td>
+        <td class="px-5 py-3"><span class="px-2 py-1 rounded-full text-[11px] font-bold ${STATUS_CLS[o.status]||''}">${STATUS_MAP[o.status]||o.status}</span></td>
+        <td class="px-5 py-3 text-on-surface-variant">${new Date(o.created_at).toLocaleDateString('fr-FR')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" class="px-5 py-10 text-center text-on-surface-variant">Aucune commande.</td></tr>';
+
+  // Litiges
+  document.getElementById('disputesList').innerHTML = disputes.length
+    ? disputes.map(d => `<div class="bg-white rounded-xl border border-outline-variant p-5">
+        <div class="flex items-center justify-between mb-2">
+          <p class="font-bold">#NX-${(d.id||'').toString().slice(0,8).toUpperCase()}</p>
+          <span class="px-2 py-1 bg-tertiary/10 text-tertiary rounded-full text-xs font-bold">Annulée</span>
+        </div>
+        <p class="text-sm text-on-surface-variant">Acheteur : ${d.buyer_name||'—'} · Vendeur : ${d.vendor_name||'—'}</p>
+        <p class="text-sm mt-1">Montant : <b>${FCFA(d.total)}</b>${d.cancel_reason ? ' · Motif : '+d.cancel_reason : ''}</p>
+      </div>`).join('')
+    : '<div class="bg-white rounded-xl border border-outline-variant p-8 text-center text-on-surface-variant text-sm">Aucun litige ouvert. ✓</div>';
+
+  // Retraits
+  document.getElementById('payoutsList').innerHTML = payouts.length
+    ? payouts.map(p => `<div class="bg-white rounded-xl border border-outline-variant p-5 flex items-center justify-between flex-wrap gap-3">
+        <div><p class="font-bold">${p.vendor_email||p.vendor_id?.slice(0,8)||'Vendeur'}</p><p class="text-xs text-on-surface-variant">${new Date(p.created_at).toLocaleDateString('fr-FR')} · ${p.payment_method||'—'}</p></div>
+        <div class="flex items-center gap-4"><p class="font-bold text-primary">${(p.amount_xof||Math.round((p.amount||0)*655.957)).toLocaleString('fr-FR')} F</p>
+          <span class="px-2 py-1 bg-secondary-container text-on-secondary-container rounded-full text-xs font-bold">En attente</span>
+        </div>
+      </div>`).join('')
+    : '<div class="bg-white rounded-xl border border-outline-variant p-8 text-center text-on-surface-variant text-sm">Aucun retrait en attente. ✓</div>';
+
+  // Coursiers
+  document.getElementById('couriersList').innerHTML = couriers.length
+    ? couriers.map(c => `<div class="bg-white rounded-xl border border-outline-variant p-4 flex items-center gap-4">
+        <div class="w-10 h-10 rounded-full bg-primary-container text-primary flex items-center justify-center font-bold">${initials(c.name||c.email)}</div>
+        <div class="flex-1"><p class="font-bold text-sm">${c.name||'—'}</p><p class="text-xs text-on-surface-variant">${c.email||'—'}</p></div>
+        <span class="px-2 py-1 bg-primary-container text-primary rounded-full text-xs font-bold">Coursier</span>
+      </div>`).join('')
+    : '<div class="bg-white rounded-xl border border-outline-variant p-8 text-center text-on-surface-variant text-sm">Aucun coursier enregistré.</div>';
+
+  // Modération : produits pas encore validés (moderated NULL ou false)
+  const { data: flagged } = await sb.from('products').select('id,name,moderated,active,vendor_id,image_url,images,price')
+    .or('moderated.is.null,moderated.eq.false').neq('active', false).limit(20);
+  const flaggedProds = flagged || [];
+  document.getElementById('todoProducts').textContent = flaggedProds.length;
+  document.getElementById('moderationList').innerHTML = flaggedProds.length
+    ? flaggedProds.map(p => {
+        const img = p.image_url || (Array.isArray(p.images) && p.images[0]) || '';
+        return `<div class="bg-white rounded-xl border border-outline-variant p-4 flex items-center gap-4">
+          <div class="w-14 h-14 rounded-lg bg-surface-container-low flex items-center justify-center overflow-hidden">${img ? `<img src="${img}" class="w-full h-full object-cover"/>` : '<span class="material-symbols-outlined text-2xl text-on-surface-variant">image</span>'}</div>
+          <div class="flex-1 min-w-0"><p class="font-bold truncate">${p.name||'Produit'}</p><p class="text-xs text-on-surface-variant">${FCFA(p.price)}</p></div>
+          <div class="flex gap-2">
+            <button onclick="approveProduct('${p.id}')" class="bg-primary text-white px-3 py-1.5 rounded-lg text-xs font-bold">Approuver</button>
+            <button onclick="removeProduct('${p.id}')" class="bg-tertiary/10 text-tertiary px-3 py-1.5 rounded-lg text-xs font-bold">Retirer</button>
+          </div>
+        </div>`;
+      }).join('')
+    : '<div class="bg-white rounded-xl border border-outline-variant p-8 text-center text-on-surface-variant text-sm">Aucun produit signalé. ✓</div>';
+
+  // Users table
+  renderUsers(allUsers);
+  loadVendors();
+}
+
+async function approveProduct(id) {
+  const { error } = await sb.from('products').update({ moderated: true }).eq('id', id);
+  if (error) { toast('Erreur : ' + error.message, false); return; }
+  toast('Produit approuvé ✓'); init();
+}
+async function removeProduct(id) {
+  const { error } = await sb.from('products').update({ active: false }).eq('id', id);
+  if (error) { toast('Erreur : ' + error.message, false); return; }
+  toast('Produit retiré'); init();
+}
+
+// Recherche utilisateurs
+document.getElementById('userSearch').addEventListener('input', function() {
+  const q = this.value.toLowerCase().trim();
+  renderUsers(q ? allUsers.filter(u => (u.name||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q)) : allUsers);
+});
+
+// Newsletter preview live
+['nlTitle','nlBody','nlCta'].forEach(id => {
+  document.getElementById(id).addEventListener('input', function() {
+    const targets = { nlTitle:'pvTitle', nlBody:'pvBody', nlCta:'pvCta' };
+    document.getElementById(targets[id]).textContent = this.value;
+  });
+});
+
+document.querySelectorAll('.navbtn').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+var sbEl=document.getElementById('sidebar'),ov=document.getElementById('overlay');
+document.getElementById('hamburgerBtn').addEventListener('click',function(){sbEl.classList.toggle('open');ov.classList.toggle('hidden',!sbEl.classList.contains('open'));});
+ov.addEventListener('click',function(){sbEl.classList.remove('open');ov.classList.add('hidden');});
+
+init().catch(console.error);
+</script>
+</body>
+</html>

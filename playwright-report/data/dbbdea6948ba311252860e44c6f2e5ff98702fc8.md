@@ -1,0 +1,1319 @@
+# Instructions
+
+- Following Playwright test failed.
+- Explain why, be concise, respect Playwright best practices.
+- Provide a snippet of code with the fix, if possible.
+
+# Test info
+
+- Name: checkout.spec.js >> NEXUS Market - Chemins critiques >> Validation NINEA rejette les formats invalides
+- Location: tests\checkout.spec.js:120:3
+
+# Error details
+
+```
+Test timeout of 30000ms exceeded.
+```
+
+```
+Tearing down "context" exceeded the test timeout of 30000ms.
+```
+
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - link "Aller au contenu principal" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - banner [ref=e5]:
+        - generic [ref=e6]:
+          - button "Menu" [ref=e7] [cursor=pointer]:
+            - generic [ref=e8]: 
+          - link "NEXUS Market - Accueil" [ref=e9] [cursor=pointer]:
+            - img [ref=e10]
+          - navigation "Navigation principale" [ref=e11]:
+            - button "Se connecter" [ref=e12] [cursor=pointer]:
+              - generic [ref=e13]: 
+              - generic [ref=e14]: Connexion
+            - button "Créer un compte" [ref=e15] [cursor=pointer]:
+              - generic [ref=e16]: 
+              - generic [ref=e17]: S’inscrire
+            - button "Vendre sur NEXUS" [ref=e18] [cursor=pointer]:
+              - generic [ref=e19]: 
+              - generic [ref=e20]: Vendre
+      - generic [ref=e21]:
+        - generic [ref=e22]:
+          - generic [ref=e23]:
+            - generic [ref=e24]:
+              - generic [ref=e25]:
+                - generic [ref=e26]: 🛵 Livraison express
+                - generic [ref=e27]: Un coursier à la demande
+                - generic [ref=e28]: Faites livrer en quelques minutes · suivi GPS en direct
+                - button " Commander un coursier" [ref=e29] [cursor=pointer]:
+                  - generic [ref=e30]: 
+                  - text: Commander un coursier
+              - generic [ref=e31]: 🛵
+            - generic [ref=e32]:
+              - generic [ref=e33]:
+                - generic [ref=e34]: 🔧 NEXUS Pro
+                - generic [ref=e35]: Un pro près de chez vous
+                - generic [ref=e36]: Maçon, plombier, électricien… trouvez et contactez un artisan
+                - button " Trouver un pro" [ref=e37] [cursor=pointer]:
+                  - generic [ref=e38]: 
+                  - text: Trouver un pro
+              - generic [ref=e39]: 🔧
+            - generic [ref=e40]:
+              - generic [ref=e41]:
+                - generic [ref=e42]: 🇸🇳 Local & Élevage
+                - generic [ref=e43]: Produits locaux & NEXUS Élevage
+                - generic [ref=e44]: Soutenez le Sénégal · moutons Tabaski, volaille, bétail
+                - button " Découvrir" [ref=e45] [cursor=pointer]:
+                  - generic [ref=e46]: 
+                  - text: Découvrir
+              - generic [ref=e47]: 🐑
+            - generic [ref=e48]:
+              - generic [ref=e49]:
+                - generic [ref=e50]: 🎬 NEXUS Stories
+                - generic [ref=e51]: Les produits en vidéo
+                - generic [ref=e52]: Découvrez les vendeurs et leurs articles en stories
+                - button " Regarder" [ref=e53] [cursor=pointer]:
+                  - generic [ref=e54]: 
+                  - text: Regarder
+              - generic [ref=e55]: 🎬
+            - generic [ref=e56]:
+              - generic [ref=e57]:
+                - generic [ref=e58]: 📣 Annonces Express
+                - generic [ref=e59]: Vendez en 2 minutes
+                - generic [ref=e60]: Publiez une annonce sans inscription · contact WhatsApp direct
+                - button " Déposer une annonce" [ref=e61] [cursor=pointer]:
+                  - generic [ref=e62]: 
+                  - text: Déposer une annonce
+              - generic [ref=e63]: 📣
+            - generic [ref=e64]:
+              - generic [ref=e65]:
+                - generic [ref=e66]: 🤖 Assistant IA
+                - generic [ref=e67]: Trouvez tout avec l'IA
+                - generic [ref=e68]: Décrivez votre besoin en français ou wolof, l'IA vous guide
+                - button " Discuter avec l'IA" [ref=e69] [cursor=pointer]:
+                  - generic [ref=e70]: 
+                  - text: Discuter avec l'IA
+              - generic [ref=e71]: 🤖
+            - generic [ref=e72]:
+              - generic [ref=e73]:
+                - generic [ref=e74]: 🔄 NEXUS Troc
+                - generic [ref=e75]: Échangez sans argent
+                - generic [ref=e76]: Troquez vos objets contre ce dont vous avez besoin
+                - button " Échanger" [ref=e77] [cursor=pointer]:
+                  - generic [ref=e78]: 
+                  - text: Échanger
+              - generic [ref=e79]: 🔄
+            - generic [ref=e80]:
+              - generic [ref=e81]:
+                - generic [ref=e82]: 💬 Communauté
+                - generic [ref=e83]: Rejoignez la discussion
+                - generic [ref=e84]: Échangez en direct avec la communauté NEXUS
+                - button " Discuter" [ref=e85] [cursor=pointer]:
+                  - generic [ref=e86]: 
+                  - text: Discuter
+              - generic [ref=e87]: 💬
+            - generic [ref=e88]:
+              - generic [ref=e89]:
+                - generic [ref=e90]: 🔊 Accessibilité
+                - generic [ref=e91]: Naviguez à la voix
+                - generic [ref=e92]: Écoute vocale, recherche parlée et gros texte — pour tous
+                - button " Activer" [ref=e93] [cursor=pointer]:
+                  - generic [ref=e94]: 
+                  - text: Activer
+              - generic [ref=e95]: 🔊
+            - generic [ref=e96]:
+              - generic [ref=e97]:
+                - generic [ref=e98]: ⚡ Vente Flash
+                - generic [ref=e99]: Jusqu'à -60% sur l'Électronique
+                - generic [ref=e100]: Offres limitées, profitez-en maintenant
+                - button " Explorer maintenant" [ref=e101] [cursor=pointer]:
+                  - generic [ref=e102]: 
+                  - text: Explorer maintenant
+              - generic [ref=e103]:
+                - generic [ref=e104]: 150 000 F
+                - generic [ref=e105]: 89 990 F
+                - generic [ref=e106]: Prix spécial flash
+              - generic [ref=e107]: "%"
+            - generic [ref=e108]:
+              - generic [ref=e109]:
+                - generic [ref=e110]: 🌿 Marketplace
+                - generic [ref=e111]: Des milliers de Produits vérifiés
+                - generic [ref=e112]: Paiement Orange Money & Wave · Protection acheteur
+                - button " Explorer maintenant" [ref=e113] [cursor=pointer]:
+                  - generic [ref=e114]: 
+                  - text: Explorer maintenant
+              - generic [ref=e115]: NX
+          - button "" [ref=e116] [cursor=pointer]:
+            - generic [ref=e117]: 
+          - button "" [ref=e118] [cursor=pointer]:
+            - generic [ref=e119]: 
+          - generic [ref=e120]:
+            - button [ref=e121] [cursor=pointer]
+            - button [ref=e122] [cursor=pointer]
+            - button [ref=e123] [cursor=pointer]
+            - button [ref=e124] [cursor=pointer]
+            - button [ref=e125] [cursor=pointer]
+            - button [ref=e126] [cursor=pointer]
+            - button [ref=e127] [cursor=pointer]
+            - button [ref=e128] [cursor=pointer]
+            - button [ref=e129] [cursor=pointer]
+            - button [ref=e130] [cursor=pointer]
+            - button [ref=e131] [cursor=pointer]
+        - generic [ref=e133]:
+          - combobox [ref=e134] [cursor=pointer]:
+            - option "Toutes catégories" [selected]
+            - option "Téléphones & Accessoires"
+            - option "Ordinateurs & Tablettes"
+            - option "Électronique & Hi-Fi"
+            - option "Appareils photo & Vidéo"
+            - option "Jeux vidéo & Consoles"
+            - option "Montres connectées"
+            - option "Mode Femme"
+            - option "Mode Homme"
+            - option "Mode Enfant"
+            - option "Chaussures"
+            - option "Sacs & Maroquinerie"
+            - option "Bijoux & Accessoires"
+            - option "Beauté & Cosmétiques"
+            - option "Parfums"
+            - option "Tissus & Wax"
+            - option "Meubles & Décoration"
+            - option "Électroménager"
+            - option "Cuisine & Art de la table"
+            - option "Linge de maison"
+            - option "Jardinage & Extérieur"
+            - option "Bricolage & Outillage"
+            - option "Éclairage"
+            - option "Alimentation générale"
+            - option "Produits bio & locaux"
+            - option "Boissons"
+            - option "Épices & Condiments"
+            - option "Céréales & Légumineuses"
+            - option "Produits laitiers"
+            - option "Boulangerie & Pâtisserie"
+            - option "Voitures"
+            - option "Motos & Scooters"
+            - option "Vélos & Trottinettes"
+            - option "Pièces & Accessoires auto"
+            - option "Transport & Logistique"
+            - option "Location appartement"
+            - option "Vente immobilier"
+            - option "Terrains & Parcelles"
+            - option "Bureaux & Locaux commerciaux"
+            - option "Animaux de compagnie"
+            - option "Accessoires animaux"
+            - option "Alimentation animaux"
+            - option "Livres & Presses"
+            - option "Livres papier"
+            - option "eBooks & PDF"
+            - option "Livres audio"
+            - option "BD & Mangas"
+            - option "Manuels scolaires"
+            - option "Presse & Magazines"
+            - option "Livres anciens & Rares"
+            - option "Musique & Instruments"
+            - option "Jouets & Jeux"
+            - option "Sport & Fitness"
+            - option "Voyages & Tourisme"
+            - option "Arts & Artisanat"
+            - option "Services à domicile"
+            - option "Formation & Cours"
+            - option "Santé & Bien-être"
+            - option "Informatique & Tech (services)"
+            - option "Événementiel"
+            - option "BTP & Construction"
+            - option "Matériel professionnel"
+            - option "Agriculture & Élevage"
+            - option "Fournitures de bureau"
+            - option "Textile & Couture (pro)"
+            - option "Collections & Antiquités"
+            - option "Dons & Trocs"
+            - option "Produits locaux"
+            - option "Autre"
+            - option "Informatique"
+            - option "Services"
+            - option "Beauté & Santé"
+            - option "Maison & Déco"
+            - option "Alimentation"
+            - option "Mode & Vêtements"
+            - option "Électronique"
+          - generic [ref=e135]:
+            - searchbox "Rechercher produits, catégories, vendeurs..." [ref=e136]
+            - generic [ref=e137]: 
+            - button "Recherche vocale" [ref=e138] [cursor=pointer]: 🎤
+          - button "" [ref=e139] [cursor=pointer]:
+            - generic [ref=e140]: 
+        - generic [ref=e142]:
+          - generic [ref=e143]:
+            - generic [ref=e144]: ⚡
+            - generic [ref=e145]: Annonce Express — sans inscription
+            - generic [ref=e146]: 2 min · gratuit
+          - button "+ Déposer" [ref=e147] [cursor=pointer]:
+            - generic [ref=e148]: +
+            - text: Déposer
+        - generic [ref=e150]:
+          - generic [ref=e151]:
+            - generic [ref=e152]: 🎬 STORIES
+            - button "Voir tout →" [ref=e153] [cursor=pointer]
+          - generic [ref=e154]:
+            - generic [ref=e155] [cursor=pointer]:
+              - generic [ref=e156]:
+                - generic [ref=e157]: ▶ Vidéo
+                - generic [ref=e158]: ▶
+              - generic [ref=e159]:
+                - generic [ref=e160]: Loumpa
+                - generic [ref=e162]: 500 FCFA
+                - generic [ref=e163]: 🏪 dame gueye
+                - button "▶ Regarder" [ref=e165]
+            - generic [ref=e166] [cursor=pointer]:
+              - generic [ref=e167]:
+                - generic [ref=e168]: ▶ Vidéo
+                - generic [ref=e169]: ▶
+              - generic [ref=e170]:
+                - generic [ref=e171]: Le chien
+                - generic [ref=e173]: 500 FCFA
+                - generic [ref=e174]: 🏪 dame gueye
+                - button "▶ Regarder" [ref=e176]
+            - generic [ref=e177] [cursor=pointer]:
+              - generic [ref=e178]:
+                - generic [ref=e179]: ▶ Vidéo
+                - generic [ref=e180]: ▶
+              - generic [ref=e181]:
+                - generic [ref=e182]: Pommade
+                - generic [ref=e184]: 500 FCFA
+                - generic [ref=e185]: 🏪 dame gueye
+                - button "▶ Regarder" [ref=e187]
+            - generic [ref=e188] [cursor=pointer]:
+              - generic [ref=e189]:
+                - generic [ref=e190]: ▶ Vidéo
+                - generic [ref=e191]: ▶
+              - generic [ref=e192]:
+                - generic [ref=e193]: tasse Test
+                - generic [ref=e194]: 🏪 khaly kone
+                - button "▶ Regarder" [ref=e196]
+        - generic [ref=e198]:
+          - generic [ref=e199]:
+            - generic [ref=e200]:
+              - generic [ref=e201]: 
+              - text: VENTES FLASH
+            - generic [ref=e202]:
+              - generic [ref=e203]: "Se termine dans :"
+              - generic [ref=e204]: "03"
+              - generic [ref=e205]: ":"
+              - generic [ref=e206]: "41"
+              - generic [ref=e207]: ":"
+              - generic [ref=e208]: "52"
+            - button "Voir tout →" [ref=e209] [cursor=pointer]
+          - generic [ref=e210]:
+            - listitem [ref=e211] [cursor=pointer]:
+              - generic [ref=e212]:
+                - img "Thiéboudienne Kit Complet (4 pers.)" [ref=e214]
+                - generic [ref=e215]: "-10%"
+                - button "Ajouter aux favoris" [ref=e216]:
+                  - generic [ref=e217]: 
+              - generic [ref=e218]:
+                - generic [ref=e219]: Thiéboudienne Kit Complet (4 pers.)
+                - generic [ref=e220]: 🏪 Marché Kermel
+                - generic [ref=e221]:
+                  - generic [ref=e222]: ★★★★★
+                  - generic [ref=e223]: (54)
+                - generic [ref=e224]: 5 897 FCFA
+                - button "🛒 Panier" [ref=e225]
+            - listitem [ref=e226] [cursor=pointer]:
+              - generic [ref=e227]:
+                - img "Ordinateur Portable HP" [ref=e229]
+                - generic [ref=e230]: "-15%"
+                - button "Ajouter aux favoris" [ref=e231]:
+                  - generic [ref=e232]: 
+              - generic [ref=e233]:
+                - generic [ref=e234]: Ordinateur Portable HP
+                - generic [ref=e235]: 🏪 TechZone Sénégal
+                - generic [ref=e236]:
+                  - generic [ref=e237]: ★★★★★
+                  - generic [ref=e238]: (89)
+                - generic [ref=e239]: 295 181 FCFA
+                - button "🛒 Panier" [ref=e240]
+            - listitem [ref=e241] [cursor=pointer]:
+              - generic [ref=e242]:
+                - img "Savon au Beurre de Karité Naturel" [ref=e244]
+                - generic [ref=e245]: "-20%"
+                - button "Ajouter aux favoris" [ref=e246]:
+                  - generic [ref=e247]: 
+              - generic [ref=e248]:
+                - generic [ref=e249]: Savon au Beurre de Karité Naturel
+                - generic [ref=e250]: 🏪 Beauty Dakar
+                - generic [ref=e251]:
+                  - generic [ref=e252]: ★★★★★
+                  - generic [ref=e253]: (43)
+                - generic [ref=e254]: 2 296 FCFA
+                - button "🛒 Panier" [ref=e255]
+            - listitem [ref=e256] [cursor=pointer]:
+              - generic [ref=e257]:
+                - img "Boubou Sénégalais Grande Occasion" [ref=e259]
+                - generic [ref=e260]: "-25%"
+                - button "Ajouter aux favoris" [ref=e261]:
+                  - generic [ref=e262]: 
+              - generic [ref=e263]:
+                - generic [ref=e264]: Boubou Sénégalais Grande Occasion
+                - generic [ref=e265]: 🏪 Dakar Fashion
+                - generic [ref=e266]:
+                  - generic [ref=e267]: ★★★★★
+                  - generic [ref=e268]: (12)
+                - generic [ref=e269]: 22 952 FCFA
+                - button "🛒 Panier" [ref=e270]
+            - listitem [ref=e271] [cursor=pointer]:
+              - generic [ref=e272]:
+                - img "Tissu Wax imprimé (6 yards)" [ref=e274]
+                - generic [ref=e275]: "-30%"
+                - button "Ajouter aux favoris" [ref=e276]:
+                  - generic [ref=e277]: 
+              - generic [ref=e278]:
+                - generic [ref=e279]: Tissu Wax imprimé (6 yards)
+                - generic [ref=e280]: 🏪 Wax & Co
+                - generic [ref=e281]:
+                  - generic [ref=e282]: ★★★★★
+                  - generic [ref=e283]: (156)
+                - generic [ref=e284]: 16 399 FCFA
+                - button "🛒 Panier" [ref=e285]
+            - listitem [ref=e286] [cursor=pointer]:
+              - generic [ref=e287]:
+                - img "Cours de Wolof en Ligne — 10 h" [ref=e289]
+                - generic [ref=e290]: "-35%"
+                - button "Ajouter aux favoris" [ref=e291]:
+                  - generic [ref=e292]: 
+              - generic [ref=e293]:
+                - generic [ref=e294]: Cours de Wolof en Ligne — 10 h
+                - generic [ref=e295]: 🏪 EduSN
+                - generic [ref=e296]:
+                  - generic [ref=e297]: ★★★★★
+                  - generic [ref=e298]: (11)
+                - generic [ref=e299]: 19 672 FCFA
+                - button "🛒 Panier" [ref=e300]
+            - listitem [ref=e301] [cursor=pointer]:
+              - generic [ref=e302]:
+                - img "Café Touba Moulu 500g" [ref=e304]
+                - generic [ref=e305]: "-40%"
+                - button "Ajouter aux favoris" [ref=e306]:
+                  - generic [ref=e307]: 
+              - generic [ref=e308]:
+                - generic [ref=e309]: Café Touba Moulu 500g
+                - generic [ref=e310]: 🏪 Épicerie Unité
+                - generic [ref=e311]:
+                  - generic [ref=e312]: ★★★★★
+                  - generic [ref=e313]: (29)
+                - generic [ref=e314]: 3 608 FCFA
+                - button "🛒 Panier" [ref=e315]
+            - listitem [ref=e316] [cursor=pointer]:
+              - generic [ref=e317]:
+                - img "Smartphone Samsung Galaxy A13" [ref=e319]
+                - generic [ref=e320]: "-10%"
+                - button "Ajouter aux favoris" [ref=e321]:
+                  - generic [ref=e322]: 
+              - generic [ref=e323]:
+                - generic [ref=e324]: Smartphone Samsung Galaxy A13
+                - generic [ref=e325]: 🏪 TechZone Sénégal
+                - generic [ref=e326]:
+                  - generic [ref=e327]: ★★★★★
+                  - generic [ref=e328]: (234)
+                - generic [ref=e329]: 98 394 FCFA
+                - button "🛒 Panier" [ref=e330]
+            - listitem [ref=e331] [cursor=pointer]:
+              - generic [ref=e332]:
+                - img "Huile de Coco Vierge Bio 250 ml" [ref=e334]
+                - generic [ref=e335]: "-15%"
+                - button "Ajouter aux favoris" [ref=e336]:
+                  - generic [ref=e337]: 
+              - generic [ref=e338]:
+                - generic [ref=e339]: Huile de Coco Vierge Bio 250 ml
+                - generic [ref=e340]: 🏪 Natural SN
+                - generic [ref=e341]:
+                  - generic [ref=e342]: ★★★★★
+                  - generic [ref=e343]: (18)
+                - generic [ref=e344]: 4 585 FCFA
+                - button "🛒 Panier" [ref=e345]
+            - listitem [ref=e346] [cursor=pointer]:
+              - generic [ref=e347]:
+                - img "Smartphone Samsung Galaxy A55" [ref=e349]
+                - generic [ref=e350]: "-20%"
+                - button "Ajouter aux favoris" [ref=e351]:
+                  - generic [ref=e352]: 
+              - generic [ref=e353]:
+                - generic [ref=e354]: Smartphone Samsung Galaxy A55
+                - generic [ref=e355]: 🏪 NEXUS Demo Store
+                - generic [ref=e356]:
+                  - generic [ref=e357]: ★★★★★
+                  - generic [ref=e358]: (38)
+                - generic [ref=e359]: 124 625 FCFA
+                - button "🛒 Panier" [ref=e360]
+            - listitem [ref=e361] [cursor=pointer]:
+              - generic [ref=e362]:
+                - img "Nappe Wax Imprimé 6 places" [ref=e364]
+                - generic [ref=e365]: "-25%"
+                - button "Ajouter aux favoris" [ref=e366]:
+                  - generic [ref=e367]: 
+              - generic [ref=e368]:
+                - generic [ref=e369]: Nappe Wax Imprimé 6 places
+                - generic [ref=e370]: 🏪 Déco Sénégal
+                - generic [ref=e371]:
+                  - generic [ref=e372]: ★★★★★
+                  - generic [ref=e373]: (9)
+                - generic [ref=e374]: 7 871 FCFA
+                - button "🛒 Panier" [ref=e375]
+            - listitem [ref=e376] [cursor=pointer]:
+              - generic [ref=e377]:
+                - img "Casque Bluetooth JBL Tune 520BT" [ref=e379]
+                - generic [ref=e380]: "-30%"
+                - button "Ajouter aux favoris" [ref=e381]:
+                  - generic [ref=e382]: 
+              - generic [ref=e383]:
+                - generic [ref=e384]: Casque Bluetooth JBL Tune 520BT
+                - generic [ref=e385]: 🏪 NEXUS Demo Store
+                - generic [ref=e386]:
+                  - generic [ref=e387]: ★★★★
+                  - generic [ref=e388]: (21)
+                - generic [ref=e389]: 32 791 FCFA
+                - button "🛒 Panier" [ref=e390]
+        - generic [ref=e393] [cursor=pointer]:
+          - generic [ref=e394]:
+            - generic [ref=e395]: 🗂️
+            - text: Explorer par catégorie
+            - generic [ref=e396]: (75)
+          - generic [ref=e397]: ▼ Afficher
+        - generic [ref=e399]:
+          - generic [ref=e400]:
+            - generic [ref=e401]:
+              - generic [ref=e402]: ⭐
+              - text: Meilleures Ventes
+            - button "Voir tout →" [ref=e403] [cursor=pointer]
+          - generic [ref=e404]:
+            - listitem [ref=e405] [cursor=pointer]:
+              - generic [ref=e406]:
+                - img "Thiéboudienne Kit Complet (4 pers.)" [ref=e408]
+                - button "Ajouter aux favoris" [ref=e409]:
+                  - generic [ref=e410]: 
+              - generic [ref=e411]:
+                - generic [ref=e412]: Thiéboudienne Kit Complet (4 pers.)
+                - generic [ref=e413]: 🏪 Marché Kermel
+                - generic [ref=e414]:
+                  - generic [ref=e415]: ★★★★★
+                  - generic [ref=e416]: (54)
+                - generic [ref=e417]: 5 897 FCFA
+                - button "🛒 Panier" [ref=e418]
+            - listitem [ref=e419] [cursor=pointer]:
+              - generic [ref=e420]:
+                - img "Ordinateur Portable HP" [ref=e422]
+                - button "Ajouter aux favoris" [ref=e423]:
+                  - generic [ref=e424]: 
+              - generic [ref=e425]:
+                - generic [ref=e426]: Ordinateur Portable HP
+                - generic [ref=e427]: 🏪 TechZone Sénégal
+                - generic [ref=e428]:
+                  - generic [ref=e429]: ★★★★★
+                  - generic [ref=e430]: (89)
+                - generic [ref=e431]: 295 181 FCFA
+                - button "🛒 Panier" [ref=e432]
+            - listitem [ref=e433] [cursor=pointer]:
+              - generic [ref=e434]:
+                - img "Savon au Beurre de Karité Naturel" [ref=e436]
+                - button "Ajouter aux favoris" [ref=e437]:
+                  - generic [ref=e438]: 
+              - generic [ref=e439]:
+                - generic [ref=e440]: Savon au Beurre de Karité Naturel
+                - generic [ref=e441]: 🏪 Beauty Dakar
+                - generic [ref=e442]:
+                  - generic [ref=e443]: ★★★★★
+                  - generic [ref=e444]: (43)
+                - generic [ref=e445]: 2 296 FCFA
+                - button "🛒 Panier" [ref=e446]
+            - listitem [ref=e447] [cursor=pointer]:
+              - generic [ref=e448]:
+                - img "Boubou Sénégalais Grande Occasion" [ref=e450]
+                - button "Ajouter aux favoris" [ref=e451]:
+                  - generic [ref=e452]: 
+              - generic [ref=e453]:
+                - generic [ref=e454]: Boubou Sénégalais Grande Occasion
+                - generic [ref=e455]: 🏪 Dakar Fashion
+                - generic [ref=e456]:
+                  - generic [ref=e457]: ★★★★★
+                  - generic [ref=e458]: (12)
+                - generic [ref=e459]: 22 952 FCFA
+                - button "🛒 Panier" [ref=e460]
+            - listitem [ref=e461] [cursor=pointer]:
+              - generic [ref=e462]:
+                - img "Tissu Wax imprimé (6 yards)" [ref=e464]
+                - button "Ajouter aux favoris" [ref=e465]:
+                  - generic [ref=e466]: 
+              - generic [ref=e467]:
+                - generic [ref=e468]: Tissu Wax imprimé (6 yards)
+                - generic [ref=e469]: 🏪 Wax & Co
+                - generic [ref=e470]:
+                  - generic [ref=e471]: ★★★★★
+                  - generic [ref=e472]: (156)
+                - generic [ref=e473]: 16 399 FCFA
+                - button "🛒 Panier" [ref=e474]
+            - listitem [ref=e475] [cursor=pointer]:
+              - generic [ref=e476]:
+                - img "Cours de Wolof en Ligne — 10 h" [ref=e478]
+                - button "Ajouter aux favoris" [ref=e479]:
+                  - generic [ref=e480]: 
+              - generic [ref=e481]:
+                - generic [ref=e482]: Cours de Wolof en Ligne — 10 h
+                - generic [ref=e483]: 🏪 EduSN
+                - generic [ref=e484]:
+                  - generic [ref=e485]: ★★★★★
+                  - generic [ref=e486]: (11)
+                - generic [ref=e487]: 19 672 FCFA
+                - button "🛒 Panier" [ref=e488]
+            - listitem [ref=e489] [cursor=pointer]:
+              - generic [ref=e490]:
+                - img "Café Touba Moulu 500g" [ref=e492]
+                - button "Ajouter aux favoris" [ref=e493]:
+                  - generic [ref=e494]: 
+              - generic [ref=e495]:
+                - generic [ref=e496]: Café Touba Moulu 500g
+                - generic [ref=e497]: 🏪 Épicerie Unité
+                - generic [ref=e498]:
+                  - generic [ref=e499]: ★★★★★
+                  - generic [ref=e500]: (29)
+                - generic [ref=e501]: 3 608 FCFA
+                - button "🛒 Panier" [ref=e502]
+            - listitem [ref=e503] [cursor=pointer]:
+              - generic [ref=e504]:
+                - img "Smartphone Samsung Galaxy A13" [ref=e506]
+                - button "Ajouter aux favoris" [ref=e507]:
+                  - generic [ref=e508]: 
+              - generic [ref=e509]:
+                - generic [ref=e510]: Smartphone Samsung Galaxy A13
+                - generic [ref=e511]: 🏪 TechZone Sénégal
+                - generic [ref=e512]:
+                  - generic [ref=e513]: ★★★★★
+                  - generic [ref=e514]: (234)
+                - generic [ref=e515]: 98 394 FCFA
+                - button "🛒 Panier" [ref=e516]
+            - listitem [ref=e517] [cursor=pointer]:
+              - generic [ref=e518]:
+                - img "Huile de Coco Vierge Bio 250 ml" [ref=e520]
+                - button "Ajouter aux favoris" [ref=e521]:
+                  - generic [ref=e522]: 
+              - generic [ref=e523]:
+                - generic [ref=e524]: Huile de Coco Vierge Bio 250 ml
+                - generic [ref=e525]: 🏪 Natural SN
+                - generic [ref=e526]:
+                  - generic [ref=e527]: ★★★★★
+                  - generic [ref=e528]: (18)
+                - generic [ref=e529]: 4 585 FCFA
+                - button "🛒 Panier" [ref=e530]
+            - listitem [ref=e531] [cursor=pointer]:
+              - generic [ref=e532]:
+                - img "Smartphone Samsung Galaxy A55" [ref=e534]
+                - button "Ajouter aux favoris" [ref=e535]:
+                  - generic [ref=e536]: 
+              - generic [ref=e537]:
+                - generic [ref=e538]: Smartphone Samsung Galaxy A55
+                - generic [ref=e539]: 🏪 NEXUS Demo Store
+                - generic [ref=e540]:
+                  - generic [ref=e541]: ★★★★★
+                  - generic [ref=e542]: (38)
+                - generic [ref=e543]: 124 625 FCFA
+                - button "🛒 Panier" [ref=e544]
+        - generic [ref=e546]:
+          - generic [ref=e547]:
+            - generic [ref=e548]:
+              - generic [ref=e549]: 🆕
+              - text: Nouveaux Arrivages
+            - button "Voir tout →" [ref=e550] [cursor=pointer]
+          - generic [ref=e551]:
+            - listitem [ref=e552] [cursor=pointer]:
+              - generic [ref=e553]:
+                - img "beignet" [ref=e555]
+                - button "Ajouter aux favoris" [ref=e556]:
+                  - generic [ref=e557]: 
+              - generic [ref=e558]:
+                - generic [ref=e559]: beignet
+                - generic [ref=e560]: 🏪 samba ndoye
+                - generic [ref=e562]: (0)
+                - generic [ref=e563]: 9 997 FCFA
+                - button "🛒 Panier" [ref=e564]
+            - listitem [ref=e565] [cursor=pointer]:
+              - generic [ref=e566]:
+                - img "Tissu Wax imprimé (6 yards)" [ref=e568]
+                - button "Ajouter aux favoris" [ref=e569]:
+                  - generic [ref=e570]: 
+              - generic [ref=e571]:
+                - generic [ref=e572]: Tissu Wax imprimé (6 yards)
+                - generic [ref=e573]: 🏪 Wax & Co
+                - generic [ref=e574]:
+                  - generic [ref=e575]: ★★★★★
+                  - generic [ref=e576]: (156)
+                - generic [ref=e577]: 16 399 FCFA
+                - button "🛒 Panier" [ref=e578]
+            - listitem [ref=e579] [cursor=pointer]:
+              - generic [ref=e580]:
+                - img "Huile de coco bio (500ml)" [ref=e582]
+                - button "Ajouter aux favoris" [ref=e583]:
+                  - generic [ref=e584]: 
+              - generic [ref=e585]:
+                - generic [ref=e586]: Huile de coco bio (500ml)
+                - generic [ref=e587]: 🏪 Wax & Co
+                - generic [ref=e588]:
+                  - generic [ref=e589]: ★★★★
+                  - generic [ref=e590]: (423)
+                - generic [ref=e591]: 5 248 FCFA
+                - button "🛒 Panier" [ref=e592]
+            - listitem [ref=e593] [cursor=pointer]:
+              - generic [ref=e594]:
+                - img "Smartphone Samsung Galaxy A13" [ref=e596]
+                - button "Ajouter aux favoris" [ref=e597]:
+                  - generic [ref=e598]: 
+              - generic [ref=e599]:
+                - generic [ref=e600]: Smartphone Samsung Galaxy A13
+                - generic [ref=e601]: 🏪 TechZone Sénégal
+                - generic [ref=e602]:
+                  - generic [ref=e603]: ★★★★★
+                  - generic [ref=e604]: (234)
+                - generic [ref=e605]: 98 394 FCFA
+                - button "🛒 Panier" [ref=e606]
+            - listitem [ref=e607] [cursor=pointer]:
+              - generic [ref=e608]:
+                - img "Ordinateur Portable HP" [ref=e610]
+                - button "Ajouter aux favoris" [ref=e611]:
+                  - generic [ref=e612]: 
+              - generic [ref=e613]:
+                - generic [ref=e614]: Ordinateur Portable HP
+                - generic [ref=e615]: 🏪 TechZone Sénégal
+                - generic [ref=e616]:
+                  - generic [ref=e617]: ★★★★★
+                  - generic [ref=e618]: (89)
+                - generic [ref=e619]: 295 181 FCFA
+                - button "🛒 Panier" [ref=e620]
+            - listitem [ref=e621] [cursor=pointer]:
+              - generic [ref=e622]:
+                - img "Smartphone Samsung Galaxy A55" [ref=e624]
+                - button "Ajouter aux favoris" [ref=e625]:
+                  - generic [ref=e626]: 
+              - generic [ref=e627]:
+                - generic [ref=e628]: Smartphone Samsung Galaxy A55
+                - generic [ref=e629]: 🏪 NEXUS Demo Store
+                - generic [ref=e630]:
+                  - generic [ref=e631]: ★★★★★
+                  - generic [ref=e632]: (38)
+                - generic [ref=e633]: 124 625 FCFA
+                - button "🛒 Panier" [ref=e634]
+            - listitem [ref=e635] [cursor=pointer]:
+              - generic [ref=e636]:
+                - img "Casque Bluetooth JBL Tune 520BT" [ref=e638]
+                - button "Ajouter aux favoris" [ref=e639]:
+                  - generic [ref=e640]: 
+              - generic [ref=e641]:
+                - generic [ref=e642]: Casque Bluetooth JBL Tune 520BT
+                - generic [ref=e643]: 🏪 NEXUS Demo Store
+                - generic [ref=e644]:
+                  - generic [ref=e645]: ★★★★
+                  - generic [ref=e646]: (21)
+                - generic [ref=e647]: 32 791 FCFA
+                - button "🛒 Panier" [ref=e648]
+            - listitem [ref=e649] [cursor=pointer]:
+              - generic [ref=e650]:
+                - img "Boubou Sénégalais Grande Occasion" [ref=e652]
+                - button "Ajouter aux favoris" [ref=e653]:
+                  - generic [ref=e654]: 
+              - generic [ref=e655]:
+                - generic [ref=e656]: Boubou Sénégalais Grande Occasion
+                - generic [ref=e657]: 🏪 Dakar Fashion
+                - generic [ref=e658]:
+                  - generic [ref=e659]: ★★★★★
+                  - generic [ref=e660]: (12)
+                - generic [ref=e661]: 22 952 FCFA
+                - button "🛒 Panier" [ref=e662]
+            - listitem [ref=e663] [cursor=pointer]:
+              - generic [ref=e664]:
+                - img "Sneakers Homme Léger Running" [ref=e666]
+                - button "Ajouter aux favoris" [ref=e667]:
+                  - generic [ref=e668]: 
+              - generic [ref=e669]:
+                - generic [ref=e670]: Sneakers Homme Léger Running
+                - generic [ref=e671]: 🏪 SportZone SN
+                - generic [ref=e672]:
+                  - generic [ref=e673]: ★★★★
+                  - generic [ref=e674]: (17)
+                - generic [ref=e675]: 16 071 FCFA
+                - button "🛒 Panier" [ref=e676]
+            - listitem [ref=e677] [cursor=pointer]:
+              - generic [ref=e678]:
+                - img "Thiéboudienne Kit Complet (4 pers.)" [ref=e680]
+                - button "Ajouter aux favoris" [ref=e681]:
+                  - generic [ref=e682]: 
+              - generic [ref=e683]:
+                - generic [ref=e684]: Thiéboudienne Kit Complet (4 pers.)
+                - generic [ref=e685]: 🏪 Marché Kermel
+                - generic [ref=e686]:
+                  - generic [ref=e687]: ★★★★★
+                  - generic [ref=e688]: (54)
+                - generic [ref=e689]: 5 897 FCFA
+                - button "🛒 Panier" [ref=e690]
+        - generic [ref=e692]:
+          - generic [ref=e693]:
+            - generic [ref=e694]:
+              - generic [ref=e695]: 💸
+              - text: Petits Prix
+            - button "Voir tout →" [ref=e696] [cursor=pointer]
+          - generic [ref=e697]:
+            - listitem [ref=e698] [cursor=pointer]:
+              - generic [ref=e699]:
+                - img "Savon au Beurre de Karité Naturel" [ref=e701]
+                - button "Ajouter aux favoris" [ref=e702]:
+                  - generic [ref=e703]: 
+              - generic [ref=e704]:
+                - generic [ref=e705]: Savon au Beurre de Karité Naturel
+                - generic [ref=e706]: 🏪 Beauty Dakar
+                - generic [ref=e707]:
+                  - generic [ref=e708]: ★★★★★
+                  - generic [ref=e709]: (43)
+                - generic [ref=e710]: 2 296 FCFA
+                - button "🛒 Panier" [ref=e711]
+            - listitem [ref=e712] [cursor=pointer]:
+              - generic [ref=e713]:
+                - img "PROMPT MASTER" [ref=e715]
+                - button "Ajouter aux favoris" [ref=e716]:
+                  - generic [ref=e717]: 
+              - generic [ref=e718]:
+                - generic [ref=e719]: PROMPT MASTER
+                - generic [ref=e720]: 🏪 DC digital
+                - generic [ref=e722]: (0)
+                - generic [ref=e723]: 2 762 FCFA
+                - button "🛒 Panier" [ref=e724]
+            - listitem [ref=e725] [cursor=pointer]:
+              - generic [ref=e726]:
+                - img "Café Touba Moulu 500g" [ref=e728]
+                - button "Ajouter aux favoris" [ref=e729]:
+                  - generic [ref=e730]: 
+              - generic [ref=e731]:
+                - generic [ref=e732]: Café Touba Moulu 500g
+                - generic [ref=e733]: 🏪 Épicerie Unité
+                - generic [ref=e734]:
+                  - generic [ref=e735]: ★★★★★
+                  - generic [ref=e736]: (29)
+                - generic [ref=e737]: 3 608 FCFA
+                - button "🛒 Panier" [ref=e738]
+            - listitem [ref=e739] [cursor=pointer]:
+              - generic [ref=e740]:
+                - img "Huile de Coco Vierge Bio 250 ml" [ref=e742]
+                - button "Ajouter aux favoris" [ref=e743]:
+                  - generic [ref=e744]: 
+              - generic [ref=e745]:
+                - generic [ref=e746]: Huile de Coco Vierge Bio 250 ml
+                - generic [ref=e747]: 🏪 Natural SN
+                - generic [ref=e748]:
+                  - generic [ref=e749]: ★★★★★
+                  - generic [ref=e750]: (18)
+                - generic [ref=e751]: 4 585 FCFA
+                - button "🛒 Panier" [ref=e752]
+            - listitem [ref=e753] [cursor=pointer]:
+              - generic [ref=e754]:
+                - img "Huile de coco bio (500ml)" [ref=e756]
+                - button "Ajouter aux favoris" [ref=e757]:
+                  - generic [ref=e758]: 
+              - generic [ref=e759]:
+                - generic [ref=e760]: Huile de coco bio (500ml)
+                - generic [ref=e761]: 🏪 Wax & Co
+                - generic [ref=e762]:
+                  - generic [ref=e763]: ★★★★
+                  - generic [ref=e764]: (423)
+                - generic [ref=e765]: 5 248 FCFA
+                - button "🛒 Panier" [ref=e766]
+            - listitem [ref=e767] [cursor=pointer]:
+              - generic [ref=e768]:
+                - img "Thiéboudienne Kit Complet (4 pers.)" [ref=e770]
+                - button "Ajouter aux favoris" [ref=e771]:
+                  - generic [ref=e772]: 
+              - generic [ref=e773]:
+                - generic [ref=e774]: Thiéboudienne Kit Complet (4 pers.)
+                - generic [ref=e775]: 🏪 Marché Kermel
+                - generic [ref=e776]:
+                  - generic [ref=e777]: ★★★★★
+                  - generic [ref=e778]: (54)
+                - generic [ref=e779]: 5 897 FCFA
+                - button "🛒 Panier" [ref=e780]
+            - listitem [ref=e781] [cursor=pointer]:
+              - generic [ref=e782]:
+                - img "Clé USB 64 Go Kingston DataTraveler" [ref=e784]
+                - button "Ajouter aux favoris" [ref=e785]:
+                  - generic [ref=e786]: 
+              - generic [ref=e787]:
+                - generic [ref=e788]: Clé USB 64 Go Kingston DataTraveler
+                - generic [ref=e789]: 🏪 TechShop SN
+                - generic [ref=e790]:
+                  - generic [ref=e791]: ★★★★
+                  - generic [ref=e792]: (27)
+                - generic [ref=e793]: 6 494 FCFA
+                - button "🛒 Panier" [ref=e794]
+            - listitem [ref=e795] [cursor=pointer]:
+              - generic [ref=e796]:
+                - img "Nappe Wax Imprimé 6 places" [ref=e798]
+                - button "Ajouter aux favoris" [ref=e799]:
+                  - generic [ref=e800]: 
+              - generic [ref=e801]:
+                - generic [ref=e802]: Nappe Wax Imprimé 6 places
+                - generic [ref=e803]: 🏪 Déco Sénégal
+                - generic [ref=e804]:
+                  - generic [ref=e805]: ★★★★★
+                  - generic [ref=e806]: (9)
+                - generic [ref=e807]: 7 871 FCFA
+                - button "🛒 Panier" [ref=e808]
+            - listitem [ref=e809] [cursor=pointer]:
+              - generic [ref=e810]:
+                - img "beignet" [ref=e812]
+                - button "Ajouter aux favoris" [ref=e813]:
+                  - generic [ref=e814]: 
+              - generic [ref=e815]:
+                - generic [ref=e816]: beignet
+                - generic [ref=e817]: 🏪 samba ndoye
+                - generic [ref=e819]: (0)
+                - generic [ref=e820]: 9 997 FCFA
+                - button "🛒 Panier" [ref=e821]
+            - listitem [ref=e822] [cursor=pointer]:
+              - generic [ref=e823]:
+                - img "Ventilateur de Table 40 cm" [ref=e825]
+                - button "Ajouter aux favoris" [ref=e826]:
+                  - generic [ref=e827]: 
+              - generic [ref=e828]:
+                - generic [ref=e829]: Ventilateur de Table 40 cm
+                - generic [ref=e830]: 🏪 ElectroDakar
+                - generic [ref=e831]:
+                  - generic [ref=e832]: ★★★★
+                  - generic [ref=e833]: (6)
+                - generic [ref=e834]: 15 080 FCFA
+                - button "🛒 Panier" [ref=e835]
+        - generic [ref=e837]:
+          - generic [ref=e839]:
+            - generic [ref=e840]: 🛒
+            - text: Tous les produits (21)
+            - generic [ref=e1125]: ⚡ 3 Express
+          - generic [ref=e841]:
+            - combobox [ref=e843]:
+              - option "🛒 Toutes les catégories" [selected]
+              - option "Téléphones & Accessoires"
+              - option "Ordinateurs & Tablettes"
+              - option "Électronique & Hi-Fi"
+              - option "Appareils photo & Vidéo"
+              - option "Jeux vidéo & Consoles"
+              - option "Montres connectées"
+              - option "Mode Femme"
+              - option "Mode Homme"
+              - option "Mode Enfant"
+              - option "Chaussures"
+              - option "Sacs & Maroquinerie"
+              - option "Bijoux & Accessoires"
+              - option "Beauté & Cosmétiques"
+              - option "Parfums"
+              - option "Tissus & Wax"
+              - option "Meubles & Décoration"
+              - option "Électroménager"
+              - option "Cuisine & Art de la table"
+              - option "Linge de maison"
+              - option "Jardinage & Extérieur"
+              - option "Bricolage & Outillage"
+              - option "Éclairage"
+              - option "Alimentation générale"
+              - option "Produits bio & locaux"
+              - option "Boissons"
+              - option "Épices & Condiments"
+              - option "Céréales & Légumineuses"
+              - option "Produits laitiers"
+              - option "Boulangerie & Pâtisserie"
+              - option "Voitures"
+              - option "Motos & Scooters"
+              - option "Vélos & Trottinettes"
+              - option "Pièces & Accessoires auto"
+              - option "Transport & Logistique"
+              - option "Location appartement"
+              - option "Vente immobilier"
+              - option "Terrains & Parcelles"
+              - option "Bureaux & Locaux commerciaux"
+              - option "Animaux de compagnie"
+              - option "Accessoires animaux"
+              - option "Alimentation animaux"
+              - option "Livres & Presses"
+              - option "Livres papier"
+              - option "eBooks & PDF"
+              - option "Livres audio"
+              - option "BD & Mangas"
+              - option "Manuels scolaires"
+              - option "Presse & Magazines"
+              - option "Livres anciens & Rares"
+              - option "Musique & Instruments"
+              - option "Jouets & Jeux"
+              - option "Sport & Fitness"
+              - option "Voyages & Tourisme"
+              - option "Arts & Artisanat"
+              - option "Services à domicile"
+              - option "Formation & Cours"
+              - option "Santé & Bien-être"
+              - option "Informatique & Tech (services)"
+              - option "Événementiel"
+              - option "BTP & Construction"
+              - option "Matériel professionnel"
+              - option "Agriculture & Élevage"
+              - option "Fournitures de bureau"
+              - option "Textile & Couture (pro)"
+              - option "Collections & Antiquités"
+              - option "Dons & Trocs"
+              - option "Produits locaux"
+              - option "Autre"
+            - generic [ref=e844]:
+              - generic [ref=e845]: "Trier :"
+              - combobox "Trier :" [ref=e846]:
+                - option "Pertinence" [selected]
+                - option "Prix ↑"
+                - option "Prix ↓"
+                - option "Meilleures notes"
+                - option "Popularité"
+          - generic [ref=e847]:
+            - generic [ref=e848]: "💰 Prix :"
+            - generic [ref=e849]: 2 296 FCFA
+            - slider "Prix minimum" [ref=e850]: "3.5"
+            - slider "Prix maximum" [ref=e851]: "447.5"
+            - generic [ref=e852]: 295 181 FCFA
+          - paragraph [ref=e853]: 21 produits trouvés
+          - generic [ref=e854]:
+            - generic [ref=e855]:
+              - generic [ref=e856]: 
+              - text: Vous avez un code promo ? Utilisez-le à la caisse !
+            - generic [ref=e858]:
+              - textbox "Code promo" [ref=e859]:
+                - /placeholder: "Code promo (ex: NEXUS15)"
+              - button " Appliquer" [disabled] [ref=e860]:
+                - generic [ref=e861]: 
+                - text: Appliquer
+          - generic [ref=e1126]:
+            - text: Publicité
+            - insertion [ref=e1127]
+          - list [ref=e862]:
+            - listitem [ref=e863] [cursor=pointer]:
+              - generic [ref=e864]:
+                - img "Clé USB 64 Go Kingston DataTraveler" [ref=e866]
+                - button "Ajouter aux favoris" [ref=e867]:
+                  - generic [ref=e868]: 
+              - generic [ref=e869]:
+                - generic [ref=e870]: Clé USB 64 Go Kingston DataTraveler
+                - generic [ref=e871]: 🏪 TechShop SN
+                - generic [ref=e872]:
+                  - generic [ref=e873]: ★★★★
+                  - generic [ref=e874]: (27)
+                - generic [ref=e875]: 6 494 FCFA
+                - button "🛒 Panier" [ref=e876]
+            - listitem [ref=e877] [cursor=pointer]:
+              - generic [ref=e878]:
+                - img "Cours de Wolof en Ligne — 10 h" [ref=e880]
+                - button "Ajouter aux favoris" [ref=e881]:
+                  - generic [ref=e882]: 
+              - generic [ref=e883]:
+                - generic [ref=e884]: Cours de Wolof en Ligne — 10 h
+                - generic [ref=e885]: 🏪 EduSN
+                - generic [ref=e886]:
+                  - generic [ref=e887]: ★★★★★
+                  - generic [ref=e888]: (11)
+                - generic [ref=e889]: 19 672 FCFA
+                - button "🛒 Panier" [ref=e890]
+            - listitem [ref=e891] [cursor=pointer]:
+              - generic [ref=e892]:
+                - img "Huile de Coco Vierge Bio 250 ml" [ref=e894]
+                - button "Ajouter aux favoris" [ref=e895]:
+                  - generic [ref=e896]: 
+              - generic [ref=e897]:
+                - generic [ref=e898]: Huile de Coco Vierge Bio 250 ml
+                - generic [ref=e899]: 🏪 Natural SN
+                - generic [ref=e900]:
+                  - generic [ref=e901]: ★★★★★
+                  - generic [ref=e902]: (18)
+                - generic [ref=e903]: 4 585 FCFA
+                - button "🛒 Panier" [ref=e904]
+            - listitem [ref=e905] [cursor=pointer]:
+              - generic [ref=e906]:
+                - img "Savon au Beurre de Karité Naturel" [ref=e908]
+                - button "Ajouter aux favoris" [ref=e909]:
+                  - generic [ref=e910]: 
+              - generic [ref=e911]:
+                - generic [ref=e912]: Savon au Beurre de Karité Naturel
+                - generic [ref=e913]: 🏪 Beauty Dakar
+                - generic [ref=e914]:
+                  - generic [ref=e915]: ★★★★★
+                  - generic [ref=e916]: (43)
+                - generic [ref=e917]: 2 296 FCFA
+                - button "🛒 Panier" [ref=e918]
+            - listitem [ref=e919] [cursor=pointer]:
+              - generic [ref=e920]:
+                - img "Ventilateur de Table 40 cm" [ref=e922]
+                - button "Ajouter aux favoris" [ref=e923]:
+                  - generic [ref=e924]: 
+              - generic [ref=e925]:
+                - generic [ref=e926]: Ventilateur de Table 40 cm
+                - generic [ref=e927]: 🏪 ElectroDakar
+                - generic [ref=e928]:
+                  - generic [ref=e929]: ★★★★
+                  - generic [ref=e930]: (6)
+                - generic [ref=e931]: 15 080 FCFA
+                - button "🛒 Panier" [ref=e932]
+            - listitem [ref=e933] [cursor=pointer]:
+              - generic [ref=e934]:
+                - img "Nappe Wax Imprimé 6 places" [ref=e936]
+                - button "Ajouter aux favoris" [ref=e937]:
+                  - generic [ref=e938]: 
+              - generic [ref=e939]:
+                - generic [ref=e940]: Nappe Wax Imprimé 6 places
+                - generic [ref=e941]: 🏪 Déco Sénégal
+                - generic [ref=e942]:
+                  - generic [ref=e943]: ★★★★★
+                  - generic [ref=e944]: (9)
+                - generic [ref=e945]: 7 871 FCFA
+                - button "🛒 Panier" [ref=e946]
+            - listitem [ref=e947] [cursor=pointer]:
+              - generic [ref=e948]:
+                - img "Café Touba Moulu 500g" [ref=e950]
+                - button "Ajouter aux favoris" [ref=e951]:
+                  - generic [ref=e952]: 
+              - generic [ref=e953]:
+                - generic [ref=e954]: Café Touba Moulu 500g
+                - generic [ref=e955]: 🏪 Épicerie Unité
+                - generic [ref=e956]:
+                  - generic [ref=e957]: ★★★★★
+                  - generic [ref=e958]: (29)
+                - generic [ref=e959]: 3 608 FCFA
+                - button "🛒 Panier" [ref=e960]
+            - listitem [ref=e961] [cursor=pointer]:
+              - generic [ref=e962]:
+                - img "Thiéboudienne Kit Complet (4 pers.)" [ref=e964]
+                - button "Ajouter aux favoris" [ref=e965]:
+                  - generic [ref=e966]: 
+              - generic [ref=e967]:
+                - generic [ref=e968]: Thiéboudienne Kit Complet (4 pers.)
+                - generic [ref=e969]: 🏪 Marché Kermel
+                - generic [ref=e970]:
+                  - generic [ref=e971]: ★★★★★
+                  - generic [ref=e972]: (54)
+                - generic [ref=e973]: 5 897 FCFA
+                - button "🛒 Panier" [ref=e974]
+            - generic [ref=e976]:
+              - text: Publicité
+              - insertion [ref=e977]
+            - listitem [ref=e979] [cursor=pointer]:
+              - generic [ref=e980]:
+                - img "Sneakers Homme Léger Running" [ref=e982]
+                - button "Ajouter aux favoris" [ref=e983]:
+                  - generic [ref=e984]: 
+              - generic [ref=e985]:
+                - generic [ref=e986]: Sneakers Homme Léger Running
+                - generic [ref=e987]: 🏪 SportZone SN
+                - generic [ref=e988]:
+                  - generic [ref=e989]: ★★★★
+                  - generic [ref=e990]: (17)
+                - generic [ref=e991]: 16 071 FCFA
+                - button "🛒 Panier" [ref=e992]
+          - navigation "Pagination" [ref=e993]:
+            - generic [ref=e994]: 1–9 sur 21
+            - button "Page précédente" [disabled] [ref=e995]:
+              - generic [ref=e996]: 
+            - button "Page 1" [ref=e997] [cursor=pointer]: "1"
+            - button "Page 2" [ref=e998] [cursor=pointer]: "2"
+            - button "Page 3" [ref=e1129] [cursor=pointer]: "3"
+            - button "Page suivante" [ref=e999] [cursor=pointer]:
+              - generic [ref=e1000]: 
+        - generic [ref=e1001]:
+          - generic [ref=e1002]:
+            - generic [ref=e1003]: 🛵
+            - generic [ref=e1004]:
+              - generic [ref=e1005]: Devenez livreur NEXUS — Gagnez jusqu'à 25 000 FCFA/jour
+              - generic [ref=e1006]: Livraisons à Dakar · Paiement Wave & OM · Inscription gratuite
+          - button "S'inscrire →" [ref=e1007] [cursor=pointer]
+      - generic [ref=e1009]:
+        - generic [ref=e1010]: Services NEXUS
+        - generic [ref=e1011]:
+          - button "🔧 Artisans & ouvriers Plombier, maçon, électricien…" [ref=e1012] [cursor=pointer]:
+            - generic [ref=e1013]: 🔧
+            - generic [ref=e1014]: Artisans & ouvriers
+            - generic [ref=e1015]: Plombier, maçon, électricien…
+          - button "🐏 Élevage & local Bétail Tabaski, produits du terroir" [ref=e1016] [cursor=pointer]:
+            - generic [ref=e1017]: 🐏
+            - generic [ref=e1018]: Élevage & local
+            - generic [ref=e1019]: Bétail Tabaski, produits du terroir
+          - button "🛵 Coursier Livraison à la demande à Dakar" [ref=e1020] [cursor=pointer]:
+            - generic [ref=e1021]: 🛵
+            - generic [ref=e1022]: Coursier
+            - generic [ref=e1023]: Livraison à la demande à Dakar
+          - button "🔄 Troc Échanger sans argent" [ref=e1024] [cursor=pointer]:
+            - generic [ref=e1025]: 🔄
+            - generic [ref=e1026]: Troc
+            - generic [ref=e1027]: Échanger sans argent
+          - button "🎬 Stories Vidéos produit des vendeurs" [ref=e1028] [cursor=pointer]:
+            - generic [ref=e1029]: 🎬
+            - generic [ref=e1030]: Stories
+            - generic [ref=e1031]: Vidéos produit des vendeurs
+          - button "🏪 Louma Le marché en ligne du vendredi" [ref=e1032] [cursor=pointer]:
+            - generic [ref=e1033]: 🏪
+            - generic [ref=e1034]: Louma
+            - generic [ref=e1035]: Le marché en ligne du vendredi
+      - generic [ref=e1037]:
+        - generic [ref=e1038]: 💰 Gagnez avec NEXUS
+        - generic [ref=e1039]:
+          - generic [ref=e1040]:
+            - generic [ref=e1041]: 🤝
+            - generic [ref=e1042]:
+              - generic [ref=e1043]: Programme Ambassadeur
+              - generic [ref=e1044]: Parrainez vos proches et gagnez 5% de commission sur leurs achats.
+            - button "Rejoindre" [ref=e1045] [cursor=pointer]
+          - generic [ref=e1046]:
+            - generic [ref=e1047]: ⭐
+            - generic [ref=e1048]:
+              - generic [ref=e1049]: Fidélité & Points
+              - generic [ref=e1050]: Cumulez des points à chaque commande, convertis en réductions.
+            - button "Découvrir" [ref=e1051] [cursor=pointer]
+      - generic [ref=e1052]:
+        - generic [ref=e1053]:
+          - text: 🍪
+          - strong [ref=e1054]: NEXUS Market
+          - text: utilise des cookies fonctionnels (panier, session) et analytiques anonymes, conformément à la loi sénégalaise 2008-12 sur la protection des données.
+          - button "Politique de confidentialité" [ref=e1055] [cursor=pointer]
+        - generic [ref=e1056]:
+          - button "Essentiels seulement" [ref=e1057] [cursor=pointer]
+          - button "Tout accepter" [ref=e1058] [cursor=pointer]
+    - alert
+  - contentinfo [ref=e1059]:
+    - generic [ref=e1060]:
+      - heading "NEXUS Market — la marketplace sécurisée du Sénégal" [level=2] [ref=e1061]
+      - paragraph [ref=e1062]:
+        - text: "NEXUS Market réunit l'achat, la vente, les services de proximité et la livraison au même endroit, avec un paiement adapté au Sénégal :"
+        - strong [ref=e1063]: Orange Money
+        - text: ","
+        - strong [ref=e1064]: Wave
+        - text: et carte bancaire. Grâce à la protection acheteur, votre argent n'est versé au vendeur qu'après confirmation de réception. Achetez et vendez en toute confiance, à Dakar comme dans toutes les régions — Thiès, Saint-Louis, Touba, Ziguinchor, Kaolack.
+      - generic [ref=e1065]:
+        - navigation "Guides & aide" [ref=e1066]:
+          - generic [ref=e1067]: Guides & aide
+          - link "Tous les guides" [ref=e1068] [cursor=pointer]:
+            - /url: /guides
+          - link "Acheter en ligne en sécurité" [ref=e1069] [cursor=pointer]:
+            - /url: /guide/acheter-en-ligne-au-senegal
+          - link "Payer avec Orange Money & Wave" [ref=e1070] [cursor=pointer]:
+            - /url: /guide/paiement-mobile-money
+          - link "La livraison au Sénégal" [ref=e1071] [cursor=pointer]:
+            - /url: /guide/livraison-au-senegal
+          - link "Questions fréquentes" [ref=e1072] [cursor=pointer]:
+            - /url: /faq
+        - navigation "Vendre & services" [ref=e1073]:
+          - generic [ref=e1074]: Vendre & services
+          - link "Vendre sur NEXUS" [ref=e1075] [cursor=pointer]:
+            - /url: /guide/vendre-sur-nexus-market
+          - link "Devenir artisan (NEXUS Pro)" [ref=e1076] [cursor=pointer]:
+            - /url: /devenir-pro
+          - link "Devenir éleveur / producteur" [ref=e1077] [cursor=pointer]:
+            - /url: /devenir-eleveur
+        - navigation "L'entreprise" [ref=e1078]:
+          - generic [ref=e1079]: NEXUS
+          - link "À propos" [ref=e1080] [cursor=pointer]:
+            - /url: /a-propos
+          - link "Contact" [ref=e1081] [cursor=pointer]:
+            - /url: /contact
+        - navigation "Catégories principales" [ref=e1082]:
+          - generic [ref=e1083]: Catégories
+          - link "Électronique & High-Tech" [ref=e1084] [cursor=pointer]:
+            - /url: /?cat=electronique
+          - link "Mode & Vêtements" [ref=e1085] [cursor=pointer]:
+            - /url: /?cat=mode
+          - link "Alimentation & Épicerie" [ref=e1086] [cursor=pointer]:
+            - /url: /?cat=alimentation
+          - link "Maison & Décoration" [ref=e1087] [cursor=pointer]:
+            - /url: /?cat=maison
+        - navigation "Réseaux sociaux" [ref=e1088]:
+          - generic [ref=e1089]: Suivez-nous
+          - iframe [ref=e1090]:
+            - generic [ref=f1e3]:
+              - link:
+                - /url: https://www.facebook.com/nexusmarketsn?ref=embed_page
+              - generic [ref=f1e6]:
+                - link [ref=f1e7] [cursor=pointer]:
+                  - /url: https://www.facebook.com/1233022656551601?ref=embed_page
+                - generic [ref=f1e9]:
+                  - img [ref=f1e14]
+                  - generic [ref=f1e16]:
+                    - generic [ref=f1e17]:
+                      - img [ref=f1e20]
+                      - generic [ref=f1e24]:
+                        - generic [ref=f1e26]: NEXUS Market
+                        - generic [ref=f1e27]: 0 followers
+                    - generic [ref=f1e30]: « Achetez local, livré chez vous. » « Le marché du Sénégal, dans ta poche. » « Vendez, achetez, livrez — 100% sénégalais. »
+                    - generic [ref=f1e31]:
+                      - img [ref=f1e32]
+                      - generic [ref=f1e34]: E-commerce website
+                      - generic [ref=f1e35]: ·
+                      - img [ref=f1e36]
+                      - generic [ref=f1e38]: +221 77 625 48 95
+                    - link "Follow" [ref=f1e41] [cursor=pointer]:
+                      - /url: https://www.facebook.com/1233022656551601?ref=embed_page
+                      - generic [ref=f1e42]:
+                        - img [ref=f1e43]
+                        - generic [ref=f1e46]: Follow
+          - link "👍 Voir notre page Facebook" [ref=e1091] [cursor=pointer]:
+            - /url: https://www.facebook.com/1233022656551601
+      - generic [ref=e1092]:
+        - link "Conditions Générales d'Utilisation" [ref=e1093] [cursor=pointer]:
+          - /url: /cgu
+        - link "Politique de confidentialité & cookies" [ref=e1094] [cursor=pointer]:
+          - /url: /confidentialite
+        - link "FAQ" [ref=e1095] [cursor=pointer]:
+          - /url: /faq
+        - link "Contact" [ref=e1096] [cursor=pointer]:
+          - /url: /contact
+      - paragraph [ref=e1097]: © 2026 NEXUS Market — Marketplace B2B & B2C au Sénégal. Paiement sécurisé Orange Money, Wave, carte bancaire. Livraison partout au Sénégal.
+  - text: 
+  - menu:
+    - menuitem "📣 Vendre en express":
+      - generic: 📣
+      - generic: Vendre en express
+    - menuitem "🛵 Coursier":
+      - generic: 🛵
+      - generic: Coursier
+    - menuitem "🔧 NEXUS Pro":
+      - generic: 🔧
+      - generic: NEXUS Pro
+    - menuitem "🤖 Assistant IA":
+      - generic: 🤖
+      - generic: Assistant IA
+    - menuitem "🔄 Troc":
+      - generic: 🔄
+      - generic: Troc
+    - menuitem "🎬 Stories":
+      - generic: 🎬
+      - generic: Stories
+    - menuitem "💬 Chat communauté":
+      - generic: 💬
+      - generic: Chat communauté
+    - menuitem "🐑 Local & Élevage":
+      - generic: 🐑
+      - generic: Local & Élevage
+    - menuitem "🔊 Accessibilité":
+      - generic: 🔊
+      - generic: Accessibilité
+  - button "Menu des raccourcis NEXUS" [ref=e1098] [cursor=pointer]:
+    - img [ref=e1099]
+  - button "Sélecteur de langue" [ref=e1105] [cursor=pointer]:
+    - generic [ref=e1106]: 🇬🇧
+    - generic [ref=e1107]: EN
+    - generic [ref=e1108]: 
+  - generic [ref=e1110]:
+    - generic [ref=e1111]:
+      - generic [ref=e1112]: NEXUS Market
+      - button "Passer" [ref=e1113] [cursor=pointer]: ×
+    - generic [ref=e1114]:
+      - heading "Bienvenue sur NEXUS 🇸🇳" [level=3] [ref=e1115]
+      - paragraph [ref=e1116]: "La marketplace tout-en-un du Sénégal : achetez, vendez, trouvez un artisan, un éleveur ou un livreur — au même endroit."
+      - generic [ref=e1117]: 🛍️ 🔧 🐏 🛵
+    - generic [ref=e1118]:
+      - button "Passer" [ref=e1119] [cursor=pointer]
+      - button "Suivant →" [ref=e1124] [cursor=pointer]
+```

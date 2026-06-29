@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html class="light" lang="fr">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>NEXUS Market | Tableau de bord Coursier</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script>
+  tailwind.config = { darkMode:"class", theme:{ extend:{
+    colors:{ primary:"#006d40","on-primary":"#ffffff","primary-container":"#e8f5ed","on-primary-container":"#002110",
+      secondary:"#e9c176","on-secondary":"#261900","secondary-container":"#ffdea5",tertiary:"#bd0014","on-tertiary":"#ffffff",
+      background:"#f9f9fc","on-background":"#1a1c1e",surface:"#f9f9fc","on-surface":"#1a1c1e","surface-variant":"#e2e2e5",
+      "on-surface-variant":"#3e4a41",outline:"#6e7a70","outline-variant":"#bdcabe","surface-container-low":"#f3f3f6",
+      "surface-container":"#eeeef0","surface-container-high":"#e8e8ea","surface-container-highest":"#e2e2e5" },
+    borderRadius:{ DEFAULT:"0.5rem",lg:"0.5rem",xl:"1rem",full:"9999px" },
+    spacing:{ xs:"4px",sm:"8px",md:"16px",lg:"24px",xl:"40px" },
+    fontFamily:{ body:["Plus Jakarta Sans","sans-serif"],display:["Plus Jakarta Sans","sans-serif"] } } } }
+</script>
+<style>
+  body { font-family:'Plus Jakarta Sans',sans-serif; }
+  .material-symbols-outlined { font-variation-settings:'FILL' 0,'wght' 400,'GRAD' 0,'opsz' 24; }
+  .hexagon-bg { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cpath fill='%23006d40' fill-opacity='0.03' d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9l11-6.35 11 6.35v12.7l-11 6.35-11-6.35V17.9z'/%3E%3C/svg%3E"); }
+  #sidebar { transition:transform .3s cubic-bezier(.4,0,.2,1); }
+  @media (max-width:1023px){ #sidebar{ position:fixed; z-index:50; transform:translateX(-100%); } #sidebar.open{ transform:translateX(0); } }
+  .view { display:none; } .view.active { display:block; }
+  .nav-active { background-color:#e8f5ed; color:#006d40; }
+  .nav-inactive { color:#3e4a41; }
+  .nav-inactive:hover { background-color:#eeeef0; }
+  .map-grid { background-image:linear-gradient(rgba(0,109,64,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(0,109,64,.08) 1px,transparent 1px); background-size:28px 28px; }
+  #toastBox { position:fixed; bottom:1.5rem; right:1.5rem; z-index:9999; display:flex; flex-direction:column; gap:.5rem; }
+  .toast { padding:.75rem 1.25rem; border-radius:.5rem; font-size:.875rem; font-weight:600; color:#fff; box-shadow:0 4px 14px rgba(0,0,0,.15); }
+  .pulse-dot { width:10px; height:10px; background:#006d40; border-radius:50%; animation: pulse-anim 1.5s infinite; }
+  @keyframes pulse-anim { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.5);opacity:.6} }
+</style>
+</head>
+<body class="bg-background text-on-surface hexagon-bg min-h-screen">
+<div id="toastBox"></div>
+
+<header class="bg-white sticky top-0 z-40 border-b border-surface-container shadow-sm">
+  <div class="px-4 md:px-6 h-16 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <button id="hamburgerBtn" aria-label="Menu" class="flex flex-col justify-center gap-1 w-10 h-10 rounded-lg hover:bg-surface-container items-center text-on-surface-variant"><span class="block h-0.5 w-5 bg-current rounded"></span><span class="block h-0.5 w-5 bg-current rounded"></span><span class="block h-0.5 w-5 bg-current rounded"></span></button>
+      <a href="/"><img src="/assets/nexus-logo.png" alt="NEXUS Market" class="h-8 md:h-9 w-auto object-contain"/></a>
+      <span class="hidden md:inline text-sm font-bold text-on-surface-variant border-l border-surface-container pl-3 ml-1">Coursier</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <label class="flex items-center gap-2 cursor-pointer">
+        <span id="availLbl" class="text-sm font-bold text-on-surface-variant">Hors ligne</span>
+        <span class="relative inline-block w-11 h-6">
+          <input id="availToggle" type="checkbox" class="peer sr-only"/>
+          <span class="absolute inset-0 bg-outline-variant peer-checked:bg-primary rounded-full transition"></span>
+          <span class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition peer-checked:translate-x-5"></span>
+        </span>
+      </label>
+      <div class="flex items-center gap-2">
+        <div id="userAvatar" class="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center font-bold text-sm">—</div>
+        <div class="hidden sm:block leading-tight"><p id="userName" class="text-sm font-bold">Chargement…</p><p id="vehicleLbl" class="text-[11px] text-on-surface-variant">Coursier NEXUS</p></div>
+      </div>
+      <button onclick="signOut()" title="Déconnexion" class="w-9 h-9 rounded-full hover:bg-surface-container flex items-center justify-center text-on-surface-variant"><span class="material-symbols-outlined text-[20px]">logout</span></button>
+    </div>
+  </div>
+</header>
+
+<div class="flex">
+  <aside id="sidebar" class="w-64 shrink-0 bg-white border-r border-surface-container min-h-[calc(100vh-4rem)] p-3">
+    <nav class="space-y-1 text-sm font-semibold">
+      <button data-view="overview" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-active"><span class="material-symbols-outlined">dashboard</span> Vue d'ensemble</button>
+      <button data-view="offers" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">assignment</span> Missions dispo <span id="offerBadge" class="ml-auto hidden bg-secondary text-on-secondary text-[10px] px-2 py-0.5 rounded-full">0</span></button>
+      <button data-view="deliveries" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">local_shipping</span> Mes livraisons <span id="delivBadge" class="ml-auto hidden bg-tertiary text-white text-[10px] px-2 py-0.5 rounded-full">0</span></button>
+      <button data-view="history" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">history</span> Historique</button>
+      <button data-view="earnings" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">payments</span> Mes gains</button>
+      <button data-view="settings" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">settings</span> Paramètres</button>
+    </nav>
+  </aside>
+  <div id="overlay" class="hidden fixed inset-0 bg-black/40 z-40 lg:hidden"></div>
+
+  <main class="flex-1 p-4 md:p-6 min-w-0">
+
+    <!-- État : pas encore coursier -->
+    <div id="notCourier" class="hidden">
+      <div class="bg-white rounded-xl border border-outline-variant p-10 text-center max-w-lg mx-auto mt-10">
+        <span class="material-symbols-outlined text-5xl text-primary mb-3 block">two_wheeler</span>
+        <h2 class="text-xl font-bold mb-2">Devenez livreur NEXUS</h2>
+        <p class="text-on-surface-variant text-sm mb-6">Vous n'avez pas encore de profil coursier. Livrez à Dakar et gagnez jusqu'à 25 000 FCFA/jour, payés par Wave ou Orange Money.</p>
+        <a href="/?register=courier" class="bg-primary text-white px-6 py-3 rounded-lg font-bold text-sm hover:brightness-110 inline-block">🚀 Postuler comme livreur</a>
+      </div>
+    </div>
+
+    <!-- État : candidature en attente -->
+    <div id="pendingCourier" class="hidden">
+      <div class="bg-white rounded-xl border border-outline-variant p-10 text-center max-w-lg mx-auto mt-10">
+        <span class="material-symbols-outlined text-5xl text-secondary mb-3 block">hourglass_top</span>
+        <h2 class="text-xl font-bold mb-2">Candidature en cours</h2>
+        <p class="text-on-surface-variant text-sm">Notre équipe valide votre profil sous 24h. Vous recevrez une notification WhatsApp dès l'activation.</p>
+      </div>
+    </div>
+
+    <!-- Interface coursier actif -->
+    <div id="courierApp" class="hidden">
+
+      <!-- VUE D'ENSEMBLE -->
+      <section class="view active space-y-6" data-view="overview">
+        <div><h1 id="greetName" class="text-2xl font-bold">Bonjour 🛵</h1><p id="statusLine" class="text-on-surface-variant text-sm">Passez en ligne pour recevoir des courses.</p></div>
+
+        <div id="staleWarn" class="hidden bg-secondary-container text-on-secondary-container rounded-xl p-4 flex items-center gap-3">
+          <span class="material-symbols-outlined">warning</span>
+          <div class="flex-1 text-sm"><b>Vous n'apparaissez plus aux clients.</b> Remettez-vous en ligne pour recevoir des courses.</div>
+          <button onclick="goLiveAgain()" class="bg-primary text-white px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap">Me remettre en ligne</button>
+        </div>
+
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-primary bg-primary-container rounded-lg p-1.5 inline-block mb-2">local_shipping</span><p id="kpiToday" class="text-2xl font-bold">—</p><p class="text-xs text-on-surface-variant">Courses du jour</p></div>
+          <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-primary bg-primary-container rounded-lg p-1.5 inline-block mb-2">payments</span><p id="kpiEarnings" class="text-2xl font-bold">—</p><p class="text-xs text-on-surface-variant">Gains du jour</p></div>
+          <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-secondary bg-secondary-container rounded-lg p-1.5 inline-block mb-2" style="font-variation-settings:'FILL' 1;">star</span><p id="kpiRating" class="text-2xl font-bold">—</p><p class="text-xs text-on-surface-variant">Note moyenne</p></div>
+          <div class="bg-white rounded-xl border border-outline-variant p-4"><span class="material-symbols-outlined text-on-surface bg-surface-container rounded-lg p-1.5 inline-block mb-2">savings</span><p id="kpiPending" class="text-2xl font-bold">—</p><p class="text-xs text-on-surface-variant">À recevoir</p></div>
+        </div>
+
+        <div class="grid lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 bg-white rounded-xl border border-outline-variant overflow-hidden">
+            <div class="flex items-center justify-between p-4 border-b border-surface-container">
+              <h2 class="font-bold">Position & livraisons actives</h2>
+              <span id="posStatus" class="text-xs text-on-surface-variant font-bold flex items-center gap-1.5"><span class="w-2 h-2 bg-surface-container rounded-full"></span>Hors ligne</span>
+            </div>
+            <div class="map-grid h-72 relative bg-surface-container-low">
+              <span id="courierPin" class="material-symbols-outlined absolute text-on-surface-variant text-[40px] transition-all" style="left:46%;top:44%;font-variation-settings:'FILL' 1;">two_wheeler</span>
+              <div id="deliveryPins"></div>
+              <div id="offlineOverlay" class="absolute inset-0 bg-white/70 flex items-center justify-center">
+                <div class="text-center"><span class="material-symbols-outlined text-4xl text-on-surface-variant mb-2 block">wifi_off</span><p class="text-sm font-bold text-on-surface-variant">Passez en ligne pour voir les missions</p></div>
+              </div>
+            </div>
+          </div>
+          <div class="bg-white rounded-xl border border-outline-variant p-4">
+            <h2 class="font-bold mb-3">Missions proposées</h2>
+            <div id="offers" class="space-y-3">
+              <div class="text-center py-8 text-on-surface-variant text-sm"><span class="material-symbols-outlined text-3xl mb-2 block">two_wheeler</span>Passez en ligne pour voir les missions</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-outline-variant overflow-hidden">
+          <div class="flex items-center justify-between p-5 border-b border-surface-container"><h2 class="font-bold">Livraisons en cours</h2><button onclick="showView('deliveries')" class="text-primary text-sm font-bold hover:underline">Voir tout</button></div>
+          <div id="activeDeliveries" class="divide-y divide-surface-container"><div class="p-8 text-center text-on-surface-variant text-sm">Chargement…</div></div>
+        </div>
+      </section>
+
+      <!-- MISSIONS DISPO -->
+      <section class="view space-y-6" data-view="offers">
+        <div><h1 class="text-2xl font-bold">Missions disponibles</h1><p class="text-on-surface-variant text-sm">Acceptez une course pour la prendre en charge.</p></div>
+        <div id="allOffers" class="grid md:grid-cols-2 gap-4"><div class="text-on-surface-variant text-sm p-4">Chargement…</div></div>
+      </section>
+
+      <!-- MES LIVRAISONS -->
+      <section class="view space-y-6" data-view="deliveries">
+        <div><h1 class="text-2xl font-bold">Mes livraisons</h1><p class="text-on-surface-variant text-sm">Vos courses en cours.</p></div>
+        <div class="space-y-3" id="allDeliveries"><div class="text-on-surface-variant text-sm p-4">Chargement…</div></div>
+      </section>
+
+      <!-- HISTORIQUE -->
+      <section class="view space-y-6" data-view="history">
+        <div><h1 class="text-2xl font-bold">Historique</h1><p class="text-on-surface-variant text-sm">Vos livraisons terminées.</p></div>
+        <div class="bg-white rounded-xl border border-outline-variant overflow-hidden">
+          <div class="overflow-x-auto"><table class="w-full text-sm">
+            <thead class="bg-surface-container-low text-on-surface-variant text-left text-xs uppercase"><tr><th class="px-5 py-3 font-bold">Commande</th><th class="px-5 py-3 font-bold">Adresse</th><th class="px-5 py-3 font-bold">Gain</th><th class="px-5 py-3 font-bold">Date</th></tr></thead>
+            <tbody id="historyBody" class="divide-y divide-surface-container"><tr><td colspan="4" class="px-5 py-8 text-center text-on-surface-variant">Chargement…</td></tr></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- GAINS -->
+      <section class="view space-y-6" data-view="earnings">
+        <div><h1 class="text-2xl font-bold">Mes gains</h1><p class="text-on-surface-variant text-sm">Suivi de vos revenus NEXUS (90% du tarif de livraison).</p></div>
+        <div class="grid md:grid-cols-3 gap-6">
+          <div class="bg-primary rounded-xl p-6 text-white text-center"><p class="text-sm text-white/80 mb-1">Aujourd'hui</p><p id="earnToday" class="text-4xl font-bold">—</p></div>
+          <div class="bg-white rounded-xl border border-outline-variant p-6 text-center"><p class="text-xs text-on-surface-variant font-bold uppercase mb-1">À recevoir</p><p id="earnPending" class="text-3xl font-bold text-secondary">—</p></div>
+          <div class="bg-white rounded-xl border border-outline-variant p-6 text-center"><p class="text-xs text-on-surface-variant font-bold uppercase mb-1">Total cumulé</p><p id="earnTotal" class="text-3xl font-bold">—</p></div>
+        </div>
+        <div class="bg-white rounded-xl border border-outline-variant p-5">
+          <h3 class="font-bold mb-3">Détail des gains</h3>
+          <div id="earningsDetail" class="space-y-2 text-sm"><p class="text-on-surface-variant">Chargement…</p></div>
+        </div>
+      </section>
+
+      <!-- PARAMÈTRES -->
+      <section class="view space-y-6" data-view="settings">
+        <div><h1 class="text-2xl font-bold">Paramètres</h1></div>
+        <div class="bg-white rounded-xl border border-outline-variant divide-y divide-surface-container">
+          <div class="p-5"><p class="font-bold text-sm mb-0.5">Nom</p><p id="settingName" class="text-on-surface-variant text-sm">—</p></div>
+          <div class="p-5"><p class="font-bold text-sm mb-0.5">Téléphone</p><p id="settingPhone" class="text-on-surface-variant text-sm">—</p></div>
+          <div class="p-5"><p class="font-bold text-sm mb-0.5">Véhicule</p><p id="settingVehicle" class="text-on-surface-variant text-sm">—</p></div>
+          <div class="p-5"><p class="font-bold text-sm mb-0.5">Zones de livraison</p><p id="settingZones" class="text-on-surface-variant text-sm">—</p></div>
+          <div class="p-5">
+            <p class="font-bold text-sm mb-2">Disponibilité</p>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <span class="relative inline-block w-11 h-6"><input id="settingToggle" type="checkbox" class="peer sr-only"/><span class="absolute inset-0 bg-outline-variant peer-checked:bg-primary rounded-full transition"></span><span class="absolute left-0.5 top-0.5 w-5 h-5 bg-white rounded-full transition peer-checked:translate-x-5"></span></span>
+              <span id="settingAvailLbl" class="text-sm font-semibold">Hors ligne</span>
+            </label>
+          </div>
+          <div class="p-5"><button onclick="signOut()" class="bg-tertiary/10 text-tertiary px-5 py-2.5 rounded-lg font-bold text-sm hover:bg-tertiary/20">Se déconnecter</button></div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+const SB_URL = 'https://pqcqbstbdujzaclsiosv.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE';
+const sb = supabase.createClient(SB_URL, SB_KEY);
+const FCFA = (n) => Math.round(n||0).toLocaleString('fr-FR') + ' F';
+const VEHICLE = { moto:'🛵 Moto', vélo:'🚲 Vélo', voiture:'🚗 Voiture', pied:'🚶 À pied' };
+
+// delivery_requests.status flow
+const ACTIVE_STATUSES = ['accepted','picked_up','in_transit'];
+const DONE_STATUSES = ['delivered','cancelled','failed'];
+const STATUS_LABEL = { pending:'En attente', accepted:'Acceptée', picked_up:'Colis récupéré', in_transit:'En route', delivered:'Livrée', cancelled:'Annulée', failed:'Échec' };
+const STATUS_CLS = { accepted:'bg-secondary-container text-on-secondary-container', picked_up:'bg-secondary-container text-on-secondary-container', in_transit:'bg-primary-container text-primary', delivered:'bg-primary text-white' };
+const NEXT = { accepted:'picked_up', picked_up:'in_transit', in_transit:'delivered' };
+const NEXT_LABEL = { accepted:'Colis récupéré', picked_up:'Démarrer la course', in_transit:'Marquer livrée' };
+
+let currentUser = null;
+let courier = null;       // ligne couriers (id, user_id, is_available, ...)
+let isOnline = false;
+let offers = [];
+let myDeliveries = [];
+let earnings = [];
+
+function toast(msg, ok=true) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.style.background = ok ? '#006d40' : '#bd0014';
+  t.textContent = msg;
+  document.getElementById('toastBox').appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
+function shortId(s) { return '#' + (s||'').toString().slice(0,8).toUpperCase(); }
+
+function showView(v) {
+  document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.dataset.view === v));
+  document.querySelectorAll('.navbtn').forEach(b => {
+    const active = b.dataset.view === v;
+    b.classList.toggle('nav-active', active);
+    b.classList.toggle('nav-inactive', !active);
+  });
+  if (window.innerWidth < 1024) {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('overlay').classList.add('hidden');
+  }
+}
+
+function navUrl(d) {
+  const target = d.status === 'accepted' ? d.pickup_address : d.delivery_address;
+  return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent((target||'') + ', ' + (d.delivery_city||'Dakar') + ', Sénégal');
+}
+
+function setAvailabilityUI(online) {
+  isOnline = online;
+  const lbl = online ? 'Disponible' : 'Hors ligne';
+  document.getElementById('availLbl').textContent = lbl;
+  document.getElementById('availLbl').className = 'text-sm font-bold ' + (online ? 'text-primary' : 'text-on-surface-variant');
+  document.getElementById('settingAvailLbl').textContent = lbl;
+  document.getElementById('availToggle').checked = online;
+  document.getElementById('settingToggle').checked = online;
+  document.getElementById('offlineOverlay').style.display = online ? 'none' : 'flex';
+  document.getElementById('courierPin').className = `material-symbols-outlined absolute text-[40px] transition-all ${online ? 'text-primary' : 'text-on-surface-variant'}`;
+  document.getElementById('posStatus').innerHTML = online
+    ? `<span class="pulse-dot"></span><span class="text-primary">Position active</span>`
+    : `<span class="w-2 h-2 bg-surface-container rounded-full"></span>Hors ligne`;
+  document.getElementById('statusLine').textContent = online
+    ? `Vous êtes en ligne — ${myDeliveries.length} livraison${myDeliveries.length>1?'s':''} en cours.`
+    : 'Passez en ligne pour recevoir des courses.';
+  if (online) loadOffers();
+  else {
+    offers = [];
+    document.getElementById('offers').innerHTML = '<div class="text-center py-8 text-on-surface-variant text-sm"><span class="material-symbols-outlined text-3xl mb-2 block">two_wheeler</span>Passez en ligne pour voir les missions</div>';
+    renderOffersPage();
+  }
+}
+
+async function toggleAvailability(online) {
+  if (!courier) return;
+  const { error } = await sb.from('couriers').update({ is_available: online }).eq('id', courier.id);
+  if (error) { toast('Erreur : ' + error.message, false); return; }
+  document.getElementById('staleWarn').classList.add('hidden');
+  setAvailabilityUI(online);
+  toast(online ? '🟢 Vous êtes disponible' : '🔴 Vous êtes hors ligne');
+}
+
+async function goLiveAgain() {
+  await toggleAvailability(true);
+}
+
+function offerCard(d) {
+  return `<div class="border border-outline-variant rounded-xl p-4 bg-white">
+    <div class="flex items-start justify-between mb-2">
+      <div><p class="font-bold text-sm">📦 Commande ${shortId(d.order_id)}</p><p class="text-xs text-on-surface-variant mt-0.5">📍 Retrait : ${d.pickup_address||'—'}</p></div>
+      <div class="text-right"><p class="font-bold text-primary">${FCFA(d.courier_net)}</p><p class="text-[11px] text-on-surface-variant">gain net</p></div>
+    </div>
+    <p class="text-xs text-on-surface-variant mb-1">🏠 Livraison : ${d.delivery_address||'—'} (${d.delivery_city||'Dakar'})</p>
+    ${d.distance_km!=null ? `<p class="text-xs text-on-surface-variant mb-3">📏 ${Number(d.distance_km).toFixed(1)} km</p>` : '<div class="mb-2"></div>'}
+    <button onclick="acceptOffer('${d.id}')" class="w-full bg-primary text-white py-2 rounded-lg text-xs font-bold hover:brightness-110">✅ Accepter cette mission</button>
+  </div>`;
+}
+
+function renderOffersPage() {
+  document.getElementById('allOffers').innerHTML = offers.length
+    ? offers.map(offerCard).join('')
+    : '<div class="col-span-full bg-white rounded-xl border border-outline-variant p-8 text-center text-on-surface-variant text-sm">'+(isOnline?'Aucune mission disponible dans votre zone.':'Passez en ligne pour voir les missions.')+'</div>';
+}
+
+async function loadOffers() {
+  if (!courier) return;
+  let q = sb.from('delivery_requests').select('*').eq('status', 'pending').order('created_at', { ascending: false }).limit(20);
+  if (courier.zones && courier.zones.length) q = q.in('delivery_city', courier.zones);
+  const { data } = await q;
+  offers = data || [];
+
+  document.getElementById('offerBadge').textContent = offers.length;
+  document.getElementById('offerBadge').classList.toggle('hidden', offers.length === 0);
+
+  document.getElementById('offers').innerHTML = offers.length
+    ? offers.slice(0,5).map(offerCard).join('')
+    : '<div class="text-center py-8 text-on-surface-variant text-sm"><span class="material-symbols-outlined text-3xl mb-2 block">check_circle</span>Aucune mission pour le moment.</div>';
+  renderOffersPage();
+}
+
+async function acceptOffer(id) {
+  const eta = new Date(Date.now() + 30*60000).toISOString();
+  const { error } = await sb.from('delivery_requests')
+    .update({ courier_id: courier.id, status: 'accepted', accepted_at: new Date().toISOString(), estimated_at: eta })
+    .eq('id', id).eq('status', 'pending');
+  if (error) { toast('Mission déjà prise !', false); loadOffers(); return; }
+  toast('✅ Mission acceptée !');
+  offers = offers.filter(o => o.id !== id);
+  loadOffers();
+  loadMyDeliveries();
+  showView('deliveries');
+}
+
+async function advanceDelivery(id, newStatus) {
+  const updates = { status: newStatus };
+  if (newStatus === 'picked_up') updates.picked_up_at = new Date().toISOString();
+  if (newStatus === 'delivered') updates.delivered_at = new Date().toISOString();
+  const { error } = await sb.from('delivery_requests').update(updates).eq('id', id);
+  if (error) { toast('Erreur : ' + error.message, false); return; }
+  const lbl = { picked_up:'Colis récupéré !', in_transit:'En route !', delivered:'Livraison confirmée ! 🎉' };
+  toast(lbl[newStatus] || 'Mis à jour');
+  loadMyDeliveries();
+  if (newStatus === 'delivered') loadEarnings();
+}
+
+function deliveryRow(d) {
+  const next = NEXT[d.status];
+  const nextBtn = next
+    ? `<button onclick="advanceDelivery('${d.id}','${next}')" class="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1 hover:brightness-110"><span class="material-symbols-outlined text-[16px]">check</span>${NEXT_LABEL[d.status]}</button>`
+    : '';
+  return `<div class="p-5 flex items-center justify-between flex-wrap gap-3">
+    <div class="flex items-center gap-3">
+      <span class="material-symbols-outlined text-primary bg-primary-container rounded-lg p-2">inventory_2</span>
+      <div><p class="font-bold text-sm">${shortId(d.order_id)} · ${FCFA(d.courier_net)}</p><p class="text-xs text-on-surface-variant flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">location_on</span>${(d.status==='accepted'?d.pickup_address:d.delivery_address)||'—'}</p></div>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="px-2 py-1 rounded-full text-[11px] font-bold ${STATUS_CLS[d.status]||'bg-surface-container text-on-surface-variant'}">${STATUS_LABEL[d.status]||d.status}</span>
+      ${nextBtn}
+      <a href="${navUrl(d)}" target="_blank" class="bg-surface-container text-on-surface px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">navigation</span>Nav</a>
+    </div>
+  </div>`;
+}
+
+async function loadMyDeliveries() {
+  const { data } = await sb.from('delivery_requests').select('*')
+    .eq('courier_id', courier.id)
+    .not('status', 'in', '("delivered","cancelled","failed")')
+    .order('created_at', { ascending: false });
+  myDeliveries = data || [];
+
+  document.getElementById('delivBadge').textContent = myDeliveries.length;
+  document.getElementById('delivBadge').classList.toggle('hidden', myDeliveries.length === 0);
+
+  const html = myDeliveries.length
+    ? myDeliveries.map(deliveryRow).join('')
+    : '<div class="p-10 text-center text-on-surface-variant text-sm"><span class="material-symbols-outlined text-4xl mb-2 block">check_circle</span>Aucune livraison en cours.</div>';
+  document.getElementById('activeDeliveries').innerHTML = html;
+  document.getElementById('allDeliveries').innerHTML = myDeliveries.length ? myDeliveries.map(deliveryRow).join('') : '<div class="bg-white rounded-xl border border-outline-variant p-10 text-center text-on-surface-variant text-sm">Aucune livraison en cours.</div>';
+
+  document.getElementById('deliveryPins').innerHTML = myDeliveries.map((d,i) => {
+    const left = 20 + (i%4)*20; const top = 20 + (i%3)*20;
+    return `<span class="material-symbols-outlined absolute text-tertiary text-[28px]" style="left:${left}%;top:${top}%;font-variation-settings:'FILL' 1;">location_on</span>`;
+  }).join('');
+
+  if (isOnline) document.getElementById('statusLine').textContent = `Vous êtes en ligne — ${myDeliveries.length} livraison${myDeliveries.length>1?'s':''} en cours.`;
+}
+
+async function loadHistory() {
+  const { data } = await sb.from('delivery_requests').select('*')
+    .eq('courier_id', courier.id).eq('status', 'delivered')
+    .order('delivered_at', { ascending: false }).limit(50);
+  const hist = data || [];
+  document.getElementById('historyBody').innerHTML = hist.length
+    ? hist.map(d => `<tr class="hover:bg-surface-container-low">
+        <td class="px-5 py-3 font-bold">${shortId(d.order_id)}</td>
+        <td class="px-5 py-3 text-on-surface-variant">${d.delivery_address||d.delivery_city||'Dakar'}</td>
+        <td class="px-5 py-3 font-bold text-primary">${FCFA(d.courier_net)}</td>
+        <td class="px-5 py-3 text-on-surface-variant">${d.delivered_at?new Date(d.delivered_at).toLocaleDateString('fr-FR'):'—'}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" class="px-5 py-10 text-center text-on-surface-variant">Aucune livraison terminée.</td></tr>';
+}
+
+async function loadEarnings() {
+  const { data } = await sb.from('courier_earnings').select('*')
+    .eq('courier_id', courier.id).order('created_at', { ascending: false }).limit(100);
+  earnings = data || [];
+  const today = new Date().toISOString().slice(0,10);
+  const total = earnings.reduce((s,e)=>s+(e.amount||0),0);
+  const pending = earnings.filter(e=>e.status==='pending').reduce((s,e)=>s+(e.amount||0),0);
+  const todayList = earnings.filter(e=>String(e.created_at||'').slice(0,10)===today);
+  const todayEarn = todayList.reduce((s,e)=>s+(e.amount||0),0);
+  const todayCount = todayList.filter(e=>e.type==='delivery'||!e.type).length;
+
+  document.getElementById('kpiToday').textContent = todayCount;
+  document.getElementById('kpiEarnings').textContent = FCFA(todayEarn);
+  document.getElementById('kpiPending').textContent = FCFA(pending);
+  document.getElementById('earnToday').textContent = FCFA(todayEarn);
+  document.getElementById('earnPending').textContent = FCFA(pending);
+  document.getElementById('earnTotal').textContent = FCFA(total);
+
+  document.getElementById('earningsDetail').innerHTML = earnings.length
+    ? earnings.slice(0,15).map(e => `<div class="flex items-center justify-between py-2 border-b border-surface-container last:border-0">
+        <div><p class="font-semibold">${e.type==='delivery'?'Livraison':(e.type||'Gain')} ${e.order_id?shortId(e.order_id):''}</p><p class="text-xs text-on-surface-variant">${new Date(e.created_at).toLocaleDateString('fr-FR')} · ${e.status==='paid'?'Payé ✓':'En attente'}</p></div>
+        <p class="font-bold ${e.status==='paid'?'text-on-surface-variant':'text-primary'}">+${FCFA(e.amount)}</p>
+      </div>`).join('')
+    : '<p class="text-on-surface-variant">Aucun gain enregistré.</p>';
+}
+
+async function signOut() { await sb.auth.signOut(); window.location.href = '/'; }
+
+async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href = '/?login=1'; return; }
+  currentUser = session.user;
+
+  // Avatar par défaut (email) avant de connaître le profil
+  document.getElementById('userAvatar').textContent = initials(currentUser.email);
+  // Recherche du profil coursier (couriers.user_id = currentUser.id)
+  const { data: courierRow } = await sb.from('couriers').select('*').eq('user_id', currentUser.id).maybeSingle();
+
+  if (!courierRow) {
+    document.getElementById('notCourier').classList.remove('hidden');
+    document.getElementById('userName').textContent = currentUser.email?.split('@')[0] || 'Visiteur';
+    document.getElementById('userAvatar').textContent = initials(currentUser.email);
+    return;
+  }
+  if (courierRow.status === 'pending') {
+    document.getElementById('pendingCourier').classList.remove('hidden');
+    document.getElementById('userName').textContent = courierRow.name || 'Coursier';
+    document.getElementById('userAvatar').textContent = initials(courierRow.name);
+    return;
+  }
+
+  courier = courierRow;
+  document.getElementById('courierApp').classList.remove('hidden');
+
+  const name = courier.name || currentUser.email?.split('@')[0] || 'Coursier';
+  document.getElementById('userName').textContent = name;
+  document.getElementById('userAvatar').textContent = initials(name);
+  document.getElementById('greetName').textContent = `Bonjour, ${name.split(' ')[0]} 🛵`;
+  document.getElementById('vehicleLbl').textContent = VEHICLE[courier.vehicle_type] || 'Coursier NEXUS';
+  document.getElementById('settingName').textContent = name;
+  document.getElementById('settingPhone').textContent = courier.phone || '—';
+  document.getElementById('settingVehicle').textContent = VEHICLE[courier.vehicle_type] || courier.vehicle_type || '—';
+  document.getElementById('settingZones').textContent = (courier.zones && courier.zones.length) ? courier.zones.join(', ') : 'Toutes zones';
+  document.getElementById('kpiRating').textContent = courier.rating != null ? '⭐ ' + Number(courier.rating).toFixed(1) : '—';
+
+  setAvailabilityUI(!!courier.is_available);
+  await Promise.all([loadMyDeliveries(), loadEarnings(), loadHistory()]);
+}
+
+// Toggles
+document.getElementById('availToggle').addEventListener('change', e => toggleAvailability(e.target.checked));
+document.getElementById('settingToggle').addEventListener('change', e => toggleAvailability(e.target.checked));
+// Refresh offres + livraisons toutes les 30s quand en ligne
+setInterval(() => { if (isOnline && courier) { loadOffers(); loadMyDeliveries(); } }, 30000);
+
+document.querySelectorAll('.navbtn').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+var sbEl=document.getElementById('sidebar'),ov=document.getElementById('overlay');
+document.getElementById('hamburgerBtn').addEventListener('click',function(){sbEl.classList.toggle('open');ov.classList.toggle('hidden',!sbEl.classList.contains('open'));});
+ov.addEventListener('click',function(){sbEl.classList.remove('open');ov.classList.add('hidden');});
+
+init().catch(console.error);
+</script>
+</body>
+</html>
