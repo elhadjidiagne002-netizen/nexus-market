@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v8"; // v8 (2026-06-21) → garde same-origin dans fetch (fix MIME text/html sur scripts tiers Plausible/Cloudflare), repli index.html réservé aux navigations
+const CACHE_NAME = "nexus-v9"; // v9 (2026-06-30) → invalide les anciens caches (nouvelle interface overlay, fix panier null-stock, fix TDZ allItems, fix filtres URL acheteur)
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────
