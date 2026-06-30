@@ -34475,7 +34475,18 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       }
       const wishlists = {};  // Chargé depuis Supabase via getWishlist
       const userWish = wishlists[currentUser2.id] || [];
-      setProducts(allProducts || []);
+      // [NOUVELLE INTERFACE] Charger les annonces Express et les fusionner avec
+      // les produits → l'utilisateur connecté voit AUSSI ses annonces dans le
+      // catalogue, comme un visiteur le verrait via PublicCatalog.
+      let mergedProducts = allProducts || [];
+      try {
+        const axData = await axLoadAnnonces();
+        if (axData && axData.length) {
+          const axNormalized = axData.map(normalizeExpressToProduct);
+          mergedProducts = [...mergedProducts, ...axNormalized];
+        }
+      } catch(_) {}
+      setProducts(mergedProducts);
       // [FIX] Deeplink ?product=ID — ouvrir le produit partagé après connexion
       try {
         const _dlParams = new URLSearchParams(window.location.search);
