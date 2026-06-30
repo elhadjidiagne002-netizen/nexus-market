@@ -45943,11 +45943,30 @@ function initProto(){
   (function(){
     var aside=ov?ov.querySelector('aside'):null;if(!aside)return;
     var CATNAME={'élevage & terroir':'Produits locaux','électronique':'Électronique','mode':'Mode & Vêtements','alimentation':'Alimentation','maison & déco':'Maison & Déco','beauté & santé':'Beauté & Santé','auto & moto':'Auto & Moto'};
+    var catLabels=[].slice.call(aside.querySelectorAll('label'));
+    /* Sélection UNIQUE (radio) + surbrillance qui suit le choix. Sans ça,
+       « Élevage » restait coché en 1er et le filtre prenait toujours sa valeur. */
+    function setActive(lbl){
+      catLabels.forEach(function(l){
+        var cb=l.querySelector('input[type=checkbox]'); var on=(l===lbl);
+        if(cb)cb.checked=on;
+        l.classList.toggle('bg-primary-container',on);
+        l.classList.toggle('text-primary',on);
+        l.classList.toggle('font-bold',on);
+      });
+    }
+    catLabels.forEach(function(l){
+      l.addEventListener('click',function(){ setTimeout(function(){ setActive(l); },0); });
+    });
+    function chosenCat(){
+      var chosen=null;
+      catLabels.forEach(function(l){var cb=l.querySelector('input[type=checkbox]');if(cb&&cb.checked&&!chosen){var lt=(l.textContent||'').replace(/\(.*\)/,'').replace(/\s+/g,' ').trim().toLowerCase();chosen=CATNAME[lt]||null;}});
+      return chosen;
+    }
     aside.querySelectorAll('button').forEach(function(bt){
       var t=(bt.textContent||'').trim().toLowerCase();
       if(t==='appliquer'){bt.addEventListener('click',function(){
-        var chosen=null;
-        aside.querySelectorAll('label').forEach(function(l){var cb=l.querySelector('input[type=checkbox]');if(cb&&cb.checked&&!chosen){var lt=(l.textContent||'').replace(/\(.*\)/,'').replace(/\s+/g,' ').trim().toLowerCase();chosen=CATNAME[lt]||null;}});
+        var chosen=chosenCat();
         var pin=aside.querySelectorAll('input[type=text]');
         var fmin=pin[0]?parseInt((pin[0].value||'').replace(/\D/g,''),10):0;
         var fmax=pin[1]?parseInt((pin[1].value||'').replace(/\D/g,''),10):0;
@@ -45957,7 +45976,10 @@ function initProto(){
         if(fmax>0&&fmax<500000)qs.push('pmax='+(fmax/655.957).toFixed(2));
         nav(qs.length?'/?'+qs.join('&'):'/');
       });}
-      else if(t==='réinitialiser'){bt.addEventListener('click',function(){aside.querySelectorAll('input[type=checkbox]').forEach(function(cb,i){cb.checked=(i===0);});});}
+      else if(t==='réinitialiser'){bt.addEventListener('click',function(){
+        catLabels.forEach(function(l){var cb=l.querySelector('input[type=checkbox]');if(cb)cb.checked=false;l.classList.remove('bg-primary-container','text-primary','font-bold');});
+        var pin=aside.querySelectorAll('input[type=text]');if(pin[0])pin[0].value='0';if(pin[1])pin[1].value='500,000+';
+      });}
     });
   })();
 
