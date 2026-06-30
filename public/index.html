@@ -45395,6 +45395,30 @@ function card(p){
     +'</div>';
 }
 
+/* ─── Carte ANNONCE EXPRESS (annonces_express) ─── */
+/* Distincte de card() : classe nx-axcard (pas nx-prodcard → pas de clic « ouvrir produit »),
+   prix déjà en FCFA (price_fcfa), bouton WhatsApp réel (<a>) car une annonce se contacte. */
+function _esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function axCard(a){
+  var img=a.photo_url||'https://placehold.co/300x300/e8f5e9/00853E?text=Annonce';
+  var name=_esc((a.description||'Annonce').slice(0,60));
+  var city=_esc(a.city||'Sénégal');
+  var cat=_esc(a.category||'');
+  var fcfa=(parseInt(a.price_fcfa,10)||0).toLocaleString('fr-FR');
+  var tel=String(a.phone||'').replace(/\D/g,'');
+  var wa='https://wa.me/221'+tel+'?text='+encodeURIComponent('Bonjour, je suis intéressé par votre annonce NEXUS : '+(a.description||'').slice(0,60));
+  return '<div class="nx-axcard relative bg-white p-3 rounded-xl border-2 border-dashed border-secondary hover:shadow-md transition-all flex flex-col group min-w-[180px] md:min-w-[210px] w-[180px] md:w-[210px] shrink-0">'
+    +'<span class="absolute top-2 left-2 z-10 bg-secondary text-white text-[10px] font-bold px-2 py-0.5 rounded">⚡ Annonce</span>'
+    +'<div class="relative h-36 flex items-center justify-center mb-2 overflow-hidden">'
+      +'<img loading="lazy" class="max-h-full w-full object-cover rounded-lg group-hover:scale-110 transition-transform" src="'+img+'" onerror="this.onerror=null;this.src=\'https://placehold.co/300x300/e8f5e9/00853E?text=Annonce\'"/>'
+    +'</div>'
+    +'<p class="text-[11px] text-on-surface-variant truncate mb-0.5 flex items-center gap-1"><span class="material-symbols-outlined text-[13px] text-primary">place</span>'+city+(cat?' · '+cat:'')+'</p>'
+    +'<h4 class="text-sm font-semibold mb-1" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.5em">'+name+'</h4>'
+    +'<div class="flex items-center justify-between mb-3 mt-auto"><p class="text-primary font-bold text-md">'+fcfa+' F</p></div>'
+    +'<a href="'+wa+'" target="_blank" rel="noopener noreferrer" class="text-center py-2 rounded font-bold text-xs text-white transition-all" style="background:#25D366"><span class="material-symbols-outlined text-[14px] align-middle">chat</span> Contacter</a>'
+    +'</div>';
+}
+
 function flashCard(name,price,oldPrice,disc,img){
   return '<div class="relative bg-surface-container-low rounded-xl p-md flex flex-col">'
     +'<span class="absolute top-3 left-3 bg-tertiary text-white text-xs font-bold px-2 py-1 rounded z-10">'+disc+'</span>'
@@ -45506,6 +45530,15 @@ function initProto(){
   });
   sbFetch('products?'+Q+'&order=rating.desc.nullslast,created_at.desc').then(function(data){
     if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):recommended.map(card).join('');
+    /* Annonces Express : affichées EN TÊTE des « Recommandés » (l'overlay ne les
+       chargeait pas → invisibles sur l'accueil). Cartes WhatsApp dédiées. */
+    sbFetch('annonces_express?select=id,photo_url,price_fcfa,category,description,phone,city,status,expires_at&status=eq.active&order=created_at.desc&limit=12').then(function(ax){
+      if(!rcEl||!ax||!ax.length)return;
+      var now=Date.now();
+      ax=ax.filter(function(a){return !a.expires_at||new Date(a.expires_at).getTime()>now;});
+      if(!ax.length)return;
+      rcEl.innerHTML=ax.map(axCard).join('')+rcEl.innerHTML;
+    });
   });
 
   /* Ventes Flash — 1) table flash_sales (admin) ; 2) repli = produits en promo
