@@ -45154,6 +45154,16 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       </div>
     </section>
 
+    <!-- Tous les produits (affiché au clic sur « Voir tout », nouveau design) -->
+    <section id="nxp-allSection" class="hidden">
+      <div class="flex items-center justify-between mb-lg">
+        <h2 class="font-bold text-xl uppercase tracking-tight flex items-center gap-2"><span class="material-symbols-outlined text-primary">grid_view</span> Tous les produits</h2>
+        <button id="nxp-allClose" class="text-primary text-sm font-bold hover:underline">Réduire</button>
+      </div>
+      <div id="nxp-allProducts" class="flex flex-wrap gap-md justify-center sm:justify-start"></div>
+      <div id="nxp-allLoading" class="text-center text-on-surface-variant text-sm py-6 hidden">Chargement…</div>
+    </section>
+
     <!-- Vu récemment -->
     <section id="nxp-recentSection" class="hidden">
       <div class="flex items-center justify-between mb-lg">
@@ -45750,6 +45760,7 @@ function initProto(){
     if(box)box.innerHTML=items.map(card).join('');if(sec)sec.classList.remove('hidden');
   }
   var cr=document.getElementById('nxp-clearRecent');if(cr)cr.addEventListener('click',function(){localStorage.removeItem('nx_recent');renderRecent();});
+  var ac=document.getElementById('nxp-allClose');if(ac)ac.addEventListener('click',function(){var s=document.getElementById('nxp-allSection');if(s){s.classList.add('hidden');window.scrollTo({top:0,behavior:'smooth'});}});
   renderRecent();
 
   /* Câblage boutons statiques (auth géré par syncAuthState) */
@@ -45771,6 +45782,33 @@ function initProto(){
   function evt(name,detail){try{window.dispatchEvent(new CustomEvent(name,detail!==undefined?{detail:detail}:undefined));}catch(e){}}
   function nav(url){window.location.href=url;}
   function closeDrawerNow(){var d=document.getElementById('nxp-drawer');if(d){d.classList.remove('open');setTimeout(function(){d.classList.add('hidden');},300);}}
+  /* « Voir tout » : affiche TOUS les produits + annonces DANS l'overlay (nouveau
+     design), au lieu de basculer vers l'ancien catalogue React (hideProto). */
+  var _allLoaded=false;
+  function nxpShowAll(){
+    closeDrawerNow();
+    var sec=document.getElementById('nxp-allSection');
+    var grid=document.getElementById('nxp-allProducts');
+    var load=document.getElementById('nxp-allLoading');
+    if(!sec||!grid)return;
+    sec.classList.remove('hidden');
+    setTimeout(function(){sec.scrollIntoView({behavior:'smooth',block:'start'});},80);
+    if(_allLoaded)return; /* déjà chargé : on ne refait pas le fetch */
+    if(load)load.classList.remove('hidden');
+    var Qall='select=id,name,price,images,image_url,rating,category,stock&active=not.is.false&order=created_at.desc&limit=100';
+    Promise.all([
+      sbFetch('products?'+Qall),
+      sbFetch('annonces_express?select=id,photo_url,price_fcfa,category,description,phone,city,status,expires_at&status=eq.active&order=created_at.desc&limit=50')
+    ]).then(function(res){
+      var prods=res[0]||[]; var ax=res[1]||[];
+      var now=Date.now();
+      ax=ax.filter(function(a){return !a.expires_at||new Date(a.expires_at).getTime()>now;});
+      var html=ax.map(axCard).join('')+prods.map(sbCard).join('');
+      grid.innerHTML=html||'<p class="text-on-surface-variant text-sm py-6">Aucun produit pour le moment.</p>';
+      if(load)load.classList.add('hidden');
+      _allLoaded=true;
+    }).catch(function(){ if(load)load.classList.add('hidden'); });
+  }
   var REG=function(role){return function(){evt('nexus:open-auth',{tab:'register',preselectedRole:role});};};
   var EVT=function(name){return function(){evt(name);};};
   var NAV=function(url){return function(){nav(url);};};
@@ -45789,8 +45827,7 @@ function initProto(){
     'louma — le marché en ligne':EVT('nexus:open-louma'),"j'en profite":EVT('nexus:open-louma'),
     'nexus stories — vidéos produit':EVT('nexus:open-stories'),
     'programme ambassadeur':function(){var u=window.__nexusCurrentUser;if(u&&u.id){evt('nexus:hide-public-home');setTimeout(function(){evt('nexus:goto-buyer-view','ambassador');},350);}else{evt('nexus:open-auth',{tab:'register'});}},
-    'voir tout':function(){try{history.pushState({},'','/?see=all');}catch(e){}hideProto();setTimeout(function(){var a=document.getElementById('all-products-anchor');if(a)a.scrollIntoView({behavior:'smooth',block:'start'});},250);},
-    'voir tout →':function(){try{history.pushState({},'','/?see=all');}catch(e){}hideProto();setTimeout(function(){var a=document.getElementById('all-products-anchor');if(a)a.scrollIntoView({behavior:'smooth',block:'start'});},250);},
+    'voir tout':nxpShowAll,'voir tout →':nxpShowAll,
     'accueil':function(){closeDrawerNow();window.scrollTo({top:0,behavior:'smooth'});},
     'toutes les catégories':EVT('nexus:open-menu'),
     'devenir vendeur':REG('vendor'),'vendre sur nexus':REG('vendor'),
