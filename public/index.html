@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
@@ -32164,14 +32164,14 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     } catch(_) {}
   })(); }, []);
   const addToCart = (product, quantity = 1) => {
-    if (!product || product.stock <= 0) {
+    if (!product || (product.stock != null && product.stock <= 0)) {
       addToast("\u274C Ce produit est en rupture de stock", "error");
       return;
     }
     // Vérifier que la quantité demandée ne dépasse pas le stock disponible
     const alreadyInCart = cart.find(i => i.id === product.id);
     const totalQty = (alreadyInCart?.quantity || 0) + quantity;
-    if (totalQty > product.stock) {
+    if (product.stock != null && totalQty > product.stock) {
       addToast(`\u26A0\uFE0F Stock limité — seulement ${product.stock} disponible${product.stock > 1 ? 's' : ''}${alreadyInCart ? ` (${alreadyInCart.quantity} déjà dans le panier)` : ''}`, "warning", 5000);
       return;
     }
@@ -32421,7 +32421,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   // ── Catalogue unifié : Produits vendeurs + Annonces Express ──────────────
   const allItems = React.useMemo(() => {
     // Fusionner produits en stock + annonces express actives
-    const vendorProds = products.filter(p => p.stock > 0);
+    const vendorProds = products.filter(p => p.stock == null || p.stock > 0);
     // Dédupliquer les annonces express (éviter doublons si rechargement)
     const axById = {};
     axAnnonces.forEach(a => { axById[a.id] = a; });
@@ -32967,19 +32967,19 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             ),
             React.createElement('p', { style: { marginBottom: '1.5rem', lineHeight: '1.8', color: 'var(--text-secondary)' } }, selectedProduct.description),
             React.createElement('div', { className: 'mb-2' },
-              React.createElement('span', { className: `badge ${selectedProduct.stock > 10 ? 'badge-success' : selectedProduct.stock > 0 ? 'badge-warning' : 'badge-danger'}` },
-                selectedProduct.stock > 0 ? `${selectedProduct.stock} en stock` : 'Rupture de stock'
+              React.createElement('span', { className: `badge ${(selectedProduct.stock == null || selectedProduct.stock > 10) ? 'badge-success' : selectedProduct.stock > 0 ? 'badge-warning' : 'badge-danger'}` },
+                selectedProduct.stock == null ? 'En stock' : selectedProduct.stock > 0 ? `${selectedProduct.stock} en stock` : 'Rupture de stock'
               )
             ),
             // [DEVIS LIVRAISON] Estimation instantanée selon la ville
             React.createElement(DeliveryEstimate, { product: selectedProduct }),
             // [UX #5] Sélecteur de quantité
-            selectedProduct.stock > 0 && React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' } },
+            (selectedProduct.stock == null || selectedProduct.stock > 0) && React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' } },
               React.createElement('span', { style: { fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-secondary)' } }, 'Quantité :'),
               React.createElement('div', { className: 'qty-selector' },
                 React.createElement('button', { onClick: () => setModalQty(q => Math.max(1, q - 1)), disabled: modalQty <= 1 }, '−'),
                 React.createElement('span', null, modalQty),
-                React.createElement('button', { onClick: () => setModalQty(q => Math.min(q + 1, selectedProduct.stock)), disabled: modalQty >= selectedProduct.stock }, '+')
+                React.createElement('button', { onClick: () => setModalQty(q => Math.min(q + 1, selectedProduct.stock ?? 9999)), disabled: selectedProduct.stock != null && modalQty >= selectedProduct.stock }, '+')
               ),
               React.createElement('span', { style: { fontSize: '0.82rem', color: 'var(--text-secondary)' } }, `= ${formatPrice(selectedProduct.price * modalQty)}`)
             ),
@@ -45940,4 +45940,5 @@ else{setTimeout(checkInit,400);}
 
 </body>
 </html>
+
 
