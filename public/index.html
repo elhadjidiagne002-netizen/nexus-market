@@ -2581,6 +2581,14 @@
   }
   /* Tiroir : fond blanc forcé pour les éléments de nav */
   #nxp-drawer .drawer-panel { background-color: #fff; }
+  /* Widget langue : au-dessus de la nav mobile sur smartphone */
+  @media (max-width: 640px) {
+    #nexus-lang-root > div {
+      bottom: 5rem !important;
+      right: auto !important;
+      left: 0.75rem !important;
+    }
+  }
 </style>
 
 </head>
@@ -32102,6 +32110,12 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     window.addEventListener('nexus:open-product', h);
     return () => window.removeEventListener('nexus:open-product', h);
   }, [products]);
+  // Ouvrir le panneau On Demand depuis n'importe où dans l'app
+  React.useEffect(() => {
+    const _od = () => setShowOnDemandPage(true);
+    window.addEventListener('nexus:open-on-demand', _od);
+    return () => window.removeEventListener('nexus:open-on-demand', _od);
+  }, []);
   const [compareList, setCompareList] = useState([]);
   const [showCompare, setShowCompare] = useState(false);
   const [homePromo, setHomePromo] = useState(null);
@@ -32399,10 +32413,10 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   // Fusionner catégories NEXUS fixes + catégories des produits existants (sans doublons)
   const allCats = ['all', ...new Set([...NEXUS_ALL_CATS, ...products.map(p => p.category).filter(Boolean)])].filter(Boolean);
 
-  const flashProducts = [...products].sort((a, b) => b.rating - a.rating).slice(0, 12);
-  const topRated     = [...products].sort((a, b) => b.rating - a.rating).slice(0, 10);
-  const newArrivals  = [...products].slice(-10).reverse();
-  const cheapest     = [...products].sort((a, b) => a.price - b.price).slice(0, 10);
+  const flashProducts = [...allItems].sort((a, b) => (b.rating||0) - (a.rating||0)).slice(0, 12);
+  const topRated     = [...allItems].sort((a, b) => (b.rating||0) - (a.rating||0)).slice(0, 10);
+  const newArrivals  = [...allItems].slice(-10).reverse();
+  const cheapest     = [...allItems].sort((a, b) => (a.price||0) - (b.price||0)).slice(0, 10);
 
   // ── Catalogue unifié : Produits vendeurs + Annonces Express ──────────────
   const allItems = React.useMemo(() => {
@@ -44883,7 +44897,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
     <!-- Category Bar -->
     <div class="flex items-center gap-lg border-t border-surface-container pt-3 scrolling-wrapper overflow-x-auto whitespace-nowrap text-sm font-semibold">
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">delivery_dining</span> Coursier Express</a>
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">two_wheeler</span> Course sur demande</a>
+      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">shopping_basket</span> On Demand</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Échange sans argent entre utilisateurs"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> Troc</a>
@@ -44917,7 +44931,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
     <div class="py-2 border-b border-surface-container">
       <p class="text-[.7rem] font-extrabold tracking-wide uppercase text-primary px-3.5 py-1 flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">hub</span> Services NEXUS</p>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">delivery_dining</span> Coursier à la demande</a>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">two_wheeler</span> Course sur demande</a>
+      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">shopping_basket</span> On Demand — liste de courses</a>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">handyman</span> NEXUS Pro — artisans proches</a>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">agriculture</span> Élevage &amp; produits locaux</a>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">storefront</span> Louma — le marché en ligne</a>
@@ -45413,7 +45427,7 @@ function syncAuthState(){
 /* Quand l'URL porte un filtre (recherche/catégorie/prix/produit), on laisse voir
    le catalogue React filtré dessous au lieu de couvrir avec l'overlay d'accueil. */
 function hasCatalogParams(){
-  try{var sp=new URLSearchParams(location.search);return !!(sp.get('q')||sp.get('cat')||sp.get('pmin')||sp.get('pmax')||sp.get('product'));}catch(e){return false;}
+  try{var sp=new URLSearchParams(location.search);return !!(sp.get('q')||sp.get('cat')||sp.get('pmin')||sp.get('pmax')||sp.get('product')||sp.get('see'));}catch(e){return false;}
 }
 function showProto(){
   var ov=document.getElementById('nx-proto-overlay');
@@ -45699,7 +45713,8 @@ function initProto(){
   var CAT=function(name){return function(){nav('/?cat='+encodeURIComponent(name));};};
   /* table : texte du lien (normalisé) → action */
   var ROUTES={
-    'coursier express':EVT('nexus:open-courier'),'coursier à la demande':EVT('nexus:open-courier'),'course sur demande':EVT('nexus:open-courier'),
+    'coursier express':EVT('nexus:open-courier'),'coursier à la demande':EVT('nexus:open-courier'),
+    'on demand':EVT('nexus:open-on-demand'),'on demand — liste de courses':EVT('nexus:open-on-demand'),
     'nexus pro':EVT('nexus:open-pros'),'nexus pro — artisans proches':EVT('nexus:open-pros'),'devenir artisan (nexus pro)':REG('pro'),
     'élevage & terroir':EVT('nexus:open-local-elevage'),'élevage & produits locaux':EVT('nexus:open-local-elevage'),'devenir éleveur / producteur':REG('breeder'),
     'troc':EVT('nexus:open-troc'),'nexus troc — échanger sans argent':EVT('nexus:open-troc'),
@@ -45710,6 +45725,8 @@ function initProto(){
     'louma — le marché en ligne':EVT('nexus:open-louma'),"j'en profite":EVT('nexus:open-louma'),
     'nexus stories — vidéos produit':EVT('nexus:open-stories'),
     'programme ambassadeur':function(){var u=window.__nexusCurrentUser;if(u&&u.id){evt('nexus:hide-public-home');setTimeout(function(){evt('nexus:goto-buyer-view','ambassador');},350);}else{evt('nexus:open-auth',{tab:'register'});}},
+    'voir tout':function(){try{history.pushState({},'','/?see=all');}catch(e){}hideProto();setTimeout(function(){var a=document.getElementById('all-products-anchor');if(a)a.scrollIntoView({behavior:'smooth',block:'start'});},250);},
+    'voir tout →':function(){try{history.pushState({},'','/?see=all');}catch(e){}hideProto();setTimeout(function(){var a=document.getElementById('all-products-anchor');if(a)a.scrollIntoView({behavior:'smooth',block:'start'});},250);},
     'accueil':function(){closeDrawerNow();window.scrollTo({top:0,behavior:'smooth'});},
     'toutes les catégories':EVT('nexus:open-menu'),
     'devenir vendeur':REG('vendor'),'vendre sur nexus':REG('vendor'),
