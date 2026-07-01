@@ -2652,6 +2652,24 @@
   /* Masque le contenu React sous l'overlay pendant le boot (évite tout flash même
      si l'overlay a de la transparence/latence de peinture). */
   html.nx-boot-home #root { visibility:hidden !important; }
+
+  /* ══ SPLASH DE DÉMARRAGE (anti-flash universel) ══
+     Couvre TOUT l'écran dès le 1er pixel (avant React) → aucun affichage de l'ancien
+     design (catalogue React transitoire, dashboard en cours de résolution auth, etc.).
+     Retiré par JS (nxHideSplash) quand la vraie vue est prête, ou après un délai max. */
+  #nx-splash {
+    position: fixed; inset: 0; z-index: 100000;
+    background: #006d40;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.25rem;
+    transition: opacity .35s ease;
+  }
+  #nx-splash img { height: 78px; width: auto; object-fit: contain; }
+  #nx-splash .nx-splash-spin {
+    width: 34px; height: 34px; border: 3px solid rgba(255,255,255,.28);
+    border-top-color: #fff; border-radius: 50%; animation: nxsplinspin .8s linear infinite;
+  }
+  @keyframes nxsplinspin { to { transform: rotate(360deg); } }
+  #nx-splash.nx-hidden { opacity: 0; pointer-events: none; }
 </style>
 <script>
 /* Boot anti-flash : décider AVANT le premier rendu si on affiche l'overlay tout de suite. */
@@ -2667,6 +2685,50 @@
 </head>
 <body>
     <a href="#main-content" class="skip-link">Aller au contenu principal</a>
+
+    <!-- ══ SPLASH anti-flash : couvre tout jusqu'à ce que la vraie vue soit prête ══ -->
+    <div id="nx-splash" aria-hidden="true" role="presentation">
+      <img src="/assets/nexus-logo.png" alt="NEXUS Market" style="filter:brightness(0) invert(1)" onerror="this.style.display='none'"/>
+      <div class="nx-splash-spin"></div>
+    </div>
+    <script>
+    /* Retrait du splash quand la VRAIE vue est prête, avec filet de sécurité (délai max). */
+    window.nxHideSplash = function(){
+      var s = document.getElementById('nx-splash');
+      if (!s || s.classList.contains('nx-hidden')) return;
+      s.classList.add('nx-hidden');
+      setTimeout(function(){ if (s && s.parentNode) s.parentNode.removeChild(s); }, 450);
+    };
+    (function(){
+      try{
+        var loggedIn = false; try{ var t=localStorage.getItem('nexus-auth-token'); loggedIn=!!(t&&t.length>20); }catch(_){}
+        var p = location.pathname; var homePath = (p==='/'||p==='/index.html'||p==='');
+        var ready = function(){
+          var root = document.getElementById('root');
+          var ov = document.getElementById('nx-proto-overlay');
+          if (ov && getComputedStyle(ov).display !== 'none') return true;             // overlay accueil (nouveau design) affiché
+          if (!root) return false;
+          if (root.querySelector('.main-layout, .courier-app, [class*="dashboard"]')) return true; // dashboard connecté monté
+          /* Connecté sur l'accueil : le catalogue public est TRANSITOIRE (avant le
+             dashboard) → on attend le dashboard/overlay, on ne révèle pas ce flash. */
+          if (loggedIn && homePath) return false;
+          /* Sinon (invité, ou page non-accueil comme /faq) : révéler dès qu'il y a du contenu. */
+          if (root.querySelector('.home-page') || root.children.length > 0) return true;
+          return false;
+        };
+        var tryHide = function(){ if (ready()){ window.nxHideSplash(); return true; } return false; };
+        if (!tryHide()) {
+          var obs = new MutationObserver(function(){ if (tryHide()) obs.disconnect(); });
+          var start = function(){ var r=document.getElementById('root'); if(r) obs.observe(r,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class']}); };
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+          /* L'overlay est un frère de #root : on re-teste aussi périodiquement au tout début. */
+          var tick=0, iv=setInterval(function(){ tick++; if (tryHide() || tick>40){ clearInterval(iv); } }, 100);
+        }
+        /* Filet de sécurité absolu : retrait au bout de 3,5 s quoi qu'il arrive. */
+        setTimeout(function(){ try{ window.nxHideSplash(); }catch(_){} }, 3500);
+      }catch(_){ try{ window.nxHideSplash(); }catch(e){} }
+    })();
+    </script>
 
     <div id="root"></div>
 
@@ -45590,6 +45652,8 @@ function showProto(){
   /* Le contrôle JS a pris le relais : on retire la classe de boot (l'overlay reste
      affiché via son display:block inline) → #root redevient visible sous l'overlay. */
   try{document.documentElement.classList.remove('nx-boot-home');}catch(_){}
+  /* Overlay accueil affiché = nouveau design prêt → retirer le splash. */
+  try{ if(window.nxHideSplash) window.nxHideSplash(); }catch(_){}
 }
 /* Active les emplacements AdSense de l'overlay quand il est VISIBLE (largeur réelle
    connue) — push une seule fois par <ins> (data-adsbygoogle-status). */
