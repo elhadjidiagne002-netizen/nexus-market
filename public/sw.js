@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v11"; // v11 (2026-07-01) → splash anti-flash durci (accueil : révèle SEULEMENT quand overlay/dashboard prêt) + invalidation cache
+const CACHE_NAME = "nexus-v12"; // v12 (2026-07-01) → panier ouvre même si état vide (resync storage) + invalidation cache
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────

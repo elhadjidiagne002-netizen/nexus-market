@@ -32399,7 +32399,14 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     setCurrentPage(1);
   }, [searchTerm, filterCategory, sortBy]);
   useEffect(() => {
-    if (cartTrigger > 0 && cart.length > 0) setShowCart(true);
+    if (cartTrigger <= 0) return;
+    // [FIX] Ouvrir le panier MÊME s'il semble vide (feedback), et resynchroniser
+    // depuis le stockage invité au cas où l'état React serait en retard.
+    let c = cart;
+    if (!c || c.length === 0) {
+      try { const saved = storage.get('guest_cart') || []; if (saved.length) { c = saved; setCart(saved); } } catch (_) {}
+    }
+    setShowCart(true);
   }, [cartTrigger]);
   // [UX #7] Restaurer le panier si l'utilisateur clique "Annuler" dans le toast
   useEffect(() => {
