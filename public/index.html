@@ -2641,7 +2641,28 @@
 
   /* Tableaux : entête surface claire */
   .data-table thead { background:#f3f3f6 !important; color:#3e4a41 !important; }
+
+  /* ══ ANTI-FLASH ANCIEN DESIGN ══
+     Visiteur non connecté sur l'accueil → l'overlay (nouveau design) est affiché
+     DÈS le 1er rendu, par-dessus #root, avant même que React ne monte le catalogue.
+     La classe .nx-boot-home est posée par le script de boot ci-dessous et retirée
+     par showProto() une fois le contrôle JS prêt. */
+  html.nx-boot-home #nx-proto-overlay { display:block !important; }
+  html.nx-boot-home body { overflow:hidden !important; }
+  /* Masque le contenu React sous l'overlay pendant le boot (évite tout flash même
+     si l'overlay a de la transparence/latence de peinture). */
+  html.nx-boot-home #root { visibility:hidden !important; }
 </style>
+<script>
+/* Boot anti-flash : décider AVANT le premier rendu si on affiche l'overlay tout de suite. */
+(function(){try{
+  var sp=new URLSearchParams(location.search);
+  var hasParams=!!(sp.get('q')||sp.get('cat')||sp.get('pmin')||sp.get('pmax')||sp.get('product')||sp.get('see'));
+  var p=location.pathname; var isHome=(p==='/'||p==='/index.html'||p==='');
+  var loggedIn=false; try{var t=localStorage.getItem('nexus-auth-token');loggedIn=!!(t&&t.length>20);}catch(_){}
+  if(isHome && !hasParams && !loggedIn){ document.documentElement.classList.add('nx-boot-home'); }
+}catch(e){}})();
+</script>
 
 </head>
 <body>
@@ -45558,7 +45579,7 @@ function hasCatalogParams(){
 }
 function showProto(){
   var ov=document.getElementById('nx-proto-overlay');
-  if(!ov) return;
+  if(!ov){ try{document.documentElement.classList.remove('nx-boot-home');}catch(_){} return; }
   if(hasCatalogParams()){hideProto();return;}
   ov.style.display='block';
   document.body.classList.add('nx-on-home');
@@ -45566,6 +45587,9 @@ function showProto(){
   syncCartCount();
   syncAuthState();
   nxpPushAds();
+  /* Le contrôle JS a pris le relais : on retire la classe de boot (l'overlay reste
+     affiché via son display:block inline) → #root redevient visible sous l'overlay. */
+  try{document.documentElement.classList.remove('nx-boot-home');}catch(_){}
 }
 /* Active les emplacements AdSense de l'overlay quand il est VISIBLE (largeur réelle
    connue) — push une seule fois par <ins> (data-adsbygoogle-status). */
@@ -45579,6 +45603,9 @@ function nxpPushAds(){
   }, 900);
 }
 function hideProto(){
+  /* Retirer la classe de boot AVANT de masquer : sinon le CSS !important forcerait
+     l'overlay visible et #root resterait caché. */
+  try{document.documentElement.classList.remove('nx-boot-home');}catch(_){}
   var ov=document.getElementById('nx-proto-overlay');
   if(!ov) return;
   ov.style.display='none';
@@ -46143,11 +46170,17 @@ window.addEventListener('nexus:cart-updated', function(e){
 
 /* Vérification initiale — si home-page est le vue active au chargement */
 function checkInit(){
+  /* Boot anti-flash : overlay déjà forcé visible (visiteur non connecté sur l'accueil)
+     → on l'initialise sans attendre le rendu React. */
+  if(document.documentElement.classList.contains('nx-boot-home')){showProto();return;}
   if(document.querySelector('#root .home-page')){showProto();return;}
   if(!document.querySelector('#root [class*="dashboard"]')&&!document.querySelector('#root .vendor-dashboard')&&!document.querySelector('#root .buyer-dashboard')){
     setTimeout(function(){if(document.querySelector('#root .home-page'))showProto();},600);
   }
 }
+/* Boot immédiat : si le script de boot a forcé l'overlay, l'initialiser TOUT DE SUITE
+   (avant même le rendu React) pour éliminer tout flash. */
+try{ if(document.documentElement.classList.contains('nx-boot-home')){ showProto(); } }catch(e){}
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',function(){setTimeout(checkInit,400);});}
 else{setTimeout(checkInit,400);}
 
@@ -46160,7 +46193,11 @@ else{setTimeout(checkInit,400);}
     var ov=document.getElementById('nx-proto-overlay');
     if(!ov) return;
     if(onHome && ov.style.display==='none') showProto();
-    if(!onHome && ov.style.display!=='none') hideProto();
+    /* Ne masquer QUE si React a monté une vraie vue NON-accueil (dashboard, catalogue
+       connecté…). Sinon (React pas encore monté au boot), on garde l'overlay affiché
+       → aucun flash de l'ancien design. */
+    var otherView=root.querySelector('.main-layout, .buyer-dashboard, .vendor-dashboard, .courier-app, [class*="dashboard"]');
+    if(!onHome && otherView && ov.style.display!=='none') hideProto();
   });
   obs.observe(root,{childList:true,subtree:true,attributes:false});
 })();
