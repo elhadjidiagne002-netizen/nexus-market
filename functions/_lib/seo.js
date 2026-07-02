@@ -77,6 +77,27 @@ export function renderListingPage(o) {
       seller: { '@type': 'Organization', name: o.vendorName || 'NEXUS Market Sénégal' },
     };
     if (o.priceValidUntil) offer.priceValidUntil = o.priceValidUntil;
+    // Politique site-wide (livraison + retour) → éligibilité fiches Google Merchant.
+    offer.shippingDetails = {
+      '@type': 'OfferShippingDetails',
+      shippingDestination: { '@type': 'DefinedRegion', addressCountry: 'SN' },
+      deliveryTime: {
+        '@type': 'ShippingDeliveryTime',
+        // Livraison réelle : 1-3 j Dakar, 3-7 j régions (plage nationale).
+        handlingTime: { '@type': 'QuantitativeValue', minValue: 0, maxValue: 1, unitCode: 'DAY' },
+        transitTime: { '@type': 'QuantitativeValue', minValue: 1, maxValue: 7, unitCode: 'DAY' },
+      },
+    };
+    offer.hasMerchantReturnPolicy = {
+      '@type': 'MerchantReturnPolicy',
+      applicableCountry: 'SN',
+      // Politique réelle : retour sous 30 jours, produit non ouvert,
+      // frais de retour à la charge de l'acheteur.
+      returnPolicyCategory: 'https://schema.org/MerchantReturnFiniteReturnWindow',
+      merchantReturnDays: 30,
+      returnMethod: 'https://schema.org/ReturnByMail',
+      returnFees: 'https://schema.org/ReturnShippingFees',
+    };
     product.offers = offer;
   }
   // AggregateRating uniquement si avis réels (Google pénalise les notes fictives/vides).
