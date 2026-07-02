@@ -220,7 +220,12 @@
 <script>
 const SB_URL = 'https://pqcqbstbdujzaclsiosv.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE';
-const sb = supabase.createClient(SB_URL, SB_KEY);
+// [FIX session partagée] Même storageKey que l'accueil (index.html) pour que la
+// session survive à la navigation dashboard ⇄ accueil (clic logo). Sans ça, le
+// client utilisait la clé Supabase par défaut → session invisible depuis "/".
+const sb = supabase.createClient(SB_URL, SB_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, storageKey: 'nexus-auth-token' },
+});
 
 const FCFA = (eur) => Math.round((eur||0) * 655.957).toLocaleString('fr-FR') + ' F';
 
@@ -415,12 +420,28 @@ async function init() {
   document.getElementById('kpiRating').classList.remove('skeleton');
 
   const prods = products || [];
+  // [UNIFORMISATION] Même présentation que les cartes produit de l'accueil
+  // (image contenue + zoom au survol, note étoiles, prix en primary, carte arrondie),
+  // mais avec les VRAIES données produit (pas les avis/vendeurs synthétiques de l'accueil)
+  // + infos utiles au vendeur (stock, badge Rupture).
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const stars = (n) => { let s=''; for (let i=0;i<5;i++){ s += `<span class="material-symbols-outlined text-[14px] ${i<n?'text-secondary':'text-outline-variant'}"${i<n?" style=\"font-variation-settings:'FILL' 1\"":''}>star</span>`; } return s; };
   document.getElementById('productsList').innerHTML = prods.length
     ? prods.map(p => {
         const img = p.image_url || (Array.isArray(p.images) && p.images[0]) || '';
-        return `<div class="bg-white rounded-xl border border-outline-variant overflow-hidden">
-          <div class="h-36 bg-surface-container-low flex items-center justify-center">${img ? `<img src="${img}" class="h-full w-full object-cover"/>` : '<span class="material-symbols-outlined text-on-surface-variant text-4xl">inventory_2</span>'}</div>
-          <div class="p-3"><p class="font-semibold text-sm truncate">${p.name||'Produit'}</p><p class="text-primary font-bold text-sm mt-0.5">${FCFA(p.price)}</p><p class="text-xs text-on-surface-variant mt-0.5">Stock : ${p.stock??'—'}</p></div>
+        const rating = Math.round(Number(p.rating) || 0);
+        const out = (p.stock ?? 0) <= 0;
+        return `<div class="nx-prodcard relative bg-white p-3 rounded-xl border border-outline-variant hover:shadow-md transition-all flex flex-col group">
+          <div class="relative h-36 flex items-center justify-center mb-2 overflow-hidden rounded-lg bg-surface-container-low">
+            ${img ? `<img src="${esc(img)}" alt="${esc(p.name||'Produit')}" loading="lazy" class="max-h-full w-full object-contain group-hover:scale-110 transition-transform"/>` : '<span class="material-symbols-outlined text-on-surface-variant text-4xl">inventory_2</span>'}
+            ${out ? '<span class="absolute top-2 left-2 bg-tertiary text-white text-[10px] font-bold px-2 py-0.5 rounded">Rupture</span>' : ''}
+          </div>
+          <h4 class="text-sm font-semibold truncate mb-1">${esc(p.name||'Produit')}</h4>
+          <div class="flex items-center gap-1 mb-1.5">${stars(rating)}<span class="text-[11px] text-on-surface-variant ml-0.5">${p.rating ? Number(p.rating).toFixed(1) : '—'}</span></div>
+          <div class="flex items-center justify-between mt-auto">
+            <p class="text-primary font-bold text-md">${FCFA(p.price)}</p>
+            <span class="text-[11px] text-on-surface-variant flex items-center gap-0.5"><span class="material-symbols-outlined text-[13px]">inventory_2</span>${p.stock ?? '—'}</span>
+          </div>
         </div>`;
       }).join('')
     : '<div class="col-span-full text-center text-on-surface-variant text-sm py-10"><span class="material-symbols-outlined text-4xl mb-2 block">inventory_2</span>Aucun produit actif.<br><button onclick="addProduct()" class="text-primary font-bold hover:underline mt-2 inline-block">Ajouter un produit</button></div>';
