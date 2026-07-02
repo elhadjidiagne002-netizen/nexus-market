@@ -181,12 +181,38 @@ export async function onRequest({ request, env }) {
   // 3. Mettre à jour la commande
   // [FIX] status ∈ {pending_payment,processing,in_transit,delivered,cancelled} :
   // 'payment_failed' n'est pas une valeur valide → 'cancelled' en cas d'échec.
-  await sbUpdate(env, 'orders', `id=eq.${encodeURIComponent(order_id)}`, {
-    status:         isPaid ? 'processing' : 'cancelled',
-    payment_status: isPaid ? 'paid' : 'failed',
-    payment_method: 'mobile',
-    updated_at:     new Date().toISOString(),
-  });
+  // [IDEMPOTENCE] L'IPN PayTech n'a pas d'anti-rejeu (hash api_key/secret constants)
+  // et peut être retenté → on ne traite le passage à 'paid' QU'UNE FOIS : condition
+  // `payment_status=neq.paid` + `return=representation` pour détecter la transition.
+  // Si 0 ligne mise à jour → commande déjà payée → on sort sans rejouer notif/email.
+  if (isPaid) {
+    const updRes = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/orders?id=eq.${encodeURIComponent(order_id)}&payment_status=neq.paid`,
+      {
+        method: 'PATCH',
+        headers: {
+          apikey: env.SUPABASE_SERVICE_KEY,
+          Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify({
+          status: 'processing', payment_status: 'paid', payment_method: 'mobile',
+          updated_at: new Date().toISOString(),
+        }),
+      }
+    );
+    const updated = await updRes.json().catch(() => []);
+    if (!Array.isArray(updated) || updated.length === 0) {
+      console.log('[PayTech IPN] Commande déjà payée — IPN ignoré (idempotent).');
+      return jsonR({ ok: true, already: true });
+    }
+  } else {
+    await sbUpdate(env, 'orders', `id=eq.${encodeURIComponent(order_id)}`, {
+      status: 'cancelled', payment_status: 'failed', payment_method: 'mobile',
+      updated_at: new Date().toISOString(),
+    });
+  }
 
   // 4. Mettre à jour la session PayTech
   await sbUpdate(env, 'stripe_sessions', `session_id=eq.${encodeURIComponent(ref_command || '')}`, {

@@ -69,7 +69,12 @@ export async function onRequestPost(context) {
         //  - `paytech_token` n'existe pas → on stocke le token dans mobile_money_ref.
         //  - status ∈ {pending_payment,processing,...} ; payment_method ∈ {card,mobile}.
         const now = new Date().toISOString();
-        const { error: orderErr } = await sb
+        // [IDEMPOTENCE] L'IPN PayTech n'a pas d'anti-rejeu réel (hash api_key/secret
+        // constants) et PayTech peut retenter l'appel → on ne transitionne vers 'paid'
+        // QU'UNE FOIS (garde `.neq('payment_status','paid')`). Sans ça, les effets de
+        // bord ci-dessous (dont le CRÉDIT DES POINTS DE FIDÉLITÉ) seraient rejoués à
+        // chaque appel → multi-crédit. `.select('id')` nous dit si la transition a eu lieu.
+        const { data: updatedRows, error: orderErr } = await sb
           .from("orders")
           .update({
             status: "processing",
@@ -79,10 +84,14 @@ export async function onRequestPost(context) {
             processing_at: now,
             updated_at: now,
           })
-          .eq("id", ref_command);
+          .eq("id", ref_command)
+          .neq("payment_status", "paid")
+          .select("id");
 
         if (orderErr) {
           console.error("[PayTech IPN] Erreur mise à jour commande:", orderErr.message);
+        } else if (!updatedRows || updatedRows.length === 0) {
+          console.log("[PayTech IPN] Commande déjà payée — effets de bord ignorés (idempotent).");
         } else {
           // [FIX] La colonne s'appelle buyer_id dans le schéma orders
           // (et non user_id — cf. saveOrder dans index.html). On lit aussi `total`

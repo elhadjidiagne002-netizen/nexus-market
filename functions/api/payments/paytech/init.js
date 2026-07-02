@@ -9,6 +9,7 @@
 // ============================================================
 
 import { requireAuth, validatePaymentAmount, validateBoostAmount, validateProSubscription, validateStoryFee, validateFlashSale, validateB2bPriority } from '../../_lib/utils.js';
+import { rateLimit, clientIp, tooManyRequests } from '../../_lib/ratelimit.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -43,6 +44,11 @@ export async function onRequest({ request, env }) {
   const [user, authErr] = await requireAuth(request, env);
   if (authErr) return authErr;
   const uid = user.id;
+
+  // [SEC #4] Rate limiting : 10 initiations de paiement / min / utilisateur (repli IP)
+  // pour limiter le spam d'initiations et l'abus des appels sortants PayTech.
+  const rl = await rateLimit(env, `payinit:${uid || clientIp(request)}`, 10, 60);
+  if (!rl.allowed) return tooManyRequests(rl.resetAt, CORS);
 
   let body;
   try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
