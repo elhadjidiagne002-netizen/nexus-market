@@ -17,9 +17,9 @@ export function esc(s) {
 export function redactContact(s) {
   if (s == null) return s;
   return String(s)
-    .replace(/(?<!\d)(\+?221[\s.\-]?)?(7[05678]|33)[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}(?!\d)/g, '[contact via NEXUS]')
+    .replace(/(?<!\d)(\+?221[\s.-]?)?(7[05678]|33)[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}(?!\d)/g, '[contact via NEXUS]')
     .replace(/\b(?:wa\.me|t\.me)\/\S+/gi, '[contact via NEXUS]')
-    .replace(/\b(whats?app|telegram|whatsap)\b\s*[:#]?\s*\+?\d[\d\s.\-]{6,}/gi, '[contact via NEXUS]');
+    .replace(/\b(whats?app|telegram|whatsap)\b\s*[:#]?\s*\+?\d[\d\s.-]{6,}/gi, '[contact via NEXUS]');
 }
 
 // Sérialise un objet JSON-LD en bloc <script> sûr (échappe < > & pour éviter toute

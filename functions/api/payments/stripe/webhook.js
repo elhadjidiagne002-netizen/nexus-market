@@ -4,6 +4,9 @@
 import { adminClient } from '../../_lib/supabase.js';
 import { ok, err } from '../../_lib/response.js';
 
+// orders.total est en EUR → affichage FCFA = round(total × 655.957).
+const EUR_TO_FCFA = 655.957;
+
 export async function onRequest({ request, env }) {
   if (request.method !== 'POST') return err('POST requis', 405);
 
@@ -38,7 +41,7 @@ export async function onRequest({ request, env }) {
           const { data: ord } = await sb.from('orders').select('buyer_id,total').eq('id', orderId).single();
           if (ord?.buyer_id) await sb.from('notifications').insert({
             user_id: ord.buyer_id, type: 'order', title: 'Paiement confirmé',
-            message: `${(ord.total||0).toLocaleString('fr-FR')} FCFA reçu via Stripe`,
+            message: `${Math.round((Number(ord.total)||0) * EUR_TO_FCFA).toLocaleString('fr-FR')} FCFA reçu via Stripe`,
             read: false, link: `/?order=${orderId}` });
         }
         break;

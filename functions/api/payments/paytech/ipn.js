@@ -8,6 +8,9 @@
 
 import { sendEventEmail } from '../../_lib/notify.js';
 
+// orders.total est en EUR (convention tranchée) → affichage FCFA = round(total × 655.957).
+const EUR_TO_FCFA = 655.957;
+
 const jsonR = (d, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { 'Content-Type': 'application/json' } });
 
@@ -209,7 +212,7 @@ export async function onRequest({ request, env }) {
           user_id:    order.buyer_id,
           type:       'order',
           title:      '✅ Paiement confirmé',
-          message:    `Votre paiement de ${Number(order.total).toLocaleString('fr-FR')} FCFA a été reçu.`,
+          message:    `Votre paiement de ${Math.round((Number(order.total) || 0) * EUR_TO_FCFA).toLocaleString('fr-FR')} FCFA a été reçu.`,
           link:       `/?order=${order_id}`,
           read:       false,
           created_at: new Date().toISOString(),
@@ -221,7 +224,7 @@ export async function onRequest({ request, env }) {
       await sendEventEmail(env, 'payment_received', order.buyer_email, {
         buyer_name: order.buyer_name || 'Client',
         order_id:   order_id,
-        total:      Number(order.total || 0).toLocaleString('fr-FR'),
+        total:      Math.round((Number(order.total) || 0) * EUR_TO_FCFA).toLocaleString('fr-FR'),
         _userId:    order.buyer_id || null,
         _orderId:   order_id,
       }).catch(e => console.warn('[PayTech IPN] email:', e.message));

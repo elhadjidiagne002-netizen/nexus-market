@@ -2,6 +2,10 @@
 // actuellement (le flux commande utilise /api/payments/paytech/ipn, le flux
 // mobile-money /functions/paytech-webhook). Conservé et rendu schéma-valide
 // par sécurité au cas où il serait câblé.
+
+// orders.total est en EUR → affichage FCFA = round(total × 655.957).
+const EUR_TO_FCFA = 655.957;
+
 async function sha256(str) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf))
@@ -21,7 +25,7 @@ async function notifyVendor(env, order) {
       user_id:  order.vendor_id,
       type:     "order",
       title:    "Nouvelle commande payee",
-      message:  `Commande #${order.id.slice(0, 8)} - ${order.buyer_name} - ${order.total} FCFA`,
+      message:  `Commande #${order.id.slice(0, 8)} - ${order.buyer_name} - ${Math.round((Number(order.total) || 0) * EUR_TO_FCFA).toLocaleString("fr-FR")} FCFA`,
       link:     `/?order=${order.id}`,
       read:     false,
     }),
@@ -43,7 +47,7 @@ async function sendBuyerConfirmation(env, order) {
       html:    `<h2>Merci pour votre commande !</h2>
                 <p>Bonjour ${order.buyer_name},</p>
                 <p>Votre paiement a bien ete recu.</p>
-                <p><strong>Montant :</strong> ${order.total?.toLocaleString("fr-FR")} FCFA</p>`,
+                <p><strong>Montant :</strong> ${Math.round((Number(order.total) || 0) * EUR_TO_FCFA).toLocaleString("fr-FR")} FCFA</p>`,
     }),
   }).catch(() => {});
 }

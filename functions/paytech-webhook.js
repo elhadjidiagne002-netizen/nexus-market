@@ -110,7 +110,9 @@ export async function onRequestPost(context) {
                 sendEventEmail(env, "payment_received", order.buyer_email, {
                   buyer_name: order.buyer_name || "Client",
                   order_id:   ref_command,
-                  total:      Number(order.total || item_price || 0).toLocaleString("fr-FR"),
+                  // order.total est en EUR → affichage FCFA = round(total × 655.957).
+                  // Repli sur item_price (déjà en FCFA, fourni par PayTech).
+                  total:      (order.total ? Math.round(Number(order.total) * EUR_TO_FCFA) : Number(item_price) || 0).toLocaleString("fr-FR"),
                   _userId:    order.buyer_id || null,
                   _orderId:   ref_command,
                 }).catch(e => console.warn("[PayTech IPN] email:", e.message))
@@ -138,8 +140,9 @@ export async function onRequestPost(context) {
             // Solution : appel direct au RPC Supabase avec la service key,
             // ce qui évite la couche HTTP et le problème d'authentification.
             if (order.total > 0) {
-              // total est en FCFA → conversion en EUR pour le calcul des points.
-              const amountEur = (Number(order.total) || 0) / EUR_TO_FCFA;
+              // orders.total est déjà en EUR (convention tranchée, cf. CLAUDE.md)
+              // → pas de conversion ; les points = EUR × POINTS_PER_EURO.
+              const amountEur = Number(order.total) || 0;
               context.waitUntil(
                 sb.rpc("add_loyalty_points", {
                   p_user_id: order.buyer_id,
