@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v12"; // v12 (2026-07-01) → panier ouvre même si état vide (resync storage) + invalidation cache
+const CACHE_NAME = "nexus-v13"; // v13 (2026-07-03) → PURGE cache : l'ancien index.html servi par intermittence sur réseau mobile faible masquait les correctifs de session (avatar/nav). Bump = suppression de nexus-v12 + re-précache frais de "/".
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────
