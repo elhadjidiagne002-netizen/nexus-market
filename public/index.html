@@ -6314,6 +6314,25 @@ async signOut() {
       throw err;
     }
   },
+  // [FIX MOBILE] Lit la session Supabase directement dans localStorage, SANS passer
+  // par getSession()/navigator.locks (qui peut se bloquer sur mobile après une
+  // navigation page→page). Retourne l'objet session si le token n'est pas expiré,
+  // sinon null. Pose aussi this._token pour les appels API immédiats.
+  _restoreFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem('nexus-auth-token');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const sess = (parsed && parsed.currentSession) || parsed; // v2 = objet direct, v1 = {currentSession}
+      if (!sess || !sess.access_token || !sess.user) return null;
+      const expMs = sess.expires_at ? Number(sess.expires_at) * 1000 : 0;
+      // Token expiré → on laisse le flux normal (refresh) gérer, pas de faux "connecté".
+      if (expMs && Date.now() >= expMs) return null;
+      this._token = sess.access_token;
+      this._refreshToken = sess.refresh_token || this._refreshToken;
+      return sess;
+    } catch (_) { return null; }
+  },
   async restoreSession() {
     // [FIX] Récupérer JWT depuis sessionStorage OU localStorage.
     // sessionStorage est réinitialisé à chaque rechargement ; localStorage persiste.
@@ -6344,7 +6363,17 @@ async signOut() {
       try {
         const { data } = await Promise.race([this._sb.auth.getSession(), timeout]);
         session = data?.session || null;
-      } catch (_) { return null; }
+      } catch (_) { /* getSession bloqué (lock) → repli localStorage ci-dessous */ }
+      // [FIX MOBILE] Sur smartphone, getSession() peut rester bloqué sur le verrou
+      // navigator.locks après une navigation page→page (dashboard → accueil), d'où une
+      // fausse déconnexion. Repli SANS verrou : on lit la session directement dans
+      // localStorage (nexus-auth-token) et on réhydrate le client en arrière-plan.
+      if (!session) {
+        session = this._restoreFromLocalStorage();
+        if (session) {
+          try { this._sb.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token || '' }).catch(() => {}); } catch (_) {}
+        }
+      }
       if (!session) return null;
       const uid = session.user.id;
       // _fetchProfile avec timeout 2s

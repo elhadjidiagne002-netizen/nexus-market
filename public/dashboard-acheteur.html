@@ -258,7 +258,26 @@ async function signOut() {
 }
 
 async function init() {
-  const { data: { session } } = await sb.auth.getSession();
+  // [FIX MOBILE] getSession() peut se bloquer sur navigator.locks après navigation
+  // page→page sur smartphone → repli sans verrou : lecture directe de nexus-auth-token.
+  let session = null;
+  try {
+    const _t = new Promise((_, r) => setTimeout(() => r(new Error('t')), 2500));
+    const { data } = await Promise.race([sb.auth.getSession(), _t]);
+    session = (data && data.session) || null;
+  } catch (_) {}
+  if (!session) {
+    try {
+      const _raw = localStorage.getItem('nexus-auth-token');
+      const _p = _raw ? (JSON.parse(_raw) || {}) : {};
+      const _s = _p.currentSession || _p;
+      const _exp = _s && _s.expires_at ? Number(_s.expires_at) * 1000 : 0;
+      if (_s && _s.access_token && _s.user && (!_exp || Date.now() < _exp)) {
+        session = _s;
+        try { sb.auth.setSession({ access_token: _s.access_token, refresh_token: _s.refresh_token || '' }).catch(() => {}); } catch (_) {}
+      }
+    } catch (_) {}
+  }
   if (!session) { window.location.href = '/?login=1'; return; }
   const user = session.user;
 

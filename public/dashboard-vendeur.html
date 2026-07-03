@@ -360,8 +360,30 @@ async function signOut() {
   window.location.href = '/';
 }
 
+// [FIX MOBILE] getSession() peut se bloquer sur navigator.locks après une navigation
+// page→page sur smartphone (fausse déconnexion). Repli sans verrou : lecture directe
+// de la session dans localStorage (nexus-auth-token) + réhydratation en arrière-plan.
+async function resilientGetSession() {
+  try {
+    const t = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 2500));
+    const { data } = await Promise.race([sb.auth.getSession(), t]);
+    if (data && data.session) return data.session;
+  } catch (_) {}
+  try {
+    const raw = localStorage.getItem('nexus-auth-token');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) || {};
+    const sess = parsed.currentSession || parsed;
+    if (!sess || !sess.access_token || !sess.user) return null;
+    const expMs = sess.expires_at ? Number(sess.expires_at) * 1000 : 0;
+    if (expMs && Date.now() >= expMs) return null;
+    try { sb.auth.setSession({ access_token: sess.access_token, refresh_token: sess.refresh_token || '' }).catch(() => {}); } catch (_) {}
+    return sess;
+  } catch (_) { return null; }
+}
+
 async function init() {
-  const { data: { session } } = await sb.auth.getSession();
+  const session = await resilientGetSession();
   if (!session) { window.location.href = '/?login=1'; return; }
   currentUser = session.user;
 
