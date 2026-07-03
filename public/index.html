@@ -14269,7 +14269,7 @@ const NexusMegaMenu = ({ user, inDashboard }) => {
         E('div', { style: { background: 'linear-gradient(135deg,var(--primary),var(--primary-light))', color: '#fff', padding: '14px' } },
           E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
             (user && user.id)
-              ? E('button', { onClick: () => { try { var r = user.role; var url = (r === 'vendor' || r === 'pro') ? '/dashboard-vendeur.html' : r === 'admin' ? '/dashboard-admin.html' : r === 'courier' ? '/dashboard-coursier.html' : '/dashboard-acheteur.html'; window.location.href = url; } catch (_) {} setOpen(false); }, title: 'Retour à mon tableau de bord', style: { background: 'rgba(255,255,255,.15)', border: 'none', color: '#fff', fontWeight: 800, cursor: 'pointer', borderRadius: 8, padding: '5px 10px', fontSize: '0.98rem', display: 'flex', alignItems: 'center', gap: 6 } },
+              ? E('button', { onClick: () => { try { window.dispatchEvent(new CustomEvent('nexus:hide-public-home')); } catch (_) {} setOpen(false); }, title: 'Retour à mon tableau de bord', style: { background: 'rgba(255,255,255,.15)', border: 'none', color: '#fff', fontWeight: 800, cursor: 'pointer', borderRadius: 8, padding: '5px 10px', fontSize: '0.98rem', display: 'flex', alignItems: 'center', gap: 6 } },
                   '👋 ' + String(user.name || 'Mon compte').split(' ')[0],
                   E('span', { style: { fontSize: '.68rem', opacity: .9, fontWeight: 600 } }, '· Tableau de bord ↗'))
               : E('strong', null, 'Menu NEXUS'),
@@ -14321,7 +14321,7 @@ const NexusMegaMenu = ({ user, inDashboard }) => {
           }, '🤝')
         )),
         sec((user && user.id) ? 'Mon espace' : 'Mon compte', E(React.Fragment, null,
-          (user && user.id) ? item('↩ Retour à mon tableau de bord', () => { var r = user.role; var url = (r === 'vendor' || r === 'pro') ? '/dashboard-vendeur.html' : r === 'admin' ? '/dashboard-admin.html' : r === 'courier' ? '/dashboard-coursier.html' : '/dashboard-acheteur.html'; window.location.href = url; }, '📊') : item('Se connecter / S’inscrire', () => emit('nexus:open-login'), '👤'),
+          (user && user.id) ? item('↩ Retour à mon tableau de bord', () => emit('nexus:hide-public-home'), '📊') : item('Se connecter / S’inscrire', () => emit('nexus:open-login'), '👤'),
           (user && user.id) && item('Mes livraisons', () => emit('nexus:open-my-deliveries'), '📦'),
           (user && user.id) && item('Messagerie', () => emit('nexus:open-messaging'), '💬'),
           item('Mon panier', () => emit('nexus:open-cart'), '🛒'),
@@ -46386,13 +46386,20 @@ else{setTimeout(checkInit,400);}
     if (el) { el.href = dashOf(u.role); return; }
     var a = document.createElement('a');
     a.id = 'nx-acct-avatar';
-    a.href = dashOf(u.role);
+    a.href = dashOf(u.role); // repli si l'app React n'est pas montée
     a.title = 'Mon tableau de bord';
     a.setAttribute('aria-label', 'Mon tableau de bord — ' + u.name);
     a.textContent = initials(u.name);
     a.style.cssText = 'position:fixed;top:9px;right:10px;z-index:99999;width:38px;height:38px;border-radius:50%;'
       + 'background:#006d40;color:#fff;font:800 14px/38px system-ui,-apple-system,sans-serif;text-align:center;'
       + 'text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid #fff;';
+    // Priorité : revenir au tableau de bord COMPLET (vue React interne) via l'event
+    // existant, plutôt que la page statique /dashboard-*.html (incomplète).
+    a.addEventListener('click', function(ev){
+      try {
+        if (window.__nexusCurrentUser) { ev.preventDefault(); window.dispatchEvent(new CustomEvent('nexus:hide-public-home')); }
+      } catch(e){}
+    });
     document.body.appendChild(a);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render); else render();
