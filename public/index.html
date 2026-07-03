@@ -5875,10 +5875,20 @@ const DataService = {
     const name  = meta.name   || email.split("@")[0] || "Utilisateur";
     const role  = meta.role   || "buyer";
     const avatar = meta.avatar || name.slice(0, 2).toUpperCase();
+    // [FIX MOBILE] Ce profil de REPLI est construit depuis les métadonnées auth quand
+    // _fetchProfile a échoué/timeout (fréquent sur mobile lent). NE PAS forcer
+    // status:'pending' pour un vendeur : ça déconnecte à tort un vendeur APPROUVÉ
+    // (grace 72h expirée) via vendorCanOperate. On réutilise le dernier statut connu
+    // mis en cache dans nexus_current_user, et on marque le profil comme incomplet.
+    let _cachedStatus = null, _cachedCreated = null;
+    try {
+      const _c = JSON.parse(localStorage.getItem('nexus_current_user') || 'null');
+      if (_c && _c.id === authUser.id) { _cachedStatus = _c.status || null; _cachedCreated = _c.created_at || _c.createdAt || null; }
+    } catch (_) {}
     const base = { id: authUser.id, email, name, role, avatar,
-      // Vendeurs en attente d'approbation admin ; acheteurs actifs immédiatement.
-      status: role === "vendor" ? "pending" : "active",
-      created_at: authUser.created_at || new Date().toISOString() };
+      status: _cachedStatus || (role === "vendor" ? "pending" : "active"),
+      created_at: _cachedCreated || authUser.created_at || new Date().toISOString(),
+      _incompleteProfile: true };
     // Restaurer tous les champs vendeur/livreur stockés dans user_metadata.
     // [FIX colonnes] On mappe explicitement vers les noms de COLONNES snake_case
     // de la table profiles. Les métadonnées peuvent arriver en camelCase
@@ -36129,7 +36139,10 @@ const App = ({ onUserChange }) => {
     // [GRACE 72H] Verrou central (connexion + session restaurée) : un vendeur non
     // approuvé dont la fenêtre de 72h est expiree ne peut plus entrer tant que
     // l'admin n'a pas validé. (Dans la fenêtre, l'accès reste autorisé.)
-    if (user && user.role === 'vendor' && !vendorCanOperate(user)) {
+    // [FIX MOBILE] Ne JAMAIS déconnecter sur un profil de repli incomplet (métadonnées
+    // auth, status non fiable) : sinon un vendeur approuvé est déconnecté à tort quand
+    // _fetchProfile a timeout (mobile lent). Le verrou ne s'applique qu'à un profil DB confirmé.
+    if (user && user.role === 'vendor' && !user._incompleteProfile && !vendorCanOperate(user)) {
       try { localStorage.removeItem('nexus_current_user'); } catch (_) {}
       try { if (DataService.signOut) DataService.signOut(); } catch (_) {}
       setCurrentUser(null); window.__nexusCurrentUser = null;
