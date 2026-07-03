@@ -35832,6 +35832,7 @@ const App = ({ onUserChange }) => {
     // localStorage pour que l'UI ne clignote pas "non connecté" puis "connecté".
     // Supabase confirmera (ou infirmera) la session quelques ms plus tard.
     try {
+      let _restored = false;
       const savedUser = localStorage.getItem('nexus_current_user');
       if (savedUser) {
         const parsed = JSON.parse(savedUser);
@@ -35839,6 +35840,28 @@ const App = ({ onUserChange }) => {
           setCurrentUser(parsed);
           window.__nexusCurrentUser = parsed;
           if (onUserChange) onUserChange(parsed);
+          _restored = true;
+        }
+      }
+      // [FIX MOBILE] Si aucun profil caché (nexus_current_user) mais une session
+      // Supabase valide existe (nexus-auth-token), reconstruire l'utilisateur DIRECTEMENT
+      // depuis le token — sans dépendre de getSession() qui peut se bloquer sur mobile.
+      // Sans ça : sur l'accueil, pas d'avatar, menu ☰ en mode invité, impossible de
+      // revenir au tableau de bord alors que la session est bien active.
+      if (!_restored) {
+        const _raw = localStorage.getItem('nexus-auth-token');
+        if (_raw) {
+          const _s = JSON.parse(_raw);
+          const _sess = (_s && _s.currentSession) || _s;
+          const _expMs = _sess && _sess.expires_at ? Number(_sess.expires_at) * 1000 : 0;
+          if (_sess && _sess.access_token && _sess.user && (!_expMs || Date.now() < _expMs)) {
+            const _prof = normalizeUser(DataService._buildProfileFromAuthUser(_sess.user));
+            if (_prof && _prof.id) {
+              setCurrentUser(_prof);
+              window.__nexusCurrentUser = _prof;
+              if (onUserChange) onUserChange(_prof);
+            }
+          }
         }
       }
     } catch(_) {}
