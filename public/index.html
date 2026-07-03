@@ -3268,7 +3268,7 @@ const NexusAPISubscribeForm = ({ onClose }) => {
           status: 'pending', payment_status: 'pending',
           user_id: DataService._user?.id || null,
         }).select('id,api_key').single();
-        if (error || !data) { alert('Erreur : ' + ((error && error.message) || 'inscription API')); setBusy(false); return; }
+        if (error || !data) { console.warn('[API sub] insert:', error && error.message); alert("Impossible de créer votre abonnement API pour le moment. Réessayez ou contactez le support."); setBusy(false); return; }
         subId = data.id; newKey = data.api_key || '';
       }
       const origin = window.location.origin;
@@ -3284,7 +3284,7 @@ const NexusAPISubscribeForm = ({ onClose }) => {
       if (initRes && initRes.redirect_url) { setApiKey(newKey); setTimeout(() => { window.location.href = initRes.redirect_url; }, 400); return; }
       // PayTech indisponible : demande enregistrée, activation après validation admin.
       setApiKey(newKey); setStep(3);
-    } catch(e) { alert('Erreur : ' + e.message); }
+    } catch(e) { console.warn('[API sub]', e && e.message); alert("Une erreur est survenue lors de l'inscription. Vérifiez votre connexion et réessayez."); }
     setBusy(false);
   };
 
@@ -12638,11 +12638,14 @@ const LocalPaymentModal = ({ amount, onSuccess, onCancel, addToast }) => {
     free:   { label: "Free Money",   color: "#DC0A15", icon: "fas fa-mobile-alt",  prefix: "76", desc: "Free Money"   },
   };
   const validatePhone = (p) => { const d = p.replace(/\D/g, ""); return d.length === 8 || d.length === 9; };
+  const [busy, setBusy] = useState(false);
   const handlePay = () => {
+    if (busy) return; // [UX] garde anti double-clic sur \u00ab Payer \u00bb
     if (!validatePhone(phone)) {
       addToast("Num\xE9ro invalide \u2014 format : " + PROVIDERS[method].prefix + " 123 45 67", "error");
       return;
     }
+    setBusy(true);
     onSuccess({ provider: method, phone: phone.replace(/\D/g, "") });
   };
   // Stubs pour compatibilité (utilisés dans le JSX existant ci-dessous)
@@ -12686,9 +12689,10 @@ const LocalPaymentModal = ({ amount, onSuccess, onCancel, addToast }) => {
       /* @__PURE__ */ React.createElement("button", {
         className: "btn btn-primary btn-block btn-lg",
         onClick: handlePay,
-        style: { background: PROVIDERS[method].color, borderColor: PROVIDERS[method].color }
+        disabled: busy,
+        style: { background: PROVIDERS[method].color, borderColor: PROVIDERS[method].color, opacity: busy ? 0.7 : 1 }
       },
-        /* @__PURE__ */ React.createElement("i", { className: "fas fa-external-link-alt" }),
+        /* @__PURE__ */ React.createElement("i", { className: busy ? "fas fa-spinner fa-spin" : "fas fa-external-link-alt" }),
         " Payer via PayTech — ", formatPrice(amount)
       ),
       /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-block mt-2", onClick: onCancel },
@@ -24810,6 +24814,12 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   };
 
   const updateOrderStatus = async (orderId, newStatus) => {
+    // [UX] Confirmation avant une annulation (action irréversible : restitue le
+    // stock, notifie l'acheteur). Même garde que les autres suppressions (troc/vidéo).
+    if (newStatus === "cancelled" && typeof confirm === "function" &&
+        !confirm("Annuler cette commande ? Action irréversible — le stock sera restitué et l'acheteur notifié.")) {
+      return;
+    }
     // Verrou anti-revert + update optimiste immédiat
     _pendingStatusUpdates.current.add(orderId);
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus, updated_at: new Date().toISOString() } : o));
@@ -36097,17 +36107,12 @@ const App = ({ onUserChange }) => {
       try { (window.__nexusToast || function(){})("Votre compte vendeur est en attente d'approbation par l'administrateur. Vous serez notifié dès validation.", "warning", 9000); } catch (_) {}
       return;
     }
-    // Transfert du panier invité vers le compte connecté
-    const guestCart = storage.get('guest_cart') || [];
-    if (guestCart.length > 0 && user.id) {
-      const userCart = storage.get(`cart_${user.id}`) || [];
-      const merged = [...userCart];
-      guestCart.forEach(gi => {
-        if (!merged.find(i => i.id === gi.id)) merged.push(gi);
-      });
-      storage.set(`cart_${user.id}`, merged);
-      storage.set('guest_cart', []);
-    }
+    // [FIX panier invité] La fusion panier invité → compte est gérée par loadData()
+    // (elle lit guest_cart, fusionne avec le panier SERVEUR de la table `carts`,
+    // persiste, puis ne vide guest_cart QU'APRÈS). L'ancien bloc ici écrivait
+    // uniquement dans cart_<id> *localStorage* PUIS vidait guest_cart immédiatement :
+    // si un panier serveur existait, getCart() l'écrasait et les articles invité
+    // étaient perdus. On NE touche donc PAS à guest_cart ici — loadData s'en charge.
 
     // Détecter 1er login GitHub → montrer GitHubRoleModal
     if (user.isNewGithubUser && !user._roleChosen) {

@@ -156,24 +156,36 @@ export async function validatePaymentAmount(env, { orderIds, uid, amountEur }) {
     return { ok: true, expectedEur: 0 };
   }
 
-  const maxDisc = Math.min(0.95, Math.max(0, parseFloat(env.PAY_MAX_DISCOUNT || '0.6')));
-  const floor = expectedEur * (1 - maxDisc);
-  // [FIX checkout 400] Le montant FACTURÉ dépasse légitimement orders.total :
-  // les frais de suivi WhatsApp (~200 FCFA) et les arrondis de conversion EUR↔XOF
-  // ne sont PAS stockés dans orders.total. L'ancien plafond +0,5 % rejetait donc
-  // des paiements valides (« Montant supérieur au total de la commande »).
-  // Le SUR-paiement n'est pas un vecteur de fraude contre la plateforme (au
-  // contraire du sous-paiement, borné strictement par `floor`). On tolère donc un
-  // dépassement modéré = 2 % + un buffer absolu couvrant les frais fixes même sur
-  // une petite commande. Configurable via PAY_FEE_TOLERANCE_EUR (défaut 2 €).
-  const feeTolEur = Math.max(0, parseFloat(env.PAY_FEE_TOLERANCE_EUR || '2'));
-  const ceil = expectedEur * 1.02 + feeTolEur;
-  if (amountEur > ceil) {
-    console.warn('[pay] montant > plafond toléré (frais/arrondis ?)', { amountEur, expectedEur, ceil });
+  // [SEC] Bornes du montant (logique pure extraite → testable, cf. paymentAmountBounds).
+  const bounds = paymentAmountBounds({
+    amountEur, expectedEur,
+    maxDisc: parseFloat(env.PAY_MAX_DISCOUNT || '0.6'),
+    feeTolEur: parseFloat(env.PAY_FEE_TOLERANCE_EUR || '2'),
+  });
+  if (!bounds.ok && bounds.reason === 'over') {
+    console.warn('[pay] montant > plafond toléré (frais/arrondis ?)', { amountEur, expectedEur, ceil: bounds.ceil });
     return { ok: false, status: 400, error: 'Montant supérieur au total de la commande' };
   }
-  if (amountEur < floor) return { ok: false, status: 400, error: 'Montant inférieur au total dû' };
+  if (!bounds.ok && bounds.reason === 'under') {
+    return { ok: false, status: 400, error: 'Montant inférieur au total dû' };
+  }
   return { ok: true, expectedEur };
+}
+
+// [SEC] Bornes PURES du montant payé (aucune I/O → testable unitairement) :
+//  - plancher = total × (1 − maxDisc) : bloque le SOUS-paiement (vecteur de fraude).
+//  - plafond  = total × 1.02 + feeTolEur : tolère frais de suivi + arrondis EUR↔XOF
+//    (le sur-paiement n'est pas une fraude contre la plateforme).
+// maxDisc borné à [0, 0.95], feeTolEur ≥ 0.
+// Retour : { ok:true, floor, ceil } | { ok:false, reason:'under'|'over', floor, ceil }
+export function paymentAmountBounds({ amountEur, expectedEur, maxDisc = 0.6, feeTolEur = 2 }) {
+  const md = Math.min(0.95, Math.max(0, Number(maxDisc) || 0));
+  const ft = Math.max(0, Number(feeTolEur) || 0);
+  const floor = expectedEur * (1 - md);
+  const ceil = expectedEur * 1.02 + ft;
+  if (amountEur > ceil) return { ok: false, reason: 'over', floor, ceil };
+  if (amountEur < floor) return { ok: false, reason: 'under', floor, ceil };
+  return { ok: true, floor, ceil };
 }
 
 // [BOOST] Valide le montant d'un paiement de boost contre le tarif CANONIQUE

@@ -10,7 +10,7 @@ test('redactContact masque les numéros sénégalais (mobiles)', () => {
   for (const n of ['77 123 45 67', '771234567', '+221 77 123 45 67', '77.123.45.67', '33 821 00 00']) {
     const out = redactContact(`Contactez-moi au ${n} svp`);
     assert.ok(out.includes('[contact via NEXUS]'), `devrait masquer: ${n}`);
-    assert.ok(!/\d{2}[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}/.test(out.replace('[contact via NEXUS]', '')), `numéro résiduel: ${n}`);
+    assert.ok(!/\d{2}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}/.test(out.replace('[contact via NEXUS]', '')), `numéro résiduel: ${n}`);
   }
 });
 
