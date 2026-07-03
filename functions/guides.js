@@ -16,6 +16,9 @@ export async function onRequest({ request, env }) {
     ['/guide/orange-money-vs-wave-senegal', '⚖️ Orange Money ou Wave : lequel choisir ?', 'Comparatif clair des deux services de paiement mobile : frais, couverture, sécurité et lequel prendre selon votre usage.'],
     ['/guide/acheter-smartphone-occasion-senegal', '📲 Acheter un smartphone d’occasion', 'Vérifier l’IMEI, tester la batterie et l’écran, éviter les téléphones bloqués et payer en sécurité.'],
     ['/guide/reussir-annonce-photos-prix-senegal', '✨ Réussir son annonce : photos & prix', 'Des photos qui inspirent confiance, un prix réaliste et une description honnête pour vendre vite.'],
+    ['/guide/eviter-arnaques-achats-en-ligne-senegal', '🛡️ Éviter les arnaques en ligne', 'Reconnaître une annonce frauduleuse, les réflexes de paiement sécurisé et que faire si on est victime d\'une arnaque.'],
+    ['/guide/vendre-artisanat-mode-senegal', '🎨 Vendre son artisanat et sa mode africaine', 'Boubous, bijoux, wax : comment photographier, fixer le prix, gérer les commandes sur mesure et expédier sans casse.'],
+    ['/guide/comprendre-frais-livraison-dakar', '📦 Frais de livraison à Dakar et au Sénégal', 'Tarifs par zone, délais, modes disponibles et quoi faire si le colis est perdu ou abîmé.'],
   ];
   const body = `
 <h1>Guides NEXUS Market</h1>
