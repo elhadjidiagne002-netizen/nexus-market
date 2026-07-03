@@ -131,7 +131,7 @@ export function renderListingPage(o) {
 <meta name="description" content="${esc(desc)}">
 <link rel="canonical" href="${esc(url)}">
 ${hreflangTags(url)}
-<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="robots" content="${o.noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large'}">
 <meta property="og:type" content="product">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(desc)}">

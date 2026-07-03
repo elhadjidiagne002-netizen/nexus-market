@@ -19,11 +19,14 @@ async function handle({ request, env, params }) {
   // [PRIX] products.price est stocké en EUR (le frontend l'affiche via ×EUR_TO_FCFA).
   const EUR_TO_FCFA = 655.957;
   const priceFcfa = p.price ? Math.round(Number(p.price) * EUR_TO_FCFA) : 0;
+  // [ADSENSE/SEO] Fiche de DÉMO (seed a0000001-… ou image placeholder) → noindex :
+  // on n'indexe pas de contenu factice (« faible valeur » AdSense/Google).
+  const isDemo = /^a0000001-/.test(String(p.id)) || /picsum\.photos|placehold\.co/i.test(p.image_url || '');
   const html = renderListingPage({
     origin, kind: 'produit', id: p.id, title: p.name, description: p.description,
     image: p.image_url, priceFcfa, category: p.category,
     rating: p.rating, reviewsCount: p.reviews_count,
-    inStock: (p.stock || 0) > 0, vendorName: p.vendor_name,
+    inStock: (p.stock || 0) > 0, vendorName: p.vendor_name, noindex: isDemo,
   });
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=600' },

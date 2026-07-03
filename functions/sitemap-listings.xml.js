@@ -28,7 +28,9 @@ async function handle({ request, env }) {
 
   // Produits actifs + annonces express + trocs + stories actifs + pros (NEXUS Pro).
   const [products, annonces, trocs, stories, pros] = await Promise.all([
-    sbGet(env, 'products?select=id,name,image_url,updated_at&active=eq.true&order=updated_at.desc&limit=5000'),
+    // [ADSENSE/SEO] Exclure les produits de DÉMO (seed UUID a0000001-…, images picsum/
+    // placehold) : ne pas présenter de contenu placeholder à Google (« faible valeur »).
+    sbGet(env, 'products?select=id,name,image_url,updated_at&active=eq.true&id=not.like.a0000001*&order=updated_at.desc&limit=5000'),
     sbGet(env, `annonces_express?select=id,category,city,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
     sbGet(env, `troc_listings?select=id,title,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
     sbGet(env, `stories?select=id,mux_playback_id,created_at&status=eq.active&order=created_at.desc&limit=5000`),
@@ -36,7 +38,10 @@ async function handle({ request, env }) {
   ]);
 
   const urls = [];
+  // Images de démo → produit placeholder, exclu de l'index.
+  const isPlaceholderImg = (u) => /picsum\.photos|placehold\.co|\/placeholder/i.test(u || '');
   for (const p of (products || [])) {
+    if (isPlaceholderImg(p.image_url)) continue;
     const loc = `${origin}/produit/${encodeURIComponent(p.id)}`;
     const img = p.image_url ? `\n    <image:image><image:loc>${xmlEscape(p.image_url)}</image:loc><image:title>${xmlEscape(p.name)}</image:title></image:image>` : '';
     urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(p.updated_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>${img}\n  </url>`);
