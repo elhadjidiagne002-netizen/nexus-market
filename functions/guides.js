@@ -13,6 +13,9 @@ export async function onRequest({ request, env }) {
     ['/guide/devenir-coursier-livreur-dakar', '🛵 Devenir coursier / livreur à Dakar', 'Prérequis, fonctionnement des courses géolocalisées, revenus et conseils pour livrer et gagner de l’argent.'],
     ['/guide/troc-echanger-objets-senegal', '🔄 Le troc : échanger sans argent', 'Échangez vos objets en bon état, évaluez un troc équilibré et sécurisez la remise.'],
     ['/guide/produits-locaux-terroir-senegal', '🇸🇳 Produits locaux & du terroir', 'Consommer sénégalais : pourquoi, quels produits, et comment trouver les producteurs proches.'],
+    ['/guide/orange-money-vs-wave-senegal', '⚖️ Orange Money ou Wave : lequel choisir ?', 'Comparatif clair des deux services de paiement mobile : frais, couverture, sécurité et lequel prendre selon votre usage.'],
+    ['/guide/acheter-smartphone-occasion-senegal', '📲 Acheter un smartphone d’occasion', 'Vérifier l’IMEI, tester la batterie et l’écran, éviter les téléphones bloqués et payer en sécurité.'],
+    ['/guide/reussir-annonce-photos-prix-senegal', '✨ Réussir son annonce : photos & prix', 'Des photos qui inspirent confiance, un prix réaliste et une description honnête pour vendre vite.'],
   ];
   const body = `
 <h1>Guides NEXUS Market</h1>
