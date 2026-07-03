@@ -6472,30 +6472,38 @@ async signOut() {
             callback(event, null);
             this._voluntarySignOut = false;
           } else {
-            // [WEBVIEW FIX] Déconnexion INVOLONTAIRE (TWA/WebView perd souvent la
-            // session en arrière-plan) → tenter de la récupérer via le refresh token
-            // persisté AVANT de déconnecter réellement l'utilisateur.
+            // [WEBVIEW/MOBILE FIX] Déconnexion INVOLONTAIRE (mobile/WebView perd souvent
+            // la session en arrière-plan ou lors d'un refresh lent). AVANT de déconnecter :
+            // 1) on lit le refresh token depuis la VRAIE source Supabase (localStorage
+            //    nexus-auth-token) — l'ancien code lisait 'nexus_refresh_token' (clé JWT
+            //    custom ABSENTE en mode Supabase pur) → rt toujours null → déconnexion à
+            //    tort sur mobile. 2) si une session locale valide existe encore, on IGNORE
+            //    l'événement (pas de déconnexion) même si le refresh échoue.
             const self = this;
-            let rt = null; try { rt = localStorage.getItem('nexus_refresh_token'); } catch (_) {}
+            const lsSess = this._restoreFromLocalStorage ? this._restoreFromLocalStorage() : null;
+            let rt = (lsSess && lsSess.refresh_token) || null;
+            if (!rt) { try { rt = localStorage.getItem('nexus_refresh_token'); } catch (_) {} }
+            const at = (lsSess && lsSess.access_token) || this._token || '';
+            const _keepIfLocalValid = function (reason) {
+              if (lsSess) { console.warn('[Session] SIGNED_OUT involontaire IGNORÉ (' + reason + ') — token local encore valide.'); return true; }
+              callback('SIGNED_OUT', null);
+              window.dispatchEvent(new CustomEvent('nexus:session-expired'));
+              return false;
+            };
             if (rt && this._sb && this._sb.auth && this._sb.auth.setSession) {
-              this._sb.auth.setSession({ access_token: this._token || '', refresh_token: rt })
+              this._sb.auth.setSession({ access_token: at, refresh_token: rt })
                 .then(function (res) {
                   const s = res && res.data && res.data.session;
                   if (s && s.access_token) {
                     self._saveTokens(s.access_token, s.expires_in || 3600, s.refresh_token || rt, 30 * 24 * 3600);
                     console.info('[Session] récupérée après SIGNED_OUT involontaire ✓');
                   } else {
-                    callback('SIGNED_OUT', null);
-                    window.dispatchEvent(new CustomEvent('nexus:session-expired'));
+                    _keepIfLocalValid('setSession sans session');
                   }
                 })
-                .catch(function () {
-                  callback('SIGNED_OUT', null);
-                  window.dispatchEvent(new CustomEvent('nexus:session-expired'));
-                });
+                .catch(function () { _keepIfLocalValid('setSession échoué'); });
             } else {
-              callback(event, null);
-              window.dispatchEvent(new CustomEvent('nexus:session-expired'));
+              _keepIfLocalValid('pas de refresh token');
             }
           }
         } else if (event === "TOKEN_REFRESHED" && session) {
