@@ -32,9 +32,12 @@ export default {
   async fetch(request, env) {
     const url    = new URL(request.url);
     const token  = url.searchParams.get('token');
-    const secret = env.NEXUS_WA_SECRET || 'nexus-wa-2026';
+    // [SEC 2026-07-03] Plus de secret en dur : si NEXUS_WA_SECRET (ou CRON_SECRET)
+    // n'est pas configuré, on refuse tout (fail-closed) au lieu d'exposer le token
+    // 'nexus-wa-2026' committé dans le repo.
+    const secret = env.NEXUS_WA_SECRET || env.CRON_SECRET;
 
-    if (token !== secret) {
+    if (!secret || token !== secret) {
       return new Response(JSON.stringify({ error: 'Non autorisé — ?token=requis' }), {
         status: 401, headers: { 'Content-Type': 'application/json' }
       });

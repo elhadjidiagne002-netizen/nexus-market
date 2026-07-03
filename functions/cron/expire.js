@@ -37,9 +37,10 @@ export default {
     // Sécuriser l'appel manuel avec un token
     const url    = new URL(request.url);
     const token  = url.searchParams.get('token');
-    const secret = env.NEXUS_WA_SECRET || 'nexus-wa-2026';
+    // [SEC 2026-07-03] Fail-closed : plus de fallback 'nexus-wa-2026' en dur.
+    const secret = env.NEXUS_WA_SECRET || env.CRON_SECRET;
 
-    if (token !== secret) {
+    if (!secret || token !== secret) {
       return new Response(JSON.stringify({ error: 'Non autorisé — ajouter ?token=votre_secret' }), {
         status: 401, headers: { 'Content-Type': 'application/json' }
       });
