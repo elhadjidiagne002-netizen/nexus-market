@@ -46357,6 +46357,64 @@ else{setTimeout(checkInit,400);}
 })();
 </script>
 
+<!-- [DIAG TEMPORAIRE] Diagnostic de session — s'active avec /?diag=1. À retirer après. -->
+<script>
+(function(){
+  try {
+    if (!/[?&]diag=1/.test(location.search)) return;
+    var lines = [];
+    var keys = [];
+    for (var i=0;i<localStorage.length;i++){ keys.push(localStorage.key(i)); }
+    lines.push('URL: ' + location.pathname);
+    lines.push('localStorage keys: ' + localStorage.length);
+    // clés d'auth
+    var authKeys = keys.filter(function(k){ return /auth-token|supabase|nexus_current_user|nexus_jwt|refresh/i.test(k); });
+    lines.push('--- clés auth ---');
+    authKeys.forEach(function(k){
+      var v = ''; try { v = localStorage.getItem(k) || ''; } catch(e){}
+      lines.push(k + ' : ' + v.length + ' car.');
+    });
+    if (authKeys.length === 0) lines.push('(AUCUNE clé auth trouvée)');
+    // détail nexus-auth-token
+    lines.push('--- nexus-auth-token ---');
+    try {
+      var raw = localStorage.getItem('nexus-auth-token');
+      if (!raw) { lines.push('ABSENT'); }
+      else {
+        var s = JSON.parse(raw); s = (s && s.currentSession) || s;
+        lines.push('access_token: ' + (s && s.access_token ? 'présent' : 'ABSENT'));
+        lines.push('refresh_token: ' + (s && s.refresh_token ? 'présent' : 'ABSENT'));
+        lines.push('user: ' + (s && s.user ? (s.user.email || s.user.id) : 'ABSENT'));
+        if (s && s.expires_at) {
+          var exp = Number(s.expires_at)*1000;
+          lines.push('expire: ' + new Date(exp).toLocaleString() + (Date.now()>=exp ? ' ❌ EXPIRÉ' : ' ✅ valide'));
+        }
+      }
+    } catch(e){ lines.push('erreur parse: ' + e.message); }
+    lines.push('--- nexus_current_user ---');
+    lines.push(localStorage.getItem('nexus_current_user') ? 'présent' : 'ABSENT');
+    lines.push('--- React ---');
+    lines.push('currentUser global: ' + (window.__nexusCurrentUser ? (window.__nexusCurrentUser.role + '/' + (window.__nexusCurrentUser.status||'')) : 'null'));
+
+    var box = document.createElement('pre');
+    box.textContent = lines.join('\n');
+    box.style.cssText = 'position:fixed;inset:8px;z-index:2147483647;background:#000;color:#0f0;font:12px/1.4 monospace;padding:12px;overflow:auto;border:2px solid #0f0;white-space:pre-wrap;word-break:break-all;';
+    var btn = document.createElement('button');
+    btn.textContent = 'Fermer';
+    btn.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483647;background:#0f0;color:#000;font-weight:bold;border:none;padding:8px 14px;border-radius:6px;';
+    btn.onclick = function(){ box.remove(); btn.remove(); };
+    // re-check après 3s (le temps que la session soit restaurée)
+    setTimeout(function(){
+      lines.push('--- après 3s ---');
+      lines.push('currentUser global: ' + (window.__nexusCurrentUser ? (window.__nexusCurrentUser.role + '/' + (window.__nexusCurrentUser.status||'')) : 'null'));
+      box.textContent = lines.join('\n');
+    }, 3000);
+    document.body.appendChild(box);
+    document.body.appendChild(btn);
+  } catch(e){}
+})();
+</script>
+
 </body>
 </html>
 
