@@ -235,6 +235,33 @@
          forçant une 2e initialisation plus tard → 2 clients en conflit → lock "nexus-auth-token" volé. -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"
             onerror="console.warn('[NEXUS] Supabase SDK non chargé')"></script>
+    <!-- Moteur A/B testing (localStorage, déterministe par nexus_ab_uid). Consommé par le
+         checkout, les cartes produit et l'onglet admin « Tests A/B ». AUPARAVANT window.nexusAB
+         n'était JAMAIS défini → tracking dormant + l'onglet admin plantait (register/setActive/
+         delete sans garde). Chargé avant l'app pour être prêt aux premiers appels. -->
+    <script>
+    (function(){
+      if (window.nexusAB) return;
+      var EXP_KEY='nexus_ab_experiments', LOG_KEY='nexus_ab_logs', UID_KEY='nexus_ab_uid';
+      function readJSON(k,d){ try{ var v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } }
+      function writeJSON(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+      function uid(){ var u=null; try{ u=localStorage.getItem(UID_KEY); }catch(e){} if(!u){ u=Date.now().toString(36)+Math.random().toString(36).slice(2,10); try{ localStorage.setItem(UID_KEY,u); }catch(e){} } return u; }
+      function hash(s){ var h=5381,i=s.length; while(i) h=(h*33)^s.charCodeAt(--i); return h>>>0; }
+      function experiments(){ return readJSON(EXP_KEY,{}); }
+      function saveExp(o){ writeJSON(EXP_KEY,o); }
+      function logs(){ return readJSON(LOG_KEY,[]); }
+      window.nexusAB = {
+        register: function(id,cfg){ if(!id) return; var all=experiments(); all[id]=Object.assign({ id:id,label:id,variants:['control','variant'],hypothesis:'',active:true,created_at:Date.now() }, all[id]||{}, cfg||{}); if(!Array.isArray(all[id].variants)||all[id].variants.length<2) all[id].variants=['control','variant']; saveExp(all); return all[id]; },
+        getVariant: function(id){ var e=experiments()[id]; if(!e||e.active===false||!Array.isArray(e.variants)||!e.variants.length) return e&&e.variants?e.variants[0]:'control'; return e.variants[hash(uid()+':'+id)%e.variants.length]; },
+        track: function(id,variant,kind){ if(!id||!variant) return; var l=logs(); l.push({ id:id,variant:variant,kind:(kind==='conversion'?'conversion':'exposure'),uid:uid(),t:Date.now() }); if(l.length>5000) l=l.slice(-4000); writeJSON(LOG_KEY,l); },
+        getStats: function(){ var all=experiments(),l=logs(),out=[]; Object.keys(all).forEach(function(id){ var e=all[id],stats={}; (e.variants||[]).forEach(function(v){ stats[v]={ exposures:0,conversions:0 }; }); l.forEach(function(r){ if(r.id!==id) return; if(!stats[r.variant]) stats[r.variant]={ exposures:0,conversions:0 }; if(r.kind==='conversion') stats[r.variant].conversions++; else stats[r.variant].exposures++; }); out.push({ id:e.id,label:e.label||e.id,hypothesis:e.hypothesis||'',active:e.active!==false,variants:e.variants,stats:stats }); }); return out.sort(function(a,b){ return (b.active?1:0)-(a.active?1:0); }); },
+        setActive: function(id,val){ var all=experiments(); if(all[id]){ all[id].active=!!val; saveExp(all); } },
+        delete: function(id){ var all=experiments(); delete all[id]; saveExp(all); writeJSON(LOG_KEY, logs().filter(function(r){ return r.id!==id; })); },
+        exportCSV: function(){ var l=logs(),rows=[['experiment','variant','kind','uid','timestamp']].concat(l.map(function(r){ return [r.id,r.variant,r.kind,r.uid,new Date(r.t).toISOString()]; })); var csv=rows.map(function(r){ return r.map(function(c){ return '"'+String(c).replace(/"/g,'""')+'"'; }).join(','); }).join('\n'); try{ var b=new Blob([csv],{type:'text/csv'}),u=URL.createObjectURL(b),a=document.createElement('a'); a.href=u; a.download='nexus_ab_logs.csv'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(u); },1000); }catch(e){} }
+      };
+      console.info('[NEXUS] A/B testing engine chargé ✅');
+    })();
+    </script>
     <!-- Migration localStorage → Supabase (one-shot, doit être chargé avant l'app) -->
     <!-- nexus_migrate.js / nexus_storage_supabase.js : fichiers absents, ignorés -->
     <!-- Stripe — non bloquant (facultatif, pas de race condition) -->

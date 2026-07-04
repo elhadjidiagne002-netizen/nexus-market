@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v18"; // v18 (2026-07-04) → PURGE cache : panneau admin Boosts (offrir/activer/prolonger/révoquer) + policy RLS products_admin_all. Bump = re-précache frais de "/".
+const CACHE_NAME = "nexus-v19"; // v19 (2026-07-04) → PURGE cache : audit admin lot 2 — moteur A/B nexusAB implémenté (onglet Tests A/B réparé + tracking rebranché). Bump = re-précache frais de "/".
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────
