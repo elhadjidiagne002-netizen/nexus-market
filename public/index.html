@@ -22888,6 +22888,189 @@ const PopupsAdminPanel = ({ addToast }) => {
 
 
 // ════════════════════════════════════════════════════════════════════════════
+// AdminBoostsPanel — Contrôle TOTAL des boosts produits (Admin → 🚀 Boosts)
+//   · Lister tous les boosts (actifs / en attente / tous)
+//   · OFFRIR un boost manuellement à n'importe quel produit (comp, 0 FCFA)
+//   · ACTIVER un boost payé en attente (Wave/OM sans callback)
+//   · RÉVOQUER / désactiver un boost actif
+//   · PROLONGER la durée d'un boost
+// Réconcilie products.is_boosted / boost_ends_at avec les boosts actifs restants.
+// ════════════════════════════════════════════════════════════════════════════
+const AdminBoostsPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const sb = (typeof DataService !== 'undefined') ? DataService._sb : null;
+  const [boosts, setBoosts]   = React.useState([]);
+  const [names, setNames]     = React.useState({});
+  const [loading, setLoading] = React.useState(true);
+  const [filter, setFilter]   = React.useState('active');
+  const [busy, setBusy]       = React.useState('');
+  // Offrir un boost
+  const [q, setQ]             = React.useState('');
+  const [results, setResults] = React.useState([]);
+  const [sel, setSel]         = React.useState(null);
+  const [gtype, setGtype]     = React.useState('boost_semaine');
+
+  const BOOST_TYPES = [
+    { id: 'top_3j',        label: 'TOP Express',        days: 3  },
+    { id: 'boost_semaine', label: 'Boost Semaine',      days: 7  },
+    { id: 'pro_mensuel',   label: 'Pro Mensuel',        days: 30 },
+    { id: 'category_top',  label: 'Tête de gondole cat.',days: 7  },
+  ];
+  const typeLabel = (t) => (BOOST_TYPES.find(x => x.id === t) || {}).label || t;
+  const daysOf    = (t) => (BOOST_TYPES.find(x => x.id === t) || {}).days || 7;
+  const FCFA = (n) => Number(n || 0).toLocaleString('fr-FR') + ' F';
+
+  const load = async () => {
+    setLoading(true);
+    if (!sb) { setLoading(false); addToast('Supabase non connecté', 'error'); return; }
+    try {
+      const { data } = await sb.from('product_boosts').select('*').order('created_at', { ascending: false }).limit(200);
+      const list = data || [];
+      setBoosts(list);
+      const ids = Array.from(new Set(list.map(b => b.product_id).filter(Boolean)));
+      if (ids.length) {
+        const { data: prods } = await sb.from('products').select('id,name').in('id', ids);
+        const m = {}; (prods || []).forEach(p => { m[p.id] = p.name; }); setNames(m);
+      }
+    } catch (e) { console.warn('[AdminBoosts]', e.message); addToast('Erreur chargement boosts', 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { load(); }, []);
+
+  // Réaligne products.is_boosted / boost_ends_at sur le boost actif le plus long restant.
+  const syncFlag = async (productId) => {
+    if (!sb || !productId) return;
+    try {
+      const { data } = await sb.from('product_boosts')
+        .select('ends_at').eq('product_id', productId).eq('active', true)
+        .order('ends_at', { ascending: false }).limit(1);
+      if (data && data.length) await sb.from('products').update({ is_boosted: true,  boost_ends_at: data[0].ends_at }).eq('id', productId);
+      else                     await sb.from('products').update({ is_boosted: false, boost_ends_at: null }).eq('id', productId);
+    } catch (_) {}
+  };
+
+  const activate = async (b) => {
+    setBusy(b.id);
+    const { error } = await sb.from('product_boosts').update({ active: true, payment_status: 'paid' }).eq('id', b.id);
+    if (error) { addToast('❌ ' + error.message, 'error'); setBusy(''); return; }
+    await syncFlag(b.product_id);
+    setBoosts(bs => bs.map(x => x.id === b.id ? { ...x, active: true, payment_status: 'paid' } : x));
+    addToast('✅ Boost activé', 'success'); setBusy('');
+  };
+  const revoke = async (b) => {
+    if (!window.confirm('Désactiver ce boost ?')) return;
+    setBusy(b.id);
+    const { error } = await sb.from('product_boosts').update({ active: false }).eq('id', b.id);
+    if (error) { addToast('❌ ' + error.message, 'error'); setBusy(''); return; }
+    await syncFlag(b.product_id);
+    setBoosts(bs => bs.map(x => x.id === b.id ? { ...x, active: false } : x));
+    addToast('🚫 Boost désactivé', 'info'); setBusy('');
+  };
+  const extend = async (b, days) => {
+    setBusy(b.id);
+    const base = Math.max(Date.now(), new Date(b.ends_at || Date.now()).getTime());
+    const ends = new Date(base + days * 86400000).toISOString();
+    const { error } = await sb.from('product_boosts').update({ ends_at: ends, active: true }).eq('id', b.id);
+    if (error) { addToast('❌ ' + error.message, 'error'); setBusy(''); return; }
+    await syncFlag(b.product_id);
+    setBoosts(bs => bs.map(x => x.id === b.id ? { ...x, ends_at: ends, active: true } : x));
+    addToast('⏱️ Boost prolongé de ' + days + 'j', 'success'); setBusy('');
+  };
+
+  const searchProducts = async (text) => {
+    setQ(text); setSel(null);
+    if (!sb || text.trim().length < 2) { setResults([]); return; }
+    try {
+      const { data } = await sb.from('products').select('id,name,vendor_id,vendor_name,category').ilike('name', '%' + text.trim() + '%').limit(8);
+      setResults(data || []);
+    } catch (_) { setResults([]); }
+  };
+  const grant = async () => {
+    if (!sel) { addToast('Choisissez un produit', 'warning'); return; }
+    setBusy('grant');
+    const now = new Date();
+    const ends = new Date(now.getTime() + daysOf(gtype) * 86400000).toISOString();
+    const row = {
+      product_id: String(sel.id), vendor_id: sel.vendor_id || null,
+      boost_type: gtype, price_fcfa: 0, started_at: now.toISOString(), ends_at: ends,
+      active: true, payment_method: 'admin_comp', payment_status: 'paid',
+      target_category: gtype === 'category_top' ? (sel.category || null) : null,
+    };
+    const { error } = await sb.from('product_boosts').insert([row]);
+    if (error) { addToast('❌ ' + error.message, 'error'); setBusy(''); return; }
+    await syncFlag(String(sel.id));
+    addToast('🎁 Boost offert à « ' + (sel.name || '') + ' » (' + daysOf(gtype) + 'j)', 'success');
+    setQ(''); setResults([]); setSel(null); setBusy(''); load();
+  };
+
+  const now = Date.now();
+  const isExpired = (b) => b.ends_at && new Date(b.ends_at).getTime() < now;
+  const shown = boosts.filter(b =>
+    filter === 'all' ? true
+    : filter === 'pending' ? b.payment_status === 'pending'
+    : /* active */ (b.active && !isExpired(b)));
+
+  const badge = (b) =>
+    b.payment_status === 'pending' ? E('span', { className: 'badge badge-warning' }, 'En attente')
+    : isExpired(b) ? E('span', { className: 'badge badge-secondary' }, 'Expiré')
+    : b.active ? E('span', { className: 'badge badge-success' }, 'Actif')
+    : E('span', { className: 'badge badge-secondary' }, 'Inactif');
+
+  return E('div', null,
+    E('div', { className: 'card-header', style: { marginBottom: '1rem' } },
+      E('h2', { className: 'section-title' }, E('i', { className: 'fas fa-rocket', style: { color: '#FDEE42', marginRight: 8 } }), 'Boosts — contrôle total'),
+      E('p', { style: { color: 'var(--text-secondary)', fontSize: '.85rem', margin: '.25rem 0 0' } },
+        'Offrir, activer, prolonger ou désactiver n\'importe quel boost produit.')
+    ),
+
+    // ── Offrir un boost ────────────────────────────────────────────────────────
+    E('div', { className: 'card', style: { marginBottom: '1rem', padding: '1rem 1.25rem' } },
+      E('div', { style: { fontWeight: 700, marginBottom: '.6rem' } }, '🎁 Offrir un boost (gratuit, comp admin)'),
+      E('div', { style: { position: 'relative', marginBottom: '.6rem' } },
+        E('input', { className: 'form-input', placeholder: 'Rechercher un produit par nom…', value: q, onChange: e => searchProducts(e.target.value) }),
+        (results.length > 0 && !sel) && E('div', { style: { position: 'absolute', zIndex: 5, background: '#fff', border: '1px solid var(--border)', borderRadius: 8, width: '100%', maxHeight: 220, overflowY: 'auto', boxShadow: '0 6px 18px rgba(0,0,0,.12)' } },
+          results.map(p => E('div', { key: p.id, onClick: () => { setSel(p); setResults([]); setQ(p.name); },
+            style: { padding: '.5rem .7rem', cursor: 'pointer', fontSize: '.85rem', borderBottom: '1px solid #f0f0f0' } },
+            E('strong', null, p.name), E('span', { style: { color: '#888' } }, ' · ' + (p.vendor_name || p.category || '')))))
+      ),
+      E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+        E('select', { className: 'form-select', style: { flex: '1 1 200px' }, value: gtype, onChange: e => setGtype(e.target.value) },
+          BOOST_TYPES.map(t => E('option', { key: t.id, value: t.id }, t.label + ' — ' + t.days + 'j'))),
+        E('button', { className: 'btn btn-primary', disabled: !sel || busy === 'grant', onClick: grant }, busy === 'grant' ? '…' : '🎁 Offrir le boost')),
+      sel && E('div', { style: { marginTop: 6, fontSize: '.8rem', color: 'var(--primary)' } }, '✓ Produit : ' + sel.name)
+    ),
+
+    // ── Filtres ──────────────────────────────────────────────────────────────────
+    E('div', { style: { display: 'flex', gap: 6, marginBottom: '.8rem', flexWrap: 'wrap' } },
+      [['active', 'Actifs'], ['pending', 'En attente'], ['all', 'Tous']].map(f =>
+        E('button', { key: f[0], className: 'btn btn-sm ' + (filter === f[0] ? 'btn-primary' : 'btn-secondary'), onClick: () => setFilter(f[0]) },
+          f[1] + ' (' + boosts.filter(b => f[0] === 'all' ? true : f[0] === 'pending' ? b.payment_status === 'pending' : (b.active && !isExpired(b))).length + ')')),
+      E('button', { className: 'btn btn-sm btn-secondary', style: { marginLeft: 'auto' }, onClick: load }, '↻ Rafraîchir')),
+
+    loading ? E('div', { style: { textAlign: 'center', padding: '2rem' } }, E('i', { className: 'fas fa-spinner fa-spin', style: { fontSize: '1.6rem', color: 'var(--primary)' } }))
+    : shown.length === 0 ? E('div', { style: { textAlign: 'center', color: '#999', padding: '2rem' } }, 'Aucun boost dans cette vue.')
+    : E('div', { style: { overflowX: 'auto' } },
+      E('table', { className: 'table', style: { width: '100%', fontSize: '.83rem' } },
+        E('thead', null, E('tr', null, ['Produit', 'Type', 'Statut', 'Fin', 'Prix', 'Actions'].map(h => E('th', { key: h }, h)))),
+        E('tbody', null, shown.map(b => E('tr', { key: b.id },
+          E('td', null, names[b.product_id] || E('span', { style: { color: '#999' } }, String(b.product_id).slice(0, 8) + '…')),
+          E('td', null, typeLabel(b.boost_type)),
+          E('td', null, badge(b)),
+          E('td', null, b.ends_at ? new Date(b.ends_at).toLocaleDateString('fr-FR') : '—'),
+          E('td', null, b.price_fcfa ? FCFA(b.price_fcfa) : (b.payment_method === 'admin_comp' ? '🎁 Offert' : '—')),
+          E('td', null,
+            (b.payment_status === 'pending') && E('button', { className: 'btn btn-sm btn-success', style: { marginRight: 4, marginBottom: 4 }, disabled: busy === b.id, onClick: () => activate(b) }, '✓ Activer'),
+            (b.active && !isExpired(b)) && E('button', { className: 'btn btn-sm btn-danger', style: { marginRight: 4, marginBottom: 4 }, disabled: busy === b.id, onClick: () => revoke(b) }, '🚫 Désactiver'),
+            E('button', { className: 'btn btn-sm btn-secondary', style: { marginRight: 4, marginBottom: 4 }, disabled: busy === b.id, onClick: () => extend(b, 7) }, '+7j'),
+            E('button', { className: 'btn btn-sm btn-secondary', style: { marginBottom: 4 }, disabled: busy === b.id, onClick: () => extend(b, 30) }, '+30j')
+          )
+        )))
+      ))
+  );
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
 // MonetizationConfigPanel — Tous les paramètres de monétisation en un seul endroit
 // Accessible via Admin → Config → 💰 Monétisation
 // Sauvegarde dans Supabase app_config via NexusAdminConfig
@@ -25156,6 +25339,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "ondemand_admin",   icon: "concierge-bell", label: "Commandes OnDemand" },
     { id: "insurance_leads",  icon: "car",            label: "🚗 Leads Assurance" },
     { id: "monetization", icon: "coins", label: "💰 Monétisation" },
+    { id: "boost_admin", icon: "rocket", label: "🚀 Boosts (gestion)" },
     { id: "validations",    icon: "user-check", label: "✅ Validations" },
     { id: "livraison_admin", icon: "truck", label: "🚛 NEXUS Livraison" },
     { id: "popups", icon: "comment-alt", label: "💬 Popups & Annonces" },
@@ -26572,6 +26756,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
   view === "broadcast" && React.createElement(AdminBroadcastPanel, { addToast }),
   view === "livraison_admin" && React.createElement(AdminLivraisonPanel, { addToast }),
   view === "monetization" && React.createElement(MonetizationConfigPanel, { addToast }),
+  view === "boost_admin" && React.createElement(AdminBoostsPanel, { addToast }),
   view === "popups"  && React.createElement(PopupsAdminPanel, { addToast }),
   view === "revenue" && React.createElement(RevenueAdminPanel, { orders, products, addToast }),
   view === "payouts" && (() => {
