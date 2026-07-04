@@ -14380,15 +14380,17 @@ const NexusMegaMenu = ({ user, inDashboard }) => {
           item('Toutes les catégories', () => go('/#/'), '🗂️')
         )),
         sec('Services NEXUS', E(React.Fragment, null,
-          item('Coursier à la demande', () => emit('nexus:open-courier'), '🛵'),
-          item('NEXUS Pro — ouvriers & artisans proches', () => emit('nexus:open-pros'), '🔧'),
-          item('NEXUS Élevage & produits locaux', () => emit('nexus:open-local-elevage'), '🐑'),
-          ((typeof window === 'undefined' || !window.NEXUS_MONET || window.NEXUS_MONET.rental_enabled !== false) &&
-            item('NEXUS Location — louer du matériel', () => emit('nexus:open-rental'), '🔑')),
-          item('Louma — le marché en ligne', () => emit('nexus:open-louma'), '🏪'),
-          item('NEXUS Troc — échanger sans argent', () => emit('nexus:open-troc'), '🔄'),
-          item('NEXUS Stories — vidéos produit', () => emit('nexus:open-stories'), '🎬'),
-          item('Tutoriels', () => emit('nexus:open-tutorials'), '🎓'),
+          (function(){ var mod = function(k){ return (typeof window==='undefined' || !window.NEXUS_MONET || window.NEXUS_MONET[k] !== false); };
+            return E(React.Fragment, null,
+              mod('mod_courier_enabled')  && item('Coursier à la demande', () => emit('nexus:open-courier'), '🛵'),
+              mod('mod_pros_enabled')     && item('NEXUS Pro — ouvriers & artisans proches', () => emit('nexus:open-pros'), '🔧'),
+              mod('mod_elevage_enabled')  && item('NEXUS Élevage & produits locaux', () => emit('nexus:open-local-elevage'), '🐑'),
+              (window.NEXUS_MONET ? window.NEXUS_MONET.rental_enabled !== false : true) && item('NEXUS Location — louer du matériel', () => emit('nexus:open-rental'), '🔑'),
+              mod('mod_louma_enabled')    && item('Louma — le marché en ligne', () => emit('nexus:open-louma'), '🏪'),
+              mod('mod_troc_enabled')     && item('NEXUS Troc — échanger sans argent', () => emit('nexus:open-troc'), '🔄'),
+              mod('mod_stories_enabled')  && item('NEXUS Stories — vidéos produit', () => emit('nexus:open-stories'), '🎬'),
+              mod('mod_tutorials_enabled')&& item('Tutoriels', () => emit('nexus:open-tutorials'), '🎓')
+            ); })(),
           item('Discuter sur Messenger', () => { try { var _m = NEXUS_CONFIG.messenger || {}; var _h = _m.username || _m.pageId; if (_h) window.open('https://m.me/' + _h, '_blank', 'noopener'); } catch (_) {} setOpen(false); }, '💬')
         )),
         sec('Catégories', NEXUS_MENU_CATS.map(([label, slug]) => item(label, () => go('/categorie/' + slug), '›'))),
@@ -33463,10 +33465,10 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       React.createElement('div', { className: 'cart-count' }, cart.reduce((s, i) => s + i.quantity, 0))
     ),
     // [UI] Boutons flottants repurposés : Wishlist → NEXUS Troc, Offre → NEXUS Stories
-    React.createElement('button', { className: 'floating-wishlist', title: 'NEXUS Troc — échanger sans argent', 'aria-label': 'NEXUS Troc', style: { background: 'linear-gradient(135deg,var(--primary),var(--primary-light))', color: '#fff', fontSize: '1.35rem' }, onClick: () => { try { window.dispatchEvent(new CustomEvent('nexus:open-troc')); } catch (_) {} } },
+    React.createElement('button', { className: 'floating-wishlist', 'data-nx-mod': 'mod_troc_enabled', title: 'NEXUS Troc — échanger sans argent', 'aria-label': 'NEXUS Troc', style: { background: 'linear-gradient(135deg,var(--primary),var(--primary-light))', color: '#fff', fontSize: '1.35rem' }, onClick: () => { try { window.dispatchEvent(new CustomEvent('nexus:open-troc')); } catch (_) {} } },
       React.createElement('span', { 'aria-hidden': 'true' }, '🔄')
     ),
-    React.createElement('button', { className: 'floating-offer', title: 'NEXUS Stories — vidéos produit', 'aria-label': 'NEXUS Stories', style: { background: 'var(--accent)', color: 'var(--primary)', fontSize: '1.35rem' }, onClick: () => { try { window.dispatchEvent(new CustomEvent('nexus:open-stories')); } catch (_) {} } },
+    React.createElement('button', { className: 'floating-offer', 'data-nx-mod': 'mod_stories_enabled', title: 'NEXUS Stories — vidéos produit', 'aria-label': 'NEXUS Stories', style: { background: 'var(--accent)', color: 'var(--primary)', fontSize: '1.35rem' }, onClick: () => { try { window.dispatchEvent(new CustomEvent('nexus:open-stories')); } catch (_) {} } },
       React.createElement('span', { 'aria-hidden': 'true' }, '🎬')
     ),
 
@@ -41122,6 +41124,7 @@ window.addEventListener('unhandledrejection', function(event) {
     var b = document.createElement('button');
     b.id = 'nexus-courier-fab';
     b.innerHTML = '🛵 Coursier';
+    b.setAttribute('data-nx-mod', 'mod_courier_enabled'); // masqué si l'admin coupe le module
     b.setAttribute('aria-label', 'Demander un coursier');
     b.style.cssText = 'position:fixed;bottom:10rem;left:1.25rem;z-index:9978;padding:10px 16px;border-radius:30px;background:#006d40;color:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600;box-shadow:0 4px 14px rgba(0,109,64,.35);font-family:inherit';
     b.addEventListener('click', function () { openModal(null); });
@@ -44109,6 +44112,7 @@ window.addEventListener('unhandledrejection', function(event) {
   function injectFab() {
     if (document.getElementById('nx-le-fab') || !document.body) return;
     var b = document.createElement('button'); b.id = 'nx-le-fab'; b.innerHTML = '🇸🇳🐑';
+    b.setAttribute('data-nx-mod', 'mod_elevage_enabled'); // masqué si l'admin coupe le module
     b.setAttribute('aria-label', 'Découvrir les produits locaux et l’élevage');
     b.setAttribute('title', 'Produits locaux 🇸🇳 & Élevage 🐑');
     b.addEventListener('click', open); document.body.appendChild(b);
@@ -44748,6 +44752,7 @@ window.addEventListener('unhandledrejection', function(event) {
   function injectFab() {
     if (document.getElementById('nx-pro-fab') || !document.body) return;
     var b = document.createElement('button'); b.id = 'nx-pro-fab'; b.innerHTML = '🔧';
+    b.setAttribute('data-nx-mod', 'mod_pros_enabled'); // masqué si l'admin coupe le module
     b.setAttribute('aria-label', 'Trouver un ouvrier / artisan professionnel près de moi');
     b.setAttribute('title', 'NEXUS Pro 🔧 — ouvriers & artisans proches');
     b.addEventListener('click', open); document.body.appendChild(b);
@@ -45819,14 +45824,14 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
     </div>
     <!-- Category Bar -->
     <div class="flex items-center gap-lg border-t border-surface-container pt-3 scrolling-wrapper overflow-x-auto whitespace-nowrap text-sm font-semibold">
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">delivery_dining</span> Coursier Express</a>
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">shopping_basket</span> On Demand</a>
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</a>
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</a>
+      <a data-nx-mod="mod_courier_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">delivery_dining</span> Coursier Express</a>
+      <a data-nx-mod="mod_ondemand_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">shopping_basket</span> On Demand</a>
+      <a data-nx-mod="mod_pros_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</a>
+      <a data-nx-mod="mod_elevage_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</a>
       <a data-nx-rental-link class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Louer du matériel (événementiel, BTP, électro…)" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">vpn_key</span> Location</a>
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Échange sans argent entre utilisateurs"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> Troc</a>
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">forum</span> Chat en direct</a>
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">smart_toy</span> Assistant IA</a>
+      <a data-nx-mod="mod_troc_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Échange sans argent entre utilisateurs"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> Troc</a>
+      <a data-nx-mod="mod_chat_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">forum</span> Chat en direct</a>
+      <a data-nx-mod="mod_assistant_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">smart_toy</span> Assistant IA</a>
       <a class="text-tertiary flex items-center gap-xs pb-2 hover:brightness-110 transition-all" href="#"><span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">bolt</span> Ventes Flash</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">add_box</span> Déposer une annonce</a>
     </div>
@@ -45854,14 +45859,14 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
     </div>
     <div class="py-2 border-b border-surface-container">
       <p class="text-[.7rem] font-extrabold tracking-wide uppercase text-primary px-3.5 py-1 flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">hub</span> Services NEXUS</p>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">delivery_dining</span> Coursier à la demande</a>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">shopping_basket</span> On Demand — liste de courses</a>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">handyman</span> NEXUS Pro — artisans proches</a>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">agriculture</span> Élevage &amp; produits locaux</a>
+      <a data-nx-mod="mod_courier_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">delivery_dining</span> Coursier à la demande</a>
+      <a data-nx-mod="mod_ondemand_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">shopping_basket</span> On Demand — liste de courses</a>
+      <a data-nx-mod="mod_pros_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">handyman</span> NEXUS Pro — artisans proches</a>
+      <a data-nx-mod="mod_elevage_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">agriculture</span> Élevage &amp; produits locaux</a>
       <a data-nx-rental-link class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px] text-primary w-5">vpn_key</span> NEXUS Location — louer du matériel</a>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">storefront</span> Louma — le marché en ligne</a>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">published_with_changes</span> NEXUS Troc — échanger sans argent</a>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">play_circle</span> NEXUS Stories — vidéos produit</a>
+      <a data-nx-mod="mod_louma_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">storefront</span> Louma — le marché en ligne</a>
+      <a data-nx-mod="mod_troc_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">published_with_changes</span> NEXUS Troc — échanger sans argent</a>
+      <a data-nx-mod="mod_stories_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">play_circle</span> NEXUS Stories — vidéos produit</a>
     </div>
     <div class="py-2 border-b border-surface-container">
       <p class="text-[.7rem] font-extrabold tracking-wide uppercase text-primary px-3.5 py-1 flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">grid_view</span> Catégories</p>
@@ -46174,13 +46179,13 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
 <!-- ══ WIDGETS BAS-GAUCHE ══ -->
 <div class="fixed left-6 z-[9979] flex flex-col items-start gap-3" style="bottom:80px">
   <div id="nxp-widgetStack" class="flex flex-col items-start gap-3 hidden">
-    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-courier'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">delivery_dining</span> Coursier Express</button>
-    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-pros'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</button>
-    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-local-elevage'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</button>
+    <button data-nx-mod="mod_courier_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-courier'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">delivery_dining</span> Coursier Express</button>
+    <button data-nx-mod="mod_pros_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-pros'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</button>
+    <button data-nx-mod="mod_elevage_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-local-elevage'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</button>
     <button data-nx-rental-link class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">vpn_key</span> Location</button>
-    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-troc'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> Troc</button>
-    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-public-chat'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">forum</span> Chat en direct</button>
-    <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-assistant'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">smart_toy</span> Assistant IA</button>
+    <button data-nx-mod="mod_troc_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-troc'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> Troc</button>
+    <button data-nx-mod="mod_chat_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-public-chat'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">forum</span> Chat en direct</button>
+    <button data-nx-mod="mod_assistant_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-assistant'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">smart_toy</span> Assistant IA</button>
     <button class="widget-item bg-white text-tertiary border border-tertiary px-4 py-2.5 rounded-full shadow-lg hover:bg-tertiary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{var f=document.getElementById('nxp-flashSales');if(f)f.scrollIntoView({behavior:'smooth',block:'center'});}catch(e){}"><span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">bolt</span> Ventes Flash</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-annonce'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">add_box</span> Déposer une annonce</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-accessibility'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">accessibility_new</span> Accessibilité</button>

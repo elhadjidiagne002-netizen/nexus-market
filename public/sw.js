@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v20"; // v20 (2026-07-04) → PURGE cache : lot 3 — panneau admin « Modules » (activer/désactiver chaque service) + gating central des events nexus:open-*. Bump = re-précache frais de "/".
+const CACHE_NAME = "nexus-v21"; // v21 (2026-07-04) → PURGE cache : masquage des entrées (menu/barre/widgets/tiroir/FABs) des services désactivés par l'admin (data-nx-mod). Bump = re-précache frais de "/".
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────
