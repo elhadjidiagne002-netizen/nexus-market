@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v14"; // v14 (2026-07-04) → PURGE cache : nouvelle verticale NEXUS Location 🔑 + correctifs sécurité. Bump = suppression de nexus-v13 + re-précache frais de "/" pour que les visiteurs récurrents (mobile) voient le nouvel index.html.
+const CACHE_NAME = "nexus-v15"; // v15 (2026-07-04) → PURGE cache : NEXUS Location pilotable par l'admin (toggle + prix min via Monétisation) + raccourcis (menu, barre services, widgets). Bump = re-précache frais de "/".
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────

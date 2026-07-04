@@ -14303,7 +14303,8 @@ const NexusMegaMenu = ({ user, inDashboard }) => {
           item('Coursier à la demande', () => emit('nexus:open-courier'), '🛵'),
           item('NEXUS Pro — ouvriers & artisans proches', () => emit('nexus:open-pros'), '🔧'),
           item('NEXUS Élevage & produits locaux', () => emit('nexus:open-local-elevage'), '🐑'),
-          item('NEXUS Location — louer du matériel', () => emit('nexus:open-rental'), '🔑'),
+          ((typeof window === 'undefined' || !window.NEXUS_MONET || window.NEXUS_MONET.rental_enabled !== false) &&
+            item('NEXUS Location — louer du matériel', () => emit('nexus:open-rental'), '🔑')),
           item('Louma — le marché en ligne', () => emit('nexus:open-louma'), '🏪'),
           item('NEXUS Troc — échanger sans argent', () => emit('nexus:open-troc'), '🔄'),
           item('NEXUS Stories — vidéos produit', () => emit('nexus:open-stories'), '🎬'),
@@ -22934,6 +22935,11 @@ const MonetizationConfigPanel = ({ addToast }) => {
     // B2B prioritaire
     b2b_priority_price:     2000,
 
+    // NEXUS Location 🔑 (vertical de location d'objets)
+    rental_enabled:         true,  // active/désactive toute la verticale Location (front)
+    rental_min_day_fcfa:    500,   // prix/jour minimum accepté à la publication (FCFA)
+    rental_commission_pct:  0,     // commission NEXUS sur la mise en relation (0 = lancement)
+
     // WhatsApp Premium
     wa_tracking_enabled:    true,
     wa_tracking_price:      200,   // FCFA par commande
@@ -23051,6 +23057,7 @@ const MonetizationConfigPanel = ({ addToast }) => {
     { id: 'commissions', label: 'Commissions',  icon: 'percent' },
     { id: 'boosts',      label: 'Boosts',        icon: 'bolt' },
     { id: 'flash',       label: 'Flash & B2B',   icon: 'fire' },
+    { id: 'rental',      label: 'Location',       icon: 'key' },
     { id: 'whatsapp',    label: 'WhatsApp',       icon: 'comment' },
     { id: 'ads',         label: 'Publicités',     icon: 'ad' },
     { id: 'api',         label: 'API Pro',        icon: 'code' },
@@ -23124,6 +23131,19 @@ const MonetizationConfigPanel = ({ addToast }) => {
         Field({ label: 'Prix réponse garantie 24h', k: 'b2b_priority_price', suffix: 'FCFA', hint: 'Payé par l\'acheteur avant envoi du devis' })
       })
     ),
+
+    rental: () => Section({ title: 'NEXUS Location 🔑', icon: 'key', children: E(React.Fragment, null,
+      Toggle({ label: 'Activer la verticale NEXUS Location', k: 'rental_enabled', hint: 'Si désactivé, les entrées (menu, barre de services, widgets) sont masquées et l\'overlay affiche « bientôt disponible ».' }),
+      E('div', { style: { padding: '0.5rem 0' } },
+        Row({ children: [
+          Field({ label: 'Prix / jour minimum', k: 'rental_min_day_fcfa', suffix: 'FCFA', hint: 'Refusé à la publication en dessous de ce montant.' }),
+          Field({ label: 'Commission mise en relation', k: 'rental_commission_pct', suffix: '%', hint: '0 = lancement gratuit. Indicatif (MVP : contact WhatsApp direct).' }),
+        ]})
+      ),
+      E('div', { style: { background: 'var(--color-background-secondary)', borderRadius: 8, padding: '0.75rem', fontSize: '0.82rem', color: 'var(--color-text-secondary)' } },
+        '🔑 MVP : annonce + mise en relation WhatsApp, caution réglée en direct entre loueur et locataire. Les annonces de location sont des produits (is_rental) → modérables depuis la gestion produits.'
+      )
+    )}),
 
     whatsapp: () => Section({ title: 'Suivi Premium WhatsApp', icon: 'comment', children: E(React.Fragment, null,
       Toggle({ label: 'Activer le suivi Premium WhatsApp au checkout', k: 'wa_tracking_enabled', hint: 'Si désactivé, la checkbox n\'apparaît pas dans le récapitulatif commande' }),
@@ -43807,6 +43827,37 @@ window.addEventListener('unhandledrejection', function(event) {
   var CATS = ['Événementiel & réception', 'Outillage & BTP', 'Électroménager', 'Informatique & Photo', 'Sport & Loisirs', 'Transport & Mobilité', 'Mobilier & Déco', 'Autres'];
   var REGIONS = ['Dakar', 'Thiès', 'Saint-Louis', 'Kaolack', 'Ziguinchor', 'Tambacounda', 'Louga', 'Kolda', 'Fatick', 'Diourbel', 'Matam', 'Kaffrine', 'Kédougou', 'Sédhiou'];
 
+  // ── Pilotage admin (app_config.nexus_monetization_cfg, lecture publique) ──────
+  // rental_enabled = false → verticale masquée + overlay « bientôt ». rental_min_day_fcfa
+  // = prix/jour plancher à la publication. Défauts permissifs si la config n'a pas
+  // encore chargé (fail-open côté UX, jamais bloquant si Supabase indispo).
+  var CFG = { rental_enabled: true, rental_min_day_fcfa: 500 };
+  function isEnabled() { return CFG.rental_enabled !== false; }
+  function applyCfg(m) {
+    if (!m || typeof m !== 'object') return;
+    if (m.rental_enabled !== undefined) CFG.rental_enabled = m.rental_enabled !== false;
+    if (m.rental_min_day_fcfa !== undefined) CFG.rental_min_day_fcfa = parseInt(m.rental_min_day_fcfa, 10) || 0;
+    syncNavVisibility();
+  }
+  // Masque/affiche les entrées de nav statiques (liens marqués data-nx-rental-link).
+  function syncNavVisibility() {
+    try {
+      var on = isEnabled();
+      Array.prototype.forEach.call(document.querySelectorAll('[data-nx-rental-link]'), function (el) {
+        el.style.display = on ? '' : 'none';
+      });
+    } catch (e) {}
+  }
+  // Lit la config : window.NEXUS_MONET (déjà peuplé au boot) puis rafraîchit via app_config.
+  function loadCfg() {
+    try { if (window.NEXUS_MONET) applyCfg(window.NEXUS_MONET); } catch (e) {}
+    try {
+      if (window.NexusAdminConfig && NexusAdminConfig.get) {
+        NexusAdminConfig.get('nexus_monetization_cfg').then(applyCfg).catch(function () {});
+      }
+    } catch (e) {}
+  }
+
   // ── Data ────────────────────────────────────────────────────────────────────
   function loadRentals(cat) {
     var c = sb(); if (!c) return Promise.resolve([]);
@@ -43919,7 +43970,8 @@ window.addEventListener('unhandledrejection', function(event) {
       if (!u || !u.id) { toast('Connectez-vous pour proposer un objet à la location.'); try { window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'login' } })); } catch (_) {} return; }
       var name = nameI.value.trim(), cat = catI.value, pd = parseInt(pdI.value, 10);
       if (!name || !cat) { toast('Objet et catégorie requis.'); return; }
-      if (!pd || pd < 100) { toast('Prix/jour invalide (min 100 FCFA).'); return; }
+      var minDay = CFG.rental_min_day_fcfa || 100;
+      if (!pd || pd < minDay) { toast('Prix/jour invalide (min ' + fcfa(minDay) + ').'); return; }
       if (!window.DataService || !DataService.saveProduct) { toast('Service indisponible, réessayez.'); return; }
       var specs = {
         category: cat,
@@ -44004,7 +44056,18 @@ window.addEventListener('unhandledrejection', function(event) {
     });
     return ov;
   }
-  function open() { buildOverlay(); ov.classList.add('open'); switchTab('browse'); paint(); }
+  function open() {
+    buildOverlay(); ov.classList.add('open');
+    if (!isEnabled()) {
+      ov.querySelector('.nx-le-tabs').style.display = 'none';
+      ov.querySelector('.nx-le-body').innerHTML = '<div style="text-align:center;color:#555;padding:2.5rem 1rem"><div style="font-size:2.4rem">🔑</div><b style="display:block;margin:.6rem 0 .3rem;font-size:1.05rem">NEXUS Location — bientôt disponible</b><div style="font-size:.85rem;color:#888">Cette fonctionnalité est momentanément désactivée. Revenez très vite !</div></div>';
+      return;
+    }
+    // Réactivé après un affichage « bientôt » (body vidé) → reconstruire.
+    if (!ov.querySelector('#nx-loc-pane-browse')) { try { ov.remove(); } catch (e) {} ov = null; buildOverlay(); ov.classList.add('open'); }
+    var tabsEl = ov.querySelector('.nx-le-tabs'); if (tabsEl) tabsEl.style.display = '';
+    switchTab('browse'); paint();
+  }
   function close() { if (ov) ov.classList.remove('open'); }
 
   // ── Ouverture par événement (entrées : menu hamburger + barre de services) ───
@@ -44012,8 +44075,12 @@ window.addEventListener('unhandledrejection', function(event) {
   // Widgets, Coursier). On expose le module via le menu et la barre de catégories.
   window.addEventListener('nexus:open-rental', function (e) {
     open();
-    if (e && e.detail && e.detail.publish) setTimeout(function () { switchTab('publish'); }, 300);
+    if (isEnabled() && e && e.detail && e.detail.publish) setTimeout(function () { switchTab('publish'); }, 300);
   });
+  // Charge la config admin (activation + prix min), puis resynchronise les entrées
+  // de nav quand la config Supabase arrive (fail-open : visible par défaut).
+  loadCfg();
+  window.addEventListener('nexus:set-user', function () { setTimeout(loadCfg, 600); });
   console.info('[NEXUS] Module Location 🔑 chargé ✅');
 })();
 </script>
@@ -45415,7 +45482,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">shopping_basket</span> On Demand</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</a>
-      <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Louer du matériel (événementiel, BTP, électro…)" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">vpn_key</span> Location</a>
+      <a data-nx-rental-link class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Louer du matériel (événementiel, BTP, électro…)" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">vpn_key</span> Location</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Échange sans argent entre utilisateurs"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> Troc</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">forum</span> Chat en direct</a>
       <a class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">smart_toy</span> Assistant IA</a>
@@ -45450,7 +45517,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">shopping_basket</span> On Demand — liste de courses</a>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">handyman</span> NEXUS Pro — artisans proches</a>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">agriculture</span> Élevage &amp; produits locaux</a>
-      <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px] text-primary w-5">vpn_key</span> NEXUS Location — louer du matériel</a>
+      <a data-nx-rental-link class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px] text-primary w-5">vpn_key</span> NEXUS Location — louer du matériel</a>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">storefront</span> Louma — le marché en ligne</a>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">published_with_changes</span> NEXUS Troc — échanger sans argent</a>
       <a class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">play_circle</span> NEXUS Stories — vidéos produit</a>
@@ -45769,6 +45836,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-courier'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">delivery_dining</span> Coursier Express</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-pros'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> NEXUS Pro</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-local-elevage'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">agriculture</span> Élevage &amp; Terroir</button>
+    <button data-nx-rental-link class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">vpn_key</span> Location</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-troc'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> Troc</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-public-chat'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">forum</span> Chat en direct</button>
     <button class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-assistant'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">smart_toy</span> Assistant IA</button>
