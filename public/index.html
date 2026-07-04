@@ -262,6 +262,59 @@
       console.info('[NEXUS] A/B testing engine chargé ✅');
     })();
     </script>
+    <!-- Pilotage admin des MODULES/SERVICES : intercepteur central qui bloque l'ouverture
+         d'un service désactivé par l'admin (flags mod_*_enabled dans nexus_monetization_cfg,
+         exposés dans window.NEXUS_MONET au boot). Enregistré AVANT les modules (IIFE en fin
+         de fichier) → en phase capture, stopImmediatePropagation() empêche le module d'ouvrir.
+         Fail-open : si la config n'est pas chargée, tout reste actif. -->
+    <script>
+    (function(){
+      if (window.__NEXUS_MODULE_GATE__) return; window.__NEXUS_MODULE_GATE__ = true;
+      // event nexus:open-X  ->  clé de flag dans nexus_monetization_cfg
+      var MAP = {
+        'nexus:open-courier':'mod_courier_enabled',
+        'nexus:open-pros':'mod_pros_enabled',
+        'nexus:open-local-elevage':'mod_elevage_enabled',
+        'nexus:open-louma':'mod_louma_enabled',
+        'nexus:open-troc':'mod_troc_enabled',
+        'nexus:open-stories':'mod_stories_enabled',
+        'nexus:open-on-demand':'mod_ondemand_enabled',
+        'nexus:open-assistant':'mod_assistant_enabled',
+        'nexus:open-public-chat':'mod_chat_enabled',
+        'nexus:open-loyalty':'mod_loyalty_enabled',
+        'nexus:open-tutorials':'mod_tutorials_enabled'
+      };
+      var LABELS = {
+        'nexus:open-courier':'La livraison coursier','nexus:open-pros':'NEXUS Pro','nexus:open-local-elevage':'NEXUS Élevage',
+        'nexus:open-louma':'Louma','nexus:open-troc':'NEXUS Troc','nexus:open-stories':'NEXUS Stories',
+        'nexus:open-on-demand':'OnDemand','nexus:open-assistant':'L’assistant IA','nexus:open-public-chat':'Le chat communauté',
+        'nexus:open-loyalty':'Le programme fidélité','nexus:open-tutorials':'Les tutoriels'
+      };
+      function disabled(flagKey){ try{ return window.NEXUS_MONET && window.NEXUS_MONET[flagKey] === false; }catch(e){ return false; } }
+      function toast(msg){ try{ if(window.NexusUX && NexusUX.toast) return NexusUX.toast(msg,{bg:'#b45309'}); }catch(e){} try{ alert(msg); }catch(_){} }
+      Object.keys(MAP).forEach(function(evt){
+        window.addEventListener(evt, function(e){
+          if (disabled(MAP[evt])) {
+            e.stopImmediatePropagation();
+            if (e.preventDefault) e.preventDefault();
+            toast((LABELS[evt]||'Ce service') + ' est momentanément indisponible.');
+          }
+        }, true); // capture : s'exécute avant les listeners des modules
+      });
+      // Masque aussi les entrées de nav marquées data-nx-mod="<flagKey>" quand désactivées.
+      function syncNav(){
+        try{
+          document.querySelectorAll('[data-nx-mod]').forEach(function(el){
+            el.style.display = disabled(el.getAttribute('data-nx-mod')) ? 'none' : '';
+          });
+        }catch(e){}
+      }
+      window.addEventListener('nexus:monet-loaded', syncNav);
+      window.addEventListener('nexus:set-user', function(){ setTimeout(syncNav, 800); });
+      setTimeout(syncNav, 2500);
+      console.info('[NEXUS] Module gate chargé ✅');
+    })();
+    </script>
     <!-- Migration localStorage → Supabase (one-shot, doit être chargé avant l'app) -->
     <!-- nexus_migrate.js / nexus_storage_supabase.js : fichiers absents, ignorés -->
     <!-- Stripe — non bloquant (facultatif, pas de race condition) -->
@@ -4304,6 +4357,8 @@ const NEXUS_TRANSLATIONS = {
         if (m.wa_tracking_enabled !== undefined) NEXUS_CONFIG.wa_tracking_enabled = m.wa_tracking_enabled;
         if (m.commission_default  !== undefined) NEXUS_CONFIG.commission_default  = m.commission_default;
       }
+      // Notifie le module gate (masquage des entrées des services désactivés).
+      try { window.dispatchEvent(new CustomEvent('nexus:monet-loaded')); } catch (_) {}
     }).catch(function () {});
   } catch (_) {}
   NEXUS_CONFIG.apiUrl = "";  // verrouille le mode tout-Supabase
@@ -23148,6 +23203,19 @@ const MonetizationConfigPanel = ({ addToast }) => {
     rental_min_day_fcfa:    500,   // prix/jour minimum accepté à la publication (FCFA)
     rental_commission_pct:  0,     // commission NEXUS sur la mise en relation (0 = lancement)
 
+    // Modules / services activables par l'admin (gating central via window.NEXUS_MONET)
+    mod_courier_enabled:    true,
+    mod_pros_enabled:       true,
+    mod_elevage_enabled:    true,
+    mod_louma_enabled:      true,
+    mod_troc_enabled:       true,
+    mod_stories_enabled:    true,
+    mod_ondemand_enabled:   true,
+    mod_assistant_enabled:  true,
+    mod_chat_enabled:       true,
+    mod_loyalty_enabled:    true,
+    mod_tutorials_enabled:  true,
+
     // WhatsApp Premium
     wa_tracking_enabled:    true,
     wa_tracking_price:      200,   // FCFA par commande
@@ -23266,6 +23334,7 @@ const MonetizationConfigPanel = ({ addToast }) => {
     { id: 'boosts',      label: 'Boosts',        icon: 'bolt' },
     { id: 'flash',       label: 'Flash & B2B',   icon: 'fire' },
     { id: 'rental',      label: 'Location',       icon: 'key' },
+    { id: 'modules',     label: 'Modules',        icon: 'toggle-on' },
     { id: 'whatsapp',    label: 'WhatsApp',       icon: 'comment' },
     { id: 'ads',         label: 'Publicités',     icon: 'ad' },
     { id: 'api',         label: 'API Pro',        icon: 'code' },
@@ -23339,6 +23408,25 @@ const MonetizationConfigPanel = ({ addToast }) => {
         Field({ label: 'Prix réponse garantie 24h', k: 'b2b_priority_price', suffix: 'FCFA', hint: 'Payé par l\'acheteur avant envoi du devis' })
       })
     ),
+
+    modules: () => Section({ title: 'Modules & services du site', icon: 'toggle-on', children: E(React.Fragment, null,
+      E('div', { style: { background: 'var(--color-background-secondary)', borderRadius: 8, padding: '0.75rem', fontSize: '0.82rem', color: 'var(--color-text-secondary)', marginBottom: '0.75rem' } },
+        '🎛️ Activez ou coupez chaque service à l\'échelle du site. Désactivé = les points d\'entrée sont masqués et l\'ouverture est bloquée (message « momentanément indisponible »). Prend effet au rechargement des visiteurs.'),
+      [
+        ['mod_courier_enabled',   '🛵 Coursier à la demande'],
+        ['mod_pros_enabled',      '🔧 NEXUS Pro (artisans)'],
+        ['mod_elevage_enabled',   '🐏 NEXUS Élevage & produits locaux'],
+        ['mod_louma_enabled',     '🏪 Louma du vendredi'],
+        ['mod_troc_enabled',      '🔄 NEXUS Troc'],
+        ['mod_stories_enabled',   '🎬 NEXUS Stories'],
+        ['mod_ondemand_enabled',  '🛒 OnDemand (liste de courses)'],
+        ['mod_assistant_enabled', '🤖 Assistant IA'],
+        ['mod_chat_enabled',      '💬 Chat communauté'],
+        ['mod_loyalty_enabled',   '⭐ Programme fidélité'],
+        ['mod_tutorials_enabled', '🎓 Tutoriels'],
+        ['rental_enabled',        '🔑 NEXUS Location'],
+      ].map(function (m) { return E('div', { key: m[0] }, Toggle({ label: m[1], k: m[0] })); })
+    )}),
 
     rental: () => Section({ title: 'NEXUS Location 🔑', icon: 'key', children: E(React.Fragment, null,
       Toggle({ label: 'Activer la verticale NEXUS Location', k: 'rental_enabled', hint: 'Si désactivé, les entrées (menu, barre de services, widgets) sont masquées et l\'overlay affiche « bientôt disponible ».' }),
