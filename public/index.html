@@ -40232,6 +40232,19 @@ window.addEventListener('unhandledrejection', function(event) {
       return [];
     },
 
+    // [FALLBACK HORS-LIGNE] Coursiers proposables même si AUCUN n'est en ligne :
+    // proximité du DOMICILE déclaré (à défaut, dernière position connue) + coordonnées
+    // de contact. Utilisé quand nearby_couriers / le dispatch ne trouvent personne.
+    async nearbyCouriersOffline(lat, lng, radiusM, limit) {
+      if (this._sb && lat != null && lng != null) {
+        try {
+          var r = await this._sb.rpc('nearby_couriers_offline', { p_lat: lat, p_lng: lng, p_radius_m: radiusM || 30000, p_limit: limit || 8 });
+          if (!r.error && r.data) return r.data;
+        } catch (e) { console.warn('[Coursier] nearbyCouriersOffline:', e.message); }
+      }
+      return [];
+    },
+
     // Nombre de livreurs en ligne (RPC publique — renvoie juste un entier).
     // Sans coordonnées : total éligible au dispatch ; avec : dans le rayon.
     async onlineCouriersCount(lat, lng, radiusM) {
@@ -40469,18 +40482,21 @@ window.addEventListener('unhandledrejection', function(event) {
       return function () { stop = true; clearInterval(iv); };
     }, []);
 
-    // Quand aucun livreur en ligne → charger les coursiers inscrits (affichage contact)
+    // [FALLBACK PROXIMITÉ] Aucun coursier en ligne (ou aucun proche en ligne, ou la
+    // course revient "no_courier") → proposer les coursiers dont le DOMICILE (à défaut
+    // la dernière position connue) est proche du point de retrait, avec leurs coordonnées.
+    // Plusieurs propositions possibles, triées « en ligne d'abord » puis par distance.
     React.useEffect(function () {
-      if (onlineCount === null || onlineCount > 0 || !DataService._sb) return;
-      DataService._sb
-        .from('couriers')
-        .select('id,phone,vehicle_type,deliveries_done,rating_avg,profiles:user_id(first_name,last_name,city,district,email)')
-        .eq('status', 'active')
-        .order('deliveries_done', { ascending: false })
-        .limit(5)
-        .then(function (r) { if (r && r.data && r.data.length) setOfflineCouriers(r.data); })
-        .catch(function () {});
-    }, [onlineCount]);
+      if (!DataService.nearbyCouriersOffline) return;
+      var pc = coordsOf('pickup');
+      var need = (onlineCount === 0) || (nearby != null && nearby.length === 0) || (live && live.status === 'no_courier');
+      if (!need || !pc) { setOfflineCouriers([]); return; }
+      var cancelled = false;
+      DataService.nearbyCouriersOffline(pc.lat, pc.lng, 40000, 8).then(function (list) {
+        if (!cancelled) setOfflineCouriers(list || []);
+      });
+      return function () { cancelled = true; };
+    }, [onlineCount, pickup, pGeo, nearby, live && live.status]);
 
     // Suivi temps réel : tant que la course cherche un coursier, on fait avancer
     // la cascade (timeouts) et on détecte l'attribution.
@@ -40506,6 +40522,35 @@ window.addEventListener('unhandledrejection', function(event) {
 
     // ETA indicatif (min) : ~22 km/h moyenne moto Dakar + 4 min de prise en charge
     function etaMin(km) { return Math.max(5, Math.round((km / 22) * 60) + 4); }
+
+    // [FALLBACK] Rendu des coursiers proches (domicile/dernière position) à contacter
+    // en direct quand aucun n'est en ligne. Boutons Appel + WhatsApp par proposition.
+    function renderOfflineProposals(title) {
+      if (!offlineCouriers || !offlineCouriers.length) return null;
+      var aBtn = { padding: '.35rem .5rem', borderRadius: 7, textDecoration: 'none', fontSize: '.78rem', fontWeight: 700, flexShrink: 0 };
+      return E('div', { style: { padding: '.75rem .85rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, marginBottom: '.8rem' } },
+        E('p', { style: { fontSize: '.78rem', fontWeight: 700, color: '#b45309', marginBottom: '.5rem' } },
+          title || '🛵 Coursiers proches de chez vous — contactez-les directement :'),
+        offlineCouriers.map(function (c) {
+          var veh = { moto: '🛵', 'vélo': '🚲', voiture: '🚗', pied: '🚶' }[c.vehicle_type] || '🛵';
+          var wa = String(c.whatsapp || c.phone || '').replace(/\D/g, ''); if (wa.length === 9 && wa[0] === '7') wa = '221' + wa;
+          var tel = String(c.phone || c.whatsapp || '').replace(/\D/g, '');
+          var meta = [];
+          if (c.distance_km != null) meta.push('~' + c.distance_km + ' km' + (c.based_on === 'domicile' ? ' (domicile)' : ''));
+          if (c.zone) meta.push(c.zone);
+          if (c.deliveries_done) meta.push(c.deliveries_done + ' livr.');
+          return E('div', { key: c.courier_id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '.4rem .5rem', borderRadius: 8, marginBottom: '.35rem', background: '#fff', border: '1px solid #fde68a' } },
+            E('div', { style: { width: 34, height: 34, borderRadius: '50%', background: '#92400e', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0, fontSize: '.85rem' } }, (c.name || '?')[0].toUpperCase()),
+            E('div', { style: { flex: 1, minWidth: 0 } },
+              E('div', { style: { fontWeight: 600, fontSize: '.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, veh + ' ' + (c.name || 'Coursier') + (c.is_online ? ' 🟢' : '')),
+              E('div', { style: { fontSize: '.72rem', color: '#888' } }, meta.join(' · '))
+            ),
+            tel && E('a', { href: 'tel:' + tel, title: 'Appeler', style: Object.assign({ background: '#006d40', color: '#fff' }, aBtn) }, '📞'),
+            wa && E('a', { href: 'https://wa.me/' + wa, target: '_blank', rel: 'noopener', title: 'WhatsApp', style: Object.assign({ background: '#25D366', color: '#fff' }, aBtn) }, '💬')
+          );
+        })
+      );
+    }
 
     React.useEffect(function () {
       DataService.getDeliveryZones().then(setZones);
@@ -40643,6 +40688,9 @@ window.addEventListener('unhandledrejection', function(event) {
                 : 'Le coursier le plus proche est sollicité. S\'il refuse, on passe automatiquement au suivant.'),
             // Carte de suivi temps réel (Leaflet/OSM, gratuit)
             E('div', { ref: mapMount, className: 'nexus-map', style: { height: 240, marginBottom: '.9rem' } }),
+            // [FALLBACK] Aucun coursier attribué → proposer des coursiers proches à contacter en direct.
+            (live && live.status === 'no_courier') && E('div', { style: { textAlign: 'left' } },
+              renderOfflineProposals('🛵 En attendant, contactez un coursier proche de chez vous :')),
             // Fiche du coursier assigné (nom + réputation + contact)
             courierCard && courierCard.assigned && E('div', { style: { background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '.7rem .85rem', marginBottom: '.9rem', display: 'flex', alignItems: 'center', gap: 10, textAlign: 'left' } },
               E('div', { style: { width: 40, height: 40, borderRadius: '50%', background: '#006d40', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 } }, (courierCard.name || '?')[0].toUpperCase()),
@@ -40680,28 +40728,8 @@ window.addEventListener('unhandledrejection', function(event) {
           onlineCount > 0
             ? (onlineCount + ' livreur' + (onlineCount > 1 ? 's' : '') + ' en ligne en ce moment')
             : 'Aucun livreur en ligne pour l\'instant — votre demande sera proposée dès qu\'un livreur se connecte.'),
-        // Coursiers inscrits disponibles sur appel (affiché si aucun en ligne)
-        (onlineCount === 0 && offlineCouriers.length > 0) && E('div', { style: { padding: '.75rem 1.25rem', background: '#fffbeb', borderBottom: '1px solid #fde68a' } },
-          E('p', { style: { fontSize: '.78rem', fontWeight: 700, color: '#b45309', marginBottom: '.5rem' } }, '📋 Coursiers enregistrés — contactez-les directement :'),
-          offlineCouriers.map(function (c) {
-            var prof = c.profiles || {};
-            var name = ((prof.first_name || '') + ' ' + (prof.last_name || '')).trim() || 'Coursier';
-            var zone = prof.district || prof.city || '';
-            var phone = c.phone || '';
-            var email = prof.email || '';
-            var veh = { moto: '🛵', 'vélo': '🚲', voiture: '🚗', pied: '🚶' }[c.vehicle_type] || '🛵';
-            return E('div', { key: c.id, style: { display: 'flex', alignItems: 'center', gap: 8, padding: '.4rem .5rem', borderRadius: 8, marginBottom: '.35rem', background: '#fff', border: '1px solid #fde68a' } },
-              E('div', { style: { width: 34, height: 34, borderRadius: '50%', background: '#92400e', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0, fontSize: '.85rem' } }, name[0] ? name[0].toUpperCase() : '?'),
-              E('div', { style: { flex: 1, minWidth: 0 } },
-                E('div', { style: { fontWeight: 600, fontSize: '.82rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, veh + ' ' + name),
-                E('div', { style: { fontSize: '.72rem', color: '#888' } }, (zone ? zone + ' · ' : '') + (c.deliveries_done || 0) + ' livraisons')
-              ),
-              phone && E('a', { href: 'tel:' + phone, title: 'Appeler', style: { padding: '.3rem .45rem', borderRadius: 6, background: '#006d40', color: '#fff', textDecoration: 'none', fontSize: '.72rem', fontWeight: 700, flexShrink: 0 } }, '📞'),
-              phone && E('a', { href: 'https://wa.me/' + String(phone).replace(/\D/g, ''), target: '_blank', rel: 'noopener', title: 'WhatsApp', style: { padding: '.3rem .45rem', borderRadius: 6, background: '#25D366', color: '#fff', textDecoration: 'none', fontSize: '.72rem', fontWeight: 700, flexShrink: 0 } }, '💬'),
-              email && E('a', { href: 'mailto:' + email, title: 'Email', style: { padding: '.3rem .45rem', borderRadius: 6, background: '#f0f0f0', color: '#333', textDecoration: 'none', fontSize: '.72rem', fontWeight: 700, flexShrink: 0 } }, '✉️')
-            );
-          })
-        ),
+        // Coursiers proches (domicile/dernière position) à contacter si aucun en ligne.
+        (onlineCount === 0) && E('div', { style: { padding: '0 1.25rem' } }, renderOfflineProposals()),
         E('div', { style: { padding: '1.25rem' } },
           E('p', { style: lbl }, 'Type de course'),
           E('div', { style: { display: 'flex', gap: 6, marginBottom: '.8rem' } },
@@ -43138,10 +43166,25 @@ window.addEventListener('unhandledrejection', function(event) {
   // fraîcheur exigées par nearby_couriers → « en ligne » à l'écran mais INVISIBLE
   // au dispatch. → HEARTBEAT : re-ping toutes les 4 min avec la position
   // courante (ou la dernière connue), même sans mouvement.
-  var _watchId=null, _lastPing=0, _lastPos=null;
+  var _watchId=null, _lastPing=0, _lastPos=null, _homeTried=false;
+  // [FALLBACK DOMICILE] Au 1er ping, si le domicile n'est pas encore défini, on
+  // enregistre la position courante comme domicile du coursier (base du fallback
+  // « coursiers proches de chez vous » quand personne n'est en ligne). Idempotent :
+  // le WHERE home_lat IS NULL garantit une seule écriture, jamais écrasée ensuite.
+  function _captureHomeOnce(lat,lng){
+    if(_homeTried) return; _homeTried=true;
+    try{
+      var client=sb(); if(!client) return;
+      var doUpd=function(id){ if(!id) return; try{ client.from('profiles').update({ home_lat:lat, home_lng:lng }).eq('id',id).is('home_lat',null).then(function(){},function(){}); }catch(e){} };
+      var uid=(window.__nexusCurrentUser && window.__nexusCurrentUser.id)||null;
+      if(uid) doUpd(uid);
+      else if(client.auth && client.auth.getUser){ client.auth.getUser().then(function(r){ doUpd(r && r.data && r.data.user && r.data.user.id); }).catch(function(){}); }
+    }catch(e){}
+  }
   function _ping(lat,lng){
     if(lat==null||lng==null) return;
     _lastPing=Date.now(); _lastPos={lat:lat,lng:lng};
+    _captureHomeOnce(lat,lng);
     var client=sb(); if(!client) return;
     // ⚠️ supabase-js v2 : le builder rpc() est PARESSEUX — la requête HTTP n'est
     // envoyée QUE si l'on appelle .then()/await. Sans ça, le ping ne partait
