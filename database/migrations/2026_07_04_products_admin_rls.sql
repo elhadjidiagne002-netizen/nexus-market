@@ -6,6 +6,9 @@
 -- Impacte le panneau Boosts (AdminBoostsPanel) ET le validateBoost / la
 -- modération produits existants.
 -- Appliqué en prod (pqcqbstbdujzaclsiosv) le 2026-07-04.
+-- Idempotent : DROP … IF EXISTS avant CREATE (Postgres n'a pas de
+-- CREATE POLICY IF NOT EXISTS) → rejouable sans erreur 42710.
 -- =====================================================================
+drop policy if exists products_admin_all on public.products;
 create policy products_admin_all on public.products
   for all using (public.is_admin()) with check (public.is_admin());
