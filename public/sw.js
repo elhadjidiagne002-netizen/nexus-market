@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v22"; // v22 (2026-07-04) → PURGE cache : lot 4 — panneau Revenus, actions « Désactiver » (pubs/API/flash) symétriques à « Valider ». Bump = re-précache frais de "/".
+const CACHE_NAME = "nexus-v23"; // v23 (2026-07-04) → PURGE cache : panneau admin Boutique Pro (offrir/prolonger/retirer le statut Pro d'un vendeur via profiles.is_pro). Bump = re-précache frais de "/".
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────

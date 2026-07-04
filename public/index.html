@@ -23176,6 +23176,145 @@ const AdminBoostsPanel = ({ addToast }) => {
 
 
 // ════════════════════════════════════════════════════════════════════════════
+// AdminProPanel — Contrôle de la Boutique Pro (Admin → ⭐ Boutique Pro)
+//   Le statut Pro EFFECTIF vit sur profiles (is_pro / pro_until / pro_plan) —
+//   posé normalement par l'IPN PayTech ; lu par le badge PRO, le TTL des stories
+//   et la BoutiqueProCard. L'admin agit donc directement sur profiles.
+//   · Lister les vendeurs Pro (actifs / expirés)
+//   · OFFRIR le Pro à un vendeur (comp), avec durée selon le plan
+//   · RÉVOQUER, PROLONGER
+//   Trace best-effort dans vendor_subscriptions (non bloquant si RLS le refuse).
+// ════════════════════════════════════════════════════════════════════════════
+const AdminProPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const sb = (typeof DataService !== 'undefined') ? DataService._sb : null;
+  const [rows, setRows]       = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [busy, setBusy]       = React.useState('');
+  const [q, setQ]             = React.useState('');
+  const [results, setResults] = React.useState([]);
+  const [sel, setSel]         = React.useState(null);
+  const [plan, setPlan]       = React.useState('pro_mensuel');
+
+  const PLANS = [
+    { id: 'pro_mensuel', label: 'Mensuel (30j)',  days: 30  },
+    { id: 'pro_annuel',  label: 'Annuel (365j)',  days: 365 },
+  ];
+  const daysOf = (p) => (PLANS.find(x => x.id === p) || {}).days || 30;
+  const planLabel = (p) => p === 'pro_annuel' ? 'Annuel' : 'Mensuel';
+
+  const load = async () => {
+    setLoading(true);
+    if (!sb) { setLoading(false); addToast('Supabase non connecté', 'error'); return; }
+    try {
+      const { data } = await sb.from('profiles')
+        .select('id,name,shop_name,email,is_pro,pro_plan,pro_until')
+        .eq('is_pro', true).order('pro_until', { ascending: false }).limit(200);
+      setRows(data || []);
+    } catch (e) { console.warn('[AdminPro]', e.message); addToast('Erreur chargement', 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { load(); }, []);
+
+  const now = Date.now();
+  const isActive = (r) => r.is_pro && r.pro_until && new Date(r.pro_until).getTime() > now;
+
+  // Trace non bloquante dans vendor_subscriptions (l'admin peut INSERT).
+  const traceSub = async (vendorId, planId, ends) => {
+    try { await sb.from('vendor_subscriptions').insert([{ vendor_id: vendorId, plan: planId, price_fcfa: 0, started_at: new Date().toISOString(), ends_at: ends, active: true, payment_method: 'admin_comp', payment_status: 'paid' }]); } catch (_) {}
+  };
+
+  const grant = async () => {
+    if (!sel) { addToast('Choisissez un vendeur', 'warning'); return; }
+    setBusy('grant');
+    const ends = new Date(now + daysOf(plan) * 86400000).toISOString();
+    const { error } = await sb.from('profiles').update({ is_pro: true, pro_until: ends, pro_plan: plan }).eq('id', sel.id);
+    if (error) { addToast('❌ ' + error.message, 'error'); setBusy(''); return; }
+    await traceSub(sel.id, plan, ends);
+    addToast('⭐ Boutique Pro offerte à « ' + (sel.shop_name || sel.name || '') + ' » (' + daysOf(plan) + 'j)', 'success', 6000);
+    setQ(''); setResults([]); setSel(null); setBusy(''); load();
+  };
+  const revoke = async (r) => {
+    if (!window.confirm('Retirer le statut Boutique Pro de ce vendeur ?')) return;
+    setBusy(r.id);
+    const { error } = await sb.from('profiles').update({ is_pro: false }).eq('id', r.id);
+    if (error) { addToast('❌ ' + error.message, 'error'); setBusy(''); return; }
+    setRows(rs => rs.map(x => x.id === r.id ? { ...x, is_pro: false } : x));
+    addToast('🚫 Statut Pro retiré', 'info'); setBusy('');
+  };
+  const extend = async (r, days) => {
+    setBusy(r.id);
+    const base = Math.max(now, new Date(r.pro_until || now).getTime());
+    const ends = new Date(base + days * 86400000).toISOString();
+    const { error } = await sb.from('profiles').update({ is_pro: true, pro_until: ends }).eq('id', r.id);
+    if (error) { addToast('❌ ' + error.message, 'error'); setBusy(''); return; }
+    setRows(rs => rs.map(x => x.id === r.id ? { ...x, is_pro: true, pro_until: ends } : x));
+    addToast('⏱️ Prolongé de ' + days + 'j', 'success'); setBusy('');
+  };
+
+  const searchVendors = async (text) => {
+    setQ(text); setSel(null);
+    if (!sb || text.trim().length < 2) { setResults([]); return; }
+    try {
+      const { data } = await sb.from('profiles').select('id,name,shop_name,email')
+        .eq('role', 'vendor').ilike('shop_name', '%' + text.trim() + '%').limit(8);
+      let list = data || [];
+      if (!list.length) { const r2 = await sb.from('profiles').select('id,name,shop_name,email').eq('role', 'vendor').ilike('name', '%' + text.trim() + '%').limit(8); list = (r2 && r2.data) || []; }
+      setResults(list);
+    } catch (_) { setResults([]); }
+  };
+
+  return E('div', null,
+    E('div', { className: 'card-header', style: { marginBottom: '1rem' } },
+      E('h2', { className: 'section-title' }, E('i', { className: 'fas fa-crown', style: { color: '#FDEE42', marginRight: 8 } }), 'Boutique Pro — gestion'),
+      E('p', { style: { color: 'var(--text-secondary)', fontSize: '.85rem', margin: '.25rem 0 0' } },
+        'Offrir, prolonger ou retirer le statut Pro d\'un vendeur (agit sur profiles.is_pro).')
+    ),
+
+    E('div', { className: 'card', style: { marginBottom: '1rem', padding: '1rem 1.25rem' } },
+      E('div', { style: { fontWeight: 700, marginBottom: '.6rem' } }, '⭐ Offrir la Boutique Pro (comp admin)'),
+      E('div', { style: { position: 'relative', marginBottom: '.6rem' } },
+        E('input', { className: 'form-input', placeholder: 'Rechercher un vendeur (boutique ou nom)…', value: q, onChange: e => searchVendors(e.target.value) }),
+        (results.length > 0 && !sel) && E('div', { style: { position: 'absolute', zIndex: 5, background: '#fff', border: '1px solid var(--border)', borderRadius: 8, width: '100%', maxHeight: 220, overflowY: 'auto', boxShadow: '0 6px 18px rgba(0,0,0,.12)' } },
+          results.map(p => E('div', { key: p.id, onClick: () => { setSel(p); setResults([]); setQ(p.shop_name || p.name); },
+            style: { padding: '.5rem .7rem', cursor: 'pointer', fontSize: '.85rem', borderBottom: '1px solid #f0f0f0' } },
+            E('strong', null, p.shop_name || p.name), E('span', { style: { color: '#888' } }, ' · ' + (p.email || '')))))
+      ),
+      E('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+        E('select', { className: 'form-select', style: { flex: '1 1 180px' }, value: plan, onChange: e => setPlan(e.target.value) },
+          PLANS.map(p => E('option', { key: p.id, value: p.id }, p.label))),
+        E('button', { className: 'btn btn-primary', disabled: !sel || busy === 'grant', onClick: grant }, busy === 'grant' ? '…' : '⭐ Offrir le Pro')),
+      sel && E('div', { style: { marginTop: 6, fontSize: '.8rem', color: 'var(--primary)' } }, '✓ Vendeur : ' + (sel.shop_name || sel.name))
+    ),
+
+    E('div', { style: { display: 'flex', alignItems: 'center', marginBottom: '.6rem' } },
+      E('h3', { style: { fontWeight: 700, margin: 0 } }, 'Vendeurs Pro (' + rows.length + ')'),
+      E('button', { className: 'btn btn-sm btn-secondary', style: { marginLeft: 'auto' }, onClick: load }, '↻ Rafraîchir')),
+
+    loading ? E('div', { style: { textAlign: 'center', padding: '2rem' } }, E('i', { className: 'fas fa-spinner fa-spin', style: { fontSize: '1.6rem', color: 'var(--primary)' } }))
+    : rows.length === 0 ? E('div', { style: { textAlign: 'center', color: '#999', padding: '2rem' } }, 'Aucun vendeur Pro pour le moment.')
+    : E('div', { style: { overflowX: 'auto' } },
+      E('table', { className: 'table', style: { width: '100%', fontSize: '.84rem' } },
+        E('thead', null, E('tr', null, ['Boutique', 'Plan', 'Statut', 'Expire le', 'Actions'].map(h => E('th', { key: h }, h)))),
+        E('tbody', null, rows.map(r => E('tr', { key: r.id },
+          E('td', null, r.shop_name || r.name || E('span', { style: { color: '#999' } }, (r.email || r.id))),
+          E('td', null, planLabel(r.pro_plan)),
+          E('td', null, isActive(r)
+            ? E('span', { className: 'badge badge-success' }, 'Actif')
+            : E('span', { className: 'badge badge-secondary' }, r.is_pro ? 'Expiré' : 'Retiré')),
+          E('td', null, r.pro_until ? new Date(r.pro_until).toLocaleDateString('fr-FR') : '—'),
+          E('td', null,
+            isActive(r) && E('button', { className: 'btn btn-sm btn-danger', style: { marginRight: 4, marginBottom: 4 }, disabled: busy === r.id, onClick: () => revoke(r) }, '🚫 Retirer'),
+            E('button', { className: 'btn btn-sm btn-secondary', style: { marginRight: 4, marginBottom: 4 }, disabled: busy === r.id, onClick: () => extend(r, 30) }, '+30j'),
+            E('button', { className: 'btn btn-sm btn-secondary', style: { marginBottom: 4 }, disabled: busy === r.id, onClick: () => extend(r, 365) }, '+1 an')
+          )
+        )))
+      ))
+  );
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
 // MonetizationConfigPanel — Tous les paramètres de monétisation en un seul endroit
 // Accessible via Admin → Config → 💰 Monétisation
 // Sauvegarde dans Supabase app_config via NexusAdminConfig
@@ -25478,6 +25617,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "insurance_leads",  icon: "car",            label: "🚗 Leads Assurance" },
     { id: "monetization", icon: "coins", label: "💰 Monétisation" },
     { id: "boost_admin", icon: "rocket", label: "🚀 Boosts (gestion)" },
+    { id: "pro_admin", icon: "crown", label: "⭐ Boutique Pro" },
     { id: "validations",    icon: "user-check", label: "✅ Validations" },
     { id: "livraison_admin", icon: "truck", label: "🚛 NEXUS Livraison" },
     { id: "popups", icon: "comment-alt", label: "💬 Popups & Annonces" },
@@ -26895,6 +27035,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
   view === "livraison_admin" && React.createElement(AdminLivraisonPanel, { addToast }),
   view === "monetization" && React.createElement(MonetizationConfigPanel, { addToast }),
   view === "boost_admin" && React.createElement(AdminBoostsPanel, { addToast }),
+  view === "pro_admin" && React.createElement(AdminProPanel, { addToast }),
   view === "popups"  && React.createElement(PopupsAdminPanel, { addToast }),
   view === "revenue" && React.createElement(RevenueAdminPanel, { orders, products, addToast }),
   view === "payouts" && (() => {
