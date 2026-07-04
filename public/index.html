@@ -21963,6 +21963,21 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
     addToast('✅ Boost activé', 'success');
   };
 
+  // Révoquer / désactiver un levier de monétisation actif (symétrie avec Valider).
+  // Valeurs conformes aux contraintes CHECK : ad_campaigns.status='paused',
+  // api_subscriptions.status='suspended', flash_sales/product_boosts via active=false.
+  const revokeItem = async (table, id, stateKey) => {
+    if (!sb || !id) return;
+    if (!window.confirm('Désactiver cet élément ? Il ne sera plus affiché aux utilisateurs.')) return;
+    const patch = table === 'ad_campaigns' ? { status: 'paused' }
+      : table === 'api_subscriptions' ? { status: 'suspended' }
+      : { active: false }; // flash_sales, product_boosts
+    const { error } = await sb.from(table).update(patch).eq('id', id);
+    if (error) { addToast('❌ ' + error.message, 'error'); console.error('[revokeItem]', table, error); return; }
+    setData(d => ({ ...d, [stateKey]: (d[stateKey] || []).map(x => x.id === id ? { ...x, ...patch } : x) }));
+    addToast('🚫 Désactivé', 'info');
+  };
+
   // Valider un paiement (pub/API/flash/boost)
   const validatePayment = async (table, id, extraFields = {}) => {
     if (!sb) return;
@@ -22275,10 +22290,12 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
               E('td', null, (a.impressions||0).toLocaleString()),
               E('td', null, (a.clicks||0).toLocaleString()),
               E('td', null,
-                a.payment_status === 'pending' && a.status === 'pending' &&
-                E('button', { className: 'btn btn-primary btn-sm', onClick: () => validatePayment('ad_campaigns', a.id) },
+                (a.payment_status === 'pending' && a.status === 'pending') &&
+                E('button', { className: 'btn btn-primary btn-sm', style: { marginRight: 4 }, onClick: () => validatePayment('ad_campaigns', a.id) },
                   '✓ Valider paiement'
-                )
+                ),
+                (a.status === 'active') &&
+                E('button', { className: 'btn btn-danger btn-sm', onClick: () => revokeItem('ad_campaigns', a.id, 'adCampaigns') }, '🚫 Désactiver')
               )
             )
           )
@@ -22314,10 +22331,12 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
               ),
               E('td', { style: { fontSize: '0.82rem' } }, s.ends_at ? new Date(s.ends_at).toLocaleDateString('fr-FR') : '—'),
               E('td', null,
-                s.payment_status === 'pending' &&
-                E('button', { className: 'btn btn-primary btn-sm', onClick: () => validatePayment('api_subscriptions', s.id) },
+                (s.payment_status === 'pending') &&
+                E('button', { className: 'btn btn-primary btn-sm', style: { marginRight: 4 }, onClick: () => validatePayment('api_subscriptions', s.id) },
                   '✓ Activer'
-                )
+                ),
+                (s.status === 'active') &&
+                E('button', { className: 'btn btn-danger btn-sm', onClick: () => revokeItem('api_subscriptions', s.id, 'apiSubs') }, '🚫 Suspendre')
               )
             )
           )
@@ -22356,16 +22375,18 @@ const RevenueAdminPanel = ({ orders, products, addToast }) => {
                 f.active ? 'Active' : f.payment_status === 'pending' ? 'En attente' : 'Inactive'
               )),
               E('td', null,
-                !f.active && f.payment_status === 'pending' &&
+                (!f.active && f.payment_status === 'pending') &&
                 E('button', {
-                  className: 'btn btn-primary btn-sm',
+                  className: 'btn btn-primary btn-sm', style: { marginRight: 4 },
                   onClick: async () => {
                     if (!sb) return;
                     await sb.from('flash_sales').update({ active: true, payment_status: 'paid' }).eq('id', f.id);
                     addToast('Flash activée !', 'success');
                     loadAll();
                   }
-                }, '✓ Activer')
+                }, '✓ Activer'),
+                f.active &&
+                E('button', { className: 'btn btn-danger btn-sm', onClick: () => revokeItem('flash_sales', f.id, 'flashPaid') }, '🚫 Désactiver')
               )
             );
           })
