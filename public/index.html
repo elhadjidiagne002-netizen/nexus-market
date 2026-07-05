@@ -15728,7 +15728,7 @@ const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
 };
 // [FIX #310] RoleHeader extrait au niveau module — défini dans RegisterForm causait un remontage à chaque render
 const RoleHeader = ({ role, onBack }) => {
-  const labels = {buyer:"\ud83d\uded2 Acheteur / Vendeur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",pro:"\ud83d\udd27 Professionnel (artisan / ouvrier)",breeder:"\ud83d\udc0f \u00c9leveur / Producteur local",vendor:"\ud83c\udfea Vendeur professionnel",courier:"\ud83d\udef5 Livreur indépendant"};
+  const labels = {buyer:"\ud83d\uded2 Acheteur / Vendeur particulier",buyer_pro:"\ud83c\udfe2 Acheteur professionnel",pro:"\ud83d\udd27 Professionnel (artisan / ouvrier)",breeder:"\ud83d\udc0f \u00c9leveur / Producteur local",vendor:"\ud83c\udfea Vendeur professionnel",courier:"\ud83d\udef5 Livreur indépendant",transporteur:"\ud83d\ude90 Transporteur"};
   return React.createElement("div",{style:{display:"flex",alignItems:"center",gap:"0.75rem",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--border)"}},
     React.createElement("button",{onClick:onBack,style:{background:"none",border:"none",cursor:"pointer",color:"var(--text-secondary)",fontSize:"0.9rem",padding:"0.3rem"}},
       React.createElement("i",{className:"fas fa-arrow-left"})
@@ -15845,7 +15845,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
   // ─── Validation per step ─────────────────────────────────
   const validate = () => {
     const e = {};
-    if (role === "buyer" || role === "pro" || role === "breeder") {
+    if (role === "buyer" || role === "pro" || role === "breeder" || role === "transporteur") {
       if (!form.name.trim() || form.name.trim().length < 2) e.name = "Nom trop court";
       if (!validateEmail(form.email)) e.email = "Email invalide";
       if (!validatePassword(form.password)) e.password = "Min 6 caract\xe8res";
@@ -16080,6 +16080,23 @@ if (json.token || json.accessToken) {
         onLogin(newBreeder);
         try { localStorage.removeItem("nexus_pending_breeder"); } catch(_) {}
         setTimeout(() => { try { window.dispatchEvent(new CustomEvent('nexus:open-local-elevage', { detail: { become: true } })); } catch(_) {} }, 700);
+      } else if (role === "transporteur") {
+        // ── Transporteur (covoiturage / trajets programmés) ────────────────
+        // Compte de base ; la fiche transporteur (véhicule, places, statut
+        // pending) est complétée ensuite via l'Espace Transporteur, ouvert
+        // automatiquement après connexion (comme NEXUS Pro / Élevage).
+        const profile = { role:"buyer", name:form.name, avatar };
+        try { localStorage.setItem("nexus_pending_transporter", "1"); } catch(_) {}
+        const newTransporter = await DataService.signUp(form.email, form.password, profile);
+        if (newTransporter.__emailConfirmPending) {
+          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
+          setDone(true); setLoading(false); return;
+        }
+        addToast(`Bienvenue, ${form.name} ! Complétez votre fiche transporteur.`, "success");
+        try { if (window.nexusAnalytics) window.nexusAnalytics.trackSignUp('transporteur'); } catch(_) {}
+        onLogin(newTransporter);
+        try { localStorage.removeItem("nexus_pending_transporter"); } catch(_) {}
+        setTimeout(() => { try { window.dispatchEvent(new CustomEvent('nexus:goto-buyer-view', { detail: 'transporter_app' })); } catch(_) {} }, 700);
       } else {
         // buyer
         const profile = { role:"buyer", name:form.name, avatar };
@@ -16179,7 +16196,8 @@ if (json.token || json.accessToken) {
       {id:"pro",icon:"🔧",label:"Professionnel (artisan)",desc:"Plombier, maçon, électricien… visible sur la carte des pros",color:"#006d40"},
       {id:"breeder",icon:"🐏",label:"Éleveur / Producteur local",desc:"Bétail (Tabaski) & produits du terroir géolocalisés",color:"#006d40"},
       {id:"vendor",icon:"\ud83c\udfea",label:"Vendeur professionnel",desc:"Boutique pro : volume, outils avanc\xe9s, mise en avant",color:"var(--danger)"},
-      {id:"courier",icon:"\ud83d\udef5",label:"Livreur / Coursier",desc:"Livrez \u00e0 Dakar \u2014 jusqu\u2019\u00e0 25\u202f000 FCFA/jour",color:"#D97706"}
+      {id:"courier",icon:"\ud83d\udef5",label:"Livreur / Coursier",desc:"Livrez \u00e0 Dakar \u2014 jusqu\u2019\u00e0 25\u202f000 FCFA/jour",color:"#D97706"},
+      {id:"transporteur",icon:"\ud83d\ude90",label:"Transporteur",desc:"Publiez des trajets, vendez des places et transportez des colis",color:"#1D4ED8"}
     ];
     return React.createElement("div",null,
       React.createElement("p",{style:{color:"var(--text-secondary)",marginBottom:"1.25rem",fontSize:"0.92rem",textAlign:"center"}},"Choisissez votre type de compte"),
@@ -16259,7 +16277,7 @@ if (json.token || json.accessToken) {
   const _roleHeaderOnBack = () => { setRole(""); setStep(1); setErrors({}); };
 
   // ─── BUYER PARTICULIER ────────────────────────────────────
-  if (role === "buyer" || role === "pro" || role === "breeder") {
+  if (role === "buyer" || role === "pro" || role === "breeder" || role === "transporteur") {
     return React.createElement(React.Fragment,null,
       React.createElement(RoleHeader,{role:role,onBack:_roleHeaderOnBack}),
       role === "pro" && React.createElement("div",{style:{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:"10px",padding:"0.7rem 0.9rem",marginBottom:"1rem",fontSize:"0.82rem",color:"#1e3a8a"}},
@@ -16269,6 +16287,10 @@ if (json.token || json.accessToken) {
       role === "breeder" && React.createElement("div",{style:{background:"#ecfdf5",border:"1px solid #a7f3d0",borderRadius:"10px",padding:"0.7rem 0.9rem",marginBottom:"1rem",fontSize:"0.82rem",color:"#065f46"}},
         React.createElement("i",{className:"fas fa-info-circle",style:{marginRight:"0.4rem"}}),
         "Créez d’abord votre compte. Juste après, on activera votre profil éleveur avec votre position pour que les acheteurs (bétail Tabaski, produits du terroir) vous trouvent sur la carte."
+      ),
+      role === "transporteur" && React.createElement("div",{style:{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:"10px",padding:"0.7rem 0.9rem",marginBottom:"1rem",fontSize:"0.82rem",color:"#1D4ED8"}},
+        React.createElement("i",{className:"fas fa-info-circle",style:{marginRight:"0.4rem"}}),
+        "Créez d’abord votre compte. Juste après, vous compléterez votre fiche transporteur (véhicule, places, trajets) — validée par notre équipe sous 24h."
       ),
       React.createElement("div",{className:"form-group"},
         React.createElement("label",{className:"form-label",htmlFor:"b-name"},"Nom complet ",React.createElement("span",{className:"required"},"*")),
