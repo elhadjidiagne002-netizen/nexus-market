@@ -3388,7 +3388,8 @@ const NexusAPISubscribeForm = ({ onClose }) => {
           custom_field: JSON.stringify({ apiId: subId }),
         }),
       }).catch(e => ({ __err: e.message }));
-      if (initRes && initRes.redirect_url) { setApiKey(newKey); setTimeout(() => { window.location.href = initRes.redirect_url; }, 400); return; }
+      const initData = (initRes && typeof initRes.json === 'function') ? await initRes.json().catch(() => null) : null;
+      if (initRes && initRes.ok && initData && initData.redirect_url) { setApiKey(newKey); setTimeout(() => { window.location.href = initData.redirect_url; }, 400); return; }
       // PayTech indisponible : demande enregistrée, activation après validation admin.
       setApiKey(newKey); setStep(3);
     } catch(e) { console.warn('[API sub]', e && e.message); alert("Une erreur est survenue lors de l'inscription. Vérifiez votre connexion et réessayez."); }
@@ -26467,9 +26468,10 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           method: 'POST',
           body: JSON.stringify({ kind: 'flash', flash_id: ins.id, order_id: 'FLASH-' + ins.id.slice(0, 12).toUpperCase(), amount: plan.price, item_name: 'Vente flash sponsoris\xE9e — ' + plan.label, success_url: origin + '/?flash_return=success', cancel_url: origin + '/?flash_return=cancel' }),
         }).catch(e => ({ __err: e.message }));
-        if (initRes && initRes.redirect_url) { addToast('Redirection vers PayTech…', 'info', 3000); setTimeout(() => { window.location.href = initRes.redirect_url; }, 600); return; }
+        const initData = (initRes && typeof initRes.json === 'function') ? await initRes.json().catch(() => null) : null;
+        if (initRes && initRes.ok && initData && initData.redirect_url) { addToast('Redirection vers PayTech…', 'info', 3000); setTimeout(() => { window.location.href = initData.redirect_url; }, 600); return; }
         await DataService._sb.from('flash_sales').delete().eq('id', ins.id).catch(() => {});
-        addToast('PayTech indisponible : ' + ((initRes && (initRes.error || initRes.__err)) || 'r\xE9essayez') + '. Vous pouvez payer par Wave/OM.', 'warning', 9000);
+        addToast('PayTech indisponible : ' + ((initData && initData.error) || (initRes && initRes.__err) || 'r\xE9essayez') + '. Vous pouvez payer par Wave/OM.', 'warning', 9000);
         setFlashPayStep('pay');
       } catch (e) { addToast('Erreur : ' + e.message, 'error'); setFlashPayStep('pay'); }
     };
@@ -30030,9 +30032,10 @@ const BoutiqueProCard = ({ currentUser: currentUser2, addToast }) => {
         }),
       }).catch(e => ({ __err: e.message }));
       if (initRes && initRes.__err) { if (DataService._sb) DataService._sb.from('vendor_subscriptions').delete().eq('id', subId); addToast('PayTech indisponible — réessayez.', 'warning', 8000); setBusy(false); return; }
-      if (initRes && initRes.redirect_url) { addToast('Redirection vers PayTech…', 'info', 3000); setTimeout(() => { window.location.href = initRes.redirect_url; }, 600); return; }
+      const initData = (initRes && typeof initRes.json === 'function') ? await initRes.json().catch(() => null) : null;
+      if (initRes && initRes.ok && initData && initData.redirect_url) { addToast('Redirection vers PayTech…', 'info', 3000); setTimeout(() => { window.location.href = initData.redirect_url; }, 600); return; }
       if (DataService._sb) DataService._sb.from('vendor_subscriptions').delete().eq('id', subId);
-      addToast('Erreur PayTech : ' + ((initRes && initRes.error) || 'réponse invalide'), 'error'); setBusy(false);
+      addToast('Erreur PayTech : ' + ((initData && initData.error) || 'réponse invalide'), 'error'); setBusy(false);
     } catch (e) { addToast('Erreur : ' + e.message, 'error'); setBusy(false); }
   };
   return E('div', { style: { background: 'linear-gradient(135deg,#4a148c,#6a1b9a)', borderRadius: 16, padding: '1.25rem 1.5rem', marginBottom: '1.5rem', color: '#fff' } },
@@ -30122,13 +30125,14 @@ const BoostModal = ({ product, currentUser: currentUser2, activBoosts, addToast,
           addToast('\u26a0\ufe0f Paiement PayTech momentan\u00e9ment indisponible \u2014 r\u00e9essayez. R\u00e9f : BOOST-' + boostId.slice(0,8).toUpperCase(), 'warning', 9000);
           setPaying(false); return;
         }
-        if (initRes && initRes.redirect_url) {
+        const initData = (initRes && typeof initRes.json === 'function') ? await initRes.json().catch(() => null) : null;
+        if (initRes && initRes.ok && initData && initData.redirect_url) {
           addToast('Redirection vers PayTech...', 'info', 3000);
-          setTimeout(() => { window.location.href = initRes.redirect_url; }, 700);
+          setTimeout(() => { window.location.href = initData.redirect_url; }, 700);
           return;
         }
         if (DataService._sb) await DataService._sb.from('product_boosts').delete().eq('id', boostId);
-        addToast('Erreur PayTech : ' + ((initRes && initRes.error) || 'R\xe9ponse invalide'), 'error');
+        addToast('Erreur PayTech : ' + ((initData && initData.error) || 'R\xe9ponse invalide'), 'error');
         setPaying(false); return;
       }
 
@@ -32586,7 +32590,8 @@ const AxModal = ({ onClose, onPublished }) => {
           custom_field: JSON.stringify({ boostId, productId: published.id }),
         }),
       }).catch(e => ({ __err: e.message }));
-      if (initRes && initRes.redirect_url) { setTimeout(() => { window.location.href = initRes.redirect_url; }, 400); return; }
+      const initData = (initRes && typeof initRes.json === 'function') ? await initRes.json().catch(() => null) : null;
+      if (initRes && initRes.ok && initData && initData.redirect_url) { setTimeout(() => { window.location.href = initData.redirect_url; }, 400); return; }
       if (DataService._sb) await DataService._sb.from('product_boosts').delete().eq('id', boostId).catch(() => {});
       alert('Paiement PayTech momentanément indisponible. Réessayez. Réf : ' + ref);
     } catch (e) { alert('Erreur : ' + e.message); }
@@ -34676,7 +34681,8 @@ Acheteur : ${cu.company || cu.name} (NINEA: ${cu.ninea || 'en cours de vérifica
           method: 'POST',
           body: JSON.stringify({ kind: 'b2b_priority', quote_id: quoteId, order_id: 'B2BPRIO-' + quoteId.slice(0, 12).toUpperCase(), amount: B2B_PRIORITY_PRICE, item_name: 'Traitement prioritaire devis B2B', success_url: origin + '/?b2b_return=success', cancel_url: origin + '/?b2b_return=cancel' }),
         }).catch(e => ({ __err: e.message }));
-        if (initRes && initRes.redirect_url) { window.location.href = initRes.redirect_url; return; }
+        const initData = (initRes && typeof initRes.json === 'function') ? await initRes.json().catch(() => null) : null;
+        if (initRes && initRes.ok && initData && initData.redirect_url) { window.location.href = initData.redirect_url; return; }
         addToast('Paiement PayTech momentanément indisponible — réessayez. Réf : ' + ref, 'warning', 9000);
       } catch (e) { addToast('Erreur PayTech : ' + e.message, 'warning'); }
     };
