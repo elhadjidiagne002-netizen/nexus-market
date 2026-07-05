@@ -24401,7 +24401,7 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
   const register = async () => {
     if (!regForm.name || !regForm.phone) { addToast('Nom et téléphone requis', 'warning'); return; }
     try {
-      const data = await DataService.registerTransporter(regForm);
+      const data = await DataService.registerTransporter(currentUser.id, regForm);
       setTransporter(data); setRegStep('pending');
       addToast('✅ Candidature envoyée ! Vous serez notifié sous 24h.', 'success');
     } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
@@ -41671,11 +41671,15 @@ window.addEventListener('unhandledrejection', function(event) {
     },
 
     // Demander l'envoi d'un colis sur un trajet (prix fixé ensuite par le transporteur)
-    async requestPackage(tripId, { recipientName, recipientPhone, description, requesterName, requesterPhone }) {
+    // [FIX] requesterId doit être fourni par l'appelant (currentUser.id) — DataService._user
+    // n'existe pas dans ce projet (propriété jamais assignée) et vaut toujours undefined,
+    // ce qui faisait échouer l'inscription/les réservations avec "Connexion requise"
+    // même utilisateur connecté.
+    async requestPackage(tripId, { requesterId, recipientName, recipientPhone, description, requesterName, requesterPhone }) {
       if (!this._sb) throw new Error('Service indisponible');
-      var user = this._user;
+      if (!requesterId) throw new Error('Connexion requise');
       var r = await this._sb.from('transport_reservations').insert({
-        trip_id: tripId, booking_type: 'package', requester_id: user && user.id,
+        trip_id: tripId, booking_type: 'package', requester_id: requesterId,
         requester_name: requesterName, requester_phone: requesterPhone,
         recipient_name: recipientName, recipient_phone: recipientPhone,
         package_description: description, price_fcfa: 0, status: 'pending_review', payment_status: 'pending',
@@ -41684,36 +41688,37 @@ window.addEventListener('unhandledrejection', function(event) {
       return r.data;
     },
 
-    async getMyReservations() {
-      if (!this._sb || !this._user) return [];
+    async getMyReservations(userId) {
+      if (!this._sb || !userId) return [];
       try {
         var r = await this._sb.from('transport_reservations').select('*, transport_trips(*)')
-          .eq('requester_id', this._user.id).order('created_at', { ascending: false });
+          .eq('requester_id', userId).order('created_at', { ascending: false });
         return (!r.error && r.data) || [];
       } catch (e) { console.warn('[Transport] getMyReservations:', e.message); return []; }
     },
 
     // ── Côté transporteur ──────────────────────────────────────────────────
-    async getMyTransporterProfile() {
-      if (!this._sb || !this._user) return null;
+    async getMyTransporterProfile(userId) {
+      if (!this._sb || !userId) return null;
       try {
-        var r = await this._sb.from('transporters').select('*').eq('user_id', this._user.id).maybeSingle();
+        var r = await this._sb.from('transporters').select('*').eq('user_id', userId).maybeSingle();
         return (!r.error && r.data) || null;
       } catch (e) { console.warn('[Transport] getMyTransporterProfile:', e.message); return null; }
     },
 
-    async registerTransporter(payload) {
-      if (!this._sb || !this._user) throw new Error('Connexion requise');
-      var row = Object.assign({ user_id: this._user.id, status: 'pending' }, payload);
+    async registerTransporter(userId, payload) {
+      if (!this._sb) throw new Error('Service indisponible');
+      if (!userId) throw new Error('Connexion requise');
+      var row = Object.assign({ user_id: userId, status: 'pending' }, payload);
       var r = await this._sb.from('transporters').upsert(row, { onConflict: 'user_id' }).select().single();
       if (r.error) throw new Error(r.error.message);
       return r.data;
     },
 
-    async getTransporterTrips() {
-      if (!this._sb || !this._user) return [];
+    async getTransporterTrips(userId) {
+      if (!this._sb || !userId) return [];
       try {
-        var r = await this._sb.from('transport_trips').select('*').eq('driver_id', this._user.id).order('departure_at', { ascending: false });
+        var r = await this._sb.from('transport_trips').select('*').eq('driver_id', userId).order('departure_at', { ascending: false });
         return (!r.error && r.data) || [];
       } catch (e) { console.warn('[Transport] getTransporterTrips:', e.message); return []; }
     },
@@ -41822,6 +41827,7 @@ window.addEventListener('unhandledrejection', function(event) {
         if (!pkgForm.recipientName || !pkgForm.recipientPhone) { alert('Nom et téléphone du destinataire requis.'); return; }
         setBusy(true);
         DataService.requestPackage(pkgTrip.id, {
+          requesterId: user.id,
           recipientName: pkgForm.recipientName, recipientPhone: pkgForm.recipientPhone, description: pkgForm.description,
           requesterName: user.name || '', requesterPhone: user.phone || '',
         }).then(function () {
