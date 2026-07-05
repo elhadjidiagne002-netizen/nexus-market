@@ -345,6 +345,37 @@ export async function validateB2bPriority(env, { quoteId, uid, amountXof }) {
   return { ok: true, quote: row };
 }
 
+// [TRANSPORT] Paiement d'une réservation de places de covoiturage ou d'un
+// colis rattaché à un trajet (transport_reservations). Le montant ne doit
+// JAMAIS être celui envoyé par le client : on relit price_fcfa en base
+// (calculé côté serveur par le RPC book_transport_seats, ou fixé par le
+// transporteur à l'acceptation d'un colis).
+export async function validateTransportBooking(env, { bookingId, uid, amountXof }) {
+  if (!bookingId) return { ok: false, status: 400, error: 'booking_id requis' };
+  const sb = supabase(env);
+  let row;
+  try {
+    const rows = await sb.from('transport_reservations').select(
+      'id,requester_id,price_fcfa,status,payment_status,booking_type',
+      `id=eq.${encodeURIComponent(bookingId)}`
+    );
+    row = Array.isArray(rows) ? rows[0] : null;
+  } catch { return { ok: false, status: 502, error: 'Lecture réservation impossible' }; }
+  if (!row) return { ok: false, status: 404, error: 'Réservation introuvable' };
+  if (row.requester_id && uid && row.requester_id !== uid) {
+    return { ok: false, status: 403, error: 'Réservation non autorisée' };
+  }
+  if (row.payment_status === 'paid') return { ok: false, status: 409, error: 'Réservation déjà payée' };
+  if (row.booking_type === 'package' && row.status !== 'pending_payment') {
+    return { ok: false, status: 409, error: 'Colis pas encore accepté/prix fixé par le transporteur' };
+  }
+  if (!(Number(row.price_fcfa) > 0)) return { ok: false, status: 400, error: 'Montant de réservation invalide' };
+  if (Math.round(Number(amountXof)) !== Math.round(Number(row.price_fcfa))) {
+    return { ok: false, status: 400, error: 'Montant ne correspond pas au prix de la réservation' };
+  }
+  return { ok: true, reservation: row };
+}
+
 export function paginate(url) {
   const u = new URL(url);
   const page  = parseInt(u.searchParams.get('page')  || '1');

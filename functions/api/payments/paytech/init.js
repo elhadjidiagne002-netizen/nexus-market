@@ -8,7 +8,7 @@
 //   SUPABASE_URL / SUPABASE_SERVICE_KEY
 // ============================================================
 
-import { requireAuth, validatePaymentAmount, validateBoostAmount, validateProSubscription, validateStoryFee, validateFlashSale, validateB2bPriority } from '../../_lib/utils.js';
+import { requireAuth, validatePaymentAmount, validateBoostAmount, validateProSubscription, validateStoryFee, validateFlashSale, validateB2bPriority, validateTransportBooking } from '../../_lib/utils.js';
 import { rateLimit, clientIp, tooManyRequests } from '../../_lib/ratelimit.js';
 
 const CORS = {
@@ -53,7 +53,7 @@ export async function onRequest({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return jsonR({ error: 'JSON invalide' }, 400); }
 
-  const { order_id, amount, item_name, success_url, cancel_url, order_ids, kind, boost_id, sub_id, story_id, flash_id, quote_id } = body;
+  const { order_id, amount, item_name, success_url, cancel_url, order_ids, kind, boost_id, sub_id, story_id, flash_id, quote_id, booking_id } = body;
   if (!order_id || !amount || !success_url || !cancel_url)
     return jsonR({ error: 'order_id, amount, success_url, cancel_url requis' }, 400);
 
@@ -75,6 +75,10 @@ export async function onRequest({ request, env }) {
     if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
   } else if (kind === 'b2b_priority') {
     const chk = await validateB2bPriority(env, { quoteId: quote_id || order_id, uid, amountXof: Number(amount) });
+    if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
+  } else if (kind === 'transport') {
+    // Réservation de places de covoiturage/transport ou colis rattaché à un trajet.
+    const chk = await validateTransportBooking(env, { bookingId: booking_id || order_id, uid, amountXof: Number(amount) });
     if (!chk.ok) return jsonR({ error: chk.error }, chk.status || 400);
   } else {
     // Commande : montant borné au total réel des commandes (orders.total, EUR).
@@ -114,6 +118,7 @@ export async function onRequest({ request, env }) {
           : kind === 'b2b_priority' ? { quote_id: quote_id || order_id, user_id: uid }
           : kind === 'boost'        ? { boost_id, user_id: uid }
           : kind === 'pro'          ? { sub_id, user_id: uid }
+          : kind === 'transport'    ? { booking_id: booking_id || order_id, user_id: uid }
           : { order_id, user_id: uid }
         ),
       }),

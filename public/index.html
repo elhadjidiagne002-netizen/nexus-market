@@ -282,13 +282,15 @@
         'nexus:open-assistant':'mod_assistant_enabled',
         'nexus:open-public-chat':'mod_chat_enabled',
         'nexus:open-loyalty':'mod_loyalty_enabled',
-        'nexus:open-tutorials':'mod_tutorials_enabled'
+        'nexus:open-tutorials':'mod_tutorials_enabled',
+        'nexus:open-covoiturage':'mod_transport_enabled'
       };
       var LABELS = {
         'nexus:open-courier':'La livraison coursier','nexus:open-pros':'NEXUS Pro','nexus:open-local-elevage':'NEXUS Élevage',
         'nexus:open-louma':'Louma','nexus:open-troc':'NEXUS Troc','nexus:open-stories':'NEXUS Stories',
         'nexus:open-on-demand':'OnDemand','nexus:open-assistant':'L’assistant IA','nexus:open-public-chat':'Le chat communauté',
-        'nexus:open-loyalty':'Le programme fidélité','nexus:open-tutorials':'Les tutoriels'
+        'nexus:open-loyalty':'Le programme fidélité','nexus:open-tutorials':'Les tutoriels',
+        'nexus:open-covoiturage':'Le covoiturage & transport'
       };
       function disabled(flagKey){ try{ return window.NEXUS_MONET && window.NEXUS_MONET[flagKey] === false; }catch(e){ return false; } }
       function toast(msg){ try{ if(window.NexusUX && NexusUX.toast) return NexusUX.toast(msg,{bg:'#b45309'}); }catch(e){} try{ alert(msg); }catch(_){} }
@@ -23641,6 +23643,7 @@ const MonetizationConfigPanel = ({ addToast }) => {
     mod_chat_enabled:       true,
     mod_loyalty_enabled:    true,
     mod_tutorials_enabled:  true,
+    mod_transport_enabled:  true,
 
     // WhatsApp Premium
     wa_tracking_enabled:    true,
@@ -23851,6 +23854,7 @@ const MonetizationConfigPanel = ({ addToast }) => {
         ['mod_loyalty_enabled',   '⭐ Programme fidélité'],
         ['mod_tutorials_enabled', '🎓 Tutoriels'],
         ['rental_enabled',        '🔑 NEXUS Location'],
+        ['mod_transport_enabled', '🚐 Covoiturage & Transport'],
       ].map(function (m) { return E('div', { key: m[0] }, Toggle({ label: m[1], k: m[0] })); })
     )}),
 
@@ -24312,6 +24316,264 @@ const CourierApp = ({ currentUser, addToast }) => {
             )
           ))
         )
+    )
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// TransporterDashboard — covoiturage/transport programmé (distinct du coursier
+// à la demande ci-dessus). Mirror structurel de CourierApp : regStep/regForm,
+// tabs, cartes. Tables : transporters/transport_trips/transport_reservations.
+// ════════════════════════════════════════════════════════════════════════════
+const TransporterDashboard = ({ currentUser, addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const [transporter, setTransporter] = React.useState(null);
+  const [regStep, setRegStep] = React.useState('check'); // check|register|pending|active
+  const [regForm, setRegForm] = React.useState({ name:'', phone:'', company_name:'', vehicle_type:'voiture', vehicle_model:'', vehicle_plate:'', seats_capacity:4 });
+  const [loading, setLoading] = React.useState(true);
+  const [tab, setTab] = React.useState('trips');
+  const [trips, setTrips] = React.useState([]);
+  const [selectedTripId, setSelectedTripId] = React.useState(null);
+  const [reservations, setReservations] = React.useState([]);
+  const [allReservations, setAllReservations] = React.useState([]);
+  const [showTripForm, setShowTripForm] = React.useState(false);
+  const [tripForm, setTripForm] = React.useState({ origin_city:'Dakar', destination_city:'Thiès', departure_at:'', vehicle_type:'voiture', seats_total:4, price_per_seat_fcfa:2000, allows_packages:true });
+
+  const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
+
+  // Charger le profil transporteur
+  React.useEffect(() => {
+    if (!sb || !currentUser?.id) return;
+    sb.from('transporters').select('*').eq('user_id', currentUser.id).maybeSingle()
+      .then(({ data }) => {
+        if (data) { setTransporter(data); setRegStep(data.status === 'pending' ? 'pending' : 'active'); setTripForm(f => ({ ...f, vehicle_type: data.vehicle_type, seats_total: data.seats_capacity })); }
+        else setRegStep('register');
+        setLoading(false);
+      }).catch(() => { setRegStep('register'); setLoading(false); });
+  }, [currentUser?.id]);
+
+  // Charger les trajets (une fois actif)
+  const loadTrips = React.useCallback(() => {
+    if (!sb || !currentUser?.id) return;
+    sb.from('transport_trips').select('*').eq('driver_id', currentUser.id).order('departure_at', { ascending: false })
+      .then(({ data }) => setTrips(data || []));
+  }, [currentUser?.id]);
+  React.useEffect(() => { if (regStep === 'active') loadTrips(); }, [regStep, loadTrips]);
+
+  // Réservations du trajet sélectionné
+  React.useEffect(() => {
+    if (!sb || tab !== 'reservations' || !selectedTripId) return;
+    sb.from('transport_reservations').select('*').eq('trip_id', selectedTripId).order('created_at', { ascending: false })
+      .then(({ data }) => setReservations(data || []));
+  }, [tab, selectedTripId]);
+
+  // Toutes les réservations (pour l'onglet Revenus)
+  React.useEffect(() => {
+    if (!sb || tab !== 'earnings' || trips.length === 0) { if (tab === 'earnings' && trips.length === 0) setAllReservations([]); return; }
+    sb.from('transport_reservations').select('*').in('trip_id', trips.map(tr => tr.id)).order('created_at', { ascending: false })
+      .then(({ data }) => setAllReservations(data || []));
+  }, [tab, trips]);
+
+  const register = async () => {
+    if (!regForm.name || !regForm.phone) { addToast('Nom et téléphone requis', 'warning'); return; }
+    try {
+      const data = await DataService.registerTransporter(regForm);
+      setTransporter(data); setRegStep('pending');
+      addToast('✅ Candidature envoyée ! Vous serez notifié sous 24h.', 'success');
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  const createTrip = async () => {
+    if (!tripForm.origin_city || !tripForm.destination_city || !tripForm.departure_at) { addToast('Départ, destination et date requis', 'warning'); return; }
+    try {
+      await DataService.createTrip({
+        driver_id: currentUser.id, driver_type: 'transporteur', transporter_id: transporter.id,
+        origin_city: tripForm.origin_city, destination_city: tripForm.destination_city,
+        departure_at: new Date(tripForm.departure_at).toISOString(), vehicle_type: tripForm.vehicle_type,
+        seats_total: Number(tripForm.seats_total), price_per_seat_fcfa: Number(tripForm.price_per_seat_fcfa),
+        allows_packages: tripForm.allows_packages, status: 'scheduled',
+      });
+      addToast('🚐 Trajet publié !', 'success');
+      setShowTripForm(false); loadTrips();
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  const cancelTrip = async (trip) => {
+    try { await DataService.updateTrip(trip.id, { status: 'cancelled' }); addToast('Trajet annulé', 'info'); loadTrips(); }
+    catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  const acceptPackage = async (resa) => {
+    const price = parseInt(window.prompt('Prix du colis (FCFA) ?', tripForm.price_per_seat_fcfa || '2000'), 10);
+    if (!price || price <= 0) return;
+    try {
+      await DataService.acceptPackage(resa.id, price);
+      addToast('✅ Colis accepté — le client peut payer', 'success');
+      setReservations(rs => rs.map(r => r.id === resa.id ? { ...r, price_fcfa: price, status: 'pending_payment' } : r));
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  const rejectPackage = async (resa) => {
+    try {
+      await DataService.rejectPackage(resa.id);
+      addToast('Colis refusé', 'info');
+      setReservations(rs => rs.map(r => r.id === resa.id ? { ...r, status: 'rejected' } : r));
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  if (loading) return E('div', { style:{ textAlign:'center', padding:'3rem' } }, E('i', { className:'fas fa-spinner fa-spin', style:{ fontSize:'2rem', color:'var(--primary)' } }));
+
+  // ── Inscription ─────────────────────────────────────────────────────────
+  if (regStep === 'register') return E('div', { style:{ maxWidth:480, margin:'0 auto', padding:'1rem' } },
+    E('div', { style:{ textAlign:'center', marginBottom:'2rem' } },
+      E('div', { style:{ fontSize:'3rem', marginBottom:'.5rem' } }, '🚐'),
+      E('h2', { style:{ fontWeight:800 } }, 'Devenir transporteur NEXUS'),
+      E('p', { style:{ color:'var(--text-secondary)', fontSize:'.88rem' } }, 'Publiez vos trajets, vendez des places et transportez des colis. Payé par Wave ou OM.')
+    ),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Nom complet *'),
+      E('input', { className:'form-input', value:regForm.name, onChange:e=>setRegForm(f=>({...f,name:e.target.value})), placeholder:'Moussa Diallo' })),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Téléphone *'),
+      E('input', { className:'form-input', value:regForm.phone, onChange:e=>setRegForm(f=>({...f,phone:e.target.value})), placeholder:'77 xxx xx xx' })),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Société (optionnel)'),
+      E('input', { className:'form-input', value:regForm.company_name, onChange:e=>setRegForm(f=>({...f,company_name:e.target.value})), placeholder:'Ex : Transport Diallo & Fils' })),
+    E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
+      E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Véhicule'),
+        E('select', { className:'form-input', value:regForm.vehicle_type, onChange:e=>setRegForm(f=>({...f,vehicle_type:e.target.value})) },
+          ['voiture','van','minibus','bus'].map(v => E('option',{key:v,value:v}, v.charAt(0).toUpperCase()+v.slice(1))))),
+      E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Places'),
+        E('input', { type:'number', min:1, className:'form-input', value:regForm.seats_capacity, onChange:e=>setRegForm(f=>({...f,seats_capacity:e.target.value})) }))
+    ),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Modèle / immatriculation'),
+      E('input', { className:'form-input', value:regForm.vehicle_model, onChange:e=>setRegForm(f=>({...f,vehicle_model:e.target.value})), placeholder:'Ex : Toyota Hiace — DK-1234-AB' })),
+    E('div', { style:{ background:'rgba(0,109,64,.06)', borderRadius:10, padding:'.85rem 1rem', margin:'1rem 0', fontSize:'.83rem' } },
+      '💡 Votre candidature sera validée sous 24h. Vous fixez vous-même vos prix et vos trajets.'
+    ),
+    E('button', { className:'btn btn-primary btn-block', onClick:register }, '🚀 Postuler comme transporteur')
+  );
+
+  // ── En attente de validation ────────────────────────────────────────────
+  if (regStep === 'pending') return E('div', { style:{ textAlign:'center', padding:'3rem 1rem' } },
+    E('div', { style:{ fontSize:'3rem', marginBottom:'1rem' } }, '⏳'),
+    E('h3', { style:{ fontWeight:700, marginBottom:'.5rem' } }, 'Candidature en cours'),
+    E('p', { style:{ color:'var(--text-secondary)' } }, 'Notre équipe valide votre profil sous 24h. Vous recevrez une notification WhatsApp.')
+  );
+
+  // ── Interface transporteur actif ────────────────────────────────────────
+  const confirmedResa = allReservations.filter(r => r.payment_status === 'paid');
+  const totalEarned = confirmedResa.reduce((s,r) => s + (r.price_fcfa||0), 0);
+  const pendingPackages = reservations.filter(r => r.booking_type === 'package' && r.status === 'pending_review');
+
+  return E('div', null,
+    E('div', { style:{ background:'var(--primary)', color:'#fff', padding:'1rem 1.25rem', borderRadius:12, marginBottom:'1rem' } },
+      E('div', { style:{ fontWeight:700, fontSize:'1rem' } }, '🚐 ', transporter.name),
+      E('div', { style:{ fontSize:'.82rem', opacity:.85 } }, transporter.company_name || (transporter.vehicle_type + ' · ' + transporter.seats_capacity + ' places'))
+    ),
+
+    E('div', { style:{ display:'flex', gap:'.35rem', marginBottom:'1rem', overflowX:'auto' } },
+      [
+        { id:'trips',        label:'🚐 Mes trajets', count:trips.filter(tr=>tr.status==='scheduled').length },
+        { id:'reservations', label:'📋 Réservations' },
+        { id:'earnings',     label:'💰 Revenus' },
+      ].map(tb => E('button', { key:tb.id, onClick:()=>setTab(tb.id), style:{
+        padding:'.4rem .85rem', borderRadius:8, border:'none', cursor:'pointer',
+        fontWeight:tab===tb.id?700:400, fontSize:'.82rem', whiteSpace:'nowrap',
+        background:tab===tb.id?'var(--primary)':'var(--bg-light)',
+        color:tab===tb.id?'#fff':'var(--text-secondary)'
+      }}, tb.label, tb.count>0&&E('span',{style:{marginLeft:'.3rem',background:'rgba(255,255,255,.25)',borderRadius:99,padding:'0 5px',fontSize:'.7rem'}},tb.count)))
+    ),
+
+    // ── Mes trajets ────────────────────────────────────────────────────────
+    tab==='trips' && E('div', null,
+      E('button', { className:'btn btn-primary btn-block', style:{ marginBottom:'1rem' }, onClick:()=>setShowTripForm(s=>!s) }, showTripForm ? '✕ Annuler' : '➕ Publier un trajet'),
+      showTripForm && E('div', { style:{ border:'1.5px solid var(--primary)', borderRadius:12, padding:'1rem', marginBottom:'1rem' } },
+        E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Départ'),
+            E('input', { className:'form-input', value:tripForm.origin_city, onChange:e=>setTripForm(f=>({...f,origin_city:e.target.value})) })),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Arrivée'),
+            E('input', { className:'form-input', value:tripForm.destination_city, onChange:e=>setTripForm(f=>({...f,destination_city:e.target.value})) }))
+        ),
+        E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Date et heure de départ'),
+          E('input', { type:'datetime-local', className:'form-input', value:tripForm.departure_at, onChange:e=>setTripForm(f=>({...f,departure_at:e.target.value})) })),
+        E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Places disponibles'),
+            E('input', { type:'number', min:1, className:'form-input', value:tripForm.seats_total, onChange:e=>setTripForm(f=>({...f,seats_total:e.target.value})) })),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Prix / place (FCFA)'),
+            E('input', { type:'number', min:0, className:'form-input', value:tripForm.price_per_seat_fcfa, onChange:e=>setTripForm(f=>({...f,price_per_seat_fcfa:e.target.value})) }))
+        ),
+        E('label', { style:{ display:'flex', alignItems:'center', gap:'.5rem', fontSize:'.85rem', margin:'.5rem 0 1rem' } },
+          E('input', { type:'checkbox', checked:tripForm.allows_packages, onChange:e=>setTripForm(f=>({...f,allows_packages:e.target.checked})) }),
+          'Accepter des colis sur ce trajet'
+        ),
+        E('button', { className:'btn btn-primary btn-block', onClick:createTrip }, '🚀 Publier ce trajet')
+      ),
+      trips.length===0 ? E('div',{className:'empty-state'},E('i',{className:'fas fa-route'}),E('p',null,'Aucun trajet publié')) :
+      E('div',{style:{display:'flex',flexDirection:'column',gap:'.75rem'}},
+        trips.map(trip => E('div',{key:trip.id,style:{border:'0.5px solid var(--border)',borderRadius:12,padding:'1rem'}},
+          E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'.5rem'}},
+            E('div',null,
+              E('div',{style:{fontWeight:700,fontSize:'.9rem'}}, trip.origin_city, ' → ', trip.destination_city),
+              E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)',marginTop:'.15rem'}}, new Date(trip.departure_at).toLocaleString('fr-FR'))
+            ),
+            E('span',{style:{fontSize:'.72rem',fontWeight:700,borderRadius:99,padding:'2px 10px',background: trip.status==='scheduled'?'#DCFCE7':trip.status==='cancelled'?'#FEE2E2':'#F3F4F6', color: trip.status==='scheduled'?'#166534':trip.status==='cancelled'?'#991B1B':'#374151'}}, trip.status)
+          ),
+          E('div',{style:{fontSize:'.82rem',color:'var(--text-secondary)',marginBottom:'.5rem'}},
+            '💺 ', trip.seats_available, '/', trip.seats_total, ' places libres · ', FCFA(trip.price_per_seat_fcfa), '/place',
+            trip.allows_packages ? ' · 📦 colis acceptés' : ''
+          ),
+          E('div',{style:{display:'flex',gap:'.5rem'}},
+            E('button',{className:'btn btn-secondary btn-sm',onClick:()=>{setSelectedTripId(trip.id);setTab('reservations');}}, '📋 Voir réservations'),
+            trip.status==='scheduled' && E('button',{className:'btn btn-secondary btn-sm',onClick:()=>cancelTrip(trip)}, '❌ Annuler')
+          )
+        ))
+      )
+    ),
+
+    // ── Réservations du trajet sélectionné ──────────────────────────────────
+    tab==='reservations' && E('div', null,
+      trips.length>0 && E('select', { className:'form-select', style:{ marginBottom:'1rem' }, value:selectedTripId||'', onChange:e=>setSelectedTripId(e.target.value) },
+        E('option', { value:'' }, '— Choisir un trajet —'),
+        trips.map(trip => E('option', { key:trip.id, value:trip.id }, trip.origin_city+' → '+trip.destination_city+' — '+new Date(trip.departure_at).toLocaleDateString('fr-FR')))
+      ),
+      !selectedTripId ? E('div',{className:'empty-state'},E('p',null,'Choisissez un trajet pour voir ses réservations')) :
+      reservations.length===0 ? E('div',{className:'empty-state'},E('p',null,'Aucune réservation sur ce trajet')) :
+      E('div',{style:{display:'flex',flexDirection:'column',gap:'.65rem'}},
+        reservations.map(r => E('div',{key:r.id,style:{border:'0.5px solid var(--border)',borderRadius:10,padding:'.85rem'}},
+          E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}},
+            E('div',null,
+              E('div',{style:{fontWeight:700,fontSize:'.85rem'}}, r.booking_type==='seat' ? ('💺 '+r.seats_booked+' place'+(r.seats_booked>1?'s':'')+' — '+(r.requester_name||'Passager')) : ('📦 Colis pour '+(r.recipient_name||'—'))),
+              r.booking_type==='package' && E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)',marginTop:'.15rem'}}, r.package_description),
+              r.requester_phone && E('a',{href:'tel:'+r.requester_phone,style:{fontSize:'.78rem',color:'var(--primary)'}}, '📞 ', r.requester_phone)
+            ),
+            E('div',{style:{textAlign:'right'}},
+              r.price_fcfa>0 && E('div',{style:{fontWeight:700,color:'var(--primary)'}}, FCFA(r.price_fcfa)),
+              E('div',{style:{fontSize:'.72rem',color:r.payment_status==='paid'?'#059669':'#d97706'}}, r.payment_status==='paid'?'✅ Payé':(r.status==='pending_review'?'⏳ À traiter':'⏳ En attente paiement'))
+            )
+          ),
+          r.booking_type==='package' && r.status==='pending_review' && E('div',{style:{display:'flex',gap:'.5rem',marginTop:'.6rem'}},
+            E('button',{className:'btn btn-primary btn-sm',onClick:()=>acceptPackage(r)}, '✅ Accepter (fixer le prix)'),
+            E('button',{className:'btn btn-secondary btn-sm',onClick:()=>rejectPackage(r)}, '❌ Refuser')
+          )
+        ))
+      )
+    ),
+
+    // ── Revenus ─────────────────────────────────────────────────────────────
+    tab==='earnings' && E('div',null,
+      E('div',{style:{background:'var(--bg-light)',borderRadius:10,padding:'.85rem 1rem',marginBottom:'1.25rem',borderLeft:'3px solid var(--primary)'}},
+        E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)',textTransform:'uppercase'}},'Total encaissé'),
+        E('div',{style:{fontWeight:700,fontSize:'1.2rem',marginTop:'.2rem'}},FCFA(totalEarned))
+      ),
+      confirmedResa.length===0 ? E('div',{className:'empty-state'},E('p',null,'Aucune réservation payée pour le moment')) :
+      E('div',{style:{display:'flex',flexDirection:'column',gap:'.5rem'}},
+        confirmedResa.map(r => E('div',{key:r.id,style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'.6rem 0',borderBottom:'0.5px solid var(--border)'}},
+          E('div',null,
+            E('div',{style:{fontSize:'.85rem',fontWeight:500}}, r.booking_type==='seat' ? '💺 Place(s)' : '📦 Colis'),
+            E('div',{style:{fontSize:'.75rem',color:'var(--text-secondary)'}}, new Date(r.created_at).toLocaleDateString('fr-FR'))
+          ),
+          E('div',{style:{fontWeight:700,color:'var(--primary)'}}, FCFA(r.price_fcfa))
+        ))
+      )
     )
   );
 };
@@ -24948,6 +25210,126 @@ const AdminLivraisonPanel = ({ addToast }) => {
                   E('button',{className:'btn btn-sm btn-secondary',title:'Itinéraire',onClick:()=>{ try{ NexusMap.openDirections(c.lat,c.lng,c.name||'Livreur'); }catch(e){} }},'🧭')));
             }))
     ); })()
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// AdminTransportPanel — covoiturage/transporteurs/colis sur trajet (mirror
+// structurel de AdminLivraisonPanel, sans carte/geoloc temps réel : les
+// trajets sont programmés, pas dispatchés).
+// ════════════════════════════════════════════════════════════════════════════
+const AdminTransportPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const [tab, setTab] = React.useState('transporters');
+  const [transporters, setTransporters] = React.useState([]);
+  const [trips, setTrips] = React.useState([]);
+  const [reservations, setReservations] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [trRes, tpRes, rsRes] = await Promise.allSettled([
+        sb.from('transporters').select('*').order('created_at', { ascending: false }),
+        sb.from('transport_trips').select('*').order('departure_at', { ascending: false }).limit(200),
+        sb.from('transport_reservations').select('*').order('created_at', { ascending: false }).limit(200),
+      ]);
+      setTransporters(trRes.status === 'fulfilled' ? (trRes.value.data || []) : []);
+      setTrips(tpRes.status === 'fulfilled' ? (tpRes.value.data || []) : []);
+      setReservations(rsRes.status === 'fulfilled' ? (rsRes.value.data || []) : []);
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+    finally { setLoading(false); }
+  };
+  React.useEffect(() => { load(); }, []);
+
+  const approveTransporter = async (id) => {
+    await sb.from('transporters').update({ status: 'active' }).eq('id', id);
+    addToast('✅ Transporteur approuvé', 'success'); load();
+  };
+  const suspendTransporter = async (id) => {
+    await sb.from('transporters').update({ status: 'suspended' }).eq('id', id);
+    addToast('Transporteur suspendu', 'warning'); load();
+  };
+  const cancelTrip = async (id) => {
+    await sb.from('transport_trips').update({ status: 'cancelled' }).eq('id', id);
+    addToast('Trajet annulé', 'info'); load();
+  };
+  // Marquage paiement manuel (Wave/OM confirmé hors PayTech, litige) — mirror
+  // du pattern payment_method='admin_comp' déjà utilisé pour les boosts.
+  const markPaidManually = async (id) => {
+    await sb.from('transport_reservations').update({ payment_status: 'paid', status: 'confirmed', payment_method: 'admin_comp' }).eq('id', id);
+    addToast('✅ Marqué payé (manuel)', 'success'); load();
+  };
+
+  const STATUS_BADGE = { pending: '#F59E0B', active: '#16A34A', suspended: '#DC2626', scheduled: '#16A34A', cancelled: '#DC2626', completed: '#6B7280', in_progress: '#0284C7' };
+
+  if (loading) return E('div', { style: { textAlign: 'center', padding: '3rem' } }, E('i', { className: 'fas fa-spinner fa-spin', style: { fontSize: '2rem', color: 'var(--primary)' } }));
+
+  return E('div', null,
+    E('h2', { style: { fontWeight: 800, marginBottom: '1rem' } }, '🚐 Covoiturage & Transporteurs'),
+    E('div', { style: { display: 'flex', gap: '.35rem', marginBottom: '1.25rem', overflowX: 'auto' } },
+      [
+        { id: 'transporters', label: '🚐 Transporteurs', count: transporters.filter(t=>t.status==='pending').length },
+        { id: 'trips',        label: '🗺️ Trajets' },
+        { id: 'reservations', label: '📋 Réservations' },
+      ].map(tb => E('button', { key: tb.id, onClick: () => setTab(tb.id), style: {
+        padding: '.4rem .85rem', borderRadius: 8, border: 'none', cursor: 'pointer',
+        fontWeight: tab === tb.id ? 700 : 400, fontSize: '.82rem', whiteSpace: 'nowrap',
+        background: tab === tb.id ? 'var(--primary)' : 'var(--bg-light)',
+        color: tab === tb.id ? '#fff' : 'var(--text-secondary)'
+      } }, tb.label, tb.count > 0 && E('span', { style: { marginLeft: '.3rem', background: 'rgba(255,255,255,.25)', borderRadius: 99, padding: '0 5px', fontSize: '.7rem' } }, tb.count)))
+    ),
+
+    tab === 'transporters' && (transporters.length === 0
+      ? E('div', { className: 'empty-state' }, E('p', null, 'Aucun transporteur inscrit'))
+      : E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.65rem' } },
+          transporters.map(tp => E('div', { key: tp.id, style: { border: '0.5px solid var(--border)', borderRadius: 12, padding: '.9rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem' } },
+            E('div', null,
+              E('div', { style: { fontWeight: 700 } }, tp.name, tp.company_name ? ' — ' + tp.company_name : ''),
+              E('div', { style: { fontSize: '.78rem', color: 'var(--text-secondary)' } }, tp.phone, ' · ', tp.vehicle_type, ' · ', tp.seats_capacity, ' places · ', tp.trips_done, ' trajet(s) réalisé(s)')
+            ),
+            E('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center' } },
+              E('span', { style: { fontSize: '.72rem', fontWeight: 700, color: '#fff', background: STATUS_BADGE[tp.status] || '#6B7280', borderRadius: 99, padding: '2px 10px' } }, tp.status),
+              tp.status === 'pending' && E('button', { className: 'btn btn-sm btn-primary', onClick: () => approveTransporter(tp.id) }, 'Approuver'),
+              tp.status !== 'suspended' && E('button', { className: 'btn btn-sm btn-secondary', onClick: () => suspendTransporter(tp.id) }, 'Suspendre')
+            )
+          ))
+        )
+    ),
+
+    tab === 'trips' && (trips.length === 0
+      ? E('div', { className: 'empty-state' }, E('p', null, 'Aucun trajet publié'))
+      : E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.65rem' } },
+          trips.map(trip => E('div', { key: trip.id, style: { border: '0.5px solid var(--border)', borderRadius: 12, padding: '.9rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem' } },
+            E('div', null,
+              E('div', { style: { fontWeight: 700 } }, trip.origin_city, ' → ', trip.destination_city, ' · ', E('span', { style: { fontWeight: 400, fontSize: '.78rem', color: 'var(--text-secondary)' } }, trip.driver_type)),
+              E('div', { style: { fontSize: '.78rem', color: 'var(--text-secondary)' } }, new Date(trip.departure_at).toLocaleString('fr-FR'), ' · ', trip.seats_available, '/', trip.seats_total, ' places · ', FCFA(trip.price_per_seat_fcfa), '/place')
+            ),
+            E('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center' } },
+              E('span', { style: { fontSize: '.72rem', fontWeight: 700, color: '#fff', background: STATUS_BADGE[trip.status] || '#6B7280', borderRadius: 99, padding: '2px 10px' } }, trip.status),
+              trip.status === 'scheduled' && E('button', { className: 'btn btn-sm btn-secondary', onClick: () => cancelTrip(trip.id) }, 'Annuler')
+            )
+          ))
+        )
+    ),
+
+    tab === 'reservations' && (reservations.length === 0
+      ? E('div', { className: 'empty-state' }, E('p', null, 'Aucune réservation'))
+      : E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.65rem' } },
+          reservations.map(r => E('div', { key: r.id, style: { border: '0.5px solid var(--border)', borderRadius: 12, padding: '.9rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem' } },
+            E('div', null,
+              E('div', { style: { fontWeight: 700 } }, r.booking_type === 'seat' ? ('💺 ' + r.seats_booked + ' place(s)') : '📦 Colis', ' — ', r.requester_name || '—'),
+              E('div', { style: { fontSize: '.78rem', color: 'var(--text-secondary)' } }, FCFA(r.price_fcfa), ' · paiement : ', r.payment_status, r.payment_method ? ' (' + r.payment_method + ')' : '')
+            ),
+            E('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center' } },
+              E('span', { style: { fontSize: '.72rem', fontWeight: 700, color: '#fff', background: STATUS_BADGE[r.status] || '#6B7280', borderRadius: 99, padding: '2px 10px' } }, r.status),
+              r.payment_status !== 'paid' && E('button', { className: 'btn btn-sm btn-primary', onClick: () => markPaidManually(r.id) }, 'Marquer payé (manuel)')
+            )
+          ))
+        )
+    )
   );
 };
 
@@ -25884,6 +26266,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "pro_admin", icon: "crown", label: "⭐ Boutique Pro" },
     { id: "validations",    icon: "user-check", label: "✅ Validations" },
     { id: "livraison_admin", icon: "truck", label: "🚛 NEXUS Livraison" },
+    { id: "transport_admin", icon: "shuttle-van", label: "🚐 Covoiturage & Transport" },
     { id: "popups", icon: "comment-alt", label: "💬 Popups & Annonces" },
     { id: "coupons", icon: "tag", label: "Codes promo" },
     { id: "health", icon: "heartbeat", label: "Sant\xE9 plateforme" },
@@ -27297,6 +27680,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
   view === "validations" && React.createElement(AdminValidationPanel, { addToast }),
   view === "broadcast" && React.createElement(AdminBroadcastPanel, { addToast }),
   view === "livraison_admin" && React.createElement(AdminLivraisonPanel, { addToast }),
+  view === "transport_admin" && React.createElement(AdminTransportPanel, { addToast }),
   view === "monetization" && React.createElement(MonetizationConfigPanel, { addToast }),
   view === "boost_admin" && React.createElement(AdminBoostsPanel, { addToast }),
   view === "pro_admin" && React.createElement(AdminProPanel, { addToast }),
@@ -35637,6 +36021,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     })() },
           { id: "referral",    icon: "users",        label: t("nav.referral") },
           { id: "courier_app",  icon: "motorcycle",   label: t("nav.courier_space") },
+          { id: "transporter_app", icon: "shuttle-van", label: "🚐 Espace Transporteur" },
           { id: "b2b_upgrade", icon: "building",     label: t("nav.b2b_upgrade"), highlight: true },
         ]
     ),
@@ -35741,7 +36126,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setComposeRecipient({ id: order.vendor, name: order.vendorName });
       setShowComposeMessage(true);
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => generateInvoicePDF(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Facture PDF"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => printOrderSlip(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-print" }), " Imprimer"), order.status === "delivered" && !order.returnStatus && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowReturnOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour"), !order.disputeId && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "#dc2626", color: "#dc2626" }, onClick: () => setShowDisputeOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige"), order.disputeId && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center", fontSize: "0.72rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige ", order.disputeStatus === "open" ? "en cours" : "r\xE9solu"), order.returnStatus && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour ", order.returnStatus === "requested" ? "en cours" : order.returnStatus), ["pending_payment", "processing"].includes(order.status) && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowCancelOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Annuler"))));
-  }))})()),  !isLoading && view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), !isLoading && view === "courier_app" && React.createElement(CourierApp, { currentUser: currentUser2, addToast }), !isLoading && view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
+  }))})()),  !isLoading && view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), !isLoading && view === "courier_app" && React.createElement(CourierApp, { currentUser: currentUser2, addToast }), !isLoading && view === "transporter_app" && React.createElement(TransporterDashboard, { currentUser: currentUser2, addToast }), !isLoading && view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
     // [FIX #310] LoyaltyHist supprimé — états hissés dans BuyerDashboard (_loyaltyData)
     const ld = _loyaltyData;
       const pts2 = ld?.points ?? 0;
@@ -41203,6 +41588,343 @@ window.addEventListener('unhandledrejection', function(event) {
     }
   });
 
+  // ════════════════════════════════════════════════════════════════════════
+  //  COVOITURAGE / TRANSPORTEURS / COLIS SUR TRAJET — brique distincte du
+  //  coursier à la demande ci-dessus : trajets PROGRAMMÉS (inter-villes),
+  //  places de covoiturage (particulier ou transporteur) + colis rattaché.
+  //  Tables : transporters / transport_trips / transport_reservations
+  //  (migration sql/2026_07_05_transport_covoiturage.sql).
+  // ════════════════════════════════════════════════════════════════════════
+  Object.assign(DataService, {
+    // Rechercher des trajets programmés (lecture publique, RLS trips_public_read)
+    async searchTrips({ originCity, destinationCity, afterDate } = {}) {
+      if (!this._sb) return [];
+      try {
+        var q = this._sb.from('transport_trips').select('*').eq('status', 'scheduled')
+          .gt('departure_at', afterDate || new Date().toISOString())
+          .order('departure_at', { ascending: true }).limit(50);
+        if (originCity) q = q.eq('origin_city', originCity);
+        if (destinationCity) q = q.eq('destination_city', destinationCity);
+        var r = await q;
+        return (!r.error && r.data) || [];
+      } catch (e) { console.warn('[Transport] searchTrips:', e.message); return []; }
+    },
+
+    async getTrip(tripId) {
+      if (!this._sb) return null;
+      try {
+        var r = await this._sb.from('transport_trips').select('*').eq('id', tripId).maybeSingle();
+        return (!r.error && r.data) || null;
+      } catch (e) { console.warn('[Transport] getTrip:', e.message); return null; }
+    },
+
+    // Publier un trajet (particulier : sans approbation ; transporteur : via son dashboard)
+    async createTrip(payload) {
+      if (!this._sb) throw new Error('Service indisponible');
+      var row = Object.assign({ seats_available: payload.seats_total }, payload);
+      var r = await this._sb.from('transport_trips').insert(row).select().single();
+      if (r.error) throw new Error(r.error.message);
+      return r.data;
+    },
+
+    async updateTrip(tripId, patch) {
+      if (!this._sb) throw new Error('Service indisponible');
+      var r = await this._sb.from('transport_trips').update(patch).eq('id', tripId).select().single();
+      if (r.error) throw new Error(r.error.message);
+      return r.data;
+    },
+
+    // Réserver N places — RPC atomique (anti-surréservation, cf. migration)
+    async bookSeats(tripId, seats, name, phone) {
+      if (!this._sb) throw new Error('Service indisponible');
+      var r = await this._sb.rpc('book_transport_seats', { p_trip_id: tripId, p_seats: seats, p_name: name, p_phone: phone });
+      if (r.error) throw new Error(r.error.message || 'Réservation impossible (places insuffisantes ?)');
+      return r.data;
+    },
+
+    // Demander l'envoi d'un colis sur un trajet (prix fixé ensuite par le transporteur)
+    async requestPackage(tripId, { recipientName, recipientPhone, description, requesterName, requesterPhone }) {
+      if (!this._sb) throw new Error('Service indisponible');
+      var user = this._user;
+      var r = await this._sb.from('transport_reservations').insert({
+        trip_id: tripId, booking_type: 'package', requester_id: user && user.id,
+        requester_name: requesterName, requester_phone: requesterPhone,
+        recipient_name: recipientName, recipient_phone: recipientPhone,
+        package_description: description, price_fcfa: 0, status: 'pending_review', payment_status: 'pending',
+      }).select().single();
+      if (r.error) throw new Error(r.error.message);
+      return r.data;
+    },
+
+    async getMyReservations() {
+      if (!this._sb || !this._user) return [];
+      try {
+        var r = await this._sb.from('transport_reservations').select('*, transport_trips(*)')
+          .eq('requester_id', this._user.id).order('created_at', { ascending: false });
+        return (!r.error && r.data) || [];
+      } catch (e) { console.warn('[Transport] getMyReservations:', e.message); return []; }
+    },
+
+    // ── Côté transporteur ──────────────────────────────────────────────────
+    async getMyTransporterProfile() {
+      if (!this._sb || !this._user) return null;
+      try {
+        var r = await this._sb.from('transporters').select('*').eq('user_id', this._user.id).maybeSingle();
+        return (!r.error && r.data) || null;
+      } catch (e) { console.warn('[Transport] getMyTransporterProfile:', e.message); return null; }
+    },
+
+    async registerTransporter(payload) {
+      if (!this._sb || !this._user) throw new Error('Connexion requise');
+      var row = Object.assign({ user_id: this._user.id, status: 'pending' }, payload);
+      var r = await this._sb.from('transporters').upsert(row, { onConflict: 'user_id' }).select().single();
+      if (r.error) throw new Error(r.error.message);
+      return r.data;
+    },
+
+    async getTransporterTrips() {
+      if (!this._sb || !this._user) return [];
+      try {
+        var r = await this._sb.from('transport_trips').select('*').eq('driver_id', this._user.id).order('departure_at', { ascending: false });
+        return (!r.error && r.data) || [];
+      } catch (e) { console.warn('[Transport] getTransporterTrips:', e.message); return []; }
+    },
+
+    async getTripReservations(tripId) {
+      if (!this._sb) return [];
+      try {
+        var r = await this._sb.from('transport_reservations').select('*').eq('trip_id', tripId).order('created_at', { ascending: false });
+        return (!r.error && r.data) || [];
+      } catch (e) { console.warn('[Transport] getTripReservations:', e.message); return []; }
+    },
+
+    // Le transporteur fixe le prix et accepte un colis → passe en pending_payment
+    // (le client peut alors payer ; cf. ipn.js kind='transport').
+    async acceptPackage(reservationId, priceFcfa) {
+      if (!this._sb) throw new Error('Service indisponible');
+      var r = await this._sb.from('transport_reservations')
+        .update({ price_fcfa: priceFcfa, status: 'pending_payment' })
+        .eq('id', reservationId).eq('booking_type', 'package').select().single();
+      if (r.error) throw new Error(r.error.message);
+      return r.data;
+    },
+
+    async rejectPackage(reservationId) {
+      if (!this._sb) throw new Error('Service indisponible');
+      var r = await this._sb.from('transport_reservations')
+        .update({ status: 'rejected' }).eq('id', reservationId).eq('booking_type', 'package').select().single();
+      if (r.error) throw new Error(r.error.message);
+      return r.data;
+    },
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  COVOITURAGE — modal passager autonome (recherche/réservation/publication
+  //  + envoi de colis), mêmes conventions de montage que CourierRequestModal
+  //  ci-dessus (racine React indépendante, ouverte par événement).
+  // ════════════════════════════════════════════════════════════════════════
+  (function () {
+    var E = React.createElement;
+    var currentUser = null;
+    window.addEventListener('nexus:set-user', function (e) { currentUser = e.detail || null; });
+
+    function requireLogin(user) {
+      if (user && user.id) return true;
+      alert('Connectez-vous pour continuer.');
+      try { window.dispatchEvent(new CustomEvent('nexus:open-login')); } catch (_) {}
+      return false;
+    }
+
+    function payForReservation(resa, itemLabel) {
+      var origin = window.location.origin;
+      return DataService.paymentFetch('/api/payments/paytech/init', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: 'transport',
+          booking_id: resa.id,
+          order_id: 'TRANSPORT-' + String(resa.id).slice(0, 12).toUpperCase(),
+          amount: resa.price_fcfa,
+          item_name: itemLabel,
+          success_url: origin + '/?transport_return=success&bookingId=' + resa.id,
+          cancel_url: origin + '/?transport_return=cancel&bookingId=' + resa.id,
+        }),
+      }).then(function (res) {
+        return res.json().catch(function () { return null; }).then(function (data) {
+          if (res.ok && data && data.redirect_url) { window.location.href = data.redirect_url; return; }
+          alert('Paiement indisponible pour le moment : ' + ((data && data.error) || 'réessayez plus tard') + '.');
+        });
+      }).catch(function (e) { alert('Erreur de paiement : ' + e.message); });
+    }
+
+    function CovoiturageModal(props) {
+      var user = props.user;
+      var _tab = React.useState('search'), tab = _tab[0], setTab = _tab[1];
+      var _sf = React.useState({ originCity: '', destinationCity: '' }), searchForm = _sf[0], setSearchForm = _sf[1];
+      var _trips = React.useState([]), trips = _trips[0], setTrips = _trips[1];
+      var _searched = React.useState(false), searched = _searched[0], setSearched = _searched[1];
+      var _busy = React.useState(false), busy = _busy[0], setBusy = _busy[1];
+      var _seatTrip = React.useState(null), seatTrip = _seatTrip[0], setSeatTrip = _seatTrip[1];
+      var _seats = React.useState(1), seats = _seats[0], setSeats = _seats[1];
+      var _pkgTrip = React.useState(null), pkgTrip = _pkgTrip[0], setPkgTrip = _pkgTrip[1];
+      var _pkgForm = React.useState({ recipientName: '', recipientPhone: '', description: '' }), pkgForm = _pkgForm[0], setPkgForm = _pkgForm[1];
+      var _pub = React.useState({ origin_city: 'Dakar', destination_city: 'Thiès', departure_at: '', vehicle_type: 'voiture', seats_total: 3, price_per_seat_fcfa: 2000, allows_packages: true }), pub = _pub[0], setPub = _pub[1];
+
+      var FCFA = function (n) { return Math.round(n || 0).toLocaleString('fr-FR') + ' F'; };
+
+      var doSearch = function () {
+        setBusy(true); setSearched(true);
+        DataService.searchTrips({ originCity: searchForm.originCity || undefined, destinationCity: searchForm.destinationCity || undefined })
+          .then(function (data) { setTrips(data); setBusy(false); });
+      };
+      React.useEffect(function () { doSearch(); }, []); // charge les prochains trajets au premier affichage
+
+      var confirmSeats = function () {
+        if (!requireLogin(user)) return;
+        setBusy(true);
+        DataService.bookSeats(seatTrip.id, seats, user.name || '', user.phone || '')
+          .then(function (resa) {
+            setBusy(false); setSeatTrip(null);
+            return payForReservation(resa, seats + ' place(s) ' + seatTrip.origin_city + ' → ' + seatTrip.destination_city);
+          })
+          .catch(function (e) { setBusy(false); alert('Réservation impossible : ' + e.message); });
+      };
+
+      var sendPackageRequest = function () {
+        if (!requireLogin(user)) return;
+        if (!pkgForm.recipientName || !pkgForm.recipientPhone) { alert('Nom et téléphone du destinataire requis.'); return; }
+        setBusy(true);
+        DataService.requestPackage(pkgTrip.id, {
+          recipientName: pkgForm.recipientName, recipientPhone: pkgForm.recipientPhone, description: pkgForm.description,
+          requesterName: user.name || '', requesterPhone: user.phone || '',
+        }).then(function () {
+          setBusy(false); setPkgTrip(null); setPkgForm({ recipientName: '', recipientPhone: '', description: '' });
+          alert('📦 Demande envoyée ! Le transporteur va fixer le prix et accepter — vous serez notifié.');
+        }).catch(function (e) { setBusy(false); alert('Erreur : ' + e.message); });
+      };
+
+      var publishTrip = function () {
+        if (!requireLogin(user)) return;
+        if (!pub.origin_city || !pub.destination_city || !pub.departure_at) { alert('Départ, destination et date requis.'); return; }
+        setBusy(true);
+        DataService.createTrip({
+          driver_id: user.id, driver_type: 'particulier',
+          origin_city: pub.origin_city, destination_city: pub.destination_city,
+          departure_at: new Date(pub.departure_at).toISOString(), vehicle_type: pub.vehicle_type,
+          seats_total: Number(pub.seats_total), price_per_seat_fcfa: Number(pub.price_per_seat_fcfa),
+          allows_packages: pub.allows_packages, status: 'scheduled',
+        }).then(function () {
+          setBusy(false);
+          alert('🚗 Trajet publié ! Il est visible dans la recherche.');
+          setTab('search'); doSearch();
+        }).catch(function (e) { setBusy(false); alert('Erreur : ' + e.message); });
+      };
+
+      var lbl = { fontSize: '.78rem', fontWeight: 600, color: '#555', marginBottom: '.25rem', display: 'block' };
+      var inp = { width: '100%', padding: '.6rem .7rem', border: '1.5px solid #e5e7eb', borderRadius: 10, fontSize: '.88rem', marginBottom: '.7rem', boxSizing: 'border-box' };
+
+      return E('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }, onClick: props.onClose },
+        E('div', { style: { background: '#fff', borderRadius: 16, maxWidth: 480, width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.25rem' }, onClick: function (e) { e.stopPropagation(); } },
+          E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' } },
+            E('h2', { style: { fontSize: '1.1rem', fontWeight: 800, margin: 0 } }, '🚗 Covoiturage & Transport'),
+            E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: '#999' } }, '×')
+          ),
+          E('div', { style: { display: 'flex', gap: 6, marginBottom: '1rem' } },
+            [['search', '🔎 Trouver un trajet'], ['publish', '➕ Publier un trajet']].map(function (tb) {
+              var on = tab === tb[0];
+              return E('button', { key: tb[0], onClick: function () { setTab(tb[0]); }, style: { flex: 1, padding: '.5rem', fontSize: '.78rem', border: on ? '2px solid #006d40' : '1.5px solid #e5e7eb', background: on ? 'rgba(0,109,64,.08)' : '#fff', color: on ? '#006d40' : '#666', borderRadius: 8, cursor: 'pointer', fontWeight: 700 } }, tb[1]);
+            })
+          ),
+
+          // ── Recherche ────────────────────────────────────────────────────
+          tab === 'search' && E('div', null,
+            E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
+              E('input', { style: Object.assign({}, inp, { marginBottom: 0 }), placeholder: 'Départ (ex. Dakar)', value: searchForm.originCity, onChange: function (e) { setSearchForm(function (f) { return Object.assign({}, f, { originCity: e.target.value }); }); } }),
+              E('input', { style: Object.assign({}, inp, { marginBottom: 0 }), placeholder: 'Arrivée (ex. Thiès)', value: searchForm.destinationCity, onChange: function (e) { setSearchForm(function (f) { return Object.assign({}, f, { destinationCity: e.target.value }); }); } })
+            ),
+            E('button', { onClick: doSearch, disabled: busy, style: { width: '100%', padding: '.65rem', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: 'pointer', marginBottom: '1rem' } }, busy ? 'Recherche…' : '🔎 Rechercher'),
+
+            !searched ? null : trips.length === 0 ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucun trajet trouvé pour ce moment.') :
+            E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
+              trips.map(function (trip) {
+                return E('div', { key: trip.id, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
+                  E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
+                    E('div', null,
+                      E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, trip.origin_city, ' → ', trip.destination_city),
+                      E('div', { style: { fontSize: '.78rem', color: '#888', marginTop: 2 } }, new Date(trip.departure_at).toLocaleString('fr-FR')),
+                      E('span', { style: { fontSize: '.68rem', fontWeight: 700, borderRadius: 99, padding: '2px 8px', marginTop: 4, display: 'inline-block', background: trip.driver_type === 'transporteur' ? '#DBEAFE' : '#F3F4F6', color: trip.driver_type === 'transporteur' ? '#1D4ED8' : '#374151' } }, trip.driver_type === 'transporteur' ? '🚐 Transporteur vérifié' : '🚗 Particulier')
+                    ),
+                    E('div', { style: { textAlign: 'right' } },
+                      E('div', { style: { fontWeight: 800, color: '#006d40' } }, FCFA(trip.price_per_seat_fcfa)),
+                      E('div', { style: { fontSize: '.7rem', color: '#888' } }, '/ place')
+                    )
+                  ),
+                  E('div', { style: { fontSize: '.78rem', color: '#666', margin: '.5rem 0' } }, '💺 ', trip.seats_available, ' place(s) restante(s)'),
+                  E('div', { style: { display: 'flex', gap: 6 } },
+                    E('button', { onClick: function () { setSeatTrip(trip); setSeats(1); }, disabled: trip.seats_available < 1, style: { flex: 1, padding: '.5rem', background: trip.seats_available < 1 ? '#9ca3af' : '#006d40', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '.78rem', cursor: trip.seats_available < 1 ? 'default' : 'pointer' } }, trip.seats_available < 1 ? 'Complet' : '🎫 Réserver'),
+                    trip.allows_packages && E('button', { onClick: function () { setPkgTrip(trip); }, style: { flex: 1, padding: '.5rem', background: '#fff', color: '#006d40', border: '1.5px solid #006d40', borderRadius: 8, fontWeight: 700, fontSize: '.78rem', cursor: 'pointer' } }, '📦 Envoyer un colis')
+                  ),
+
+                  // Formulaire réservation de places (inline)
+                  seatTrip && seatTrip.id === trip.id && E('div', { style: { marginTop: '.7rem', paddingTop: '.7rem', borderTop: '1px solid #eee' } },
+                    E('label', lbl, 'Nombre de places'),
+                    E('input', { type: 'number', min: 1, max: trip.seats_available, style: inp, value: seats, onChange: function (e) { setSeats(parseInt(e.target.value, 10) || 1); } }),
+                    E('div', { style: { fontSize: '.82rem', fontWeight: 700, marginBottom: '.6rem' } }, 'Total : ', FCFA(trip.price_per_seat_fcfa * seats)),
+                    E('button', { onClick: confirmSeats, disabled: busy, style: { width: '100%', padding: '.6rem', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' } }, busy ? 'Réservation…' : '💳 Réserver et payer')
+                  ),
+
+                  // Formulaire envoi de colis (inline)
+                  pkgTrip && pkgTrip.id === trip.id && E('div', { style: { marginTop: '.7rem', paddingTop: '.7rem', borderTop: '1px solid #eee' } },
+                    E('label', lbl, 'Nom du destinataire'),
+                    E('input', { style: inp, value: pkgForm.recipientName, onChange: function (e) { setPkgForm(function (f) { return Object.assign({}, f, { recipientName: e.target.value }); }); } }),
+                    E('label', lbl, 'Téléphone du destinataire'),
+                    E('input', { style: inp, value: pkgForm.recipientPhone, onChange: function (e) { setPkgForm(function (f) { return Object.assign({}, f, { recipientPhone: e.target.value }); }); } }),
+                    E('label', lbl, 'Description du colis'),
+                    E('input', { style: inp, value: pkgForm.description, placeholder: 'Ex : petit carton, 3kg', onChange: function (e) { setPkgForm(function (f) { return Object.assign({}, f, { description: e.target.value }); }); } }),
+                    E('p', { style: { fontSize: '.75rem', color: '#888', marginBottom: '.6rem' } }, 'Le transporteur fixera le prix et acceptera avant paiement.'),
+                    E('button', { onClick: sendPackageRequest, disabled: busy, style: { width: '100%', padding: '.6rem', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' } }, busy ? 'Envoi…' : '📦 Envoyer la demande')
+                  )
+                );
+              })
+            )
+          ),
+
+          // ── Publier un trajet (particulier) ───────────────────────────────
+          tab === 'publish' && E('div', null,
+            E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
+              E('div', { style: { flex: 1 } }, E('label', lbl, 'Départ'), E('input', { style: inp, value: pub.origin_city, onChange: function (e) { setPub(function (f) { return Object.assign({}, f, { origin_city: e.target.value }); }); } })),
+              E('div', { style: { flex: 1 } }, E('label', lbl, 'Arrivée'), E('input', { style: inp, value: pub.destination_city, onChange: function (e) { setPub(function (f) { return Object.assign({}, f, { destination_city: e.target.value }); }); } }))
+            ),
+            E('label', lbl, 'Date et heure de départ'),
+            E('input', { type: 'datetime-local', style: inp, value: pub.departure_at, onChange: function (e) { setPub(function (f) { return Object.assign({}, f, { departure_at: e.target.value }); }); } }),
+            E('div', { style: { display: 'flex', gap: 6 } },
+              E('div', { style: { flex: 1 } }, E('label', lbl, 'Places libres'), E('input', { type: 'number', min: 1, style: inp, value: pub.seats_total, onChange: function (e) { setPub(function (f) { return Object.assign({}, f, { seats_total: e.target.value }); }); } })),
+              E('div', { style: { flex: 1 } }, E('label', lbl, 'Prix / place (FCFA)'), E('input', { type: 'number', min: 0, style: inp, value: pub.price_per_seat_fcfa, onChange: function (e) { setPub(function (f) { return Object.assign({}, f, { price_per_seat_fcfa: e.target.value }); }); } }))
+            ),
+            E('label', { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: '.82rem', margin: '.3rem 0 1rem' } },
+              E('input', { type: 'checkbox', checked: pub.allows_packages, onChange: function (e) { setPub(function (f) { return Object.assign({}, f, { allows_packages: e.target.checked }); }); } }),
+              'Accepter des colis sur ce trajet'
+            ),
+            E('button', { onClick: publishTrip, disabled: busy, style: { width: '100%', padding: '.7rem', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.88rem', cursor: 'pointer' } }, busy ? 'Publication…' : '🚀 Publier ce trajet')
+          )
+        )
+      );
+    }
+
+    var mountEl = null, root = null;
+    function getMount() {
+      if (!mountEl) { mountEl = document.createElement('div'); mountEl.id = 'nexus-transport-root'; document.body.appendChild(mountEl); }
+      if (!root && window.ReactDOM) root = ReactDOM.createRoot ? ReactDOM.createRoot(mountEl) : null;
+      return root;
+    }
+    function openModal() {
+      var r = getMount();
+      var close = function () { if (r) r.render(null); else ReactDOM.unmountComponentAtNode(mountEl); };
+      var el = E(CovoiturageModal, { onClose: close, user: currentUser });
+      if (r) r.render(el); else ReactDOM.render(el, mountEl);
+    }
+    window.addEventListener('nexus:open-covoiturage', function () { openModal(); });
+  })();
+
   // ── Notification WhatsApp coursier (réutilise NexusWA.send) ──────────────
   if (typeof NexusWA !== 'undefined' && NexusWA.send) {
     NexusWA.deliveryAssigned = function (courierPhone, pickup, dropoff, payout) {
@@ -46296,6 +47018,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <a data-route="nexus pro" data-nx-mod="mod_pros_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> <span data-i18n="service.pro">NEXUS Pro</span></a>
       <a data-route="élevage & terroir" data-nx-mod="mod_elevage_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">agriculture</span> <span data-i18n="service.elevage">Élevage &amp; Terroir</span></a>
       <a data-nx-rental-link class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Louer du matériel (événementiel, BTP, électro…)" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">vpn_key</span> <span data-i18n="service.rental">Location</span></a>
+      <a data-nx-mod="mod_transport_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Covoiturage, transporteurs et colis entre villes" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-covoiturage'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">directions_car</span> Covoiturage</a>
       <a data-route="troc" data-nx-mod="mod_troc_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#" title="Échange sans argent entre utilisateurs"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> <span data-i18n="service.troc">Troc</span></a>
       <a data-route="chat en direct" data-nx-mod="mod_chat_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">forum</span> <span data-i18n="service.chat">Chat en direct</span></a>
       <a data-route="assistant ia" data-nx-mod="mod_assistant_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">smart_toy</span> <span data-i18n="service.assistant">Assistant IA</span></a>
@@ -46331,6 +47054,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <a data-route="nexus pro — artisans proches" data-nx-mod="mod_pros_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">handyman</span> <span data-i18n="service.pro_desc">NEXUS Pro — artisans proches</span></a>
       <a data-route="élevage & produits locaux" data-nx-mod="mod_elevage_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">agriculture</span> <span data-i18n="service.elevage_desc">Élevage &amp; produits locaux</span></a>
       <a data-nx-rental-link class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px] text-primary w-5">vpn_key</span> <span data-i18n="service.rental_desc">NEXUS Location — louer du matériel</span></a>
+      <a data-nx-mod="mod_transport_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-covoiturage'))}catch(e){}"><span class="material-symbols-outlined text-[18px] text-primary w-5">directions_car</span> Covoiturage — trajets, transporteurs &amp; colis</a>
       <a data-route="louma — le marché en ligne" data-nx-mod="mod_louma_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">storefront</span> <span data-i18n="service.louma_desc">Louma — le marché en ligne</span></a>
       <a data-route="nexus troc — échanger sans argent" data-nx-mod="mod_troc_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">published_with_changes</span> <span data-i18n="service.troc_desc">NEXUS Troc — échanger sans argent</span></a>
       <a data-route="nexus stories — vidéos produit" data-nx-mod="mod_stories_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">play_circle</span> <span data-i18n="service.stories_desc">NEXUS Stories — vidéos produit</span></a>
@@ -46349,6 +47073,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <a data-route="devenir vendeur" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">store</span> <span data-i18n="vendor.become">Devenir vendeur</span></a>
       <a data-route="devenir artisan (nexus pro)" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">handyman</span> <span data-i18n="pro.become">Devenir artisan (NEXUS Pro)</span></a>
       <a data-route="devenir éleveur / producteur" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">agriculture</span> <span data-i18n="breeder.become">Devenir éleveur / producteur</span></a>
+      <a data-route="devenir transporteur" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">local_shipping</span> Devenir transporteur</a>
       <a data-route="programme ambassadeur" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">handshake</span> <span data-i18n="nav.ambassador">Programme ambassadeur</span></a>
     </div>
   </nav>
@@ -47255,6 +47980,7 @@ function initProto(){
     'louma — le marché en ligne':EVT('nexus:open-louma'),"j'en profite":EVT('nexus:open-louma'),
     'nexus stories — vidéos produit':EVT('nexus:open-stories'),
     'programme ambassadeur':function(){var u=window.__nexusCurrentUser;if(u&&u.id){evt('nexus:hide-public-home');setTimeout(function(){evt('nexus:goto-buyer-view','ambassador');},350);}else{evt('nexus:open-auth',{tab:'register'});}},
+    'devenir transporteur':function(){var u=window.__nexusCurrentUser;if(u&&u.id){evt('nexus:hide-public-home');setTimeout(function(){evt('nexus:goto-buyer-view','transporter_app');},350);}else{evt('nexus:open-auth',{tab:'register'});}},
     'voir tout':nxpShowAll,'voir tout →':nxpShowAll,
     'accueil':function(){closeDrawerNow();window.scrollTo({top:0,behavior:'smooth'});},
     'toutes les catégories':EVT('nexus:open-menu'),

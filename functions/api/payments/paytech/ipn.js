@@ -69,16 +69,17 @@ export async function onRequest({ request, env }) {
   }
 
   // 2. Extraire l'identifiant depuis custom_field (commande / boost / abo Pro)
-  let order_id = null, boostId = null, subId = null, storyId = null, flashId = null, quoteId = null, apiId = null;
+  let order_id = null, boostId = null, subId = null, storyId = null, flashId = null, quoteId = null, apiId = null, bookingId = null;
   try {
     const cf = typeof custom_field === 'string' ? JSON.parse(custom_field) : custom_field;
-    order_id = cf?.order_id;
-    boostId  = cf?.boostId || cf?.boost_id;
-    subId    = cf?.subId   || cf?.sub_id;
-    storyId  = cf?.storyId || cf?.story_id;
-    flashId  = cf?.flash_id;
-    quoteId  = cf?.quote_id;
-    apiId    = cf?.apiId   || cf?.api_id;
+    order_id  = cf?.order_id;
+    boostId   = cf?.boostId || cf?.boost_id;
+    subId     = cf?.subId   || cf?.sub_id;
+    storyId   = cf?.storyId || cf?.story_id;
+    flashId   = cf?.flash_id;
+    quoteId   = cf?.quote_id;
+    apiId     = cf?.apiId   || cf?.api_id;
+    bookingId = cf?.booking_id;
   } catch { /* ignore */ }
 
   const isPaid = type_event === 'sale_complete';
@@ -171,6 +172,40 @@ export async function onRequest({ request, env }) {
       priority_paid_at: isPaid ? new Date().toISOString() : null,
     });
     return jsonR({ ok: true, kind: 'b2b_priority', activated: isPaid });
+  }
+
+  // 2septies. RÉSERVATION TRANSPORT (place de covoiturage ou colis sur trajet)
+  // → activation au paiement. En échec, une place (booking_type='seat') doit être
+  // restituée au trajet (elle avait été décomptée de façon optimiste par le RPC
+  // book_transport_seats à la création de la réservation) ; un colis refusé reste
+  // en attente pour permettre une nouvelle tentative de paiement (comme story).
+  if (bookingId && !order_id) {
+    const resas = await sbGet(env, `transport_reservations?id=eq.${encodeURIComponent(bookingId)}&select=trip_id,booking_type,seats_booked,payment_status`);
+    const resa = resas?.[0];
+    if (isPaid) {
+      await sbUpdate(env, 'transport_reservations', `id=eq.${encodeURIComponent(bookingId)}&payment_status=neq.paid`, {
+        payment_status: 'paid', status: 'confirmed', payment_method: 'paytech', payment_ref: ref_command || null,
+      });
+    } else {
+      if (resa?.booking_type === 'seat' && resa.trip_id) {
+        // Restituer les places tenues de façon optimiste (jamais de surréservation
+        // possible entre-temps : seats_available <= seats_total est garanti par
+        // la contrainte CHECK ; LEAST() est une double sécurité).
+        const trips = await sbGet(env, `transport_trips?id=eq.${encodeURIComponent(resa.trip_id)}&select=seats_available,seats_total`);
+        const trip = trips?.[0];
+        if (trip) {
+          const restored = Math.min(trip.seats_total, (trip.seats_available || 0) + (resa.seats_booked || 0));
+          await sbUpdate(env, 'transport_trips', `id=eq.${encodeURIComponent(resa.trip_id)}`, { seats_available: restored });
+        }
+        await sbUpdate(env, 'transport_reservations', `id=eq.${encodeURIComponent(bookingId)}`, {
+          payment_status: 'failed', status: 'cancelled',
+        });
+      } else {
+        // Colis : on laisse la réservation en l'état pour une nouvelle tentative.
+        await sbUpdate(env, 'transport_reservations', `id=eq.${encodeURIComponent(bookingId)}`, { payment_status: 'failed' });
+      }
+    }
+    return jsonR({ ok: true, kind: 'transport', activated: isPaid });
   }
 
   if (!order_id) {
