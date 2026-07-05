@@ -4,18 +4,30 @@
 // et aux flux Google Merchant. Les libellés `aliases` couvrent les variantes réelles
 // stockées en base (champ TEXT libre, plusieurs orthographes historiques).
 
+// [FIX UNIFORMISATION 2026-07-05] Le formulaire produit principal (public/index.html,
+// « Extraire depuis une URL ») propose 66 catégories détaillées (ex. "Téléphones &
+// Accessoires", "Meubles & Décoration"…). Avant ce fix, seules 2 des 66 avaient un
+// alias ici → pour tous les autres produits, slugForLabel() retombait sur un slug
+// générique (slugify du libellé complet) qui ne correspond à AUCUNE page
+// /categorie/:slug réelle : le fil d'Ariane (BreadcrumbList, SEO) pointait vers une
+// page inexistante pour la quasi-totalité du catalogue. Le filtrage catalogue
+// principal (React, `products.category` en exact match) n'est PAS affecté — ce
+// fix ne touche que la couverture SEO/breadcrumb. Certains rattachements sont des
+// approximations raisonnables faute de bucket dédié (immobilier, livres, voyages,
+// dons/troc → pas de slug propre parmi les 11 piliers actuels) : à ajuster si de
+// nouvelles pages de catégorie dédiées sont créées plus tard.
 export const CATEGORIES = [
-  { slug: 'electronique', label: 'Électronique',     aliases: ['Électronique', 'Electronique'],                      google: 'Electronics' },
-  { slug: 'informatique', label: 'Informatique',     aliases: ['Informatique'],                                      google: 'Electronics > Computers' },
-  { slug: 'telephones',   label: 'Téléphones',        aliases: ['Téléphones', 'Telephones', 'Téléphonie'],            google: 'Electronics > Communications > Telephony' },
-  { slug: 'mode',         label: 'Mode & Vêtements',  aliases: ['Mode & Vêtements', 'Mode', 'Vêtements', 'Vetements'], google: 'Apparel & Accessories' },
-  { slug: 'alimentation', label: 'Alimentation',      aliases: ['Alimentation'],                                      google: 'Food, Beverages & Tobacco' },
-  { slug: 'maison',       label: 'Maison & Déco',     aliases: ['Maison & Déco', 'Maison', 'Maison & Deco', 'Déco'],  google: 'Home & Garden' },
-  { slug: 'beaute',       label: 'Beauté & Santé',    aliases: ['Beauté & Santé', 'Beauté', 'Beaute & Sante', 'Santé'], google: 'Health & Beauty' },
-  { slug: 'sport',        label: 'Sport & Loisirs',   aliases: ['Sport & Loisirs', 'Sport', 'Loisirs'],               google: 'Sporting Goods' },
-  { slug: 'services',     label: 'Services',          aliases: ['Services'],                                          google: 'Shopping' },
-  { slug: 'auto',         label: 'Auto & Moto',       aliases: ['Auto & Moto', 'Auto', 'Moto', 'Véhicules'],          google: 'Vehicles & Parts' },
-  { slug: 'animaux',      label: 'Animaux & Élevage', aliases: ['Animaux & Élevage', 'Animaux', 'Élevage', 'Elevage', 'Bétail', 'Agriculture & Élevage', 'Animaux de compagnie'], google: 'Animals & Pet Supplies' },
+  { slug: 'electronique', label: 'Électronique',     aliases: ['Électronique', 'Electronique', 'Électronique & Hi-Fi', 'Appareils photo & Vidéo', 'Jeux vidéo & Consoles', 'Montres connectées', 'Éclairage'], google: 'Electronics' },
+  { slug: 'informatique', label: 'Informatique',     aliases: ['Informatique', 'Ordinateurs & Tablettes', 'Informatique & Tech (services)'], google: 'Electronics > Computers' },
+  { slug: 'telephones',   label: 'Téléphones',        aliases: ['Téléphones', 'Telephones', 'Téléphonie', 'Téléphones & Accessoires'],            google: 'Electronics > Communications > Telephony' },
+  { slug: 'mode',         label: 'Mode & Vêtements',  aliases: ['Mode & Vêtements', 'Mode', 'Vêtements', 'Vetements', 'Mode Femme', 'Mode Homme', 'Mode Enfant', 'Chaussures', 'Sacs & Maroquinerie', 'Bijoux & Accessoires', 'Tissus & Wax', 'Textile & Couture (pro)'], google: 'Apparel & Accessories' },
+  { slug: 'alimentation', label: 'Alimentation',      aliases: ['Alimentation', 'Alimentation générale', 'Produits bio & locaux', 'Boissons', 'Épices & Condiments', 'Céréales & Légumineuses', 'Produits laitiers', 'Boulangerie & Pâtisserie', 'Produits locaux'], google: 'Food, Beverages & Tobacco' },
+  { slug: 'maison',       label: 'Maison & Déco',     aliases: ['Maison & Déco', 'Maison', 'Maison & Deco', 'Déco', 'Meubles & Décoration', 'Électroménager', 'Cuisine & Art de la table', 'Linge de maison', 'Jardinage & Extérieur', 'Bricolage & Outillage'],  google: 'Home & Garden' },
+  { slug: 'beaute',       label: 'Beauté & Santé',    aliases: ['Beauté & Santé', 'Beauté', 'Beaute & Sante', 'Santé', 'Beauté & Cosmétiques', 'Parfums', 'Santé & Bien-être'], google: 'Health & Beauty' },
+  { slug: 'sport',        label: 'Sport & Loisirs',   aliases: ['Sport & Loisirs', 'Sport', 'Loisirs', 'Sport & Fitness', 'Jouets & Jeux', 'Musique & Instruments', 'Livres & Presses', 'Livres papier', 'eBooks & PDF', 'Livres audio', 'BD & Mangas', 'Manuels scolaires', 'Presse & Magazines', 'Livres anciens & Rares', 'Voyages & Tourisme', 'Arts & Artisanat', 'Collections & Antiquités'], google: 'Sporting Goods' },
+  { slug: 'services',     label: 'Services',          aliases: ['Services', 'Services à domicile', 'Formation & Cours', 'Événementiel', 'Transport & Logistique', 'Location appartement', 'Vente immobilier', 'Terrains & Parcelles', 'Bureaux & Locaux commerciaux', 'BTP & Construction', 'Matériel professionnel', 'Fournitures de bureau', 'Dons & Trocs', 'Autre'], google: 'Shopping' },
+  { slug: 'auto',         label: 'Auto & Moto',       aliases: ['Auto & Moto', 'Auto', 'Moto', 'Véhicules', 'Voitures', 'Motos & Scooters', 'Vélos & Trottinettes', 'Pièces & Accessoires auto'],          google: 'Vehicles & Parts' },
+  { slug: 'animaux',      label: 'Animaux & Élevage', aliases: ['Animaux & Élevage', 'Animaux', 'Élevage', 'Elevage', 'Bétail', 'Agriculture & Élevage', 'Animaux de compagnie', 'Accessoires animaux', 'Alimentation animaux'], google: 'Animals & Pet Supplies' },
 ];
 
 // slug générique (minuscules, sans accent, tirets) — pour libellés hors référentiel.
