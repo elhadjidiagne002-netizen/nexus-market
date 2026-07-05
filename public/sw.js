@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v24"; // v24 (2026-07-05) → PURGE cache : unification des listes de villes (Troc/Assurance/Annonce rapide) en une seule NEXUS_VILLES_SENEGAL. Bump = re-précache frais de "/".
+const CACHE_NAME = "nexus-v25"; // v25 (2026-07-05) → PURGE cache : STATUS_MAP (5 endroits) complétés avec pending/pending_payment — badges vides pour ~25% des commandes réelles (status=pending_payment). Bump = re-précache frais de "/".
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────
