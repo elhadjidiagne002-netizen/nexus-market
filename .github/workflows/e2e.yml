@@ -1,0 +1,68 @@
+name: E2E (Playwright sur preview Cloudflare)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # Le job E2E a besoin du secret CLOUDFLARE_API_TOKEN pour deployer une preview.
+  # Tant qu'il n'est pas configure, on SKIP proprement (pas d'echec rouge) plutot
+  # que de faire echouer chaque push. On expose la presence du secret en sortie.
+  gate:
+    name: Verifier la config Cloudflare
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        run: echo "ready=${{ secrets.CLOUDFLARE_API_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    name: Deploy preview + Playwright
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Installer les dependances
+        run: npm ci
+
+      # wrangler lit _routes.json depuis le repertoire deploye (public/), alors que
+      # l'integration git de Cloudflare le lit a la racine. On le copie pour que la
+      # preview route EXACTEMENT comme la production (exclusions /assets/*, etc.).
+      - name: Aligner le routing preview sur la prod
+        run: cp _routes.json public/_routes.json
+
+      - name: Deployer une preview Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # branch=ci-<run_id> => deploiement PREVIEW (jamais production, qui est "main").
+          command: pages deploy public --project-name=nexus-market --branch=ci-${{ github.run_id }}
+
+      - name: Installer les navigateurs Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Lancer les tests E2E contre la preview
+        env:
+          NEXUS_BASE_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: npx playwright test
+
+      - name: Publier le rapport Playwright
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
