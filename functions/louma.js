@@ -14,7 +14,14 @@ export async function onRequest({ request, env }) {
     ['C’est quoi le Louma NEXUS ?', 'Le Louma est l’édition hebdomadaire (le vendredi) de la marketplace NEXUS Market, avec une sélection mise en avant de vendeurs et d’offres, à l’image des marchés traditionnels sénégalais.'],
     ['Quand le Louma est-il actif ?', 'Le Louma s’active chaque vendredi. Les autres jours, retrouvez le catalogue complet de NEXUS Market.'],
     ['Comment participer en tant que vendeur ?', 'Tout vendeur actif sur NEXUS Market peut voir ses produits mis en avant lors de l’édition Louma du vendredi.'],
+    ['Pourquoi le vendredi et pas un autre jour ?', 'Le Louma reprend la tradition des marchés hebdomadaires sénégalais, historiquement organisés un jour fixe dans chaque localité — le vendredi correspond à cette logique de rendez-vous régulier.'],
+    ['Les prix du Louma sont-ils vraiment différents ?', 'Les vendeurs participants proposent des remises ou mettent en avant des offres spécifiques pour l’édition du jour ; comparez toujours avec le prix habituel affiché sur la fiche produit.'],
+    ['Puis-je retrouver un article du Louma la semaine suivante ?', 'Si le vendeur maintient l’offre, oui ; sinon l’article reste disponible au catalogue à son prix normal en dehors du Louma.'],
   ];
+
+  const origin_context = `
+<h2>Le concept du Louma, du marché physique au marché en ligne</h2>
+<p>Au Sénégal, un « louma » désigne un grand marché périodique, souvent hebdomadaire, où producteurs, éleveurs et commerçants se retrouvent pour échanger bétail, produits agricoles et marchandises diverses — une tradition ancrée dans de nombreuses régions du pays. NEXUS s'inspire de cet esprit de rendez-vous régulier pour créer une édition spéciale de la marketplace, chaque vendredi, où l'offre et la visibilité des vendeurs sont mises en avant.</p>`;
 
   const body = `
 <h1>🏪 Louma — le marché en ligne</h1>
@@ -23,8 +30,10 @@ export async function onRequest({ request, env }) {
 <div class="cards">
 ${benefits.map(([e, t, d]) => `<div class="card"><h3>${e} ${t}</h3><p>${d}</p></div>`).join('')}
 </div>
+${origin_context}
 <h2>Questions fréquentes</h2>
 ${faq.map(([q, a]) => `<h3>${q}</h3><p>${a}</p>`).join('')}
+<p>Envie de vendre lors du prochain Louma ? Consultez notre guide <a href="${origin}/guide/vendre-sur-nexus-market">vendre sur NEXUS Market</a> pour bien démarrer.</p>
 <a class="cta" href="${appUrl}">J’en profite →</a>`;
 
   return contentResponse(renderContentPage({

@@ -14,6 +14,9 @@ export async function onRequest({ request, env }) {
     ['Comment gagner des points de fidélité ?', 'Chaque achat sur NEXUS Market vous rapporte des points, selon le montant dépensé et votre palier actuel.'],
     ['Comment consulter mes points ?', 'Connectez-vous à votre compte NEXUS Market : votre solde de points s’affiche en haut de l’écran.'],
     ['Les points expirent-ils ?', 'Les points restent valables tant que votre compte est actif. Utilisez-les pour profiter des avantages de votre palier.'],
+    ['Comment monter de palier ?', 'Le palier est recalculé automatiquement en fonction de votre solde de points cumulé : plus vous achetez, plus vous progressez vers Argent puis Or.'],
+    ['Les points sont-ils valables sur toute la marketplace ?', 'Oui, les points sont crédités quel que soit le vendeur et utilisables sur l’ensemble du catalogue NEXUS Market.'],
+    ['Puis-je perdre mes points ?', 'Un remboursement ou une annulation de commande peut entraîner le retrait des points associés à cet achat.'],
   ];
 
   const body = `
@@ -23,6 +26,8 @@ export async function onRequest({ request, env }) {
 <div class="cards">
 ${tiers.map(([e, t, r, d]) => `<div class="card"><h3>${e} ${t}</h3><p><strong>${r}</strong><br>${d}</p></div>`).join('')}
 </div>
+<h2>Comment ça fonctionne</h2>
+<p>À chaque commande livrée et payée sur NEXUS Market, des points sont automatiquement crédités sur votre compte, proportionnellement au montant dépensé et à votre palier actuel. Plus votre solde de points augmente, plus vous accédez à des avantages exclusifs : accès prioritaire aux ventes flash avant tout le monde, livraison gratuite à partir d'un certain montant, et à terme des offres réservées aux membres du palier Or. Aucune inscription supplémentaire n'est nécessaire : le programme est actif dès votre première commande.</p>
 <h2>Questions fréquentes</h2>
 ${faq.map(([q, a]) => `<h3>${q}</h3><p>${a}</p>`).join('')}
 <a class="cta" href="${appUrl}">Voir mes points →</a>`;

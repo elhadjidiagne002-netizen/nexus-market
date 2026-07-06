@@ -14,6 +14,15 @@ export async function onRequest({ request, env }) {
     ['Comment accéder au chat communauté ?', 'Cliquez sur l’icône de chat en bas de l’écran sur NEXUS Market pour rejoindre la discussion en direct.'],
     ['Le chat communauté est-il gratuit ?', 'Oui, il est accessible gratuitement à tous les utilisateurs de NEXUS Market.'],
     ['Puis-je signaler un message inapproprié ?', 'Oui, un modérateur surveille les échanges et tout message inapproprié peut être signalé.'],
+    ['Le chat communauté remplace-t-il la messagerie privée avec un vendeur ?', 'Non, c’est un espace public d’échange général ; pour négocier un achat précis, utilisez la messagerie privée depuis la fiche du vendeur.'],
+    ['Faut-il un compte pour lire le chat ?', 'La lecture est ouverte à tous les visiteurs ; un compte est nécessaire pour participer aux discussions.'],
+    ['Quels sujets peut-on aborder dans le chat ?', 'Bons plans, questions sur la livraison ou le paiement, retours d’expérience, conseils entre acheteurs et vendeurs — toujours dans le respect des règles de la communauté.'],
+  ];
+
+  const topics = [
+    ['💡', 'Bons plans', 'Repérez les meilleures offres partagées par la communauté.'],
+    ['🛠️', 'Entraide pratique', 'Questions sur le paiement, la livraison ou l’utilisation de l’application.'],
+    ['⭐', 'Retours d’expérience', 'Avis et conseils entre acheteurs sur des vendeurs ou des produits.'],
   ];
 
   const body = `
@@ -23,6 +32,12 @@ export async function onRequest({ request, env }) {
 <div class="cards">
 ${benefits.map(([e, t, d]) => `<div class="card"><h3>${e} ${t}</h3><p>${d}</p></div>`).join('')}
 </div>
+<h2>De quoi parle-t-on dans le chat ?</h2>
+<div class="cards">
+${topics.map(([e, t, d]) => `<div class="card"><h3>${e} ${t}</h3><p>${d}</p></div>`).join('')}
+</div>
+<h2>Une communauté modérée</h2>
+<p>Le chat communauté NEXUS Market est un espace ouvert mais surveillé : les messages inappropriés, publicitaires abusifs ou frauduleux sont modérés pour garder un lieu d'échange utile et sûr pour tous les utilisateurs, qu'ils soient acheteurs occasionnels ou vendeurs réguliers.</p>
 <h2>Questions fréquentes</h2>
 ${faq.map(([q, a]) => `<h3>${q}</h3><p>${a}</p>`).join('')}
 <a class="cta" href="${appUrl}">Rejoindre la discussion →</a>`;

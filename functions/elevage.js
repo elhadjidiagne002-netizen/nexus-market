@@ -16,6 +16,16 @@ export async function onRequest({ request, env }) {
     ['Comment trouver un éleveur près de moi ?', 'Ouvrez NEXUS Élevage et activez votre position : la liste des éleveurs et producteurs proches s’affiche avec leur distance.'],
     ['Puis-je acheter un mouton de Tabaski en ligne ?', 'Oui, les éleveurs référencés publient leurs moutons et bétail comme des produits classiques, consultables et négociables directement.'],
     ['Comment devenir éleveur sur NEXUS ?', 'Rendez-vous sur la page dédiée : <a href="' + origin + '/devenir-eleveur">devenir éleveur / producteur</a>.'],
+    ['Quels animaux trouve-t-on sur NEXUS Élevage ?', 'Moutons et béliers (Tabaski), volaille, bovins, chèvres, ainsi que des animaux de compagnie selon les annonces des éleveurs locaux.'],
+    ['Comment vérifier la santé d’un animal avant l’achat ?', 'Demandez à l’éleveur des informations sur l’âge, le poids et l’état de santé ; un déplacement sur place est recommandé pour les achats de bétail.'],
+    ['Les produits du terroir sont-ils garantis 100% locaux ?', 'Chaque producteur référencé indique la provenance de ses produits dans sa fiche ; privilégiez les profils avec avis et historique de ventes.'],
+  ];
+
+  const animalTypes = [
+    ['🐑', 'Moutons & béliers', 'Le cœur de l’activité avant la Tabaski, avec des annonces classées par poids et par race.'],
+    ['🐔', 'Volaille', 'Poulets, pintades et autres volailles vendues par des éleveurs de proximité.'],
+    ['🐄', 'Bovins & bétail', 'Vaches, taureaux et bétail pour les besoins agricoles ou l’élevage familial.'],
+    ['🐐', 'Chèvres', 'Une alternative appréciée pour les petits élevages et certaines célébrations.'],
   ];
 
   const body = `
@@ -24,6 +34,10 @@ export async function onRequest({ request, env }) {
 <a class="cta" href="${appUrl}">Découvrir →</a>
 <div class="cards">
 ${benefits.map(([e, t, d]) => `<div class="card"><h3>${e} ${t}</h3><p>${d}</p></div>`).join('')}
+</div>
+<h2>Quels animaux et produits trouver ?</h2>
+<div class="cards">
+${animalTypes.map(([e, t, d]) => `<div class="card"><h3>${e} ${t}</h3><p>${d}</p></div>`).join('')}
 </div>
 <h2>Questions fréquentes</h2>
 ${faq.map(([q, a]) => `<h3>${q}</h3><p>${a}</p>`).join('')}
