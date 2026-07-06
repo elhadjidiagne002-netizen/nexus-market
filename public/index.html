@@ -150,50 +150,67 @@
     </script>
     <script>
     (function _initSentryBrowser() {
-      if (typeof Sentry === 'undefined') return;
       // DSN injecté via meta tag par le serveur, ou directement ici
       const dsn = document.querySelector('meta[name="sentry-dsn"]')?.content || '';
       if (!dsn) {
-        // [FIX] Sentry DSN non configuré — silence (normal sur Netlify sans monitoring)
+        // Sentry DSN non configuré — on ne charge PAS le SDK réel (zéro coût réseau/perf),
+        // le stub no-op de _initErrorCapture reste actif pour window.__nexusErrors.
         return;
       }
-      Sentry.init({
-        dsn,
-        environment:        window.location.hostname === 'localhost' ? 'development' : 'production',
-        release:            'nexus-market@3.2.0',
-        tracesSampleRate:   window.location.hostname === 'localhost' ? 1.0 : 0.15,
-        replaysOnErrorSampleRate: 1.0,   // Rejouer 100% des sessions avec erreur
-        replaysSessionSampleRate: 0.05,  // Rejouer 5% des sessions normales
-        integrations: [
-          new Sentry.BrowserTracing({
-            tracePropagationTargets: ['nexus-market-api.onrender.com', /^\/api\//],
-          }),
-          new Sentry.Replay({ maskAllText: false, blockAllMedia: false }),
-        ],
-        ignoreErrors: [
-          // Erreurs bénignes navigateurs / extensions
-          'ResizeObserver loop limit exceeded',
-          'Non-Error promise rejection captured',
-          'NetworkError', 'Failed to fetch', 'Load failed',
-          /extensions\//i, /^chrome:\/\//i,
-        ],
-        beforeSend(event) {
-          // Ne pas remonter les erreurs depuis le mode démo (localStorage)
-          if (event.extra?.mode === 'demo') return null;
-          return event;
-        },
-      });
-      console.log('[Sentry] ✅ Browser tracking actif');
-
-      // Exposer le helper global pour le code app
-      window.__sentryCapture = function(err, ctx) {
-        Sentry.withScope(scope => {
-          if (ctx?.userId) scope.setUser({ id: ctx.userId });
-          if (ctx?.tag)    scope.setTag('feature', ctx.tag);
-          if (ctx?.extra)  scope.setExtras(ctx.extra);
-          Sentry.captureException(err instanceof Error ? err : new Error(String(err)));
+      // [FIX 2026-07] Le SDK Sentry réel n'était jamais chargé : window.Sentry était
+      // TOUJOURS le stub no-op défini plus haut (donc `typeof Sentry === 'undefined'`
+      // était toujours faux), et new Sentry.BrowserTracing()/new Sentry.Replay() (API
+      // v7, retirée en v8+) auraient de toute façon fait planter Sentry.init(). On
+      // charge maintenant le vrai bundle CDN, puis on initialise dans son onload avec
+      // la syntaxe d'intégration actuelle (browserTracingIntegration/replayIntegration).
+      // Version à bumper de temps en temps : https://github.com/getsentry/sentry-javascript/releases
+      const SENTRY_SDK_VERSION = '10.63.0';
+      const script = document.createElement('script');
+      script.src = `https://browser.sentry-cdn.com/${SENTRY_SDK_VERSION}/bundle.tracing.replay.min.js`;
+      script.crossOrigin = 'anonymous';
+      script.onload = function() {
+        Sentry.init({
+          dsn,
+          environment:        window.location.hostname === 'localhost' ? 'development' : 'production',
+          release:            'nexus-market@3.2.0',
+          tracesSampleRate:   window.location.hostname === 'localhost' ? 1.0 : 0.15,
+          replaysOnErrorSampleRate: 1.0,   // Rejouer 100% des sessions avec erreur
+          replaysSessionSampleRate: 0.05,  // Rejouer 5% des sessions normales
+          integrations: [
+            Sentry.browserTracingIntegration({
+              tracePropagationTargets: ['nexus-market-api.onrender.com', /^\/api\//],
+            }),
+            Sentry.replayIntegration({ maskAllText: false, blockAllMedia: false }),
+          ],
+          ignoreErrors: [
+            // Erreurs bénignes navigateurs / extensions
+            'ResizeObserver loop limit exceeded',
+            'Non-Error promise rejection captured',
+            'NetworkError', 'Failed to fetch', 'Load failed',
+            /extensions\//i, /^chrome:\/\//i,
+          ],
+          beforeSend(event) {
+            // Ne pas remonter les erreurs depuis le mode démo (localStorage)
+            if (event.extra?.mode === 'demo') return null;
+            return event;
+          },
         });
+        console.log('[Sentry] ✅ Browser tracking actif');
+
+        // Exposer le helper global pour le code app
+        window.__sentryCapture = function(err, ctx) {
+          Sentry.withScope(scope => {
+            if (ctx?.userId) scope.setUser({ id: ctx.userId });
+            if (ctx?.tag)    scope.setTag('feature', ctx.tag);
+            if (ctx?.extra)  scope.setExtras(ctx.extra);
+            Sentry.captureException(err instanceof Error ? err : new Error(String(err)));
+          });
+        };
       };
+      script.onerror = function() {
+        console.warn('[Sentry] Échec du chargement du SDK — le stub no-op reste actif');
+      };
+      document.head.appendChild(script);
     })();
     </script>
     <!-- React & ReactDOM — synchrones (obligatoire : le script inline en dépend directement) -->
