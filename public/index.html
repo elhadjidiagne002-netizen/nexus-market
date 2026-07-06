@@ -4875,7 +4875,12 @@ async function nexusUploadPdf(file) {
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok || !j.url) throw new Error(j.error || 'Téléversement échoué');
-  return j.url;
+  // [FIX] La contrainte DB products_file_url_is_url exige file_url NULL ou LIKE 'http%'.
+  // L'API renvoie un chemin RELATIF (/api/files/<clé>) → insert refusé (400) et
+  // "impossible d'ajouter le livre PDF". On rend l'URL ABSOLUE : elle satisfait la
+  // contrainte ET devient partageable (lien de téléchargement dans l'email/WhatsApp
+  // de livraison, hors du contexte de l'app).
+  return /^https?:\/\//i.test(j.url) ? j.url : new URL(j.url, location.origin).href;
 }
 
 const normalizeProduct = (p) => {
