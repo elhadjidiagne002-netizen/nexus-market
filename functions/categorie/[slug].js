@@ -1,8 +1,9 @@
 // functions/categorie/[slug].js → /categorie/:slug
 // Page d'atterrissage SEO d'une catégorie : liste les produits actifs de la
 // catégorie avec JSON-LD ItemList + BreadcrumbList. URLs propres (slug sans accent).
-import { renderListPage, render404, sbGet } from '../_lib/seo.js';
+import { renderListPage, render404, sbGet, buildFaqBlock } from '../_lib/seo.js';
 import { categoryBySlug } from '../_lib/categories.js';
+import { CATEGORY_CONTENT } from '../_lib/category-content.js';
 import { cachedResponse } from '../_lib/edgecache.js';
 
 const EUR_TO_FCFA = 655.957;
@@ -26,11 +27,16 @@ async function handle({ request, env, params }) {
   }));
 
   const url = `${origin}/categorie/${cat.slug}`;
+  const content = CATEGORY_CONTENT[cat.slug];
+  const { html: faqHtml, jsonld: faqJsonld } = buildFaqBlock(content && content.faq);
   const html = renderListPage({
     origin, url, title: `${cat.label} au Sénégal`,
     description: `Achetez ${cat.label.toLowerCase()} au Sénégal sur NEXUS Market : ${items.length} produits disponibles, paiement Orange Money, Wave ou carte bancaire, livraison partout. Protection acheteur garantie.`,
     image: items[0] && items[0].image,
     items,
+    introHtml: content ? `<div class="body-content">${content.intro}</div>` : '',
+    faqHtml,
+    jsonldExtra: faqJsonld ? [faqJsonld] : [],
     breadcrumb: [
       { name: 'Accueil', url: `${origin}/` },
       { name: cat.label, url },

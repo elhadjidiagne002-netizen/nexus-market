@@ -181,7 +181,7 @@ export function renderListPage(o) {
     '@type': 'BreadcrumbList',
     itemListElement: crumbs.map((c, i) => ({ '@type': 'ListItem', position: i + 1, name: c.name, item: c.url })),
   };
-  const extra = o.jsonldExtra ? [o.jsonldExtra] : [];
+  const extra = Array.isArray(o.jsonldExtra) ? o.jsonldExtra : (o.jsonldExtra ? [o.jsonldExtra] : []);
   const graph = jsonLdScript({ '@context': 'https://schema.org', '@graph': [itemList, breadcrumb, ...extra] });
 
   const crumbHtml = crumbs.map((c, i) =>
@@ -210,15 +210,32 @@ ${hreflangTags(url)}
 <meta property="og:locale" content="fr_SN">
 <meta name="twitter:card" content="summary_large_image">
 ${graph}
-<style>body{font-family:Arial,Helvetica,sans-serif;max-width:1100px;margin:0 auto;padding:20px;color:#1F2937;line-height:1.6}h1{font-size:1.6rem;margin:.4rem 0}.crumb{font-size:.8rem;color:#6B7280;margin-bottom:1rem}.crumb a{color:#00853E;text-decoration:none}.crumb .sep{margin:0 4px}.intro{color:#374151;margin-bottom:1.4rem}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}.card{display:block;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;background:#fff}.card img,.card .ph{width:100%;height:160px;object-fit:cover;background:#F3F4F6;display:block}.ci{padding:10px}.ct{font-size:.9rem;font-weight:600;line-height:1.3;max-height:2.6em;overflow:hidden}.cp{color:#00853E;font-weight:800;margin-top:6px}.top{color:#00853E;text-decoration:none;font-weight:700}.empty{color:#6B7280;padding:2rem 0}.foot{color:#9CA3AF;font-size:.8rem;margin-top:2.4rem}</style>
+<style>body{font-family:Arial,Helvetica,sans-serif;max-width:1100px;margin:0 auto;padding:20px;color:#1F2937;line-height:1.6}h1{font-size:1.6rem;margin:.4rem 0}.crumb{font-size:.8rem;color:#6B7280;margin-bottom:1rem}.crumb a{color:#00853E;text-decoration:none}.crumb .sep{margin:0 4px}.intro{color:#374151;margin-bottom:1.4rem}.body-content{color:#374151;margin-bottom:1.6rem;max-width:760px}.body-content h2{font-size:1.1rem;color:#00853E;margin:1.2rem 0 .5rem}.body-content ul{margin:.3rem 0 .8rem;padding-left:1.3rem}.body-content li{margin:.25rem 0}.body-content a{color:#00853E}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}.card{display:block;border:1px solid #E5E7EB;border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;background:#fff}.card img,.card .ph{width:100%;height:160px;object-fit:cover;background:#F3F4F6;display:block}.ci{padding:10px}.ct{font-size:.9rem;font-weight:600;line-height:1.3;max-height:2.6em;overflow:hidden}.cp{color:#00853E;font-weight:800;margin-top:6px}.top{color:#00853E;text-decoration:none;font-weight:700}.empty{color:#6B7280;padding:2rem 0}.faq-block{margin-top:2rem;border-top:1px solid #E5E7EB;padding-top:1.2rem;max-width:760px}.faq-block h2{font-size:1.1rem;color:#00853E;margin-bottom:.6rem}.faq-item{margin-bottom:.9rem}.faq-item .q{font-weight:700;margin-bottom:.2rem}.faq-item .a{color:#374151}.foot{color:#9CA3AF;font-size:.8rem;margin-top:2.4rem}</style>
 </head><body>
 <nav class="crumb">${crumbHtml}</nav>
 <h1>${esc(o.title)}</h1>
 ${desc ? `<p class="intro">${esc(desc)}</p>` : ''}
+${o.introHtml || ''}
 ${items.length ? `<div class="grid">${cards}</div>` : '<p class="empty">Aucune annonce pour le moment. Revenez bientôt !</p>'}
+${o.faqHtml || ''}
 <p style="margin-top:1.6rem"><a class="top" href="${esc(o.origin)}/">← Explorer toute la marketplace NEXUS</a></p>
 <p class="foot">NEXUS Market — Marketplace sécurisée au Sénégal · Orange Money · Wave · Livraison partout.</p>
 </body></html>`;
+}
+
+// Construit un mini-bloc FAQ (HTML visible + JSON-LD FAQPage) à partir de
+// paires [question, réponse]. Réutilisé par les pages catégorie/ville pour
+// étoffer le contenu sans dupliquer le HTML dans chaque fichier.
+export function buildFaqBlock(faq) {
+  if (!Array.isArray(faq) || !faq.length) return { html: '', jsonld: null };
+  const html = `<div class="faq-block"><h2>Questions fréquentes</h2>${
+    faq.map(([q, a]) => `<div class="faq-item"><div class="q">${esc(q)}</div><div class="a">${esc(a)}</div></div>`).join('')
+  }</div>`;
+  const jsonld = {
+    '@type': 'FAQPage',
+    mainEntity: faq.map(([q, a]) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
+  };
+  return { html, jsonld };
 }
 
 // Page 404 SEO-friendly (noindex) : utilisée quand une fiche n'existe plus.
