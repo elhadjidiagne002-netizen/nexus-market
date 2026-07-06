@@ -9,6 +9,7 @@ import { esc } from './seo.js';
 const NAV = [
   ['/', 'Accueil'],
   ['/guides', 'Guides'],
+  ['/blog', 'Blog'],
   ['/faq', 'FAQ'],
   ['/a-propos', 'À propos'],
   ['/contact', 'Contact'],
@@ -23,6 +24,7 @@ const FOOTER = [
   ['/devenir-pro', 'Devenir artisan (NEXUS Pro)'],
   ['/devenir-eleveur', 'Devenir éleveur / producteur'],
   ['/guides', 'Tous les guides'],
+  ['/blog', 'Blog NEXUS'],
   ['/faq', 'Questions fréquentes'],
   ['/a-propos', 'À propos de NEXUS'],
   ['/contact', 'Nous contacter'],
