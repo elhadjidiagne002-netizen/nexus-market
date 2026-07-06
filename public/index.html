@@ -47073,7 +47073,9 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       </div>
     </div>
     <!-- Category Bar -->
-    <div class="flex items-center gap-lg border-t border-surface-container pt-3 scrolling-wrapper overflow-x-auto whitespace-nowrap text-sm font-semibold">
+    <div class="relative">
+      <button id="nxp-catBarPrev" aria-label="Précédent" class="hidden md:flex absolute left-0 top-0 bottom-3 z-10 w-8 items-center justify-center bg-gradient-to-r from-white via-white to-transparent text-on-surface-variant hover:text-primary transition-all" style="display:none"><span class="material-symbols-outlined text-[20px] bg-white rounded-full shadow-md p-1">chevron_left</span></button>
+      <div id="nxp-catBar" class="flex items-center gap-lg border-t border-surface-container pt-3 scrolling-wrapper overflow-x-auto whitespace-nowrap text-sm font-semibold" style="scrollbar-width:none">
       <a data-route="coursier express" data-nx-mod="mod_courier_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">delivery_dining</span> <span data-i18n="service.courier">Coursier Express</span></a>
       <a data-route="on demand" data-nx-mod="mod_ondemand_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">shopping_basket</span> <span data-i18n="service.ondemand">On Demand</span></a>
       <a data-route="nexus pro" data-nx-mod="mod_pros_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> <span data-i18n="service.pro">NEXUS Pro</span></a>
@@ -47085,6 +47087,8 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <a data-route="assistant ia" data-nx-mod="mod_assistant_enabled" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">smart_toy</span> <span data-i18n="service.assistant">Assistant IA</span></a>
       <a data-route="ventes flash" class="text-tertiary flex items-center gap-xs pb-2 hover:brightness-110 transition-all" href="#"><span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">bolt</span> <span data-i18n="service.flash">Ventes Flash</span></a>
       <a data-route="déposer une annonce" class="text-on-surface-variant hover:text-primary transition-colors pb-2 flex items-center gap-xs" href="#"><span class="material-symbols-outlined text-[18px]">add_box</span> <span data-i18n="service.post_ad">Déposer une annonce</span></a>
+      </div>
+      <button id="nxp-catBarNext" aria-label="Suivant" class="hidden md:flex absolute right-0 top-0 bottom-3 z-10 w-8 items-center justify-center bg-gradient-to-l from-white via-white to-transparent text-on-surface-variant hover:text-primary transition-all"><span class="material-symbols-outlined text-[20px] bg-white rounded-full shadow-md p-1">chevron_right</span></button>
     </div>
   </div>
 </header>
@@ -47849,6 +47853,32 @@ function initProto(){
   if(heroDots)heroDots.addEventListener('click',function(e){var b=e.target.closest('[data-hd]');if(b){heroGo(+b.getAttribute('data-hd'));heroAuto();}});
   if(heroTrack)heroTrack.addEventListener('click',function(e){var b=e.target.closest('[data-hero-action]');if(b){e.preventDefault();e.stopPropagation();heroAction(b.getAttribute('data-hero-action'));}});
   heroGo(0);heroAuto();
+
+  /* Barre de catégories : flèches de défilement (souris/desktop — le tactile
+     défile déjà nativement). Masque la flèche gauche au tout début, la droite
+     à la toute fin, pour signaler visuellement qu'on peut aller plus loin. */
+  (function(){
+    var bar=document.getElementById('nxp-catBar');
+    var prev=document.getElementById('nxp-catBarPrev');
+    var next=document.getElementById('nxp-catBarNext');
+    if(!bar||!prev||!next)return;
+    var STEP=280;
+    function syncArrows(){
+      prev.style.display = bar.scrollLeft > 8 ? '' : 'none';
+      var atEnd = bar.scrollLeft + bar.clientWidth >= bar.scrollWidth - 8;
+      next.style.display = atEnd ? 'none' : '';
+    }
+    // [FIX] scrollBy({behavior:'smooth'}) ne se déclenche pas du tout sous
+    // certains réglages navigateur/OS (« mouvement réduit », certains rendus
+    // embarqués) — les flèches semblent alors ne rien faire. Défilement
+    // instantané (behavior:'auto') : moins joli, mais fiable à 100%.
+    prev.addEventListener('click',function(){ bar.scrollBy({ left: -STEP, behavior: 'auto' }); });
+    next.addEventListener('click',function(){ bar.scrollBy({ left: STEP, behavior: 'auto' }); });
+    bar.addEventListener('scroll', syncArrows, { passive: true });
+    window.addEventListener('resize', syncArrows);
+    setTimeout(syncArrows, 300);
+  })();
+
   /* Bannières publiées par l'admin (nexus_admin_banners) → remplacent le repli */
   function applyAdminBanners(arr){
     var v=(arr||[]).filter(function(x){return x&&x.active!==false&&(x.title||x.img);});
