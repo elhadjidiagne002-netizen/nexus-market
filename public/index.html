@@ -47630,9 +47630,27 @@ function flashCard(name,price,oldPrice,disc,img){
 /* ─── Supabase REST (clé publique anon) ─── */
 var SB_URL='https://pqcqbstbdujzaclsiosv.supabase.co';
 var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE';
-function sbFetch(path){
+// [RESILIENCE] Retry avec backoff : Supabase renvoie parfois des 503/504 transitoires
+// (budget Disk IO / pool de connexions saturés quelques secondes) — un seul essai
+// faisait alors échouer silencieusement le chargement produits/annonces/promos.
+function sbFetch(path, _attempt){
+  var attempt = _attempt || 0;
   return fetch(SB_URL+'/rest/v1/'+path,{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Accept':'application/json'}})
-    .then(function(r){return r.ok?r.json():null;}).catch(function(){return null;});
+    .then(function(r){
+      if (r.ok) return r.json();
+      if ((r.status === 503 || r.status === 504) && attempt < 2) {
+        return new Promise(function(resolve){ setTimeout(resolve, 400 * Math.pow(2, attempt)); })
+          .then(function(){ return sbFetch(path, attempt + 1); });
+      }
+      return null;
+    })
+    .catch(function(){
+      if (attempt < 2) {
+        return new Promise(function(resolve){ setTimeout(resolve, 400 * Math.pow(2, attempt)); })
+          .then(function(){ return sbFetch(path, attempt + 1); });
+      }
+      return null;
+    });
 }
 
 /* Convertit un produit Supabase en objet produit overlay + HTML card */
