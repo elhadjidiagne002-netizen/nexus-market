@@ -17,7 +17,7 @@ Ordre recommandé :
 
 - [ ] `2026_06_03_payout_requests_align.sql` — colonnes payouts (corrige les retraits)
 - [ ] `2026_06_03_rate_limits.sql` — table de rate-limiting
-- [ ] `2026_06_07_drop_refresh_tokens.sql` — nettoyage table inutilisée
+- [x] `2026_06_07_drop_refresh_tokens.sql` — nettoyage table inutilisée (vérifié absente en prod le 2026-07-06)
 - [ ] `2026_06_07_api_keys.sql` — clés API + RPC `api_key_validate` (flux Merchant/Pro)
 - [ ] `2026_06_07_db_usage.sql` — RPC `db_usage` (monitoring quota)
 - [ ] `2026_06_07_delivery_proof.sql` — preuve de livraison (#13)

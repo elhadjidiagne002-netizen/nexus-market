@@ -30,20 +30,18 @@ PAYTECH_ENV      = "prod"
 GROQ_MODEL       = "llama-3.3-70b-versatile"
 NEXUS_COMMISSION = "0"   # [COMMISSION] Phase de lancement 0 % (RT-01/PM-01) — repasser à 0.05/0.10/0.15 ensuite
 EUR_TO_XOF       = "655.957"
-INTERNAL_API_KEY = "nexus-internal-2024"
-DELIVERY_WEBHOOK_SECRET = "nexus-delivery-secret-2024"
 INFOBIP_SENDER   = "NexusMarket"
 CORS_ORIGIN      = "https://nexusmarket.sn,https://nexus-market-production.up.railway.app"
 LOG_LEVEL        = "info"
 JWT_EXPIRES_IN   = "604800"
 GREEN_API_INSTANCE_ID = "7107631852"
 GREEN_API_BASE_URL    = "https://7107.api.greenapi.com"
-NEXUS_WA_SECRET       = "nexus-wa-2026"
 AMAZON_AFFILIATE_TAG  = "nexusmarket-21"
 
 # ── SECRETS à configurer dans CF Dashboard (jamais en clair ici) ──────────
 # Cloudflare Dashboard → Workers & Pages → nexus-market
 #   → Settings → Variables and Secrets → Add secret
+# (ou via scripts/setup-cf-secrets.sh / .ps1, qui les pousse depuis le .env local)
 #
 #   SUPABASE_SERVICE_KEY  = eyJ...  (Supabase → Settings → API → service_role)
 #   GREEN_API_TOKEN       = (Green API — NE PAS committer la valeur)
@@ -60,9 +58,17 @@ AMAZON_AFFILIATE_TAG  = "nexusmarket-21"
 #   MUX_TOKEN_ID          = (NEXUS Stories — mux.com → Settings → Access Tokens)
 #   MUX_TOKEN_SECRET      = (NEXUS Stories — secret du token Mux)
 #   MUX_WEBHOOK_SECRET    = (NEXUS Stories — Mux → Webhooks → signing secret)
+#   NEXUS_WA_SECRET       = (déclenchement manuel /cron/*, secret partagé WhatsApp —
+#                            rotée le 2026-07-06, ANCIENNE valeur "nexus-wa-2026" REVOQUÉE ;
+#                            synchronisée avec le secret GitHub Actions NEXUS_CRON_TOKEN)
+#   INTERNAL_API_KEY      = (rotée le 2026-07-06, ANCIENNE valeur "nexus-internal-2024" révoquée)
+#   DELIVERY_WEBHOOK_SECRET = (rotée le 2026-07-06, ANCIENNE valeur "nexus-delivery-secret-2024" révoquée)
 #
-# ⚠️  Les vars NEXUS_WA_SECRET, INTERNAL_API_KEY, DELIVERY_WEBHOOK_SECRET ci-dessus
-#     sont en clair dans [vars] (donc commitées) : à déplacer en secrets chiffrés.
+# [SEC 2026-07-06] NEXUS_WA_SECRET, INTERNAL_API_KEY et DELIVERY_WEBHOOK_SECRET
+# étaient commitées en clair ci-dessus depuis le début du projet (donc visibles dans
+# l'historique Git). Rotées et déplacées en secrets chiffrés Cloudflare Pages ; les
+# anciennes valeurs ne sont plus valides côté serveur mais restent lisibles dans
+# l'historique Git — à garder en tête si le repo devient public un jour.
 
 # ── R2 : stockage fichiers (PDF, etc.) ─────────────────────────────────────
 # Le bucket doit déjà exister côté Cloudflare avant le prochain déploiement
@@ -86,10 +92,11 @@ local_protocol = "http"
 # Option A — cron-job.org (gratuit, recommandé) :
 #   1. Créer un compte sur https://cron-job.org
 #   2. Ajouter deux jobs :
-#      • Toutes les heures  : GET https://nexusmarket.sn/cron/expire?token=nexus-wa-2026
-#      • Chaque dimanche 3h : GET https://nexusmarket.sn/cron/cleanup?token=nexus-wa-2026
-#      • Chaque jour 6h     : GET https://nexusmarket.sn/cron/db-usage?token=nexus-wa-2026  (alerte quota Supabase >70%)
-#      • Toutes les 1-2 min : GET https://nexusmarket.sn/cron/dispatch?token=nexus-wa-2026 (avance le dispatch coursier sur timeout)
+#      • Toutes les heures  : GET https://nexusmarket.sn/cron/expire?token=VOTRE_NEXUS_WA_SECRET
+#      • Chaque dimanche 3h : GET https://nexusmarket.sn/cron/cleanup?token=VOTRE_NEXUS_WA_SECRET
+#      • Chaque jour 6h     : GET https://nexusmarket.sn/cron/db-usage?token=VOTRE_NEXUS_WA_SECRET  (alerte quota Supabase >70%)
+#      • Toutes les 1-2 min : GET https://nexusmarket.sn/cron/dispatch?token=VOTRE_NEXUS_WA_SECRET (avance le dispatch coursier sur timeout)
+#        (remplacer VOTRE_NEXUS_WA_SECRET par la valeur actuelle du secret chiffré Cloudflare — plus "nexus-wa-2026", révoqué le 2026-07-06)
 #
 # Option B — GitHub Actions (si le repo est sur GitHub) :
 #   Voir .github/workflows/cron.yml (à créer)
