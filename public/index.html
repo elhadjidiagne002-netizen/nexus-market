@@ -2757,7 +2757,9 @@
 /* Boot anti-flash : décider AVANT le premier rendu si on affiche l'overlay tout de suite. */
 (function(){try{
   var sp=new URLSearchParams(location.search);
-  var hasParams=!!(sp.get('q')||sp.get('cat')||sp.get('pmin')||sp.get('pmax')||sp.get('product')||sp.get('see'));
+  var hasParams=!!(sp.get('q')||sp.get('cat')||sp.get('pmin')||sp.get('pmax')||sp.get('product')||sp.get('see')
+    ||sp.get('pro')||sp.get('troc')||sp.get('story')||sp.get('courier')||sp.get('elevage')||sp.get('louma')||sp.get('rental')||sp.get('ondemand')
+    ||sp.get('covoiturage')||sp.get('loyalty')||sp.get('assistant')||sp.get('chat')||sp.get('tutorials'));
   var p=location.pathname; var isHome=(p==='/'||p==='/index.html'||p==='');
   var loggedIn=false; try{var t=localStorage.getItem('nexus-auth-token');loggedIn=!!(t&&t.length>20);}catch(_){}
   if(isHome && !hasParams && !loggedIn){ document.documentElement.classList.add('nx-boot-home'); }
@@ -48428,6 +48430,47 @@ else{setTimeout(checkInit,400);}
     document.body.appendChild(btn);
   } catch(e){}
 })();
+</script>
+
+<!-- Deep-link partageable pour les modules sans URL propre (coursier, élevage, louma,
+     location, on-demand, covoiturage, fidélité, assistant IA, chat communauté, tutoriels)
+     — même convention que ?pro=/?troc=/?story= déjà en place. -->
+<script>
+(function(){try{
+  var sp = new URLSearchParams(location.search);
+  // Modules idempotents : rappeler l'event ne fait que re-confirmer l'ouverture
+  // (jamais fermer). Deux tentatives (400ms/1500ms) car certains modules (ex.
+  // Louma) enregistrent leur listener après un aller-retour Supabase, plus lent
+  // que les 400ms habituels — dispatchEvent est sans effet si rien n'écoute
+  // encore, donc sûr à répéter.
+  var IDEMPOTENT = {
+    courier:'nexus:open-courier', elevage:'nexus:open-local-elevage',
+    louma:'nexus:open-louma', rental:'nexus:open-rental', ondemand:'nexus:open-on-demand',
+    covoiturage:'nexus:open-covoiturage', chat:'nexus:open-public-chat', tutorials:'nexus:open-tutorials'
+  };
+  Object.keys(IDEMPOTENT).forEach(function(k){
+    if (!sp.get(k)) return;
+    setTimeout(function(){ window.dispatchEvent(new CustomEvent(IDEMPOTENT[k])); }, 400);
+    setTimeout(function(){ window.dispatchEvent(new CustomEvent(IDEMPOTENT[k])); }, 1500);
+  });
+  // Assistant IA : le FAB fait un vrai TOGGLE à chaque clic simulé — une seule
+  // tentative, sinon la 2e l'ouvre puis la referme aussitôt.
+  if (sp.get('assistant')) {
+    setTimeout(function(){ window.dispatchEvent(new CustomEvent('nexus:open-assistant')); }, 600);
+  }
+  // Fidélité : pas de simple nexus:open-*, c'est une vue interne du tableau de
+  // bord acheteur (connexion requise) — même mécanisme que le programme
+  // Ambassadeur (nexus:goto-buyer-view). Sans effet si l'utilisateur n'est pas
+  // connecté (BuyerDashboard non monté), comme ?ondemand=.
+  if (sp.get('loyalty')) {
+    var openLoyalty = function(){
+      window.dispatchEvent(new CustomEvent('nexus:hide-public-home'));
+      setTimeout(function(){ window.dispatchEvent(new CustomEvent('nexus:goto-buyer-view', { detail: 'loyalty' })); }, 350);
+    };
+    setTimeout(openLoyalty, 400);
+    setTimeout(openLoyalty, 1500);
+  }
+}catch(e){}})();
 </script>
 
 </body>
