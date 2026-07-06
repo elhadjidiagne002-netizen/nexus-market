@@ -13567,6 +13567,10 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
           id: item.id, name: item.name, price: item.price,
           quantity: item.quantity, imageUrl: item.imageUrl,
           vendorName: item.vendorName,
+          // [FIX] Snapshot du lien du fichier numérique DANS la commande : le
+          // téléchargement post-achat (Mes commandes) ne dépend alors plus du
+          // catalogue live (produit inactif/épuisé/filtré => bouton dispo quand même).
+          file_url: item.fileUrl || item.file_url || null,
         });
       });
 
@@ -13863,6 +13867,25 @@ const StripeCheckoutModal = ({ cart, currentUser: currentUser2, onSuccess, onCan
   };
   if (step === 3) {
     return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay" }, /* @__PURE__ */ React.createElement("div", { className: "modal", style: { textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "4rem", marginBottom: "1rem" } }, "\u{1F389}"), /* @__PURE__ */ React.createElement("h2", { className: "modal-title", style: { justifyContent: "center", marginBottom: "1rem" } }, "Commande confirm\xE9e !"), /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.5rem" } }, paymentMethod === "cod" ? /* @__PURE__ */ React.createElement(React.Fragment, null, "Votre commande a \xE9t\xE9 confirm\xE9e. Vous r\xE9glerez ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)), " en esp\xE8ces \xE0 la livraison.", /* @__PURE__ */ React.createElement("br", null), "Un email de confirmation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, customerInfo.email), ".") : /* @__PURE__ */ React.createElement(React.Fragment, null, "Votre paiement de ", /* @__PURE__ */ React.createElement("strong", { style: { color: "var(--primary)" } }, formatPrice(grandTotalEur)), " a \xE9t\xE9 trait\xE9 avec succ\xE8s.", /* @__PURE__ */ React.createElement("br", null), "Un email de confirmation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, customerInfo.email), ".")),
+      /* ── Fichier numérique (PDF/eBook) — visible dès la confirmation ─── */
+      (() => {
+        const digitalFiles = (cart || []).map(i => i.fileUrl || i.file_url).filter(Boolean);
+        if (!digitalFiles.length) return null;
+        // Carte : payé immédiatement (Stripe confirmé avant création commande) → lien direct.
+        // Mobile Money / à la livraison : paiement non confirmé de façon synchrone → on
+        // pointe vers Mes commandes (où le lien apparaît dès le paiement confirmé par l'IPN).
+        const paidNow = paymentMethod === "card";
+        return /* @__PURE__ */ React.createElement("div", { style: { background: "linear-gradient(135deg,rgba(2,132,199,.07),rgba(14,165,233,.04))", border: "1.5px solid #0284c755", borderRadius: "12px", padding: "1rem", marginBottom: "1.5rem", textAlign: "left" } },
+          /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, fontSize: "0.92rem", marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.4rem" } },
+            /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-download", style: { color: "#0284c7" } }), " Votre fichier numérique"),
+          paidNow
+            ? /* @__PURE__ */ React.createElement("div", null, digitalFiles.map((fu, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: i < digitalFiles.length - 1 ? "0.4rem" : 0 } },
+                /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => window.open(driveDownloadUrl(fu), "_blank") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-download" }), " Télécharger"),
+                /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => openDrivePdf(fu) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-eye" }), " Lire en ligne")
+              )))
+            : /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.82rem", color: "var(--text-secondary)" } }, "Dès le paiement confirmé, téléchargez votre fichier dans ", /* @__PURE__ */ React.createElement("strong", null, "Mon compte → Mes commandes"), ".")
+        );
+      })(),
       /* ── Résumé multi-vendeur ──────────────────────────────────────── */
       createdOrders.length > 1 && /* @__PURE__ */ React.createElement("div", { style: { background: "rgba(0,109,64,0.06)", border: "1.5px solid var(--primary)", borderRadius: "12px", padding: "1rem", marginBottom: "1rem", textAlign: "left" } },
         /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 700, color: "var(--primary)", marginBottom: "0.75rem", fontSize: "0.92rem", display: "flex", alignItems: "center", gap: "0.4rem" } },
