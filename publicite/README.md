@@ -130,6 +130,47 @@ Dossier central pour **toutes les affiches promotionnelles** (Facebook, Instagra
 
 ---
 
+## 🆕 Nouvelles fonctionnalités (côté acheteur/utilisateur)
+
+Ces 4 affiches annoncent des fonctionnalités qui n'avaient encore aucune publicité
+côté utilisateur (seulement des messages de recrutement prestataires pour Location
+et Covoiturage — voir section suivante). Même format et charte que les 12 premières.
+Design pas encore créé dans Canva (pas d'ID).
+
+### 38. 🔑 NEXUS Location — Louez plutôt qu'acheter
+**Titre :** Besoin ponctuel ? Louez, ne payez pas le prix du neuf
+**Sous‑titre :** Événementiel, BTP, électroménager · Contact direct avec le loueur
+**Légende :**
+> 🔑 Un mariage, un chantier, un déménagement ? Pas besoin d'acheter ! Loue chaises, sonorisation, outillage ou électroménager directement auprès de particuliers sur NEXUS Location 💰
+> 👉 nexusmarket.sn/location
+> #NexusLocation #Location #Événementiel #BTP #Sénégal
+
+### 39. 🚗 NEXUS Covoiturage — Trajets & colis entre villes
+**Titre :** Voyage moins cher, envoie un colis en même temps
+**Sous‑titre :** Trajets entre villes du Sénégal · Partage des frais · Envoi de colis
+**Légende :**
+> 🚗 Dakar-Thiès, Dakar-Saint-Louis… Trouve un trajet ou propose le tien sur NEXUS Covoiturage, et profite-en pour envoyer un colis à moindre coût 📦
+> 👉 nexusmarket.sn/covoiturage
+> #Covoiturage #Trajet #Colis #Sénégal #NexusMarket
+
+### 40. 🤖 Assistant IA — Trouve le bon produit en un message
+**Titre :** Décris ce que tu cherches, l'IA s'occupe du reste
+**Sous‑titre :** En français ou en wolof · Réponse immédiate, jour et nuit
+**Légende :**
+> 🤖 Pas envie de fouiller tout le catalogue ? Décris ce que tu cherches à l'assistant IA de NEXUS Market, en français ou en **wolof** 🇸🇳, et reçois des suggestions immédiates.
+> 👉 nexusmarket.sn/assistant
+> #AssistantIA #Wolof #NexusMarket #Sénégal #IA
+
+### 41. 📰 Blog NEXUS — Conseils, astuces & bons plans
+**Titre :** Tous nos conseils pour acheter et vendre malin
+**Sous‑titre :** Guides pratiques · Astuces saisonnières · Nouveautés NEXUS
+**Légende :**
+> 📰 Bien choisir un mouton de Tabaski, fixer le juste prix d'un objet d'occasion, profiter du Louma… Retrouve tous nos conseils pratiques sur le blog NEXUS Market ✍️
+> 👉 nexusmarket.sn/blog
+> #BlogNexus #Conseils #AstucesSénégal #NexusMarket
+
+---
+
 ## 🆕 Campagne recrutement — service clé en main « on s'occupe de tout »
 
 Ces 5 affiches ciblent le **recrutement** de vendeurs et prestataires (pas les acheteurs).
