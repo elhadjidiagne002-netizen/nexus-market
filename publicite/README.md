@@ -130,6 +130,64 @@ Dossier central pour **toutes les affiches promotionnelles** (Facebook, Instagra
 
 ---
 
+## 🆕 Campagne recrutement — service clé en main « on s'occupe de tout »
+
+Ces 5 affiches ciblent le **recrutement** de vendeurs et prestataires (pas les acheteurs).
+Nouveauté par rapport aux 12 affiches ci-dessus : elles mettent en avant une offre
+concierge — celui qui ne veut/sait pas créer sa fiche envoie ses infos et NEXUS s'en
+charge à sa place. Contact à afficher sur CES affiches (pas sur les 12 précédentes,
+qui restent sur `m.me/nexusmarketsn`) :
+
+> 📱 WhatsApp **+221 77 625 48 95** · 📧 **nx@nexusmarket.sn**
+> Lien direct : `https://wa.me/221776254895`
+
+Design pas encore créé dans Canva (pas d'ID) — briefs ci-dessous prêts à mettre en page.
+Voir aussi [`messages-whatsapp-recrutement.md`](./messages-whatsapp-recrutement.md) pour
+des messages de démarchage direct (DM) à envoyer individuellement, distincts des
+affiches à publier.
+
+### 33. 🏪 Vendeurs (produits) — « On crée ta fiche pour toi »
+**Titre :** Pas le temps de mettre tes produits en ligne ?
+**Sous‑titre :** Envoie-nous photos, description et prix — on crée et publie ta fiche pour toi, gratuitement
+**Légende :**
+> 🏪 Tu as des produits à vendre mais tu ne sais pas comment faire une fiche ? Envoie-nous tes photos, la description et le prix par WhatsApp, **on s'occupe de tout** : création et mise en ligne de ta boutique sur NEXUS Market 🇸🇳
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #DevenirVendeur #NexusMarket #Business #Sénégal #VendreEnLigne
+
+### 34. 🔨 Artisans & ouvriers — « On s'occupe de ta fiche pro »
+**Titre :** Maçon, plombier, électricien, menuisier…
+**Sous‑titre :** Envoie ton métier, ta zone et tes tarifs par WhatsApp — on crée ton profil NEXUS Pro
+**Légende :**
+> 🔨 Tu es maçon, plombier, électricien, menuisier ou un autre métier du bâtiment ? Envoie-nous ton métier, ta zone d'intervention et tes tarifs par WhatsApp : **on crée ton profil** sur NEXUS Pro pour que les clients te trouvent près de chez eux.
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #NexusPro #Artisan #Maçon #Plombier #Électricien #Sénégal
+
+### 35. 🛵 Coursiers & transporteurs — « Rejoins le réseau NEXUS »
+**Titre :** Livreur ou transporteur ?
+**Sous‑titre :** Envoie tes infos (zone, véhicule, contact) par WhatsApp — on t'inscrit sur NEXUS Coursier
+**Légende :**
+> 🛵 Tu livres à moto, en voiture, ou tu fais des trajets inter-villes ? Envoie-nous ton nom, ta zone et ton contact par WhatsApp : **on t'inscrit** sur NEXUS Coursier / Covoiturage pour recevoir des courses près de chez toi.
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #Coursier #Transporteur #Livraison #Covoiturage #Sénégal #NexusMarket
+
+### 36. 🐏 Éleveurs & producteurs locaux — « On publie tes animaux/produits »
+**Titre :** Éleveur ou producteur local ?
+**Sous‑titre :** Envoie tes photos, prix et localisation par WhatsApp — on publie ta fiche sur NEXUS Élevage
+**Légende :**
+> 🐏 Moutons, volaille, bétail, produits du terroir : envoie-nous tes photos, tes prix et ta localisation par WhatsApp, **on publie ta fiche** sur NEXUS Élevage pour que les acheteurs te trouvent, surtout à l'approche de la Tabaski 🇸🇳
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #NexusÉlevage #Éleveur #Tabaski #ProduitsLocaux #Sénégal
+
+### 37. 🔑 Loueurs de matériel — « On met ton matériel en ligne »
+**Titre :** Du matériel à louer qui dort chez toi ?
+**Sous‑titre :** Événementiel, BTP, électroménager — envoie photos et prix par WhatsApp, on publie l'annonce
+**Légende :**
+> 🔑 Chaises, sonorisation, bétonnière, échafaudage, électroménager… du matériel que tu pourrais louer ? Envoie-nous les photos et le prix par WhatsApp, **on publie ton annonce** sur NEXUS Location.
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #NexusLocation #Location #Matériel #Événementiel #BTP #Sénégal
+
+---
+
 ## 📅 Idées de calendrier de publication
 
 | Jour | Contenu |
