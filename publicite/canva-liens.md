@@ -38,6 +38,15 @@ Asset logo NX uploadé dans Canva : `MAHNiOVoNk4` (réutilisé sur chaque affich
 | 30 | Retours & remboursements | [30-retours.png](30-retours.png) | DAHNmkGyKoU |
 | 31 | Authenticité garantie | [31-authenticite.png](31-authenticite.png) | DAHNmu0YNXA |
 | 32 | Service après-vente | [32-sav.png](32-sav.png) | DAHNmuVzCX8 |
+| 33 | Recrutement vendeurs (concierge) | [33-vendeurs-concierge.png](33-vendeurs-concierge.png) | DAHOscaNbHg |
+| 34 | Recrutement artisans (NEXUS Pro) | [34-artisans-nexus-pro.png](34-artisans-nexus-pro.png) | DAHOsXsQCMU |
+| 35 | Recrutement coursiers/transporteurs | [35-coursiers-transporteurs.png](35-coursiers-transporteurs.png) | DAHOsbAJX8I |
+| 36 | Recrutement éleveurs | [36-eleveurs.png](36-eleveurs.png) | DAHOsQMKlc4 |
+| 37 | Recrutement loueurs de matériel | [37-loueurs-materiel.png](37-loueurs-materiel.png) | DAHOsYL-w98 |
+| 38 | NEXUS Location (côté utilisateur) | [38-location-materiel.png](38-location-materiel.png) | DAHOsZnycIw |
+| 39 | NEXUS Covoiturage (côté utilisateur) | [39-covoiturage.png](39-covoiturage.png) | DAHOsZqtgoo |
+| 40 | Assistant IA (côté utilisateur) | [40-assistant-ia.png](40-assistant-ia.png) | DAHOsQXBCV0 |
+| 41 | Blog NEXUS | [41-blog-nexus.png](41-blog-nexus.png) | DAHOsdUfA8U |
 
 ## Aperçus
 

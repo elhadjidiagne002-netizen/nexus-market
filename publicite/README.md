@@ -135,7 +135,8 @@ Dossier central pour **toutes les affiches promotionnelles** (Facebook, Instagra
 Ces 4 affiches annoncent des fonctionnalités qui n'avaient encore aucune publicité
 côté utilisateur (seulement des messages de recrutement prestataires pour Location
 et Covoiturage — voir section suivante). Même format et charte que les 12 premières.
-Design pas encore créé dans Canva (pas d'ID).
+Designs créés dans Canva — voir [`canva-liens.md`](./canva-liens.md) (#38-41)
+pour les liens et fichiers PNG exportés.
 
 ### 38. 🔑 NEXUS Location — Louez plutôt qu'acheter
 **Titre :** Besoin ponctuel ? Louez, ne payez pas le prix du neuf
@@ -182,7 +183,8 @@ qui restent sur `m.me/nexusmarketsn`) :
 > 📱 WhatsApp **+221 77 625 48 95** · 📧 **nx@nexusmarket.sn**
 > Lien direct : `https://wa.me/221776254895`
 
-Design pas encore créé dans Canva (pas d'ID) — briefs ci-dessous prêts à mettre en page.
+Designs créés dans Canva — voir [`canva-liens.md`](./canva-liens.md) (#33-37) pour
+les liens et fichiers PNG exportés.
 Voir aussi [`messages-whatsapp-recrutement.md`](./messages-whatsapp-recrutement.md) pour
 des messages de démarchage direct (DM) à envoyer individuellement, distincts des
 affiches à publier.
