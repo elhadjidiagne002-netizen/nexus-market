@@ -1190,6 +1190,63 @@ const NEXUS_TRANSLATIONS = {
     'vendor.equip':           '🛠️ Équiper ma boutique',
     'vendor.shop':            'Ma Boutique',
     'cart.added_short':       '✓ Ajouté',
+    // ─ Transporteur / Covoiturage ─
+    'transport.become_title':   'Devenir transporteur NEXUS',
+    'transport.become_pitch':   'Publiez vos trajets, vendez des places et transportez des colis. Payé par Wave ou OM.',
+    'transport.fullname':       'Nom complet *',
+    'transport.phone':          'Téléphone *',
+    'transport.company_opt':    'Société (optionnel)',
+    'transport.vehicle':        'Véhicule',
+    'transport.seats':          'Places',
+    'transport.model_plate':    'Modèle / immatriculation',
+    'transport.apply_note':     '💡 Votre candidature sera validée sous 24h. Vous fixez vous-même vos prix et vos trajets.',
+    'transport.apply_btn':      '🚀 Postuler comme transporteur',
+    'transport.pending_title':  'Candidature en cours',
+    'transport.pending_desc':   'Notre équipe valide votre profil sous 24h. Vous recevrez une notification WhatsApp.',
+    'transport.tab_trips':      '🚐 Mes trajets',
+    'transport.tab_reservations':'📋 Réservations',
+    'transport.tab_earnings':   '💰 Revenus',
+    'transport.publish_trip':   '➕ Publier un trajet',
+    'transport.cancel':         '✕ Annuler',
+    'transport.origin':         'Départ',
+    'transport.destination':    'Arrivée',
+    'transport.departure_dt':   'Date et heure de départ',
+    'transport.seats_avail':    'Places disponibles',
+    'transport.price_seat':     'Prix / place (FCFA)',
+    'transport.allow_packages': 'Accepter des colis sur ce trajet',
+    'transport.publish_btn':    '🚀 Publier ce trajet',
+    'transport.no_trips':       'Aucun trajet publié',
+    'transport.see_reservations':'📋 Voir réservations',
+    'transport.cancel_trip':    '❌ Annuler',
+    'transport.choose_trip':    '— Choisir un trajet —',
+    'transport.choose_trip_hint':'Choisissez un trajet pour voir ses réservations',
+    'transport.no_reservations':'Aucune réservation sur ce trajet',
+    'transport.accept_price':   '✅ Accepter (fixer le prix)',
+    'transport.reject':         '❌ Refuser',
+    'transport.total_earned':   'Total encaissé',
+    'transport.no_paid':        'Aucune réservation payée pour le moment',
+    'transport.name_phone_req': 'Nom et téléphone requis',
+    'transport.application_sent':'✅ Candidature envoyée ! Vous serez notifié sous 24h.',
+    'transport.trip_fields_req':'Départ, destination et date requis',
+    'transport.trip_published': '🚐 Trajet publié !',
+    'transport.trip_cancelled': 'Trajet annulé',
+    'transport.package_price_q':'Prix du colis (FCFA) ?',
+    'transport.package_accepted':'✅ Colis accepté — le client peut payer',
+    'transport.package_rejected':'Colis refusé',
+    'transport.seats_unit':     'places',
+    'transport.seats_free':     'places libres',
+    'transport.per_seat':       '/place',
+    'transport.packages_ok':    '· 📦 colis acceptés',
+    'transport.passenger':      'Passager',
+    'transport.package_for':    '📦 Colis pour',
+    'transport.paid':           '✅ Payé',
+    'transport.to_process':     '⏳ À traiter',
+    'transport.awaiting_payment':'⏳ En attente paiement',
+    'transport.seats_label':    '💺 Place(s)',
+    'transport.package_label':  '📦 Colis',
+    'transport.role_label':     'Transporteur',
+    'transport.role_desc':      'Publiez des trajets, vendez des places et transportez des colis',
+    'transport.onboarding_info':'Créez d’abord votre compte. Juste après, vous compléterez votre fiche transporteur (véhicule, places, trajets) — validée par notre équipe sous 24h.',
   },
 
   en: {
@@ -1324,6 +1381,63 @@ const NEXUS_TRANSLATIONS = {
     'vendor.equip':           '🛠️ Equip my shop',
     'vendor.shop':            'My Shop',
     'cart.added_short':       '✓ Added',
+    // ─ Carrier / Carpooling ─
+    'transport.become_title':   'Become a NEXUS carrier',
+    'transport.become_pitch':   'Post your trips, sell seats and carry packages. Paid via Wave or OM.',
+    'transport.fullname':       'Full name *',
+    'transport.phone':          'Phone *',
+    'transport.company_opt':    'Company (optional)',
+    'transport.vehicle':        'Vehicle',
+    'transport.seats':          'Seats',
+    'transport.model_plate':    'Model / plate number',
+    'transport.apply_note':     '💡 Your application will be reviewed within 24h. You set your own prices and trips.',
+    'transport.apply_btn':      '🚀 Apply as a carrier',
+    'transport.pending_title':  'Application pending',
+    'transport.pending_desc':   'Our team is reviewing your profile within 24h. You will get a WhatsApp notification.',
+    'transport.tab_trips':      '🚐 My trips',
+    'transport.tab_reservations':'📋 Bookings',
+    'transport.tab_earnings':   '💰 Earnings',
+    'transport.publish_trip':   '➕ Post a trip',
+    'transport.cancel':         '✕ Cancel',
+    'transport.origin':         'From',
+    'transport.destination':    'To',
+    'transport.departure_dt':   'Departure date & time',
+    'transport.seats_avail':    'Available seats',
+    'transport.price_seat':     'Price / seat (FCFA)',
+    'transport.allow_packages': 'Accept packages on this trip',
+    'transport.publish_btn':    '🚀 Post this trip',
+    'transport.no_trips':       'No trips posted',
+    'transport.see_reservations':'📋 View bookings',
+    'transport.cancel_trip':    '❌ Cancel',
+    'transport.choose_trip':    '— Choose a trip —',
+    'transport.choose_trip_hint':'Choose a trip to see its bookings',
+    'transport.no_reservations':'No bookings on this trip',
+    'transport.accept_price':   '✅ Accept (set price)',
+    'transport.reject':         '❌ Reject',
+    'transport.total_earned':   'Total earned',
+    'transport.no_paid':        'No paid bookings yet',
+    'transport.name_phone_req': 'Name and phone required',
+    'transport.application_sent':'✅ Application sent! You will be notified within 24h.',
+    'transport.trip_fields_req':'From, to and date required',
+    'transport.trip_published': '🚐 Trip posted!',
+    'transport.trip_cancelled': 'Trip cancelled',
+    'transport.package_price_q':'Package price (FCFA)?',
+    'transport.package_accepted':'✅ Package accepted — the customer can pay',
+    'transport.package_rejected':'Package rejected',
+    'transport.seats_unit':     'seats',
+    'transport.seats_free':     'seats free',
+    'transport.per_seat':       '/seat',
+    'transport.packages_ok':    '· 📦 packages accepted',
+    'transport.passenger':      'Passenger',
+    'transport.package_for':    '📦 Package for',
+    'transport.paid':           '✅ Paid',
+    'transport.to_process':     '⏳ To process',
+    'transport.awaiting_payment':'⏳ Awaiting payment',
+    'transport.seats_label':    '💺 Seat(s)',
+    'transport.package_label':  '📦 Package',
+    'transport.role_label':     'Carrier',
+    'transport.role_desc':      'Post trips, sell seats and carry packages',
+    'transport.onboarding_info':'First create your account. Right after, you\'ll complete your carrier profile (vehicle, seats, trips) — reviewed by our team within 24h.',
   },
 
   wo: {
@@ -1592,6 +1706,63 @@ const NEXUS_TRANSLATIONS = {
     'vendor.referral':        'Woote Xarit Jaay-kat',
     'vendor.equip':           '🛠️ Jépp Sama Bitik',
     'cart.added_short':       '✓ Yokk na',
+    // ─ Transportër / Covoiturage (à faire relire par un locuteur natif) ─
+    'transport.become_title':   'Nekk transportër NEXUS',
+    'transport.become_pitch':   'Génnal say tukki, jaayal palaas yi te yóbbu colis. Fay ci Wave walla OM.',
+    'transport.fullname':       'Tur wu mat *',
+    'transport.phone':          'Telefon *',
+    'transport.company_opt':    'Sosiete (bu soxul)',
+    'transport.vehicle':        'Woto',
+    'transport.seats':          'Palaas',
+    'transport.model_plate':    'Modèl / imatrikilasyon',
+    'transport.apply_note':     '💡 Dinañu seetlu sa ndëmm ci 24h. Yaa di tëral say njëg ak say tukki.',
+    'transport.apply_btn':      '🚀 Sépp ngir nekk transportër',
+    'transport.pending_title':  'Ndëmm mi angi ci yoon',
+    'transport.pending_desc':   'Sunu ekip dina seetlu sa profil ci 24h. Dinga jot benn xibaar ci WhatsApp.',
+    'transport.tab_trips':      '🚐 Samay tukki',
+    'transport.tab_reservations':'📋 Réservasyon',
+    'transport.tab_earnings':   '💰 Xaalis',
+    'transport.publish_trip':   '➕ Génnal benn tukki',
+    'transport.cancel':         '✕ Neenal',
+    'transport.origin':         'Bërëb bu jóge',
+    'transport.destination':    'Bërëb bu jëm',
+    'transport.departure_dt':   'Bés ak waxtu tukki',
+    'transport.seats_avail':    'Palaas yu am',
+    'transport.price_seat':     'Njëg / palaas (FCFA)',
+    'transport.allow_packages': 'Nangu colis ci tukki bii',
+    'transport.publish_btn':    '🚀 Génnal tukki bii',
+    'transport.no_trips':       'Amul tukki bu génn',
+    'transport.see_reservations':'📋 Xool réservasyon',
+    'transport.cancel_trip':    '❌ Neenal',
+    'transport.choose_trip':    '— Tannal benn tukki —',
+    'transport.choose_trip_hint':'Tannal benn tukki ngir gis ay réservasyon',
+    'transport.no_reservations':'Amul réservasyon ci tukki bii',
+    'transport.accept_price':   '✅ Nangu (tëral njëg)',
+    'transport.reject':         '❌ Ban',
+    'transport.total_earned':   'Xaalis bu ñu jël',
+    'transport.no_paid':        'Amul réservasyon bu fay ba léegi',
+    'transport.name_phone_req': 'Tur ak telefon a laaj',
+    'transport.application_sent':'✅ Ndëmm mi yónnee na! Dinañu la xamal ci 24h.',
+    'transport.trip_fields_req':'Bërëb bu jóge, bu jëm ak bés a laaj',
+    'transport.trip_published': '🚐 Tukki génn na!',
+    'transport.trip_cancelled': 'Tukki neenal na',
+    'transport.package_price_q':'Njëgu colis (FCFA)?',
+    'transport.package_accepted':'✅ Colis nangu na — kliyaan bi mën na fay',
+    'transport.package_rejected':'Colis ban na',
+    'transport.seats_unit':     'palaas',
+    'transport.seats_free':     'palaas yu neex',
+    'transport.per_seat':       '/palaas',
+    'transport.packages_ok':    '· 📦 colis nangu',
+    'transport.passenger':      'Dox-kat',
+    'transport.package_for':    '📦 Colis ngir',
+    'transport.paid':           '✅ Fay na',
+    'transport.to_process':     '⏳ War naa jëfandikoo',
+    'transport.awaiting_payment':'⏳ Ap na fay',
+    'transport.seats_label':    '💺 Palaas',
+    'transport.package_label':  '📦 Colis',
+    'transport.role_label':     'Transportër',
+    'transport.role_desc':      'Génnal say tukki, jaayal palaas yi te yóbbu colis',
+    'transport.onboarding_info':'Sosal sa kont bu jëkk. Ci topp, dinga mat sa fiches transportër (woto, palaas, tukki) — dinañu ko seetlu ci 24h.',
   },
 };
 
@@ -13346,7 +13517,7 @@ if (json.token || json.accessToken) {
       {id:"breeder",icon:"🐏",label:"Éleveur / Producteur local",desc:"Bétail (Tabaski) & produits du terroir géolocalisés",color:"#006d40"},
       {id:"vendor",icon:"\ud83c\udfea",label:"Vendeur professionnel",desc:"Boutique pro : volume, outils avanc\xe9s, mise en avant",color:"var(--danger)"},
       {id:"courier",icon:"\ud83d\udef5",label:"Livreur / Coursier",desc:"Livrez \u00e0 Dakar \u2014 jusqu\u2019\u00e0 25\u202f000 FCFA/jour",color:"#D97706"},
-      {id:"transporteur",icon:"\ud83d\ude90",label:"Transporteur",desc:"Publiez des trajets, vendez des places et transportez des colis",color:"#1D4ED8"}
+      {id:"transporteur",icon:"\ud83d\ude90",label:t("transport.role_label"),desc:t("transport.role_desc"),color:"#1D4ED8"}
     ];
     return React.createElement("div",null,
       React.createElement("p",{style:{color:"var(--text-secondary)",marginBottom:"1.25rem",fontSize:"0.92rem",textAlign:"center"}},"Choisissez votre type de compte"),
@@ -13439,7 +13610,7 @@ if (json.token || json.accessToken) {
       ),
       role === "transporteur" && React.createElement("div",{style:{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:"10px",padding:"0.7rem 0.9rem",marginBottom:"1rem",fontSize:"0.82rem",color:"#1D4ED8"}},
         React.createElement("i",{className:"fas fa-info-circle",style:{marginRight:"0.4rem"}}),
-        "Créez d’abord votre compte. Juste après, vous compléterez votre fiche transporteur (véhicule, places, trajets) — validée par notre équipe sous 24h."
+        t("transport.onboarding_info")
       ),
       React.createElement("div",{className:"form-group"},
         React.createElement("label",{className:"form-label",htmlFor:"b-name"},"Nom complet ",React.createElement("span",{className:"required"},"*")),
@@ -21548,16 +21719,16 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
   }, [tab, trips]);
 
   const register = async () => {
-    if (!regForm.name || !regForm.phone) { addToast('Nom et téléphone requis', 'warning'); return; }
+    if (!regForm.name || !regForm.phone) { addToast(t('transport.name_phone_req'), 'warning'); return; }
     try {
       const data = await DataService.registerTransporter(currentUser.id, regForm);
       setTransporter(data); setRegStep('pending');
-      addToast('✅ Candidature envoyée ! Vous serez notifié sous 24h.', 'success');
-    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+      addToast(t('transport.application_sent'), 'success');
+    } catch (e) { addToast(t('common.error') + ' : ' + e.message, 'error'); }
   };
 
   const createTrip = async () => {
-    if (!tripForm.origin_city || !tripForm.destination_city || !tripForm.departure_at) { addToast('Départ, destination et date requis', 'warning'); return; }
+    if (!tripForm.origin_city || !tripForm.destination_city || !tripForm.departure_at) { addToast(t('transport.trip_fields_req'), 'warning'); return; }
     try {
       await DataService.createTrip({
         driver_id: currentUser.id, driver_type: 'transporteur', transporter_id: transporter.id,
@@ -21566,32 +21737,32 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
         seats_total: Number(tripForm.seats_total), price_per_seat_fcfa: Number(tripForm.price_per_seat_fcfa),
         allows_packages: tripForm.allows_packages, status: 'scheduled',
       });
-      addToast('🚐 Trajet publié !', 'success');
+      addToast(t('transport.trip_published'), 'success');
       setShowTripForm(false); loadTrips();
-    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+    } catch (e) { addToast(t('common.error') + ' : ' + e.message, 'error'); }
   };
 
   const cancelTrip = async (trip) => {
-    try { await DataService.updateTrip(trip.id, { status: 'cancelled' }); addToast('Trajet annulé', 'info'); loadTrips(); }
-    catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+    try { await DataService.updateTrip(trip.id, { status: 'cancelled' }); addToast(t('transport.trip_cancelled'), 'info'); loadTrips(); }
+    catch (e) { addToast(t('common.error') + ' : ' + e.message, 'error'); }
   };
 
   const acceptPackage = async (resa) => {
-    const price = parseInt(window.prompt('Prix du colis (FCFA) ?', tripForm.price_per_seat_fcfa || '2000'), 10);
+    const price = parseInt(window.prompt(t('transport.package_price_q'), tripForm.price_per_seat_fcfa || '2000'), 10);
     if (!price || price <= 0) return;
     try {
       await DataService.acceptPackage(resa.id, price);
-      addToast('✅ Colis accepté — le client peut payer', 'success');
+      addToast(t('transport.package_accepted'), 'success');
       setReservations(rs => rs.map(r => r.id === resa.id ? { ...r, price_fcfa: price, status: 'pending_payment' } : r));
-    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+    } catch (e) { addToast(t('common.error') + ' : ' + e.message, 'error'); }
   };
 
   const rejectPackage = async (resa) => {
     try {
       await DataService.rejectPackage(resa.id);
-      addToast('Colis refusé', 'info');
+      addToast(t('transport.package_rejected'), 'info');
       setReservations(rs => rs.map(r => r.id === resa.id ? { ...r, status: 'rejected' } : r));
-    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+    } catch (e) { addToast(t('common.error') + ' : ' + e.message, 'error'); }
   };
 
   if (loading) return E('div', { style:{ textAlign:'center', padding:'3rem' } }, E('i', { className:'fas fa-spinner fa-spin', style:{ fontSize:'2rem', color:'var(--primary)' } }));
@@ -21600,35 +21771,35 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
   if (regStep === 'register') return E('div', { style:{ maxWidth:480, margin:'0 auto', padding:'1rem' } },
     E('div', { style:{ textAlign:'center', marginBottom:'2rem' } },
       E('div', { style:{ fontSize:'3rem', marginBottom:'.5rem' } }, '🚐'),
-      E('h2', { style:{ fontWeight:800 } }, 'Devenir transporteur NEXUS'),
-      E('p', { style:{ color:'var(--text-secondary)', fontSize:'.88rem' } }, 'Publiez vos trajets, vendez des places et transportez des colis. Payé par Wave ou OM.')
+      E('h2', { style:{ fontWeight:800 } }, t('transport.become_title')),
+      E('p', { style:{ color:'var(--text-secondary)', fontSize:'.88rem' } }, t('transport.become_pitch'))
     ),
-    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Nom complet *'),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, t('transport.fullname')),
       E('input', { className:'form-input', value:regForm.name, onChange:e=>setRegForm(f=>({...f,name:e.target.value})), placeholder:'Moussa Diallo' })),
-    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Téléphone *'),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, t('transport.phone')),
       E('input', { className:'form-input', value:regForm.phone, onChange:e=>setRegForm(f=>({...f,phone:e.target.value})), placeholder:'77 xxx xx xx' })),
-    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Société (optionnel)'),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, t('transport.company_opt')),
       E('input', { className:'form-input', value:regForm.company_name, onChange:e=>setRegForm(f=>({...f,company_name:e.target.value})), placeholder:'Ex : Transport Diallo & Fils' })),
     E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
-      E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Véhicule'),
+      E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('transport.vehicle')),
         E('select', { className:'form-input', value:regForm.vehicle_type, onChange:e=>setRegForm(f=>({...f,vehicle_type:e.target.value})) },
           ['voiture','van','minibus','bus'].map(v => E('option',{key:v,value:v}, v.charAt(0).toUpperCase()+v.slice(1))))),
-      E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Places'),
+      E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('transport.seats')),
         E('input', { type:'number', min:1, className:'form-input', value:regForm.seats_capacity, onChange:e=>setRegForm(f=>({...f,seats_capacity:e.target.value})) }))
     ),
-    E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Modèle / immatriculation'),
+    E('div', { className:'form-group' }, E('label', { className:'form-label' }, t('transport.model_plate')),
       E('input', { className:'form-input', value:regForm.vehicle_model, onChange:e=>setRegForm(f=>({...f,vehicle_model:e.target.value})), placeholder:'Ex : Toyota Hiace — DK-1234-AB' })),
     E('div', { style:{ background:'rgba(0,109,64,.06)', borderRadius:10, padding:'.85rem 1rem', margin:'1rem 0', fontSize:'.83rem' } },
-      '💡 Votre candidature sera validée sous 24h. Vous fixez vous-même vos prix et vos trajets.'
+      t('transport.apply_note')
     ),
-    E('button', { className:'btn btn-primary btn-block', onClick:register }, '🚀 Postuler comme transporteur')
+    E('button', { className:'btn btn-primary btn-block', onClick:register }, t('transport.apply_btn'))
   );
 
   // ── En attente de validation ────────────────────────────────────────────
   if (regStep === 'pending') return E('div', { style:{ textAlign:'center', padding:'3rem 1rem' } },
     E('div', { style:{ fontSize:'3rem', marginBottom:'1rem' } }, '⏳'),
-    E('h3', { style:{ fontWeight:700, marginBottom:'.5rem' } }, 'Candidature en cours'),
-    E('p', { style:{ color:'var(--text-secondary)' } }, 'Notre équipe valide votre profil sous 24h. Vous recevrez une notification WhatsApp.')
+    E('h3', { style:{ fontWeight:700, marginBottom:'.5rem' } }, t('transport.pending_title')),
+    E('p', { style:{ color:'var(--text-secondary)' } }, t('transport.pending_desc'))
   );
 
   // ── Interface transporteur actif ────────────────────────────────────────
@@ -21639,14 +21810,14 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
   return E('div', null,
     E('div', { style:{ background:'var(--primary)', color:'#fff', padding:'1rem 1.25rem', borderRadius:12, marginBottom:'1rem' } },
       E('div', { style:{ fontWeight:700, fontSize:'1rem' } }, '🚐 ', transporter.name),
-      E('div', { style:{ fontSize:'.82rem', opacity:.85 } }, transporter.company_name || (transporter.vehicle_type + ' · ' + transporter.seats_capacity + ' places'))
+      E('div', { style:{ fontSize:'.82rem', opacity:.85 } }, transporter.company_name || (transporter.vehicle_type + ' · ' + transporter.seats_capacity + ' ' + t('transport.seats_unit')))
     ),
 
     E('div', { style:{ display:'flex', gap:'.35rem', marginBottom:'1rem', overflowX:'auto' } },
       [
-        { id:'trips',        label:'🚐 Mes trajets', count:trips.filter(tr=>tr.status==='scheduled').length },
-        { id:'reservations', label:'📋 Réservations' },
-        { id:'earnings',     label:'💰 Revenus' },
+        { id:'trips',        label:t('transport.tab_trips'), count:trips.filter(tr=>tr.status==='scheduled').length },
+        { id:'reservations', label:t('transport.tab_reservations') },
+        { id:'earnings',     label:t('transport.tab_earnings') },
       ].map(tb => E('button', { key:tb.id, onClick:()=>setTab(tb.id), style:{
         padding:'.4rem .85rem', borderRadius:8, border:'none', cursor:'pointer',
         fontWeight:tab===tb.id?700:400, fontSize:'.82rem', whiteSpace:'nowrap',
@@ -21657,29 +21828,29 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
 
     // ── Mes trajets ────────────────────────────────────────────────────────
     tab==='trips' && E('div', null,
-      E('button', { className:'btn btn-primary btn-block', style:{ marginBottom:'1rem' }, onClick:()=>setShowTripForm(s=>!s) }, showTripForm ? '✕ Annuler' : '➕ Publier un trajet'),
+      E('button', { className:'btn btn-primary btn-block', style:{ marginBottom:'1rem' }, onClick:()=>setShowTripForm(s=>!s) }, showTripForm ? t('transport.cancel') : t('transport.publish_trip')),
       showTripForm && E('div', { style:{ border:'1.5px solid var(--primary)', borderRadius:12, padding:'1rem', marginBottom:'1rem' } },
         E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
-          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Départ'),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('transport.origin')),
             E('input', { className:'form-input', value:tripForm.origin_city, onChange:e=>setTripForm(f=>({...f,origin_city:e.target.value})) })),
-          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Arrivée'),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('transport.destination')),
             E('input', { className:'form-input', value:tripForm.destination_city, onChange:e=>setTripForm(f=>({...f,destination_city:e.target.value})) }))
         ),
-        E('div', { className:'form-group' }, E('label', { className:'form-label' }, 'Date et heure de départ'),
+        E('div', { className:'form-group' }, E('label', { className:'form-label' }, t('transport.departure_dt')),
           E('input', { type:'datetime-local', className:'form-input', value:tripForm.departure_at, onChange:e=>setTripForm(f=>({...f,departure_at:e.target.value})) })),
         E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
-          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Places disponibles'),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('transport.seats_avail')),
             E('input', { type:'number', min:1, className:'form-input', value:tripForm.seats_total, onChange:e=>setTripForm(f=>({...f,seats_total:e.target.value})) })),
-          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, 'Prix / place (FCFA)'),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('transport.price_seat')),
             E('input', { type:'number', min:0, className:'form-input', value:tripForm.price_per_seat_fcfa, onChange:e=>setTripForm(f=>({...f,price_per_seat_fcfa:e.target.value})) }))
         ),
         E('label', { style:{ display:'flex', alignItems:'center', gap:'.5rem', fontSize:'.85rem', margin:'.5rem 0 1rem' } },
           E('input', { type:'checkbox', checked:tripForm.allows_packages, onChange:e=>setTripForm(f=>({...f,allows_packages:e.target.checked})) }),
-          'Accepter des colis sur ce trajet'
+          t('transport.allow_packages')
         ),
-        E('button', { className:'btn btn-primary btn-block', onClick:createTrip }, '🚀 Publier ce trajet')
+        E('button', { className:'btn btn-primary btn-block', onClick:createTrip }, t('transport.publish_btn'))
       ),
-      trips.length===0 ? E('div',{className:'empty-state'},E('i',{className:'fas fa-route'}),E('p',null,'Aucun trajet publié')) :
+      trips.length===0 ? E('div',{className:'empty-state'},E('i',{className:'fas fa-route'}),E('p',null,t('transport.no_trips'))) :
       E('div',{style:{display:'flex',flexDirection:'column',gap:'.75rem'}},
         trips.map(trip => E('div',{key:trip.id,style:{border:'0.5px solid var(--border)',borderRadius:12,padding:'1rem'}},
           E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'.5rem'}},
@@ -21690,12 +21861,12 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
             E('span',{style:{fontSize:'.72rem',fontWeight:700,borderRadius:99,padding:'2px 10px',background: trip.status==='scheduled'?'#DCFCE7':trip.status==='cancelled'?'#FEE2E2':'#F3F4F6', color: trip.status==='scheduled'?'#166534':trip.status==='cancelled'?'#991B1B':'#374151'}}, trip.status)
           ),
           E('div',{style:{fontSize:'.82rem',color:'var(--text-secondary)',marginBottom:'.5rem'}},
-            '💺 ', trip.seats_available, '/', trip.seats_total, ' places libres · ', FCFA(trip.price_per_seat_fcfa), '/place',
-            trip.allows_packages ? ' · 📦 colis acceptés' : ''
+            '💺 ', trip.seats_available, '/', trip.seats_total, ' ' + t('transport.seats_free') + ' · ', FCFA(trip.price_per_seat_fcfa), t('transport.per_seat'),
+            trip.allows_packages ? ' ' + t('transport.packages_ok') : ''
           ),
           E('div',{style:{display:'flex',gap:'.5rem'}},
-            E('button',{className:'btn btn-secondary btn-sm',onClick:()=>{setSelectedTripId(trip.id);setTab('reservations');}}, '📋 Voir réservations'),
-            trip.status==='scheduled' && E('button',{className:'btn btn-secondary btn-sm',onClick:()=>cancelTrip(trip)}, '❌ Annuler')
+            E('button',{className:'btn btn-secondary btn-sm',onClick:()=>{setSelectedTripId(trip.id);setTab('reservations');}}, t('transport.see_reservations')),
+            trip.status==='scheduled' && E('button',{className:'btn btn-secondary btn-sm',onClick:()=>cancelTrip(trip)}, t('transport.cancel_trip'))
           )
         ))
       )
@@ -21704,27 +21875,27 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
     // ── Réservations du trajet sélectionné ──────────────────────────────────
     tab==='reservations' && E('div', null,
       trips.length>0 && E('select', { className:'form-select', style:{ marginBottom:'1rem' }, value:selectedTripId||'', onChange:e=>setSelectedTripId(e.target.value) },
-        E('option', { value:'' }, '— Choisir un trajet —'),
+        E('option', { value:'' }, t('transport.choose_trip')),
         trips.map(trip => E('option', { key:trip.id, value:trip.id }, trip.origin_city+' → '+trip.destination_city+' — '+new Date(trip.departure_at).toLocaleDateString('fr-FR')))
       ),
-      !selectedTripId ? E('div',{className:'empty-state'},E('p',null,'Choisissez un trajet pour voir ses réservations')) :
-      reservations.length===0 ? E('div',{className:'empty-state'},E('p',null,'Aucune réservation sur ce trajet')) :
+      !selectedTripId ? E('div',{className:'empty-state'},E('p',null,t('transport.choose_trip_hint'))) :
+      reservations.length===0 ? E('div',{className:'empty-state'},E('p',null,t('transport.no_reservations'))) :
       E('div',{style:{display:'flex',flexDirection:'column',gap:'.65rem'}},
         reservations.map(r => E('div',{key:r.id,style:{border:'0.5px solid var(--border)',borderRadius:10,padding:'.85rem'}},
           E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}},
             E('div',null,
-              E('div',{style:{fontWeight:700,fontSize:'.85rem'}}, r.booking_type==='seat' ? ('💺 '+r.seats_booked+' place'+(r.seats_booked>1?'s':'')+' — '+(r.requester_name||'Passager')) : ('📦 Colis pour '+(r.recipient_name||'—'))),
+              E('div',{style:{fontWeight:700,fontSize:'.85rem'}}, r.booking_type==='seat' ? ('💺 '+r.seats_booked+' '+t('transport.seats_unit')+' — '+(r.requester_name||t('transport.passenger'))) : (t('transport.package_for')+' '+(r.recipient_name||'—'))),
               r.booking_type==='package' && E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)',marginTop:'.15rem'}}, r.package_description),
               r.requester_phone && E('a',{href:'tel:'+r.requester_phone,style:{fontSize:'.78rem',color:'var(--primary)'}}, '📞 ', r.requester_phone)
             ),
             E('div',{style:{textAlign:'right'}},
               r.price_fcfa>0 && E('div',{style:{fontWeight:700,color:'var(--primary)'}}, FCFA(r.price_fcfa)),
-              E('div',{style:{fontSize:'.72rem',color:r.payment_status==='paid'?'#059669':'#d97706'}}, r.payment_status==='paid'?'✅ Payé':(r.status==='pending_review'?'⏳ À traiter':'⏳ En attente paiement'))
+              E('div',{style:{fontSize:'.72rem',color:r.payment_status==='paid'?'#059669':'#d97706'}}, r.payment_status==='paid'?t('transport.paid'):(r.status==='pending_review'?t('transport.to_process'):t('transport.awaiting_payment')))
             )
           ),
           r.booking_type==='package' && r.status==='pending_review' && E('div',{style:{display:'flex',gap:'.5rem',marginTop:'.6rem'}},
-            E('button',{className:'btn btn-primary btn-sm',onClick:()=>acceptPackage(r)}, '✅ Accepter (fixer le prix)'),
-            E('button',{className:'btn btn-secondary btn-sm',onClick:()=>rejectPackage(r)}, '❌ Refuser')
+            E('button',{className:'btn btn-primary btn-sm',onClick:()=>acceptPackage(r)}, t('transport.accept_price')),
+            E('button',{className:'btn btn-secondary btn-sm',onClick:()=>rejectPackage(r)}, t('transport.reject'))
           )
         ))
       )
@@ -21733,14 +21904,14 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
     // ── Revenus ─────────────────────────────────────────────────────────────
     tab==='earnings' && E('div',null,
       E('div',{style:{background:'var(--bg-light)',borderRadius:10,padding:'.85rem 1rem',marginBottom:'1.25rem',borderLeft:'3px solid var(--primary)'}},
-        E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)',textTransform:'uppercase'}},'Total encaissé'),
+        E('div',{style:{fontSize:'.72rem',color:'var(--text-secondary)',textTransform:'uppercase'}},t('transport.total_earned')),
         E('div',{style:{fontWeight:700,fontSize:'1.2rem',marginTop:'.2rem'}},FCFA(totalEarned))
       ),
-      confirmedResa.length===0 ? E('div',{className:'empty-state'},E('p',null,'Aucune réservation payée pour le moment')) :
+      confirmedResa.length===0 ? E('div',{className:'empty-state'},E('p',null,t('transport.no_paid'))) :
       E('div',{style:{display:'flex',flexDirection:'column',gap:'.5rem'}},
         confirmedResa.map(r => E('div',{key:r.id,style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'.6rem 0',borderBottom:'0.5px solid var(--border)'}},
           E('div',null,
-            E('div',{style:{fontSize:'.85rem',fontWeight:500}}, r.booking_type==='seat' ? '💺 Place(s)' : '📦 Colis'),
+            E('div',{style:{fontSize:'.85rem',fontWeight:500}}, r.booking_type==='seat' ? t('transport.seats_label') : t('transport.package_label')),
             E('div',{style:{fontSize:'.75rem',color:'var(--text-secondary)'}}, new Date(r.created_at).toLocaleDateString('fr-FR'))
           ),
           E('div',{style:{fontWeight:700,color:'var(--primary)'}}, FCFA(r.price_fcfa))
