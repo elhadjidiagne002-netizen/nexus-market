@@ -11606,7 +11606,8 @@ function toggleFav(id){var f=favs();var i=f.indexOf(id);if(i>=0)f.splice(i,1);el
 
 function card(p){
   var faved=isFav(p.id);
-  return '<div class="nx-prodcard relative bg-white p-3 rounded-xl border border-outline-variant hover:shadow-md transition-all flex flex-col group min-w-[180px] md:min-w-[210px] w-[180px] md:w-[210px] shrink-0" data-id="'+p.id+'">'
+  return '<div class="nx-prodcard relative bg-white p-3 rounded-xl border '+(p.boosted?'border-2':'border')+' border-outline-variant hover:shadow-md transition-all flex flex-col group min-w-[180px] md:min-w-[210px] w-[180px] md:w-[210px] shrink-0" data-id="'+p.id+'" style="'+(p.boosted?'border-color:#f59e0b':'')+'">'
+    +(p.boosted?'<span class="absolute top-2 left-2 z-10 bg-[#f59e0b] text-white text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-0.5"><span class="material-symbols-outlined text-[12px]">bolt</span>Boosté</span>':'')
     +'<button class="nx-heart '+(faved?'active ':'')+'absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-white/90 shadow flex items-center justify-center text-on-surface-variant hover:text-tertiary transition-all" data-fav="'+p.id+'" aria-label="Favoris"><span class="material-symbols-outlined text-[20px]">favorite</span></button>'
     +'<div class="relative h-36 flex items-center justify-center mb-2 overflow-hidden">'
       +'<img loading="lazy" alt="'+_esc(p.name)+'" class="max-h-full object-contain group-hover:scale-110 transition-transform" src="'+p.img+'"/>'
@@ -11691,7 +11692,8 @@ function sbCard(p){
   var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
   var priceStr=fcfa.toLocaleString('fr-FR');
   var rat=Math.min(5,Math.max(1,Math.round(parseFloat(p.rating)||4)));
-  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat};
+  var boosted=!!p.is_boosted&&(!p.boost_ends_at||new Date(p.boost_ends_at).getTime()>Date.now());
+  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat,boosted:boosted};
   NXP_PRODS[pObj.id]=pObj;
   return card(pObj);
 }
@@ -11785,15 +11787,19 @@ function initProto(){
 
   /* Fetch vrais produits Supabase → remplace les squelettes.
      NB: on ordonne par created_at/rating uniquement (colonnes sûres) ;
-     active peut être NULL → on filtre active=not.is.false plutôt que eq.true. */
-  var Q='select=id,name,price,images,image_url,rating,category,stock&active=not.is.false&limit=12';
-  sbFetch('products?'+Q+'&order=rating.desc.nullslast').then(function(data){
+     active peut être NULL → on filtre active=not.is.false plutôt que eq.true.
+     [FIX] is_boosted en tête de tri (+ colonne récupérée) : jusqu'ici un produit
+     boosté par l'admin n'avait AUCUN effet visible sur l'accueil statique — la
+     requête ne remontait même pas la colonne (contrairement au catalogue React
+     qui, lui, en tient déjà compte via nexusRankScore/NxCard). */
+  var Q='select=id,name,price,images,image_url,rating,category,stock,is_boosted,boost_ends_at&active=not.is.false&limit=12';
+  sbFetch('products?'+Q+'&order=is_boosted.desc.nullslast,rating.desc.nullslast').then(function(data){
     if(bsEl) bsEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):best.map(card).join('');
   });
-  sbFetch('products?'+Q+'&order=created_at.desc').then(function(data){
+  sbFetch('products?'+Q+'&order=is_boosted.desc.nullslast,created_at.desc').then(function(data){
     if(naEl) naEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):arrivals.map(card).join('');
   });
-  sbFetch('products?'+Q+'&order=rating.desc.nullslast,created_at.desc').then(function(data){
+  sbFetch('products?'+Q+'&order=is_boosted.desc.nullslast,rating.desc.nullslast,created_at.desc').then(function(data){
     if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):recommended.map(card).join('');
     /* Annonces Express : affichées EN TÊTE des « Recommandés » (l'overlay ne les
        chargeait pas → invisibles sur l'accueil). Cartes WhatsApp dédiées. */
