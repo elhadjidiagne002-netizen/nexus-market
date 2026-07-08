@@ -1247,6 +1247,195 @@ const NEXUS_TRANSLATIONS = {
     'transport.role_label':     'Transporteur',
     'transport.role_desc':      'Publiez des trajets, vendez des places et transportez des colis',
     'transport.onboarding_info':'Créez d’abord votre compte. Juste après, vous compléterez votre fiche transporteur (véhicule, places, trajets) — validée par notre équipe sous 24h.',
+    // ─ NEXUS Location (rental) ─
+    'location.title':           'NEXUS Location',
+    'location.tab_browse':      '🔎 Louer un objet',
+    'location.tab_publish':     '➕ Mettre en location',
+    'location.hero_title':      "Louez plutôt qu'acheter 🔑",
+    'location.hero_desc':       'Matériel événementiel, outillage BTP, électroménager… Contactez le loueur pour convenir des dates. Caution indicative en direct.',
+    'location.publish_intro':   "Proposez un objet à la location et touchez de nouveaux revenus. La mise en relation se fait par WhatsApp ; l'échange et la caution se règlent en direct.",
+    'location.all_cat':         'Tous',
+    'location.empty':           'Aucun objet en location pour le moment. Soyez le premier à en proposer un !',
+    'location.lessor':          'Loueur',
+    'location.contact_btn':     '💬 Réserver / Contacter',
+    'location.wa_message':      'Bonjour, je souhaite LOUER « {name} »{price} vu sur NEXUS Location. Mes dates souhaitées : du ___ au ___.',
+    'location.per_day':         '/jour',
+    'location.per_week':        '/sem.',
+    'location.deposit':         'Caution',
+    'location.min_days_short':  'min',
+    'location.days_unit':       'j',
+    'location.field_name':      'Objet à louer *',
+    'location.field_category':  'Catégorie *',
+    'location.field_choose':    '— Choisir —',
+    'location.field_photo':     'Photo',
+    'location.field_price_day': 'Prix / jour (FCFA) *',
+    'location.field_price_week':'Prix / semaine (FCFA, optionnel)',
+    'location.field_deposit':   'Caution (FCFA, indicative)',
+    'location.field_min_days':  'Durée min (jours)',
+    'location.field_condition': 'État / précisions',
+    'location.field_region':    'Région',
+    'location.photo_login_req': 'Connectez-vous pour ajouter une photo.',
+    'location.photo_pick_img':  'Choisissez une image.',
+    'location.photo_too_big':   'Image trop lourde (max 5 Mo).',
+    'location.photo_uploading': '⏳ Envoi de la photo…',
+    'location.photo_added':     '📷 Photo ajoutée ✓',
+    'location.photo_failed':    '❌ Échec photo : ',
+    'location.submit_btn':      '🔑 Publier mon annonce de location',
+    'location.publish_login_req':'Connectez-vous pour proposer un objet à la location.',
+    'location.name_cat_req':    'Objet et catégorie requis.',
+    'location.price_invalid':   'Prix/jour invalide (min {min}).',
+    'location.service_unavailable':'Service indisponible, réessayez.',
+    'location.publishing':      '⏳ Publication…',
+    'location.published':       '✅ Annonce de location publiée !',
+    'location.error':           'Erreur : ',
+    'location.coming_soon_title':'NEXUS Location — bientôt disponible',
+    'location.coming_soon_desc':'Cette fonctionnalité est momentanément désactivée. Revenez très vite !',
+    // ─ NEXUS Troc ─
+    'troc.title':                'NEXUS Troc',
+    'troc.subtitle':              'Échangez vos objets sans argent — « mon téléphone contre ta tablette ». Sans commission.',
+    'troc.tab_browse':            'Parcourir',
+    'troc.tab_create':            '+ Publier mon objet',
+    'troc.empty':                 'Aucun troc pour le moment. Soyez le premier à publier !',
+    'troc.looking_for':           '🎯 Cherche : ',
+    'troc.propose_btn':           'Proposer un échange',
+    'troc.title_placeholder':     'Objet à troquer (ex. iPhone 11 64 Go)',
+    'troc.desc_placeholder':      'Description, état…',
+    'troc.want_placeholder':      '🎯 Ce que vous cherchez en échange',
+    'troc.phone_placeholder':     'Téléphone (WhatsApp) — optionnel',
+    'troc.photo_busy':            '⏳…',
+    'troc.photo_btn':             '📷 Photo',
+    'troc.preview_alt':           'aperçu',
+    'troc.publishing':            'Publication…',
+    'troc.submit_btn':            'Publier mon troc',
+    'troc.propose_for':           'Proposer pour : ',
+    'troc.looking_for_modal':     '🎯 Recherche : ',
+    'troc.offered_placeholder':   'Objet que vous proposez en échange',
+    'troc.message_placeholder':   'Message (optionnel)',
+    'troc.your_phone_placeholder':'Votre téléphone (WhatsApp) — optionnel',
+    'troc.sending':                'Envoi…',
+    'troc.send_proposal_btn':     'Envoyer ma proposition',
+    'troc.anonymous':             'Anonyme',
+    'troc.photo_failed':          'Échec photo : ',
+    'troc.title_req':             'Donnez un titre à votre objet.',
+    'troc.want_req':              'Indiquez ce que vous recherchez en échange.',
+    'troc.published':             'Annonce de troc publiée ! 🔄',
+    'troc.published_local':       'Publié en local (vérifiez la connexion).',
+    'troc.error':                 'Erreur : ',
+    'troc.offered_req':           'Indiquez l’objet que vous proposez.',
+    'troc.proposal_sent':         'Proposition envoyée ! Le propriétaire vous recontactera. 🤝',
+    'troc.proposal_local':        'Proposition enregistrée localement.',
+    // ─ NEXUS Stories ─
+    'stories.title':              'NEXUS Stories',
+    'stories.load_error':         'Erreur chargement stories : ',
+    'stories.unavailable':        'Stories inaccessibles : ',
+    'stories.login_req':          'Connectez-vous comme vendeur pour publier une story.',
+    'stories.pick_video':         'Choisissez un fichier vidéo (15–60s).',
+    'stories.video_too_big':      'Vidéo trop lourde (max 100 Mo).',
+    'stories.db_unavailable':     'Connexion à la base indisponible.',
+    'stories.upload_failed':      'Envoi échoué : ',
+    'stories.bucket_missing':     ' (bucket « nexus-stories » manquant ?)',
+    'stories.publish_failed':     'Publication impossible.',
+    'stories.paid_publish':       'Publication payante ({fee} FCFA) — redirection vers le paiement…',
+    'stories.payment_unavailable':'Paiement indisponible : ',
+    'stories.pending_story':      '. Story en attente.',
+    'stories.payment_network_err':'Paiement indisponible (réseau). Story en attente.',
+    'stories.published':          'Story publiée !',
+    'stories.error':              'Erreur : ',
+    'stories.import_tooltip':     'Importer une vidéo depuis votre appareil',
+    'stories.import_btn':         '⬆ Importer',
+    'stories.film_tooltip':       'Filmer une vidéo maintenant',
+    'stories.film_btn':           '🎥 Filmer',
+    'stories.encoding_status':    '⏳ {n} story{s} en cours d’encodage — visible{s} sous ~1 min.',
+    'stories.no_video':           'Aucune vidéo pour le moment.',
+    'stories.import_video_btn':   '⬆ Importer une vidéo',
+    'stories.login_to_publish':   'Connectez-vous comme vendeur pour publier.',
+    'stories.default_title':      'Vidéo produit',
+    'stories.out_of_stock':       '· Épuisé',
+    'stories.view_btn':           '🛒 Voir',
+    'stories.buy_btn':            '🛒 Acheter',
+    'stories.offer_btn':          '💰 Faire une offre',
+    'stories.modal_title':        'Publier votre story',
+    'stories.field_title':        'Titre',
+    'stories.title_placeholder':  'Ex. iPhone 11 — démo rapide',
+    'stories.field_product':      'Produit associé (optionnel)',
+    'stories.no_product':         '— Aucun produit —',
+    'stories.field_price':        'Prix affiché (FCFA, optionnel)',
+    'stories.price_placeholder':  'Laisser vide si pas de prix',
+    'stories.allow_offers':       'Autoriser les acheteurs à faire une offre',
+    'stories.sending':            'Envoi en cours…',
+    'stories.submit_btn':         'Publier la story',
+    'stories.video_badge':        '▶ Vidéo',
+    'stories.fallback_title':     'Story',
+    'stories.fallback_vendor':    'Vendeur',
+    'stories.watch_btn':          '▶ Regarder',
+    'stories.view_product_tooltip':'Voir le produit',
+    'stories.publish_card':       'Publier une story',
+    'stories.badge':              '🎬 STORIES',
+    'stories.see_all':            'Voir tout →',
+    // ─ NEXUS On Demand (commande sur demande) ─
+    'ondemand.title':             'Commande sur demande',
+    'ondemand.subtitle':          "Vous ne trouvez pas ce que vous cherchez ? Soumettez votre liste — l'administrateur NEXUS le trouve pour vous.",
+    'ondemand.new_request':       'Nouvelle demande',
+    'ondemand.how_it_works':      '🛒 Comment ça marche ?',
+    'ondemand.step1':             "1️⃣  Créez votre liste de courses (articles introuvables sur le site)",
+    'ondemand.step2':             "2️⃣  L'administrateur NEXUS recherche pour vous (délai : 24h ouvrées)",
+    'ondemand.step3':             "3️⃣  Vous recevez un devis par WhatsApp avec disponibilité et prix",
+    'ondemand.step4':             "4️⃣  Vous confirmez et passez commande directement sur NEXUS",
+    'ondemand.create_list_btn':   'Créer ma liste',
+    'ondemand.no_requests':       'Aucune demande',
+    'ondemand.no_requests_desc':  "Créez votre première liste de courses — l'administrateur s'occupe du reste.",
+    'ondemand.create_first_list': 'Créer ma première liste',
+    'ondemand.my_requests':       'Mes demandes (',
+    'ondemand.reply_badge':       '💬 Réponse !',
+    'ondemand.back':              'Retour',
+    'ondemand.my_list_title':     '📋 Ma liste de courses',
+    'ondemand.hide_ai':           " Masquer l'IA",
+    'ondemand.ai_assistant_btn':  ' 🤖 Assistant IA',
+    'ondemand.ai_assistant_name': 'Assistant NEXUS IA',
+    'ondemand.ai_assistant_desc': 'Groq Llama 3.3 — Français & Wolof — Ajoute vos articles automatiquement',
+    'ondemand.ai_greeting':       'Bonjour ! 👋 Je suis votre assistant NEXUS pour vous aider à construire votre liste de courses.\n\nDécrivez-moi ce que vous cherchez — en français, en wolof, ou mélangé !\n\nPar exemple : "Je cherche un ordinateur portable pas cher pour mon enfant" ou "Dama soxor téléphone iPhone pas cher".',
+    'ondemand.ai_input_placeholder':'Dites ce que vous cherchez... (français ou wolof)',
+    'ondemand.ai_chip_smartphone': 'Smartphone',
+    'ondemand.ai_chip_clothes':    'Vêtements',
+    'ondemand.ai_chip_food':       'Alimentaire',
+    'ondemand.ai_chip_auto_parts': 'Pièces auto',
+    'ondemand.ai_chip_computer':   'Ordinateur',
+    'ondemand.items_searched':    'Articles recherchés',
+    'ondemand.item_label':        'Article ',
+    'ondemand.remove':            ' Supprimer',
+    'ondemand.field_product_name':'Nom du produit *',
+    'ondemand.field_qty':         'Qté',
+    'ondemand.field_budget':      'Budget max (FCFA)',
+    'ondemand.optional':          'Optionnel',
+    'ondemand.field_category':    'Catégorie',
+    'ondemand.field_notes':       'Précisions (couleur, marque, taille…)',
+    'ondemand.add_item_btn':      ' Ajouter un article',
+    'ondemand.field_whatsapp':    'Votre numéro WhatsApp *',
+    'ondemand.whatsapp_note':     "L'administrateur vous contactera sur ce numéro avec le devis.",
+    'ondemand.field_message':     'Message complémentaire (optionnel)',
+    'ondemand.message_placeholder':'Précisions sur vos besoins, délai souhaité, zone de livraison…',
+    'ondemand.cancel':            'Annuler',
+    'ondemand.submit_btn':        ' Envoyer ma liste à NEXUS',
+    'ondemand.your_message':      'Votre message',
+    'ondemand.admin_reply':       " Réponse de l'administrateur NEXUS",
+    'ondemand.replied_on':        'Répondu le ',
+    'ondemand.contact_to_order':  ' Contacter NEXUS pour commander',
+    'ondemand.awaiting_reply':    'En attente de réponse',
+    'ondemand.usual_delay':       'Délai habituel : 24h ouvrées. Vous serez contacté(e) par WhatsApp au ',
+    'ondemand.item_added':        '✅ Article ajouté : ',
+    'ondemand.ai_error':          '⚠️ Erreur IA : ',
+    'ondemand.ai_check_connection':'. Vérifiez votre connexion.',
+    'ondemand.ai_no_understand':  'Désolé, je n’ai pas compris.',
+    'ondemand.load_error':        'Erreur chargement : ',
+    'ondemand.send_error':        'Erreur envoi : ',
+    'ondemand.min_one_item':      'Ajoutez au moins 1 article avec un nom.',
+    'ondemand.phone_req':         'Indiquez votre numéro WhatsApp.',
+    'ondemand.request_sent':      "✅ Demande envoyée ! L'administrateur NEXUS vous contactera sous 24h.",
+    'ondemand.visitor':           'Visiteur',
+    'ondemand.status_pending':    '⏳ En attente',
+    'ondemand.status_processing': '🔍 Recherche en cours',
+    'ondemand.status_replied':    '✅ Réponse reçue',
+    'ondemand.status_closed':     '🔒 Fermé',
   },
 
   en: {
@@ -1438,6 +1627,195 @@ const NEXUS_TRANSLATIONS = {
     'transport.role_label':     'Carrier',
     'transport.role_desc':      'Post trips, sell seats and carry packages',
     'transport.onboarding_info':'First create your account. Right after, you\'ll complete your carrier profile (vehicle, seats, trips) — reviewed by our team within 24h.',
+    // ─ NEXUS Location (rental) ─
+    'location.title':           'NEXUS Location',
+    'location.tab_browse':      '🔎 Rent an item',
+    'location.tab_publish':     '➕ Rent out an item',
+    'location.hero_title':      'Rent instead of buying 🔑',
+    'location.hero_desc':       'Event equipment, construction tools, appliances… Contact the owner to arrange dates. Deposit discussed directly.',
+    'location.publish_intro':   'List an item for rent and earn extra income. Contact happens via WhatsApp; exchange and deposit are settled directly.',
+    'location.all_cat':         'All',
+    'location.empty':           'No items for rent yet. Be the first to list one!',
+    'location.lessor':          'Owner',
+    'location.contact_btn':     '💬 Book / Contact',
+    'location.wa_message':      'Hello, I would like to RENT "{name}"{price} seen on NEXUS Location. My preferred dates: from ___ to ___.',
+    'location.per_day':         '/day',
+    'location.per_week':        '/week',
+    'location.deposit':         'Deposit',
+    'location.min_days_short':  'min',
+    'location.days_unit':       'd',
+    'location.field_name':      'Item to rent *',
+    'location.field_category':  'Category *',
+    'location.field_choose':    '— Choose —',
+    'location.field_photo':     'Photo',
+    'location.field_price_day': 'Price / day (FCFA) *',
+    'location.field_price_week':'Price / week (FCFA, optional)',
+    'location.field_deposit':   'Deposit (FCFA, indicative)',
+    'location.field_min_days':  'Minimum duration (days)',
+    'location.field_condition': 'Condition / details',
+    'location.field_region':    'Region',
+    'location.photo_login_req': 'Log in to add a photo.',
+    'location.photo_pick_img':  'Choose an image.',
+    'location.photo_too_big':   'Image too large (max 5MB).',
+    'location.photo_uploading': '⏳ Uploading photo…',
+    'location.photo_added':     '📷 Photo added ✓',
+    'location.photo_failed':    '❌ Photo upload failed: ',
+    'location.submit_btn':      '🔑 Publish my rental listing',
+    'location.publish_login_req':'Log in to list an item for rent.',
+    'location.name_cat_req':    'Item and category required.',
+    'location.price_invalid':   'Invalid price/day (min {min}).',
+    'location.service_unavailable':'Service unavailable, please retry.',
+    'location.publishing':      '⏳ Publishing…',
+    'location.published':       '✅ Rental listing published!',
+    'location.error':           'Error: ',
+    'location.coming_soon_title':'NEXUS Location — coming soon',
+    'location.coming_soon_desc':'This feature is temporarily disabled. Check back soon!',
+    // ─ NEXUS Troc (barter) ─
+    'troc.title':                'NEXUS Troc',
+    'troc.subtitle':              'Trade your items without money — "my phone for your tablet". No commission.',
+    'troc.tab_browse':            'Browse',
+    'troc.tab_create':            '+ List my item',
+    'troc.empty':                 'No barter listings yet. Be the first to post one!',
+    'troc.looking_for':           '🎯 Looking for: ',
+    'troc.propose_btn':           'Propose a trade',
+    'troc.title_placeholder':     'Item to trade (e.g. iPhone 11 64GB)',
+    'troc.desc_placeholder':      'Description, condition…',
+    'troc.want_placeholder':      '🎯 What you want in exchange',
+    'troc.phone_placeholder':     'Phone (WhatsApp) — optional',
+    'troc.photo_busy':            '⏳…',
+    'troc.photo_btn':             '📷 Photo',
+    'troc.preview_alt':           'preview',
+    'troc.publishing':            'Publishing…',
+    'troc.submit_btn':            'Post my trade',
+    'troc.propose_for':           'Propose for: ',
+    'troc.looking_for_modal':     '🎯 Looking for: ',
+    'troc.offered_placeholder':   'Item you are offering in exchange',
+    'troc.message_placeholder':   'Message (optional)',
+    'troc.your_phone_placeholder':'Your phone (WhatsApp) — optional',
+    'troc.sending':                'Sending…',
+    'troc.send_proposal_btn':     'Send my proposal',
+    'troc.anonymous':             'Anonymous',
+    'troc.photo_failed':          'Photo upload failed: ',
+    'troc.title_req':             'Give your item a title.',
+    'troc.want_req':              'State what you are looking for in exchange.',
+    'troc.published':             'Barter listing posted! 🔄',
+    'troc.published_local':       'Posted locally (check your connection).',
+    'troc.error':                 'Error: ',
+    'troc.offered_req':           'Indicate the item you are offering.',
+    'troc.proposal_sent':         'Proposal sent! The owner will contact you back. 🤝',
+    'troc.proposal_local':        'Proposal saved locally.',
+    // ─ NEXUS Stories ─
+    'stories.title':              'NEXUS Stories',
+    'stories.load_error':         'Error loading stories: ',
+    'stories.unavailable':        'Stories unavailable: ',
+    'stories.login_req':          'Log in as a vendor to publish a story.',
+    'stories.pick_video':         'Choose a video file (15–60s).',
+    'stories.video_too_big':      'Video too large (max 100MB).',
+    'stories.db_unavailable':     'Database connection unavailable.',
+    'stories.upload_failed':      'Upload failed: ',
+    'stories.bucket_missing':     ' (missing "nexus-stories" bucket?)',
+    'stories.publish_failed':     'Publishing failed.',
+    'stories.paid_publish':       'Paid publishing ({fee} FCFA) — redirecting to payment…',
+    'stories.payment_unavailable':'Payment unavailable: ',
+    'stories.pending_story':      '. Story pending.',
+    'stories.payment_network_err':'Payment unavailable (network). Story pending.',
+    'stories.published':          'Story published!',
+    'stories.error':              'Error: ',
+    'stories.import_tooltip':     'Import a video from your device',
+    'stories.import_btn':         '⬆ Import',
+    'stories.film_tooltip':       'Film a video now',
+    'stories.film_btn':           '🎥 Film',
+    'stories.encoding_status':    '⏳ {n} story{s} being encoded — visible in ~1 min.',
+    'stories.no_video':           'No video yet.',
+    'stories.import_video_btn':   '⬆ Import a video',
+    'stories.login_to_publish':   'Log in as a vendor to publish.',
+    'stories.default_title':      'Product video',
+    'stories.out_of_stock':       '· Out of stock',
+    'stories.view_btn':           '🛒 View',
+    'stories.buy_btn':            '🛒 Buy',
+    'stories.offer_btn':          '💰 Make an offer',
+    'stories.modal_title':        'Publish your story',
+    'stories.field_title':        'Title',
+    'stories.title_placeholder':  'e.g. iPhone 11 — quick demo',
+    'stories.field_product':      'Linked product (optional)',
+    'stories.no_product':         '— No product —',
+    'stories.field_price':        'Displayed price (FCFA, optional)',
+    'stories.price_placeholder':  'Leave blank if no price',
+    'stories.allow_offers':       'Allow buyers to make an offer',
+    'stories.sending':            'Sending…',
+    'stories.submit_btn':         'Publish the story',
+    'stories.video_badge':        '▶ Video',
+    'stories.fallback_title':     'Story',
+    'stories.fallback_vendor':    'Vendor',
+    'stories.watch_btn':          '▶ Watch',
+    'stories.view_product_tooltip':'View product',
+    'stories.publish_card':       'Publish a story',
+    'stories.badge':              '🎬 STORIES',
+    'stories.see_all':            'See all →',
+    // ─ NEXUS On Demand ─
+    'ondemand.title':             'On-demand order',
+    'ondemand.subtitle':          "Can't find what you're looking for? Submit your list — the NEXUS admin will find it for you.",
+    'ondemand.new_request':       'New request',
+    'ondemand.how_it_works':      '🛒 How does it work?',
+    'ondemand.step1':             "1️⃣  Create your shopping list (items not found on the site)",
+    'ondemand.step2':             "2️⃣  The NEXUS admin searches for you (within 24 business hours)",
+    'ondemand.step3':             "3️⃣  You get a quote via WhatsApp with availability and price",
+    'ondemand.step4':             "4️⃣  You confirm and order directly on NEXUS",
+    'ondemand.create_list_btn':   'Create my list',
+    'ondemand.no_requests':       'No requests',
+    'ondemand.no_requests_desc':  'Create your first shopping list — the admin takes care of the rest.',
+    'ondemand.create_first_list': 'Create my first list',
+    'ondemand.my_requests':       'My requests (',
+    'ondemand.reply_badge':       '💬 Reply!',
+    'ondemand.back':              'Back',
+    'ondemand.my_list_title':     '📋 My shopping list',
+    'ondemand.hide_ai':           ' Hide AI',
+    'ondemand.ai_assistant_btn':  ' 🤖 AI Assistant',
+    'ondemand.ai_assistant_name': 'NEXUS AI Assistant',
+    'ondemand.ai_assistant_desc': 'Groq Llama 3.3 — French & Wolof — Adds your items automatically',
+    'ondemand.ai_greeting':       'Hello! 👋 I\'m your NEXUS assistant here to help you build your shopping list.\n\nTell me what you\'re looking for — in French, Wolof, or a mix!\n\nFor example: "I\'m looking for a cheap laptop for my child" or "Dama soxor téléphone iPhone pas cher".',
+    'ondemand.ai_input_placeholder':'Say what you\'re looking for... (French or Wolof)',
+    'ondemand.ai_chip_smartphone': 'Smartphone',
+    'ondemand.ai_chip_clothes':    'Clothes',
+    'ondemand.ai_chip_food':       'Food',
+    'ondemand.ai_chip_auto_parts': 'Auto parts',
+    'ondemand.ai_chip_computer':   'Computer',
+    'ondemand.items_searched':    'Requested items',
+    'ondemand.item_label':        'Item ',
+    'ondemand.remove':            ' Remove',
+    'ondemand.field_product_name':'Product name *',
+    'ondemand.field_qty':         'Qty',
+    'ondemand.field_budget':      'Max budget (FCFA)',
+    'ondemand.optional':          'Optional',
+    'ondemand.field_category':    'Category',
+    'ondemand.field_notes':       'Details (color, brand, size…)',
+    'ondemand.add_item_btn':      ' Add an item',
+    'ondemand.field_whatsapp':    'Your WhatsApp number *',
+    'ondemand.whatsapp_note':     'The admin will contact you at this number with the quote.',
+    'ondemand.field_message':     'Additional message (optional)',
+    'ondemand.message_placeholder':'Details about your needs, desired timeline, delivery area…',
+    'ondemand.cancel':            'Cancel',
+    'ondemand.submit_btn':        ' Send my list to NEXUS',
+    'ondemand.your_message':      'Your message',
+    'ondemand.admin_reply':       ' Reply from the NEXUS admin',
+    'ondemand.replied_on':        'Replied on ',
+    'ondemand.contact_to_order':  ' Contact NEXUS to order',
+    'ondemand.awaiting_reply':    'Awaiting reply',
+    'ondemand.usual_delay':       'Usual delay: 24 business hours. You will be contacted via WhatsApp at ',
+    'ondemand.item_added':        '✅ Item added: ',
+    'ondemand.ai_error':          '⚠️ AI Error: ',
+    'ondemand.ai_check_connection':'. Check your connection.',
+    'ondemand.ai_no_understand':  'Sorry, I did not understand.',
+    'ondemand.load_error':        'Loading error: ',
+    'ondemand.send_error':        'Sending error: ',
+    'ondemand.min_one_item':      'Add at least 1 item with a name.',
+    'ondemand.phone_req':         'Please provide your WhatsApp number.',
+    'ondemand.request_sent':      '✅ Request sent! The NEXUS admin will contact you within 24h.',
+    'ondemand.visitor':           'Visitor',
+    'ondemand.status_pending':    '⏳ Pending',
+    'ondemand.status_processing': '🔍 Searching',
+    'ondemand.status_replied':    '✅ Reply received',
+    'ondemand.status_closed':     '🔒 Closed',
   },
 
   wo: {
@@ -1763,6 +2141,195 @@ const NEXUS_TRANSLATIONS = {
     'transport.role_label':     'Transportër',
     'transport.role_desc':      'Génnal say tukki, jaayal palaas yi te yóbbu colis',
     'transport.onboarding_info':'Sosal sa kont bu jëkk. Ci topp, dinga mat sa fiches transportër (woto, palaas, tukki) — dinañu ko seetlu ci 24h.',
+    // ─ NEXUS Location (jëlub — à faire relire par un locuteur natif) ─
+    'location.title':           'NEXUS Location',
+    'location.tab_browse':      '🔎 Jël benn jumtukaay',
+    'location.tab_publish':     '➕ Jox jumtukaay ci jël',
+    'location.hero_title':      'Jëlal, bul jënd 🔑',
+    'location.hero_desc':       'Jumtukaay évènement, outiy BTP, jumtukaay kër… Jokkoo ak boroom ji ngir tëral bés. Kaution ci digga direkt.',
+    'location.publish_intro':   'Génnal sa jumtukaay ngir jël, am xaalis bu bees. Jokkoo dana am ci WhatsApp ; digga ak kaution dañu koy tëral direkt.',
+    'location.all_cat':         'Lépp',
+    'location.empty':           'Amul jumtukaay ci jël léegi. Nekkal ki jëkk a génne benn !',
+    'location.lessor':          'Boroom jël',
+    'location.contact_btn':     '💬 Baamtu / Jokkoo',
+    'location.wa_message':      'Nanga def, dama bëgg JËL « {name} »{price} gis ci NEXUS Location. Bés yi ma bëgg : dale ___ ba ___.',
+    'location.per_day':         '/bés',
+    'location.per_week':        '/ayubés',
+    'location.deposit':         'Kaution',
+    'location.min_days_short':  'ndoortel',
+    'location.days_unit':       'bés',
+    'location.field_name':      'Jumtukaay bu jël *',
+    'location.field_category':  'Kategori *',
+    'location.field_choose':    '— Tannal —',
+    'location.field_photo':     'Foto',
+    'location.field_price_day': 'Njëg / bés (FCFA) *',
+    'location.field_price_week':'Njëg / ayubés (FCFA, bu soxul)',
+    'location.field_deposit':   'Kaution (FCFA, indikatif)',
+    'location.field_min_days':  'Diirub ndoortel (bés)',
+    'location.field_condition': 'Xew / leeral',
+    'location.field_region':    'Diiwaan',
+    'location.photo_login_req': 'Duggal ngir yokk foto.',
+    'location.photo_pick_img':  'Tannal benn nataal.',
+    'location.photo_too_big':   'Nataal bu diis lool (max 5 Mo).',
+    'location.photo_uploading': '⏳ Yónnee foto…',
+    'location.photo_added':     '📷 Foto yokk na ✓',
+    'location.photo_failed':    '❌ Foto jotul : ',
+    'location.submit_btn':      '🔑 Génnal sama annonce jël',
+    'location.publish_login_req':'Duggal ngir génnal jumtukaay ci jël.',
+    'location.name_cat_req':    'Jumtukaay ak kategori a laaj.',
+    'location.price_invalid':   'Njëgu bés du baax (min {min}).',
+    'location.service_unavailable':'Service amul, jéemaatal.',
+    'location.publishing':      '⏳ Ap na génn…',
+    'location.published':       '✅ Annonce jël génn na !',
+    'location.error':           'Njuumte : ',
+    'location.coming_soon_title':'NEXUS Location — dina ñëw léegi',
+    'location.coming_soon_desc':'Jumtukaay bii dañu ko tëj ci ndeetu. Ñëwaatal !',
+    // ─ NEXUS Troc (weccante — à faire relire par un locuteur natif) ─
+    'troc.title':                'NEXUS Troc',
+    'troc.subtitle':              'Weccalanteel say jumtukaay te du xaalis — « sama telefon ak sa tablet ». Amul commission.',
+    'troc.tab_browse':            'Seetlu',
+    'troc.tab_create':            '+ Génnal sama jumtukaay',
+    'troc.empty':                 'Amul weccante léegi. Nekkal ki jëkk a génne !',
+    'troc.looking_for':           '🎯 Dama seet : ',
+    'troc.propose_btn':           'Jox weccante',
+    'troc.title_placeholder':     'Jumtukaay bu weccu (misaal iPhone 11 64 Go)',
+    'troc.desc_placeholder':      'Leeral, xew…',
+    'troc.want_placeholder':      '🎯 Loo bëgg ci weccante',
+    'troc.phone_placeholder':     'Telefon (WhatsApp) — bu soxul',
+    'troc.photo_busy':            '⏳…',
+    'troc.photo_btn':             '📷 Foto',
+    'troc.preview_alt':           'gis',
+    'troc.publishing':            'Ap na génn…',
+    'troc.submit_btn':            'Génnal sama weccante',
+    'troc.propose_for':           'Jox ngir : ',
+    'troc.looking_for_modal':     '🎯 Dama seet : ',
+    'troc.offered_placeholder':   'Jumtukaay boo jox ci weccante',
+    'troc.message_placeholder':   'Bataaxal (bu soxul)',
+    'troc.your_phone_placeholder':'Sa telefon (WhatsApp) — bu soxul',
+    'troc.sending':                'Ap na yónnee…',
+    'troc.send_proposal_btn':     'Yónnee sama proposition',
+    'troc.anonymous':             'Anonim',
+    'troc.photo_failed':          'Foto jotul : ',
+    'troc.title_req':             'Jox benn tur sa jumtukaay.',
+    'troc.want_req':              'Leeral loo seet ci weccante.',
+    'troc.published':             'Annonce weccante génn na ! 🔄',
+    'troc.published_local':       'Génn na ci local (seetal sa connexion).',
+    'troc.error':                 'Njuumte : ',
+    'troc.offered_req':           'Leeral jumtukaay boo jox.',
+    'troc.proposal_sent':         'Proposition yónnee na ! Boroom ji dina la wooye. 🤝',
+    'troc.proposal_local':        'Proposition denc na ci local.',
+    // ─ NEXUS Stories (à faire relire par un locuteur natif) ─
+    'stories.title':              'NEXUS Stories',
+    'stories.load_error':         'Njuumte ci jël stories : ',
+    'stories.unavailable':        'Stories amul : ',
+    'stories.login_req':          'Duggal ni jaay-kat ngir génnal benn story.',
+    'stories.pick_video':         'Tannal benn video (15–60s).',
+    'stories.video_too_big':      'Video bu diis lool (max 100 Mo).',
+    'stories.db_unavailable':     'Jokkoo ak base amul.',
+    'stories.upload_failed':      'Yónnee jotul : ',
+    'stories.bucket_missing':     ' (bucket « nexus-stories » amul ?)',
+    'stories.publish_failed':     'Génnal jotul.',
+    'stories.paid_publish':       'Génnal bu fay ({fee} FCFA) — dinañu la yóbbu ci fay…',
+    'stories.payment_unavailable':'Fay amul : ',
+    'stories.pending_story':      '. Story ap na xaar.',
+    'stories.payment_network_err':'Fay amul (rézo). Story ap na xaar.',
+    'stories.published':          'Story génn na !',
+    'stories.error':              'Njuumte : ',
+    'stories.import_tooltip':     'Yóbbaale benn video ci sa apparëy',
+    'stories.import_btn':         '⬆ Yóbbaale',
+    'stories.film_tooltip':       'Filmi benn video léegi',
+    'stories.film_btn':           '🎥 Filmi',
+    'stories.encoding_status':    '⏳ {n} story{s} ap nañu jariñoo — dinañu leen gis ci ~1 min.',
+    'stories.no_video':           'Amul video léegi.',
+    'stories.import_video_btn':   '⬆ Yóbbaale benn video',
+    'stories.login_to_publish':   'Duggal ni jaay-kat ngir génnal.',
+    'stories.default_title':      'Video jumtukaay',
+    'stories.out_of_stock':       '· Amatul',
+    'stories.view_btn':           '🛒 Gis',
+    'stories.buy_btn':            '🛒 Jënd',
+    'stories.offer_btn':          '💰 Jox njëg',
+    'stories.modal_title':        'Génnal sa story',
+    'stories.field_title':        'Tur',
+    'stories.title_placeholder':  'Misaal iPhone 11 — démo bu gaaw',
+    'stories.field_product':      'Jumtukaay bu jokk (bu soxul)',
+    'stories.no_product':         '— Amul jumtukaay —',
+    'stories.field_price':        'Njëg wone (FCFA, bu soxul)',
+    'stories.price_placeholder':  'Bàyyi mukk su amul njëg',
+    'stories.allow_offers':       'Nangul jëndikat yi ñu jox njëg',
+    'stories.sending':            'Ap na yónnee…',
+    'stories.submit_btn':         'Génnal story bi',
+    'stories.video_badge':        '▶ Video',
+    'stories.fallback_title':     'Story',
+    'stories.fallback_vendor':    'Jaay-kat',
+    'stories.watch_btn':          '▶ Xool',
+    'stories.view_product_tooltip':'Gis jumtukaay bi',
+    'stories.publish_card':       'Génnal benn story',
+    'stories.badge':              '🎬 STORIES',
+    'stories.see_all':            'Gis lépp →',
+    // ─ NEXUS On Demand (commande selon soxla — à faire relire par un locuteur natif) ─
+    'ondemand.title':             'Commande selon soxla',
+    'ondemand.subtitle':          'Gisu nga loo seet ? Yónnee sa liste — admin NEXUS dina la ko wut.',
+    'ondemand.new_request':       'Ndemande bu bees',
+    'ondemand.how_it_works':      '🛒 Naka la dox ?',
+    'ondemand.step1':             '1️⃣  Sos sa liste jaay (jumtukaay yu amul ci site bi)',
+    'ondemand.step2':             '2️⃣  Admin NEXUS dina la ko wut (diir : 24h liggéey)',
+    'ondemand.step3':             '3️⃣  Dinga jot benn devis ci WhatsApp ak njëg',
+    'ondemand.step4':             '4️⃣  Dinga confirmer te jël sa commande ci NEXUS',
+    'ondemand.create_list_btn':   'Sos sama liste',
+    'ondemand.no_requests':       'Amul ndemande',
+    'ondemand.no_requests_desc':  'Sosal sa liste bu jëkk — admin bi dina jëfandikoo yeneen yi.',
+    'ondemand.create_first_list': 'Sos sama liste bu jëkk',
+    'ondemand.my_requests':       'Samay ndemande (',
+    'ondemand.reply_badge':       '💬 Tontu !',
+    'ondemand.back':              'Delu',
+    'ondemand.my_list_title':     '📋 Sama liste jaay',
+    'ondemand.hide_ai':           ' Nëbb IA',
+    'ondemand.ai_assistant_btn':  ' 🤖 Assistant IA',
+    'ondemand.ai_assistant_name': 'Assistant NEXUS IA',
+    'ondemand.ai_assistant_desc': 'Groq Llama 3.3 — Français ak Wolof — Yokk say jumtukaay ci boppam',
+    'ondemand.ai_greeting':       'Nanga def ! 👋 Man maa di sa assistant NEXUS ngir dimbali la sos sa liste jaay.\n\nLeeral ma loo seet — ci français, ci wolof, walla xaalis !\n\nMisaal : "Dama seet ordinateur portable bu yomb njëg ngir sama xale" walla "Dama soxor téléphone iPhone pas cher".',
+    'ondemand.ai_input_placeholder':'Wax loo seet... (français walla wolof)',
+    'ondemand.ai_chip_smartphone': 'Smartphone',
+    'ondemand.ai_chip_clothes':    'Mbubb',
+    'ondemand.ai_chip_food':       'Lekk',
+    'ondemand.ai_chip_auto_parts': 'Pièces auto',
+    'ondemand.ai_chip_computer':   'Ordinateur',
+    'ondemand.items_searched':    'Jumtukaay yu seet',
+    'ondemand.item_label':        'Jumtukaay ',
+    'ondemand.remove':            ' Far',
+    'ondemand.field_product_name':'Turu jumtukaay *',
+    'ondemand.field_qty':         'Lim',
+    'ondemand.field_budget':      'Budget max (FCFA)',
+    'ondemand.optional':          'Bu soxul',
+    'ondemand.field_category':    'Kategori',
+    'ondemand.field_notes':       'Leeral (couleur, marque, taille…)',
+    'ondemand.add_item_btn':      ' Yokk benn jumtukaay',
+    'ondemand.field_whatsapp':    'Sa nimero WhatsApp *',
+    'ondemand.whatsapp_note':     'Admin bi dina la wooye ci nimero bii ak devis bi.',
+    'ondemand.field_message':     'Bataaxal bu ëpp (bu soxul)',
+    'ondemand.message_placeholder':'Leeral say soxla, waxtu, zone livraison…',
+    'ondemand.cancel':            'Neenal',
+    'ondemand.submit_btn':        ' Yónnee sama liste ci NEXUS',
+    'ondemand.your_message':      'Sa bataaxal',
+    'ondemand.admin_reply':       ' Tontu admin NEXUS',
+    'ondemand.replied_on':        'Tontu ci ',
+    'ondemand.contact_to_order':  ' Jokkoo ak NEXUS ngir commande',
+    'ondemand.awaiting_reply':    'Ap na xaar tontu',
+    'ondemand.usual_delay':       'Diir yaatu : 24h liggéey. Dinañu la wooye ci WhatsApp ci ',
+    'ondemand.item_added':        '✅ Jumtukaay yokk na : ',
+    'ondemand.ai_error':          '⚠️ Njuumte IA : ',
+    'ondemand.ai_check_connection':'. Seetal sa connexion.',
+    'ondemand.ai_no_understand':  'Baal ma, xamuma.',
+    'ondemand.load_error':        'Njuumte ci jël : ',
+    'ondemand.send_error':        'Njuumte ci yónnee : ',
+    'ondemand.min_one_item':      'Yokk benn jumtukaay ak turam.',
+    'ondemand.phone_req':         'Jox sa nimero WhatsApp.',
+    'ondemand.request_sent':      '✅ Ndemande yónnee na ! Admin NEXUS dina la wooye ci 24h.',
+    'ondemand.visitor':           'Gan',
+    'ondemand.status_pending':    '⏳ Ap na xaar',
+    'ondemand.status_processing': '🔍 Ap na seet',
+    'ondemand.status_replied':    '✅ Tontu jot na',
+    'ondemand.status_closed':     '🔒 Tëj na',
   },
 };
 
@@ -11451,16 +12018,16 @@ const NexusTrocWidget = ({ user }) => {
         url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
       }
       setForm(f => ({ ...f, photoUrl: url }));
-    } catch (e) { toast('Échec photo : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+    } catch (e) { toast(t('troc.photo_failed') + (e.message || e), 'error'); } finally { setBusy(false); }
   };
 
   const submitCreate = async () => {
-    if (!form.title.trim()) { toast('Donnez un titre à votre objet.', 'error'); return; }
-    if (!form.want.trim()) { toast('Indiquez ce que vous recherchez en échange.', 'error'); return; }
+    if (!form.title.trim()) { toast(t('troc.title_req'), 'error'); return; }
+    if (!form.want.trim()) { toast(t('troc.want_req'), 'error'); return; }
     setBusy(true);
     try {
       const rec = { id: (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
-        owner_id: (user && user.id) || null, owner_name: (user && user.name) || 'Anonyme',
+        owner_id: (user && user.id) || null, owner_name: (user && user.name) || t('troc.anonymous'),
         title: form.title.trim(), description: form.description.trim() || null, photo_url: form.photoUrl || null,
         category: form.category, city: form.city || 'Dakar', want: form.want.trim(),
         phone: form.phone || null, status: 'active', created_at: new Date().toISOString() };
@@ -11468,36 +12035,36 @@ const NexusTrocWidget = ({ user }) => {
       if (DataService._sb) { const { error } = await DataService._sb.from('troc_listings').insert([rec]); ok = !error; if (error) console.warn('[troc]', error.message); }
       try { const a = JSON.parse(localStorage.getItem('nexus_troc') || '[]'); a.unshift(rec); localStorage.setItem('nexus_troc', JSON.stringify(a.slice(0, 100))); } catch (_) {}
       try { fetch('/api/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: ['/troc/' + rec.id, '/troc'] }) }).catch(() => {}); } catch (_) {}
-      toast(ok ? 'Annonce de troc publiée ! 🔄' : 'Publié en local (vérifiez la connexion).', ok ? 'success' : 'warning');
+      toast(ok ? t('troc.published') : t('troc.published_local'), ok ? 'success' : 'warning');
       setForm({ title: '', description: '', category: 'Électronique', city: 'Dakar', want: '', phone: '', photoUrl: '' });
       setTab('browse'); load();
-    } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+    } catch (e) { toast(t('troc.error') + (e.message || e), 'error'); } finally { setBusy(false); }
   };
 
   const submitProposal = async () => {
-    if (!prop.offered_title.trim()) { toast('Indiquez l’objet que vous proposez.', 'error'); return; }
+    if (!prop.offered_title.trim()) { toast(t('troc.offered_req'), 'error'); return; }
     setBusy(true);
     try {
       const rec = { id: (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())), listing_id: proposeFor.id,
-        proposer_id: (user && user.id) || null, proposer_name: (user && user.name) || 'Anonyme',
+        proposer_id: (user && user.id) || null, proposer_name: (user && user.name) || t('troc.anonymous'),
         offered_title: prop.offered_title.trim(), message: prop.message.trim() || null, phone: prop.phone || null,
         status: 'pending', created_at: new Date().toISOString() };
       let ok = false;
       if (DataService._sb) { const { error } = await DataService._sb.from('troc_proposals').insert([rec]); ok = !error; if (error) console.warn('[troc prop]', error.message); }
-      toast(ok ? 'Proposition envoyée ! Le propriétaire vous recontactera. 🤝' : 'Proposition enregistrée localement.', ok ? 'success' : 'warning');
+      toast(ok ? t('troc.proposal_sent') : t('troc.proposal_local'), ok ? 'success' : 'warning');
       setProposeFor(null); setProp({ offered_title: '', message: '', phone: '' });
-    } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+    } catch (e) { toast(t('troc.error') + (e.message || e), 'error'); } finally { setBusy(false); }
   };
 
   const inp = (val, on, ph, type) => E('input', { type: type || 'text', value: val, onChange: e => on(e.target.value), placeholder: ph, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem' } });
 
-  const card = (t) => E('div', { key: t.id, style: { border: '1px solid var(--border,#e5e7eb)', borderRadius: 12, overflow: 'hidden', background: '#fff', display: 'flex', flexDirection: 'column' } },
-    t.photo_url ? E('img', { src: t.photo_url, alt: t.title, loading: 'lazy', style: { width: '100%', height: 120, objectFit: 'cover' } }) : E('div', { style: { height: 120, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34 } }, '🔄'),
+  const card = (item) => E('div', { key: item.id, style: { border: '1px solid var(--border,#e5e7eb)', borderRadius: 12, overflow: 'hidden', background: '#fff', display: 'flex', flexDirection: 'column' } },
+    item.photo_url ? E('img', { src: item.photo_url, alt: item.title, loading: 'lazy', style: { width: '100%', height: 120, objectFit: 'cover' } }) : E('div', { style: { height: 120, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34 } }, '🔄'),
     E('div', { style: { padding: '0.6rem', flex: 1, display: 'flex', flexDirection: 'column' } },
-      E('div', { style: { fontWeight: 700, fontSize: '0.9rem' } }, t.title),
-      E('div', { style: { fontSize: '0.8rem', color: 'var(--text-secondary,#6b7280)', margin: '0.2rem 0', flex: 1 } }, '🎯 Cherche : ' + (t.want || '—')),
-      E('div', { style: { fontSize: '0.72rem', color: '#9ca3af', marginBottom: '0.4rem' } }, (t.category || '') + (t.city ? ' · ' + t.city : '')),
-      E('button', { onClick: () => setProposeFor(t), style: { background: '#006d40', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' } }, 'Proposer un échange')
+      E('div', { style: { fontWeight: 700, fontSize: '0.9rem' } }, item.title),
+      E('div', { style: { fontSize: '0.8rem', color: 'var(--text-secondary,#6b7280)', margin: '0.2rem 0', flex: 1 } }, t('troc.looking_for') + (item.want || '—')),
+      E('div', { style: { fontSize: '0.72rem', color: '#9ca3af', marginBottom: '0.4rem' } }, (item.category || '') + (item.city ? ' · ' + item.city : '')),
+      E('button', { onClick: () => setProposeFor(item), style: { background: '#006d40', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' } }, t('troc.propose_btn'))
     )
   );
 
@@ -11508,48 +12075,48 @@ const NexusTrocWidget = ({ user }) => {
     // [UI] Accès via le méga-menu (☰ Tout) — plus de bouton flottant (anti-chevauchement)
     open && overlay(E(React.Fragment, null,
       E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.8rem' } },
-        E('h2', { style: { margin: 0, fontSize: '1.25rem', color: '#006d40' } }, '🔄 NEXUS Troc'),
+        E('h2', { style: { margin: 0, fontSize: '1.25rem', color: '#006d40' } }, '🔄 ' + t('troc.title')),
         E('button', { onClick: () => setOpen(false), style: { background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', lineHeight: 1 } }, '×')
       ),
-      E('p', { style: { marginTop: 0, color: 'var(--text-secondary,#6b7280)', fontSize: '0.86rem' } }, 'Échangez vos objets sans argent — « mon téléphone contre ta tablette ». Sans commission.'),
+      E('p', { style: { marginTop: 0, color: 'var(--text-secondary,#6b7280)', fontSize: '0.86rem' } }, t('troc.subtitle')),
       E('div', { style: { display: 'flex', gap: '0.5rem', marginBottom: '1rem' } },
-        E('button', { onClick: () => setTab('browse'), style: { flex: 1, padding: '0.5rem', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, background: tab === 'browse' ? '#006d40' : '#eef2f0', color: tab === 'browse' ? '#fff' : '#374151' } }, 'Parcourir'),
-        E('button', { onClick: () => setTab('create'), style: { flex: 1, padding: '0.5rem', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, background: tab === 'create' ? '#006d40' : '#eef2f0', color: tab === 'create' ? '#fff' : '#374151' } }, '+ Publier mon objet')
+        E('button', { onClick: () => setTab('browse'), style: { flex: 1, padding: '0.5rem', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, background: tab === 'browse' ? '#006d40' : '#eef2f0', color: tab === 'browse' ? '#fff' : '#374151' } }, t('troc.tab_browse')),
+        E('button', { onClick: () => setTab('create'), style: { flex: 1, padding: '0.5rem', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, background: tab === 'create' ? '#006d40' : '#eef2f0', color: tab === 'create' ? '#fff' : '#374151' } }, t('troc.tab_create'))
       ),
       tab === 'browse' && (loading
-        ? E('p', { style: { textAlign: 'center', color: '#6b7280' } }, 'Chargement…')
+        ? E('p', { style: { textAlign: 'center', color: '#6b7280' } }, t('common.loading'))
         : items.length === 0
-          ? E('p', { style: { textAlign: 'center', color: '#6b7280', padding: '1.5rem 0' } }, 'Aucun troc pour le moment. Soyez le premier à publier !')
+          ? E('p', { style: { textAlign: 'center', color: '#6b7280', padding: '1.5rem 0' } }, t('troc.empty'))
           : E('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: '0.8rem' } }, items.map(card))
       ),
       tab === 'create' && E('div', null,
-        inp(form.title, v => setForm(f => ({ ...f, title: v })), 'Objet à troquer (ex. iPhone 11 64 Go)'),
-        E('textarea', { value: form.description, onChange: e => setForm(f => ({ ...f, description: e.target.value })), placeholder: 'Description, état…', rows: 3, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem', resize: 'vertical' } }),
-        inp(form.want, v => setForm(f => ({ ...f, want: v })), '🎯 Ce que vous cherchez en échange'),
+        inp(form.title, v => setForm(f => ({ ...f, title: v })), t('troc.title_placeholder')),
+        E('textarea', { value: form.description, onChange: e => setForm(f => ({ ...f, description: e.target.value })), placeholder: t('troc.desc_placeholder'), rows: 3, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem', resize: 'vertical' } }),
+        inp(form.want, v => setForm(f => ({ ...f, want: v })), t('troc.want_placeholder')),
         E('div', { style: { display: 'flex', gap: '0.6rem' } },
           E('select', { value: form.category, onChange: e => setForm(f => ({ ...f, category: e.target.value })), style: { flex: 1, padding: '0.55rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem' } }, TROC_CATS.map(c => E('option', { key: c, value: c }, c))),
           E('select', { value: form.city, onChange: e => setForm(f => ({ ...f, city: e.target.value })), style: { flex: 1, padding: '0.55rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem' } }, NEXUS_VILLES_SENEGAL.map(c => E('option', { key: c, value: c }, c)))
         ),
-        inp(form.phone, v => setForm(f => ({ ...f, phone: v })), 'Téléphone (WhatsApp) — optionnel', 'tel'),
+        inp(form.phone, v => setForm(f => ({ ...f, phone: v })), t('troc.phone_placeholder'), 'tel'),
         E('input', { ref: fileRef, type: 'file', accept: 'image/*', style: { display: 'none' }, onChange: e => pickPhoto(e.target.files && e.target.files[0]) }),
         E('div', { style: { display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.8rem' } },
-          E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, style: { background: '#eef2f0', border: 'none', borderRadius: 8, padding: '0.5rem 0.8rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : '📷 Photo'),
-          form.photoUrl && E('img', { src: form.photoUrl, alt: 'aperçu', style: { width: 44, height: 44, borderRadius: 8, objectFit: 'cover' } })
+          E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, style: { background: '#eef2f0', border: 'none', borderRadius: 8, padding: '0.5rem 0.8rem', cursor: 'pointer', fontWeight: 700 } }, busy ? t('troc.photo_busy') : t('troc.photo_btn')),
+          form.photoUrl && E('img', { src: form.photoUrl, alt: t('troc.preview_alt'), style: { width: 44, height: 44, borderRadius: 8, objectFit: 'cover' } })
         ),
-        E('button', { onClick: submitCreate, disabled: busy, style: { width: '100%', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, busy ? 'Publication…' : 'Publier mon troc')
+        E('button', { onClick: submitCreate, disabled: busy, style: { width: '100%', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, busy ? t('troc.publishing') : t('troc.submit_btn'))
       )
     )),
     // Sous-modal : proposer un échange
     proposeFor && overlay(E(React.Fragment, null,
       E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' } },
-        E('h3', { style: { margin: 0 } }, 'Proposer pour : ' + proposeFor.title),
+        E('h3', { style: { margin: 0 } }, t('troc.propose_for') + proposeFor.title),
         E('button', { onClick: () => setProposeFor(null), style: { background: 'none', border: 'none', fontSize: 22, cursor: 'pointer' } }, '×')
       ),
-      E('p', { style: { marginTop: 0, fontSize: '0.85rem', color: '#6b7280' } }, '🎯 Recherche : ' + (proposeFor.want || '—')),
-      inp(prop.offered_title, v => setProp(p => ({ ...p, offered_title: v })), 'Objet que vous proposez en échange'),
-      E('textarea', { value: prop.message, onChange: e => setProp(p => ({ ...p, message: e.target.value })), placeholder: 'Message (optionnel)', rows: 3, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem', resize: 'vertical' } }),
-      inp(prop.phone, v => setProp(p => ({ ...p, phone: v })), 'Votre téléphone (WhatsApp) — optionnel', 'tel'),
-      E('button', { onClick: submitProposal, disabled: busy, style: { width: '100%', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, busy ? 'Envoi…' : 'Envoyer ma proposition')
+      E('p', { style: { marginTop: 0, fontSize: '0.85rem', color: '#6b7280' } }, t('troc.looking_for_modal') + (proposeFor.want || '—')),
+      inp(prop.offered_title, v => setProp(p => ({ ...p, offered_title: v })), t('troc.offered_placeholder')),
+      E('textarea', { value: prop.message, onChange: e => setProp(p => ({ ...p, message: e.target.value })), placeholder: t('troc.message_placeholder'), rows: 3, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem', resize: 'vertical' } }),
+      inp(prop.phone, v => setProp(p => ({ ...p, phone: v })), t('troc.your_phone_placeholder'), 'tel'),
+      E('button', { onClick: submitProposal, disabled: busy, style: { width: '100%', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, busy ? t('troc.sending') : t('troc.send_proposal_btn'))
     ))
   );
 };
@@ -11669,7 +12236,7 @@ const NexusStoriesWidget = ({ user }) => {
           .order('created_at', { ascending: false })
           .limit(50);
         if (error) {
-          toast('Erreur chargement stories : ' + (error.message || JSON.stringify(error)), 'error');
+          toast(t('stories.load_error') + (error.message || JSON.stringify(error)), 'error');
           setItems([]); setLoading(false); return;
         }
         { const list = data || []; const wi = wantIdRef.current ? list.findIndex(s => s.id === wantIdRef.current) : -1; wantIdRef.current = null; setItems(list); setIdx(wi >= 0 ? wi : 0); } setLoading(false);
@@ -11680,7 +12247,7 @@ const NexusStoriesWidget = ({ user }) => {
         }
         return;
       }
-    } catch (e) { toast('Stories inaccessibles : ' + (e.message || e), 'error'); }
+    } catch (e) { toast(t('stories.unavailable') + (e.message || e), 'error'); }
     setItems([]); setLoading(false);
   };
   React.useEffect(() => { if (open) load(); }, [open]);
@@ -11742,10 +12309,10 @@ const NexusStoriesWidget = ({ user }) => {
   // Étape 1 : sélection du fichier → valider + charger les produits → ouvrir le formulaire.
   const openUploadForm = async (file) => {
     if (!file) return;
-    if (!user || !user.id) { toast('Connectez-vous comme vendeur pour publier une story.', 'warning'); return; }
-    if (!/^video\//.test(file.type || '')) { toast('Choisissez un fichier vidéo (15–60s).', 'error'); return; }
-    if (file.size > 100 * 1024 * 1024) { toast('Vidéo trop lourde (max 100 Mo).', 'error'); return; }
-    if (!DataService._sb) { toast('Connexion à la base indisponible.', 'error'); return; }
+    if (!user || !user.id) { toast(t('stories.login_req'), 'warning'); return; }
+    if (!/^video\//.test(file.type || '')) { toast(t('stories.pick_video'), 'error'); return; }
+    if (file.size > 100 * 1024 * 1024) { toast(t('stories.video_too_big'), 'error'); return; }
+    if (!DataService._sb) { toast(t('stories.db_unavailable'), 'error'); return; }
     setBusy(true);
     let products = [];
     try {
@@ -11763,7 +12330,7 @@ const NexusStoriesWidget = ({ user }) => {
     if (!uploadForm) return;
     const { file, title, productId, priceStr, allowOffers } = uploadForm;
     if (!file) return;
-    if (!DataService._sb) { toast('Connexion à la base indisponible.', 'error'); return; }
+    if (!DataService._sb) { toast(t('stories.db_unavailable'), 'error'); return; }
     setUploadForm(null);
     setBusy(true);
     try {
@@ -11777,7 +12344,7 @@ const NexusStoriesWidget = ({ user }) => {
       const fname = user.id + '/' + Date.now() + '-' + Math.random().toString(16).slice(2, 8) + '.' + ext;
       const { data: up, error: upErr } = await DataService._sb.storage.from('nexus-stories')
         .upload(fname, file, { contentType: file.type || 'video/mp4', upsert: true });
-      if (upErr || !up) { toast('Envoi échoué : ' + ((upErr && upErr.message) || 'inconnu') + ' (bucket « nexus-stories » manquant ?)', 'error'); setBusy(false); return; }
+      if (upErr || !up) { toast(t('stories.upload_failed') + ((upErr && upErr.message) || 'inconnu') + t('stories.bucket_missing'), 'error'); setBusy(false); return; }
       const videoUrl = DataService._sb.storage.from('nexus-stories').getPublicUrl(up.path).data.publicUrl;
 
       // 2) Enregistrer la story (active immédiatement) côté serveur (service key).
@@ -11787,10 +12354,10 @@ const NexusStoriesWidget = ({ user }) => {
         body: JSON.stringify({ title: title || '', productId: productId || null, videoUrl, price: storyPriceEur, allowOffers }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok) { toast(j.error || 'Publication impossible.', 'error'); setBusy(false); return; }
+      if (!r.ok || !j.ok) { toast(j.error || t('stories.publish_failed'), 'error'); setBusy(false); return; }
       try { fetch('/api/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: ['/stories'] }) }).catch(() => {}); } catch (_) {}
       if (j.requiresPayment) {
-        toast('Publication payante (' + (Number(j.fee) || 0).toLocaleString('fr-FR') + ' FCFA) — redirection vers le paiement…', 'info', 6000);
+        toast(t('stories.paid_publish', { fee: (Number(j.fee) || 0).toLocaleString('fr-FR') }), 'info', 6000);
         try {
           var _origin = window.location.origin;
           var _pr = await fetch('/api/payments/paytech/init', {
@@ -11800,10 +12367,10 @@ const NexusStoriesWidget = ({ user }) => {
           });
           var _pj = await _pr.json().catch(function () { return {}; });
           if (_pr.ok && _pj.redirect_url) { window.location.href = _pj.redirect_url; return; }
-          toast('Paiement indisponible : ' + (_pj.error || 'réessayez plus tard') + '. Story en attente.', 'warning', 9000);
-        } catch (e) { toast('Paiement indisponible (réseau). Story en attente.', 'warning', 8000); }
+          toast(t('stories.payment_unavailable') + (_pj.error || 'réessayez plus tard') + t('stories.pending_story'), 'warning', 9000);
+        } catch (e) { toast(t('stories.payment_network_err'), 'warning', 8000); }
       } else {
-        toast('Story publiée !', 'success', 6000);
+        toast(t('stories.published'), 'success', 6000);
         // Mise à jour optimiste : affiche la story immédiatement sans attendre load().
         if (j.storyId) {
           const ns = { id: j.storyId, title: title || '', video_url: videoUrl, mux_playback_id: null, status: 'active', vendor_id: user.id, vendor_name: user.name || '', created_at: new Date().toISOString(), product_id: productId || null, price: storyPriceEur, allow_offers: allowOffers };
@@ -11811,7 +12378,7 @@ const NexusStoriesWidget = ({ user }) => {
         }
       }
       load();
-    } catch (e) { toast('Erreur : ' + (e.message || e), 'error'); } finally { setBusy(false); }
+    } catch (e) { toast(t('stories.error') + (e.message || e), 'error'); } finally { setBusy(false); }
   };
 
   const cur = items[idx];
@@ -11821,10 +12388,10 @@ const NexusStoriesWidget = ({ user }) => {
     // [UI] Accès via le méga-menu (☰ Tout) — plus de bouton flottant (anti-chevauchement)
     open && E('div', { style: { position: 'fixed', inset: 0, background: '#000', zIndex: 9997, display: 'flex', flexDirection: 'column' } },
       E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', color: '#fff' } },
-        E('strong', null, '🎬 NEXUS Stories'),
+        E('strong', null, '🎬 ' + t('stories.title')),
         E('div', { style: { display: 'flex', gap: 8 } },
-          (user && user.id) && E('button', { onClick: () => importRef.current && importRef.current.click(), disabled: busy, title: 'Importer une vidéo depuis votre appareil', style: { background: '#fff', color: '#bd0014', border: 'none', borderRadius: 8, padding: '0.4rem 0.7rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : '⬆ Importer'),
-          (user && user.id) && E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, title: 'Filmer une vidéo maintenant', style: { background: '#bd0014', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem 0.7rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : '🎥 Filmer'),
+          (user && user.id) && E('button', { onClick: () => importRef.current && importRef.current.click(), disabled: busy, title: t('stories.import_tooltip'), style: { background: '#fff', color: '#bd0014', border: 'none', borderRadius: 8, padding: '0.4rem 0.7rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : t('stories.import_btn')),
+          (user && user.id) && E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, title: t('stories.film_tooltip'), style: { background: '#bd0014', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem 0.7rem', cursor: 'pointer', fontWeight: 700 } }, busy ? '⏳…' : t('stories.film_btn')),
           E('button', { onClick: () => setOpen(false), style: { background: 'none', border: 'none', color: '#fff', fontSize: 26, cursor: 'pointer', lineHeight: 1 } }, '×')
         )
       ),
@@ -11833,19 +12400,19 @@ const NexusStoriesWidget = ({ user }) => {
       // Import depuis la galerie / le disque (PAS de capture → sélecteur de fichiers).
       E('input', { ref: importRef, type: 'file', accept: 'video/*', style: { display: 'none' }, onChange: e => { openUploadForm(e.target.files && e.target.files[0]); e.target.value = ''; } }),
       // Indicateur d'encodage en cours pour le vendeur (story pas encore active).
-      pendingCount > 0 && E('div', { style: { background: 'rgba(225,27,34,.9)', color: '#fff', textAlign: 'center', padding: '6px 12px', fontSize: '.8rem' } }, '⏳ ' + pendingCount + ' story' + (pendingCount > 1 ? 's' : '') + ' en cours d’encodage — visible' + (pendingCount > 1 ? 's' : '') + ' sous ~1 min.'),
-      loading ? E('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' } }, 'Chargement…')
+      pendingCount > 0 && E('div', { style: { background: 'rgba(225,27,34,.9)', color: '#fff', textAlign: 'center', padding: '6px 12px', fontSize: '.8rem' } }, t('stories.encoding_status', { n: pendingCount, s: pendingCount > 1 ? 's' : '' })),
+      loading ? E('div', { style: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' } }, t('common.loading'))
         : !cur ? E('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', gap: 14, alignItems: 'center', justifyContent: 'center', color: '#fff', padding: 24, textAlign: 'center' } },
             E('div', { style: { fontSize: 44 } }, '🎬'),
-            E('div', null, 'Aucune vidéo pour le moment.'),
+            E('div', null, t('stories.no_video')),
             (user && user.id) && E('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' } },
-              E('button', { onClick: () => importRef.current && importRef.current.click(), disabled: busy, style: { background: '#fff', color: '#bd0014', border: '2px solid #bd0014', borderRadius: 10, padding: '0.7rem 1.2rem', fontWeight: 800, cursor: 'pointer' } }, '⬆ Importer une vidéo'),
-              E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, style: { background: '#bd0014', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem 1.2rem', fontWeight: 800, cursor: 'pointer' } }, '🎥 Filmer')),
-            !(user && user.id) && E('div', { style: { fontSize: '.82rem', opacity: .7 } }, 'Connectez-vous comme vendeur pour publier.'))
+              E('button', { onClick: () => importRef.current && importRef.current.click(), disabled: busy, style: { background: '#fff', color: '#bd0014', border: '2px solid #bd0014', borderRadius: 10, padding: '0.7rem 1.2rem', fontWeight: 800, cursor: 'pointer' } }, t('stories.import_video_btn')),
+              E('button', { onClick: () => fileRef.current && fileRef.current.click(), disabled: busy, style: { background: '#bd0014', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem 1.2rem', fontWeight: 800, cursor: 'pointer' } }, t('stories.film_btn'))),
+            !(user && user.id) && E('div', { style: { fontSize: '.82rem', opacity: .7 } }, t('stories.login_to_publish')))
           : E('div', { style: { flex: 1, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' } },
               E('video', { ref: videoRef, controls: true, playsInline: true, autoPlay: true, loop: true, muted: false, style: { width: '100%', height: '100%', objectFit: 'contain', background: '#000' } }),
               E('div', { style: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: '16px', color: '#fff', background: 'linear-gradient(transparent,rgba(0,0,0,.7))' } },
-                E('div', { style: { fontWeight: 800 } }, cur.title || 'Vidéo produit'),
+                E('div', { style: { fontWeight: 800 } }, cur.title || t('stories.default_title')),
                 E('div', { style: { fontSize: '.85rem', opacity: .85 } }, (cur.category || '') + (cur.city ? ' · ' + cur.city : '') + (cur.vendor_name ? ' · ' + cur.vendor_name : '')),
                 cur.expires_at && E(StoryTtlBadge, { expiresAt: cur.expires_at }),
                 // [STORIES SHOPPABLES] Barre d'achat : produit lié → ouvre la fiche.
@@ -11857,16 +12424,16 @@ const NexusStoriesWidget = ({ user }) => {
                   E('img', { src: storyProd.image_url || 'https://placehold.co/52x52/e8f5e9/00853E?text=NX', alt: storyProd.name, style: { width: 46, height: 46, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }, onError: e => { e.target.onerror = null; e.target.src = 'https://placehold.co/52x52/e8f5e9/00853E?text=NX'; } }),
                   E('div', { style: { flex: 1, minWidth: 0 } },
                     E('div', { style: { fontWeight: 700, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, storyProd.name),
-                    E('div', { style: { fontWeight: 800, fontSize: '.84rem', color: '#006d40' } }, _storyPrice(storyProd.price), storyProd.stock === 0 ? E('span', { style: { color: '#b91c1c', fontWeight: 700, marginLeft: 6 } }, '· Épuisé') : null)
+                    E('div', { style: { fontWeight: 800, fontSize: '.84rem', color: '#006d40' } }, _storyPrice(storyProd.price), storyProd.stock === 0 ? E('span', { style: { color: '#b91c1c', fontWeight: 700, marginLeft: 6 } }, t('stories.out_of_stock')) : null)
                   ),
-                  E('span', { style: { flexShrink: 0, background: '#006d40', color: '#fff', borderRadius: 10, padding: '.5rem .8rem', fontWeight: 800, fontSize: '.8rem', whiteSpace: 'nowrap' } }, '🛒 Voir')
+                  E('span', { style: { flexShrink: 0, background: '#006d40', color: '#fff', borderRadius: 10, padding: '.5rem .8rem', fontWeight: 800, fontSize: '.8rem', whiteSpace: 'nowrap' } }, t('stories.view_btn'))
                 ),
                 // [STORIES À LA VENTE] Prix vendeur + actions : Acheter (mise en
                 // relation) / Faire une offre (négociation). Ouvert à tous, même invités.
                 (cur.price != null || cur.allow_offers !== false) && E('div', { style: { marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
                   cur.price != null && E('div', { style: { fontWeight: 800, fontSize: '.95rem', color: '#fff', background: 'rgba(0,109,64,.95)', borderRadius: 10, padding: '.45rem .7rem' } }, _storyPrice(cur.price)),
-                  cur.price != null && E('button', { onClick: () => setOfferModal({ kind: 'buy', story: cur }), style: { background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, padding: '.5rem .9rem', fontWeight: 800, cursor: 'pointer' } }, '🛒 Acheter'),
-                  (cur.allow_offers !== false) && E('button', { onClick: () => setOfferModal({ kind: 'offer', story: cur }), style: { background: '#fff', color: '#bd0014', border: 'none', borderRadius: 10, padding: '.5rem .9rem', fontWeight: 800, cursor: 'pointer' } }, '💰 Faire une offre')
+                  cur.price != null && E('button', { onClick: () => setOfferModal({ kind: 'buy', story: cur }), style: { background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, padding: '.5rem .9rem', fontWeight: 800, cursor: 'pointer' } }, t('stories.buy_btn')),
+                  (cur.allow_offers !== false) && E('button', { onClick: () => setOfferModal({ kind: 'offer', story: cur }), style: { background: '#fff', color: '#bd0014', border: 'none', borderRadius: 10, padding: '.5rem .9rem', fontWeight: 800, cursor: 'pointer' } }, t('stories.offer_btn'))
                 )
               ),
               idx > 0 && navBtn('▲', () => go(-1), { top: 10 }),
@@ -11877,35 +12444,35 @@ const NexusStoriesWidget = ({ user }) => {
     // Formulaire de publication : remplace les prompt()/confirm() bloqués sur mobile.
     uploadForm && E('div', { style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.78)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 } },
       E('div', { style: { background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 420, width: '100%', maxHeight: '90vh', overflowY: 'auto' } },
-        E('h3', { style: { margin: '0 0 18px', fontWeight: 800, fontSize: '1.1rem' } }, 'Publier votre story'),
-        E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, 'Titre'),
-        E('input', { type: 'text', value: uploadForm.title, placeholder: 'Ex. iPhone 11 — démo rapide', maxLength: 80, autoFocus: true,
+        E('h3', { style: { margin: '0 0 18px', fontWeight: 800, fontSize: '1.1rem' } }, t('stories.modal_title')),
+        E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, t('stories.field_title')),
+        E('input', { type: 'text', value: uploadForm.title, placeholder: t('stories.title_placeholder'), maxLength: 80, autoFocus: true,
           style: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1.5px solid #d1d5db', padding: '0.5rem 0.7rem', fontSize: '1rem', marginBottom: 14 },
           onChange: ev => setUploadForm(f => ({ ...f, title: ev.target.value })) }),
         uploadForm.products.length > 0 && E(React.Fragment, null,
-          E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, 'Produit associé (optionnel)'),
+          E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, t('stories.field_product')),
           E('select', { value: uploadForm.productId,
             style: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1.5px solid #d1d5db', padding: '0.5rem 0.7rem', fontSize: '.97rem', marginBottom: 14 },
             onChange: ev => setUploadForm(f => ({ ...f, productId: ev.target.value })) },
-            E('option', { value: '' }, '— Aucun produit —'),
+            E('option', { value: '' }, t('stories.no_product')),
             ...uploadForm.products.map(p => E('option', { key: p.id, value: p.id }, p.name))
           )
         ),
-        E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, 'Prix affiché (FCFA, optionnel)'),
-        E('input', { type: 'number', min: 0, value: uploadForm.priceStr, placeholder: 'Laisser vide si pas de prix',
+        E('label', { style: { display: 'block', fontWeight: 700, marginBottom: 4, fontSize: '.93rem' } }, t('stories.field_price')),
+        E('input', { type: 'number', min: 0, value: uploadForm.priceStr, placeholder: t('stories.price_placeholder'),
           style: { width: '100%', boxSizing: 'border-box', borderRadius: 8, border: '1.5px solid #d1d5db', padding: '0.5rem 0.7rem', fontSize: '1rem', marginBottom: 14 },
           onChange: ev => setUploadForm(f => ({ ...f, priceStr: ev.target.value })) }),
         E('label', { style: { display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 20, fontWeight: 700, fontSize: '.93rem' } },
           E('input', { type: 'checkbox', checked: uploadForm.allowOffers, style: { width: 18, height: 18, cursor: 'pointer', flexShrink: 0 },
             onChange: ev => setUploadForm(f => ({ ...f, allowOffers: ev.target.checked })) }),
-          'Autoriser les acheteurs à faire une offre'
+          t('stories.allow_offers')
         ),
         E('div', { style: { display: 'flex', gap: 10 } },
           E('button', { onClick: () => { setUploadForm(null); setBusy(false); },
-            style: { flex: 1, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 10, padding: '0.72rem', fontWeight: 700, cursor: 'pointer', fontSize: '.97rem' } }, 'Annuler'),
+            style: { flex: 1, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 10, padding: '0.72rem', fontWeight: 700, cursor: 'pointer', fontSize: '.97rem' } }, t('common.cancel')),
           E('button', { onClick: startUpload, disabled: busy,
             style: { flex: 2, background: '#bd0014', color: '#fff', border: 'none', borderRadius: 10, padding: '0.72rem', fontWeight: 800, cursor: 'pointer', fontSize: '.97rem' } },
-            busy ? 'Envoi en cours…' : 'Publier la story')
+            busy ? t('stories.sending') : t('stories.submit_btn'))
         )
       )
     )
@@ -30685,28 +31252,28 @@ const HomeStoriesRow = ({ user }) => {
   const card = (s) => E('div', { key: s.id, className: 'flash-card', onClick: function () { open(s.id); } },
     E('div', { className: 'flash-card-img', style: { position: 'relative' } },
       thumb(s),
-      E('span', { style: { position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,.62)', color: '#fff', borderRadius: 6, padding: '2px 7px', fontSize: '.66rem', fontWeight: 800 } }, '▶ Vidéo'),
+      E('span', { style: { position: 'absolute', top: 8, left: 8, background: 'rgba(0,0,0,.62)', color: '#fff', borderRadius: 6, padding: '2px 7px', fontSize: '.66rem', fontWeight: 800 } }, t('stories.video_badge')),
       E('span', { style: { position: 'absolute', bottom: 8, right: 8, width: 34, height: 34, borderRadius: '50%', background: 'rgba(225,27,34,.92)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.9rem' } }, '▶')
     ),
     E('div', { className: 'flash-card-body' },
-      E('div', { className: 'flash-card-name' }, s.title || s.vendor_name || 'Story'),
+      E('div', { className: 'flash-card-name' }, s.title || s.vendor_name || t('stories.fallback_title')),
       s.price != null && E('div', { className: 'flash-card-prices', style: { marginBottom: 6 } }, E('span', { className: 'flash-price-new' }, fmt(s.price))),
-      E('div', { style: { fontSize: '.7rem', color: 'var(--text-secondary)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, '🏪 ' + (s.vendor_name || 'Vendeur')),
+      E('div', { style: { fontSize: '.7rem', color: 'var(--text-secondary)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, '🏪 ' + (s.vendor_name || t('stories.fallback_vendor'))),
       E('div', { style: { display: 'flex', gap: 6 } },
-        E('button', { className: 'btn btn-primary btn-sm', style: { flex: 1, fontSize: '.74rem', padding: '.4rem' }, onClick: function (e) { e.stopPropagation(); open(s.id); } }, '▶ Regarder'),
-        s.product_id && E('button', { className: 'btn btn-secondary btn-sm', title: 'Voir le produit', style: { fontSize: '.78rem', padding: '.4rem .55rem' }, onClick: function (e) { e.stopPropagation(); openProduct(s.product_id); } }, '🛒')
+        E('button', { className: 'btn btn-primary btn-sm', style: { flex: 1, fontSize: '.74rem', padding: '.4rem' }, onClick: function (e) { e.stopPropagation(); open(s.id); } }, t('stories.watch_btn')),
+        s.product_id && E('button', { className: 'btn btn-secondary btn-sm', title: t('stories.view_product_tooltip'), style: { fontSize: '.78rem', padding: '.4rem .55rem' }, onClick: function (e) { e.stopPropagation(); openProduct(s.product_id); } }, '🛒')
       )
     )
   );
   const addCard = isVendor && E('div', { className: 'flash-card', onClick: function () { open(); }, style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 230, cursor: 'pointer' } },
     E('div', { style: { fontSize: '2.6rem', color: '#bd0014', lineHeight: 1 } }, '＋'),
-    E('div', { style: { fontWeight: 800, fontSize: '.82rem', marginTop: 8, color: 'var(--text-primary)' } }, 'Publier une story')
+    E('div', { style: { fontWeight: 800, fontSize: '.82rem', marginTop: 8, color: 'var(--text-primary)' } }, t('stories.publish_card'))
   );
   return E('div', { className: 'home-section' },
     E('div', { className: 'flash-sale-section' },
       E('div', { className: 'flash-header' },
-        E('div', { className: 'flash-badge', style: { background: 'linear-gradient(135deg,#bd0014,#006d40)' } }, '🎬 STORIES'),
-        E('button', { className: 'section-see-all', style: { marginLeft: 'auto' }, onClick: function () { open(); } }, 'Voir tout →')
+        E('div', { className: 'flash-badge', style: { background: 'linear-gradient(135deg,#bd0014,#006d40)' } }, t('stories.badge')),
+        E('button', { className: 'section-see-all', style: { marginLeft: 'auto' }, onClick: function () { open(); } }, t('stories.see_all'))
       ),
       E('div', { className: 'flash-scroll' },
         addCard,
@@ -35256,7 +35823,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
   const [aiInput,    setAiInput]    = React.useState('');
   const [aiMessages, setAiMessages] = React.useState([{
     role: 'assistant',
-    content: 'Bonjour ! 👋 Je suis votre assistant NEXUS pour vous aider à construire votre liste de courses.\n\nDécrivez-moi ce que vous cherchez — en français, en wolof, ou mélangé !\n\nPar exemple : "Je cherche un ordinateur portable pas cher pour mon enfant" ou "Dama soxor téléphone iPhone pas cher".',
+    content: t('ondemand.ai_greeting'),
   }]);
   const [aiLoading,  setAiLoading]  = React.useState(false);
   const [aiPanel,    setAiPanel]    = React.useState(true);  // panel IA visible
@@ -35286,7 +35853,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
       });
       if (!res.ok) throw new Error('Groq ' + res.status);
       const data = await res.json();
-      const reply = data?.choices?.[0]?.message?.content || 'Désolé, je n’ai pas compris.';
+      const reply = data?.choices?.[0]?.message?.content || t('ondemand.ai_no_understand');
 
       // Détecter ADD_ITEM: dans la réponse IA
       let parsedItem = null;
@@ -35324,10 +35891,10 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
           }
           return [...prev, newItem];
         });
-        addToast('✅ Article ajouté : ' + newItem.name, 'success', 3000);
+        addToast(t('ondemand.item_added') + newItem.name, 'success', 3000);
       }
     } catch(e) {
-      setAiMessages(prev => [...prev, { role: 'assistant', content: '⚠️ Erreur IA : ' + e.message + '. Vérifiez votre connexion.' }]);
+      setAiMessages(prev => [...prev, { role: 'assistant', content: t('ondemand.ai_error') + e.message + t('ondemand.ai_check_connection') }]);
     } finally {
       setAiLoading(false);
     }
@@ -35359,7 +35926,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
         const all = storage.getArray('ondemand_requests');
         setReqs(all.filter(r => r.buyer_id === currentUser2.id));
       }
-    } catch(e) { addToast('Erreur chargement : ' + e.message, 'error'); }
+    } catch(e) { addToast(t('ondemand.load_error') + e.message, 'error'); }
     finally { setLoading(false); }
   }, [(currentUser2 && currentUser2.id) || 'guest']);
 
@@ -35374,14 +35941,14 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
   // ── Soumettre la demande ───────────────────────────────────────────────────
   const handleSubmit = async () => {
     const validItems = items.filter(it => it.name.trim().length >= 2);
-    if (validItems.length === 0) { addToast('Ajoutez au moins 1 article avec un nom.', 'error'); return; }
-    if (!phone.trim()) { addToast('Indiquez votre numéro WhatsApp.', 'error'); return; }
+    if (validItems.length === 0) { addToast(t('ondemand.min_one_item'), 'error'); return; }
+    if (!phone.trim()) { addToast(t('ondemand.phone_req'), 'error'); return; }
     setSaving(true);
     try {
       const row = {
         id:          crypto.randomUUID(),
         buyer_id:    (currentUser2 && currentUser2.id) || 'guest_' + Date.now(),
-        buyer_name:  (currentUser2 && currentUser2.name) || 'Visiteur',
+        buyer_name:  (currentUser2 && currentUser2.name) || t('ondemand.visitor'),
         buyer_phone: phone.trim(),
         buyer_email: (currentUser2 && currentUser2.email) || '',
         items:       validItems,
@@ -35411,21 +35978,21 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
         );
         window.open('https://wa.me/' + adminWa.replace(/\D/g,'') + '?text=' + msg, '_blank');
       }
-      addToast('\u2705 Demande envoy\xe9e ! L\'administrateur NEXUS vous contactera sous 24h.', 'success', 8000);
+      addToast(t('ondemand.request_sent'), 'success', 8000);
       setItems([{ ...EMPTY_ITEM }]);
       setMessage('');
       setView('list');
       load();
-    } catch(e) { addToast('Erreur envoi : ' + e.message, 'error'); }
+    } catch(e) { addToast(t('ondemand.send_error') + e.message, 'error'); }
     finally { setSaving(false); }
   };
 
   // ── STATUS helpers ─────────────────────────────────────────────────────────
   const STATUS = {
-    pending:    { label: '\u23f3 En attente',   badge: 'warning',  icon: 'clock' },
-    processing: { label: '\U0001f50d Recherche en cours', badge: 'info', icon: 'search' },
-    replied:    { label: '\u2705 R\xe9ponse re\xe7ue',   badge: 'success', icon: 'check-circle' },
-    closed:     { label: '\U0001f512 Ferm\xe9',         badge: 'secondary', icon: 'lock' },
+    pending:    { label: t('ondemand.status_pending'),    badge: 'warning',  icon: 'clock' },
+    processing: { label: t('ondemand.status_processing'), badge: 'info', icon: 'search' },
+    replied:    { label: t('ondemand.status_replied'),    badge: 'success', icon: 'check-circle' },
+    closed:     { label: t('ondemand.status_closed'),     badge: 'secondary', icon: 'lock' },
   };
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -35437,14 +36004,14 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
       E('div', null,
         E('h2', { className: 'section-title' },
           E('i', { className: 'fas fa-concierge-bell', style: { color: 'var(--primary)', marginRight: '.5rem' } }),
-          'Commande sur demande'
+          t('ondemand.title')
         ),
         E('p', { style: { color: 'var(--text-secondary)', fontSize: '.88rem', marginTop: '.25rem' } },
-          'Vous ne trouvez pas ce que vous cherchez ? Soumettez votre liste \u2014 l\'administrateur NEXUS le trouve pour vous.'
+          t('ondemand.subtitle')
         )
       ),
       E('button', { className: 'btn btn-primary', onClick: () => setView('form') },
-        E('i', { className: 'fas fa-plus' }), ' Nouvelle demande'
+        E('i', { className: 'fas fa-plus' }), ' ' + t('ondemand.new_request')
       )
     ),
 
@@ -35456,14 +36023,14 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
     }},
       E('div', { style: { flex: 1, minWidth: 220 } },
         E('div', { style: { fontWeight: 800, fontSize: '1rem', marginBottom: '.4rem' } },
-          '\U0001f6d2 Comment \xe7a marche ?'
+          t('ondemand.how_it_works')
         ),
         E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.35rem', fontSize: '.83rem', color: 'rgba(255,255,255,.75)' } },
           [
-            '1\ufe0f\u20e3  Cr\xe9ez votre liste de courses (articles introuvables sur le site)',
-            '2\ufe0f\u20e3  L\'administrateur NEXUS recherche pour vous (d\xe9lai : 24h ouvr\xe9es)',
-            '3\ufe0f\u20e3  Vous recevez un devis par WhatsApp avec disponibilit\xe9 et prix',
-            '4\ufe0f\u20e3  Vous confirmez et passez commande directement sur NEXUS',
+            t('ondemand.step1'),
+            t('ondemand.step2'),
+            t('ondemand.step3'),
+            t('ondemand.step4'),
           ].map((s, i) => E('div', { key: i }, s))
         )
       ),
@@ -35473,7 +36040,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
           style: { background: '#FDEE42', color: '#1a1a1a', border: 'none', fontWeight: 800 },
           onClick: () => setView('form'),
         },
-          E('i', { className: 'fas fa-list-ul' }), ' Cr\xe9er ma liste'
+          E('i', { className: 'fas fa-list-ul' }), ' ' + t('ondemand.create_list_btn')
         )
       )
     ),
@@ -35483,15 +36050,15 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
     requests.length === 0
       ? E('div', { className: 'empty-state' },
           E('i', { className: 'fas fa-concierge-bell' }),
-          E('h3', null, 'Aucune demande'),
-          E('p', null, 'Cr\xe9ez votre premi\xe8re liste de courses — l\'administrateur s\'occupe du reste.'),
+          E('h3', null, t('ondemand.no_requests')),
+          E('p', null, t('ondemand.no_requests_desc')),
           E('button', { className: 'btn btn-primary', onClick: () => setView('form') },
-            E('i', { className: 'fas fa-plus' }), ' Cr\xe9er ma premi\xe8re liste'
+            E('i', { className: 'fas fa-plus' }), ' ' + t('ondemand.create_first_list')
           )
         )
       : E('div', { className: 'card' },
           E('div', { className: 'card-header' },
-            E('h3', { className: 'card-title' }, 'Mes demandes (', requests.length, ')')
+            E('h3', { className: 'card-title' }, t('ondemand.my_requests'), requests.length, ')')
           ),
           E('div', { style: { display: 'flex', flexDirection: 'column' } },
             requests.map(req => {
@@ -35515,7 +36082,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
                     )
                   ),
                   E('div', { style: { display: 'flex', alignItems: 'center', gap: '.75rem' } },
-                    req.status === 'replied' && E('span', { style: { fontSize: '.72rem', fontWeight: 700, color: '#059669' } }, '\U0001f4ac R\xe9ponse !'),
+                    req.status === 'replied' && E('span', { style: { fontSize: '.72rem', fontWeight: 700, color: '#059669' } }, t('ondemand.reply_badge')),
                     E('span', { className: 'badge badge-' + st.badge }, st.label),
                     E('i', { className: 'fas fa-chevron-right', style: { color: 'var(--text-secondary)', fontSize: '.8rem' } })
                   )
@@ -35532,15 +36099,15 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
   if (view === 'form') return E('div', null,
     E('div', { className: 'card-header', style: { marginBottom: '1.5rem' } },
       E('button', { className: 'btn btn-secondary btn-sm', onClick: () => setView('list') },
-        E('i', { className: 'fas fa-arrow-left' }), ' Retour'
+        E('i', { className: 'fas fa-arrow-left' }), ' ' + t('ondemand.back')
       ),
-      E('h2', { className: 'section-title' }, '\U0001f4cb Ma liste de courses'),
+      E('h2', { className: 'section-title' }, t('ondemand.my_list_title')),
       E('button', {
         className: 'btn btn-sm',
         style: { background: aiPanel ? 'var(--primary)' : 'var(--bg-light)', color: aiPanel ? 'white' : 'var(--text-secondary)', border: 'none', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '.4rem', fontSize: '.8rem' },
         onClick: function() { setAiPanel(function(p){ return !p; }); },
       },
-        E('i', { className: 'fas fa-robot' }), aiPanel ? ' Masquer l\'IA' : ' \U0001f916 Assistant IA'
+        E('i', { className: 'fas fa-robot' }), aiPanel ? t('ondemand.hide_ai') : t('ondemand.ai_assistant_btn')
       )
     ),
 
@@ -35548,8 +36115,8 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
       E('div', { style: { background: 'linear-gradient(135deg,#1a1a2e,#16213e)', padding: '.8rem 1.25rem', display: 'flex', alignItems: 'center', gap: '.65rem' } },
         E('div', { style: { width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#FDEE42,#f5c800)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 } }, '\U0001f916'),
         E('div', { style: { flex: 1 } },
-          E('div', { style: { color: 'white', fontWeight: 800, fontSize: '.9rem' } }, 'Assistant NEXUS IA'),
-          E('div', { style: { color: 'rgba(255,255,255,.55)', fontSize: '.7rem' } }, 'Groq Llama 3.3 \u2014 Fran\xe7ais & Wolof \u2014 Ajoute vos articles automatiquement')
+          E('div', { style: { color: 'white', fontWeight: 800, fontSize: '.9rem' } }, t('ondemand.ai_assistant_name')),
+          E('div', { style: { color: 'rgba(255,255,255,.55)', fontSize: '.7rem' } }, t('ondemand.ai_assistant_desc'))
         ),
         items.filter(function(it){ return it.name.trim(); }).length > 0 && E('span', { style: { background: 'rgba(253,238,66,.18)', color: '#FDEE42', borderRadius: 20, padding: '2px 10px', fontSize: '.7rem', fontWeight: 700 } },
           items.filter(function(it){ return it.name.trim(); }).length, ' article(s)'
@@ -35585,8 +36152,8 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
         )
       ),
       aiMessages.length <= 1 && E('div', { style: { padding: '.5rem 1rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '.4rem', flexWrap: 'wrap', background: 'white' } },
-        ['\U0001f4f1 Smartphone', '\U0001f457 V\xeatements', '\U0001f371 Alimentaire', '\U0001f697 Pi\xe8ces auto', '\U0001f4bb Ordinateur'].map(function(s) {
-          var lbl = s.slice(2);
+        ['\U0001f4f1 ' + t('ondemand.ai_chip_smartphone'), '\U0001f457 ' + t('ondemand.ai_chip_clothes'), '\U0001f371 ' + t('ondemand.ai_chip_food'), '\U0001f697 ' + t('ondemand.ai_chip_auto_parts'), '\U0001f4bb ' + t('ondemand.ai_chip_computer')].map(function(s) {
+          var lbl = s.slice(s.indexOf(' ') + 1);
           return E('button', { key: s,
             onClick: function() { setAiMessages(function(prev) { return [...prev, { role: 'user', content: lbl }]; }); callGroq(lbl); },
             style: { padding: '.25rem .65rem', borderRadius: 99, background: 'var(--bg-light)', border: '1px solid var(--border)', cursor: 'pointer', fontSize: '.73rem', fontWeight: 600, color: 'var(--text-secondary)' }
@@ -35596,7 +36163,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
       E('div', { style: { padding: '.65rem 1rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '.5rem', background: 'white' } },
         E('input', {
           type: 'text', className: 'form-input', style: { flex: 1, fontSize: '.87rem' },
-          value: aiInput, placeholder: 'Dites ce que vous cherchez... (fran\xe7ais ou wolof)',
+          value: aiInput, placeholder: t('ondemand.ai_input_placeholder'),
           onChange: function(e) { setAiInput(e.target.value); },
           onKeyDown: function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAiMessage(); } },
           disabled: aiLoading,
@@ -35610,7 +36177,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
 
     E('div', { className: 'card', style: { marginBottom: '1.25rem' } },
       E('div', { className: 'card-header' },
-        E('h3', { className: 'card-title' }, 'Articles recherch\xe9s'),
+        E('h3', { className: 'card-title' }, t('ondemand.items_searched')),
         E('span', { style: { fontSize: '.8rem', color: 'var(--text-secondary)' } },
           items.filter(it=>it.name.trim()).length, ' article(s)'
         )
@@ -35622,18 +36189,18 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
         },
           E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '.65rem' } },
             E('span', { style: { fontWeight: 700, color: 'var(--primary)', fontSize: '.88rem' } },
-              'Article ', i+1
+              t('ondemand.item_label'), i+1
             ),
             items.length > 1 && E('button', {
               onClick: () => removeItem(i),
               style: { background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '.8rem', padding: '2px 6px' }
             },
-              E('i', { className: 'fas fa-trash-alt' }), ' Supprimer'
+              E('i', { className: 'fas fa-trash-alt' }), t('ondemand.remove')
             )
           ),
           E('div', { style: { display: 'grid', gridTemplateColumns: '1fr 80px', gap: '.5rem', marginBottom: '.5rem' } },
             E('div', { className: 'form-group', style: { margin: 0 } },
-              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Nom du produit *'),
+              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, t('ondemand.field_product_name')),
               E('input', {
                 type: 'text', className: 'form-input',
                 value: it.name, placeholder: 'ex: Chargeur iPhone 14, Rizière Basmati 5kg…',
@@ -35642,7 +36209,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
               })
             ),
             E('div', { className: 'form-group', style: { margin: 0 } },
-              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Qté'),
+              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, t('ondemand.field_qty')),
               E('input', {
                 type: 'number', className: 'form-input', min: '1', max: '99',
                 value: it.qty, onChange: e => updateItem(i, 'qty', e.target.value),
@@ -35652,16 +36219,16 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
           ),
           E('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.5rem' } },
             E('div', { className: 'form-group', style: { margin: 0 } },
-              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Budget max (FCFA)'),
+              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, t('ondemand.field_budget')),
               E('input', {
                 type: 'number', className: 'form-input',
-                value: it.budget, placeholder: 'Optionnel',
+                value: it.budget, placeholder: t('ondemand.optional'),
                 onChange: e => updateItem(i, 'budget', e.target.value),
                 style: { fontSize: '.88rem' }
               })
             ),
             E('div', { className: 'form-group', style: { margin: 0 } },
-              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Catégorie'),
+              E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, t('ondemand.field_category')),
               E('select', {
                 className: 'form-select',
                 value: it.category, onChange: e => updateItem(i, 'category', e.target.value),
@@ -35672,7 +36239,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
             )
           ),
           E('div', { className: 'form-group', style: { margin: '.5rem 0 0' } },
-            E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, 'Précisions (couleur, marque, taille…)'),
+            E('label', { className: 'form-label', style:{fontSize:'.8rem'} }, t('ondemand.field_notes')),
             E('input', {
               type: 'text', className: 'form-input',
               value: it.notes, placeholder: 'ex: Couleur bleue, taille M, marque Samsung…',
@@ -35687,7 +36254,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
         onClick: addItem,
         style: { margin: '.5rem 1rem 1rem', width: 'calc(100% - 2rem)' }
       },
-        E('i', { className: 'fas fa-plus' }), ' Ajouter un article'
+        E('i', { className: 'fas fa-plus' }), t('ondemand.add_item_btn')
       )
     ),
 
@@ -35696,7 +36263,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
         E('div', { className: 'form-group', style: { marginBottom: '1rem' } },
           E('label', { className: 'form-label' },
             E('i', { className: 'fab fa-whatsapp', style: { color: '#25D366', marginRight: '.3rem' } }),
-            'Votre numéro WhatsApp *'
+            t('ondemand.field_whatsapp')
           ),
           E('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'center' } },
             E('span', { style: { padding: '.5rem .75rem', background: 'var(--bg-light)', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: '.9rem', fontWeight: 600, whiteSpace: 'nowrap' } }, '+221'),
@@ -35709,15 +36276,15 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
             })
           ),
           E('div', { style: { fontSize: '.75rem', color: 'var(--text-secondary)', marginTop: '.25rem' } },
-            'L\'administrateur vous contactera sur ce numéro avec le devis.'
+            t('ondemand.whatsapp_note')
           )
         ),
         E('div', { className: 'form-group' },
-          E('label', { className: 'form-label' }, 'Message complémentaire (optionnel)'),
+          E('label', { className: 'form-label' }, t('ondemand.field_message')),
           E('textarea', {
             className: 'form-textarea', rows: 3,
             value: message,
-            placeholder: 'Précisions sur vos besoins, délai souhaité, zone de livraison…',
+            placeholder: t('ondemand.message_placeholder'),
             onChange: e => setMessage(e.target.value),
             style: { fontSize: '.88rem', resize: 'vertical' }
           }),
@@ -35727,14 +36294,14 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
     ),
 
     E('div', { style: { display: 'flex', gap: '.75rem', flexWrap: 'wrap' } },
-      E('button', { className: 'btn btn-secondary flex-1', onClick: () => setView('list') }, 'Annuler'),
+      E('button', { className: 'btn btn-secondary flex-1', onClick: () => setView('list') }, t('ondemand.cancel')),
       E('button', {
         className: saving ? 'btn btn-primary flex-1 btn-loading' : 'btn btn-primary flex-1',
         onClick: handleSubmit, disabled: saving,
         style: { background: 'linear-gradient(135deg,#006d40,#006b32)' }
       },
         !saving && E(React.Fragment, null,
-          E('i', { className: 'fas fa-paper-plane' }), ' Envoyer ma liste à NEXUS'
+          E('i', { className: 'fas fa-paper-plane' }), t('ondemand.submit_btn')
         )
       )
     )
@@ -35748,14 +36315,14 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
     return E('div', null,
       E('div', { className: 'card-header', style: { marginBottom: '1.25rem' } },
         E('button', { className: 'btn btn-secondary btn-sm', onClick: () => { setSelected(null); setView('list'); } },
-          E('i', { className: 'fas fa-arrow-left' }), ' Retour'
+          E('i', { className: 'fas fa-arrow-left' }), ' ' + t('ondemand.back')
         ),
         E('span', { className: 'badge badge-' + st.badge, style: { fontSize: '.82rem', padding: '.3rem .8rem' } }, st.label)
       ),
 
       E('div', { className: 'card', style: { marginBottom: '1.25rem' } },
         E('div', { className: 'card-header' },
-          E('h3', { className: 'card-title' }, '\U0001f4cb Ma liste de courses'),
+          E('h3', { className: 'card-title' }, t('ondemand.my_list_title')),
           E('span', { style: { fontSize: '.78rem', color: 'var(--text-secondary)' } },
             new Date(selected.created_at).toLocaleDateString('fr-FR', { dateStyle: 'long' })
           )
@@ -35783,7 +36350,7 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
         E('div', { style: { padding: '1rem 1.25rem' } },
           E('div', { style: { fontWeight: 600, marginBottom: '.4rem', fontSize: '.88rem' } },
             E('i', { className: 'fas fa-comment-alt', style: { marginRight: '.4rem', color: 'var(--primary)' } }),
-            'Votre message'
+            t('ondemand.your_message')
           ),
           E('p', { style: { color: 'var(--text-secondary)', fontSize: '.88rem', margin: 0 } }, selected.message)
         )
@@ -35797,13 +36364,13 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
             padding: '1.25rem', marginBottom: '1.25rem',
           }},
             E('div', { style: { display: 'flex', alignItems: 'center', gap: '.5rem', fontWeight: 800, color: 'var(--primary)', marginBottom: '.75rem', fontSize: '.95rem' } },
-              E('i', { className: 'fas fa-check-circle' }), ' R\xe9ponse de l\'administrateur NEXUS'
+              E('i', { className: 'fas fa-check-circle' }), t('ondemand.admin_reply')
             ),
             E('div', { style: { fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', marginBottom: '1rem' } },
               selected.admin_reply
             ),
             E('div', { style: { fontSize: '.75rem', color: 'var(--text-secondary)', marginBottom: '1rem' } },
-              'R\xe9pondu le ', new Date(selected.admin_reply_at).toLocaleString('fr-FR')
+              t('ondemand.replied_on'), new Date(selected.admin_reply_at).toLocaleString('fr-FR')
             ),
             // Bouton WhatsApp pour finaliser
             E('button', {
@@ -35815,14 +36382,14 @@ const OnDemandPanel = ({ currentUser: currentUser2, addToast, guestMode }) => {
                 window.open('https://wa.me/' + phone2.replace(/\D/g,'') + '?text=' + msg, '_blank');
               }
             },
-              E('i', { className: 'fab fa-whatsapp' }), ' Contacter NEXUS pour commander'
+              E('i', { className: 'fab fa-whatsapp' }), t('ondemand.contact_to_order')
             )
           )
         : E('div', { style: { background: 'rgba(234,179,8,.08)', border: '1.5px solid rgba(234,179,8,.3)', borderRadius: 14, padding: '1rem 1.25rem', textAlign: 'center' } },
             E('i', { className: 'fas fa-hourglass-half', style: { fontSize: '1.5rem', color: '#d97706', marginBottom: '.5rem', display: 'block' } }),
-            E('div', { style: { fontWeight: 700, color: '#92400e' } }, 'En attente de réponse'),
+            E('div', { style: { fontWeight: 700, color: '#92400e' } }, t('ondemand.awaiting_reply')),
             E('div', { style: { fontSize: '.83rem', color: '#92400e', marginTop: '.3rem' } },
-              'Délai habituel : 24h ouvr\xe9es. Vous serez contacté(e) par WhatsApp au ', selected.buyer_phone, '.'
+              t('ondemand.usual_delay'), selected.buyer_phone, '.'
             )
           )
     );

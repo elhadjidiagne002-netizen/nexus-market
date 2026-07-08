@@ -2925,7 +2925,7 @@
       </div>
     </footer>
 
-    <script src="/assets/app.f86495cfcd.js"></script>
+    <script src="/assets/app.8e6ee7079d.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -9391,12 +9391,12 @@ window.addEventListener('unhandledrejection', function(event) {
   function specHtml(p) {
     var s = p.rental_specs || {};
     var prices = [];
-    if (s.price_per_day) prices.push(fcfa(s.price_per_day) + '/jour');
-    if (s.price_per_week) prices.push(fcfa(s.price_per_week) + '/sem.');
+    if (s.price_per_day) prices.push(fcfa(s.price_per_day) + window.t('location.per_day'));
+    if (s.price_per_week) prices.push(fcfa(s.price_per_week) + window.t('location.per_week'));
     var l1 = prices.length ? '<div style="color:#1d4ed8;font-weight:800;margin-top:2px">' + esc(prices.join(' · ')) + '</div>' : '';
     var meta = [];
-    if (s.deposit_fcfa) meta.push('Caution ' + fcfa(s.deposit_fcfa));
-    if (s.min_days) meta.push('min ' + s.min_days + 'j');
+    if (s.deposit_fcfa) meta.push(window.t('location.deposit') + ' ' + fcfa(s.deposit_fcfa));
+    if (s.min_days) meta.push(window.t('location.min_days_short') + ' ' + s.min_days + window.t('location.days_unit'));
     if (s.condition) meta.push(s.condition);
     if (s.region) meta.push('📍 ' + s.region);
     var l2 = meta.length ? '<div style="color:#666;font-size:.68rem;margin-top:2px">' + esc(meta.join(' · ')) + '</div>' : '';
@@ -9405,33 +9405,33 @@ window.addEventListener('unhandledrejection', function(event) {
 
   // ── Grille location + contact WhatsApp ───────────────────────────────────────
   function renderGrid(host, products) {
-    if (!products.length) { host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem .5rem">Aucun objet en location pour le moment. Soyez le premier à en proposer un !</div>'; return; }
+    if (!products.length) { host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem .5rem">' + esc(window.t('location.empty')) + '</div>'; return; }
     var ids = products.map(function (p) { return p.vendor_id; }).filter(Boolean);
     loadPhones(ids).then(function (phones) {
       var grid = document.createElement('div'); grid.className = 'nx-le-grid';
       products.forEach(function (p) {
         var ph = phones[p.vendor_id] || {};
         var s = p.rental_specs || {};
-        var t = document.createElement('div'); t.className = 'nx-le-tile';
-        t.innerHTML =
+        var tile = document.createElement('div'); tile.className = 'nx-le-tile';
+        tile.innerHTML =
           (imgOf(p) ? '<img src="' + esc(imgOf(p)) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '<div style="height:110px;background:#eef2ff;display:flex;align-items:center;justify-content:center;font-size:1.8rem">🔑</div>')
           + '<div class="p"><div style="font-weight:700;line-height:1.2">' + esc(p.name || '') + '</div>'
           + specHtml(p)
-          + '<div style="font-size:.68rem;color:#888;margin-top:3px">🏪 ' + esc(p.vendor_name || ph.shop_name || 'Loueur') + '</div></div>';
+          + '<div style="font-size:.68rem;color:#888;margin-top:3px">🏪 ' + esc(p.vendor_name || ph.shop_name || window.t('location.lessor')) + '</div></div>';
         var btnWrap = document.createElement('div'); btnWrap.style.cssText = 'padding:0 .6rem .6rem';
         var b = document.createElement('button');
-        b.textContent = '💬 Réserver / Contacter';
+        b.textContent = window.t('location.contact_btn');
         b.style.cssText = 'width:100%;padding:.45rem;border:none;border-radius:8px;background:#25D366;color:#fff;font-weight:700;font-size:.72rem;cursor:pointer';
         b.addEventListener('click', function (ev) {
           ev.stopPropagation();
           var phone = (ph.phone || '').replace(/\D/g, '');
-          var tarif = s.price_per_day ? (' (' + fcfa(s.price_per_day) + '/jour)') : '';
-          var msg = 'Bonjour, je souhaite LOUER « ' + (p.name || '') + ' »' + tarif + ' vu sur NEXUS Location. Mes dates souhaitées : du ___ au ___.';
+          var tarif = s.price_per_day ? (' (' + fcfa(s.price_per_day) + window.t('location.per_day') + ')') : '';
+          var msg = window.t('location.wa_message', { name: p.name || '', price: tarif });
           if (phone) { if (phone.length === 9 && phone[0] === '7') phone = '221' + phone; window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(msg), '_blank'); }
           else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
         });
-        btnWrap.appendChild(b); t.appendChild(btnWrap);
-        grid.appendChild(t);
+        btnWrap.appendChild(b); tile.appendChild(btnWrap);
+        grid.appendChild(tile);
       });
       host.innerHTML = ''; host.appendChild(grid);
     });
@@ -9443,45 +9443,45 @@ window.addEventListener('unhandledrejection', function(event) {
     host.innerHTML = '';
     var wrap = document.createElement('div');
     function field(label, html) { var d = document.createElement('div'); d.className = 'nx-loc-field'; d.innerHTML = '<label>' + label + '</label>' + html; return d; }
-    var nameEl = field('Objet à louer *', '<input maxlength="90" placeholder="Ex. Sono 500W + 2 enceintes">'); var nameI = nameEl.querySelector('input');
-    var catEl = field('Catégorie *', '<select><option value="">— Choisir —</option>' + CATS.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('') + '</select>'); var catI = catEl.querySelector('select');
-    var photoEl = field('Photo', '<input type="file" accept="image/*">'); var photoI = photoEl.querySelector('input');
+    var nameEl = field(window.t('location.field_name'), '<input maxlength="90" placeholder="Ex. Sono 500W + 2 enceintes">'); var nameI = nameEl.querySelector('input');
+    var catEl = field(window.t('location.field_category'), '<select><option value="">' + esc(window.t('location.field_choose')) + '</option>' + CATS.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('') + '</select>'); var catI = catEl.querySelector('select');
+    var photoEl = field(window.t('location.field_photo'), '<input type="file" accept="image/*">'); var photoI = photoEl.querySelector('input');
     var photoPrev = document.createElement('div'); photoPrev.style.cssText = 'font-size:.72rem;color:#666;margin-top:2px';
-    var pdEl = field('Prix / jour (FCFA) *', '<input type="number" min="0" placeholder="5000">'); var pdI = pdEl.querySelector('input');
-    var pwEl = field('Prix / semaine (FCFA, optionnel)', '<input type="number" min="0" placeholder="25000">'); var pwI = pwEl.querySelector('input');
-    var depEl = field('Caution (FCFA, indicative)', '<input type="number" min="0" placeholder="20000">'); var depI = depEl.querySelector('input');
-    var minEl = field('Durée min (jours)', '<input type="number" min="1" value="1">'); var minI = minEl.querySelector('input');
-    var condEl = field('État / précisions', '<input maxlength="60" placeholder="Ex. Très bon état, livraison possible">'); var condI = condEl.querySelector('input');
-    var regEl = field('Région', '<select><option value="">— Choisir —</option>' + REGIONS.map(function (r) { return '<option>' + esc(r) + '</option>'; }).join('') + '</select>'); var regI = regEl.querySelector('select');
+    var pdEl = field(window.t('location.field_price_day'), '<input type="number" min="0" placeholder="5000">'); var pdI = pdEl.querySelector('input');
+    var pwEl = field(window.t('location.field_price_week'), '<input type="number" min="0" placeholder="25000">'); var pwI = pwEl.querySelector('input');
+    var depEl = field(window.t('location.field_deposit'), '<input type="number" min="0" placeholder="20000">'); var depI = depEl.querySelector('input');
+    var minEl = field(window.t('location.field_min_days'), '<input type="number" min="1" value="1">'); var minI = minEl.querySelector('input');
+    var condEl = field(window.t('location.field_condition'), '<input maxlength="60" placeholder="Ex. Très bon état, livraison possible">'); var condI = condEl.querySelector('input');
+    var regEl = field(window.t('location.field_region'), '<select><option value="">' + esc(window.t('location.field_choose')) + '</option>' + REGIONS.map(function (r) { return '<option>' + esc(r) + '</option>'; }).join('') + '</select>'); var regI = regEl.querySelector('select');
 
     // Upload photo (bucket nexus-stories, même pattern que "Vendre un article")
     photoI.addEventListener('change', function () {
       var file = photoI.files && photoI.files[0]; if (!file) return;
       var c = sb(); var u = curUser();
-      if (!c || !u || !u.id) { toast('Connectez-vous pour ajouter une photo.'); return; }
-      if (!/^image\//.test(file.type || '')) { toast('Choisissez une image.'); return; }
-      if (file.size > 5 * 1024 * 1024) { toast('Image trop lourde (max 5 Mo).'); return; }
-      photoPrev.textContent = '⏳ Envoi de la photo…';
+      if (!c || !u || !u.id) { toast(window.t('location.photo_login_req')); return; }
+      if (!/^image\//.test(file.type || '')) { toast(window.t('location.photo_pick_img')); return; }
+      if (file.size > 5 * 1024 * 1024) { toast(window.t('location.photo_too_big')); return; }
+      photoPrev.textContent = window.t('location.photo_uploading');
       var ext = ((file.name || '').split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
       var path = 'location/' + u.id + '/' + Date.now() + '.' + ext;
       c.storage.from('nexus-stories').upload(path, file, { contentType: file.type, upsert: true }).then(function (res) {
         if (res.error) throw res.error;
         f.imageUrl = c.storage.from('nexus-stories').getPublicUrl(path).data.publicUrl;
-        photoPrev.textContent = '📷 Photo ajoutée ✓';
-      }).catch(function (e) { photoPrev.textContent = '❌ Échec photo : ' + (e.message || e); });
+        photoPrev.textContent = window.t('location.photo_added');
+      }).catch(function (e) { photoPrev.textContent = window.t('location.photo_failed') + (e.message || e); });
     });
 
     var submit = document.createElement('button');
-    submit.textContent = '🔑 Publier mon annonce de location';
+    submit.textContent = window.t('location.submit_btn');
     submit.style.cssText = 'width:100%;padding:.7rem;border:none;border-radius:10px;background:#1d4ed8;color:#fff;font-weight:800;font-size:.9rem;cursor:pointer;margin-top:.4rem';
     submit.addEventListener('click', function () {
       var u = curUser();
-      if (!u || !u.id) { toast('Connectez-vous pour proposer un objet à la location.'); try { window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'login' } })); } catch (_) {} return; }
+      if (!u || !u.id) { toast(window.t('location.publish_login_req')); try { window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'login' } })); } catch (_) {} return; }
       var name = nameI.value.trim(), cat = catI.value, pd = parseInt(pdI.value, 10);
-      if (!name || !cat) { toast('Objet et catégorie requis.'); return; }
+      if (!name || !cat) { toast(window.t('location.name_cat_req')); return; }
       var minDay = CFG.rental_min_day_fcfa || 100;
-      if (!pd || pd < minDay) { toast('Prix/jour invalide (min ' + fcfa(minDay) + ').'); return; }
-      if (!window.DataService || !DataService.saveProduct) { toast('Service indisponible, réessayez.'); return; }
+      if (!pd || pd < minDay) { toast(window.t('location.price_invalid', { min: fcfa(minDay) })); return; }
+      if (!window.DataService || !DataService.saveProduct) { toast(window.t('location.service_unavailable')); return; }
       var specs = {
         category: cat,
         price_per_day: pd,
@@ -9491,20 +9491,20 @@ window.addEventListener('unhandledrejection', function(event) {
         condition: condI.value.trim() || null,
         region: regI.value || null
       };
-      submit.disabled = true; submit.textContent = '⏳ Publication…';
+      submit.disabled = true; submit.textContent = window.t('location.publishing');
       // price (colonne canonique) = prix/jour converti en EUR (convention EUR de la pile).
       DataService.saveProduct({
         name: name, category: cat, price: pd / EUR_TO_XOF, stock: 1,
         description: condI.value.trim() || null, imageUrl: f.imageUrl || null,
-        vendor: u.id, vendorName: u.name || u.shop_name || 'Loueur',
+        vendor: u.id, vendorName: u.name || u.shop_name || window.t('location.lessor'),
         active: true, rating: 0, reviewsCount: 0,
         isRental: true, rentalSpecs: specs
       }).then(function () {
-        toast('✅ Annonce de location publiée !', { bg: '#1d4ed8', duration: 5000 });
+        toast(window.t('location.published'), { bg: '#1d4ed8', duration: 5000 });
         open(); switchTab('browse');
       }).catch(function (e) {
-        submit.disabled = false; submit.textContent = '🔑 Publier mon annonce de location';
-        toast('Erreur : ' + (e.message || e));
+        submit.disabled = false; submit.textContent = window.t('location.submit_btn');
+        toast(window.t('location.error') + (e.message || e));
       });
     });
 
@@ -9529,7 +9529,7 @@ window.addEventListener('unhandledrejection', function(event) {
   }
   function paint() {
     var host = ov.querySelector('#nx-loc-grid');
-    host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem">Chargement…</div>';
+    host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem">' + esc(window.t('common.loading')) + '</div>';
     loadRentals(curCat).then(function (list) { renderGrid(host, list); });
   }
   function buildOverlay() {
@@ -9537,15 +9537,15 @@ window.addEventListener('unhandledrejection', function(event) {
     ov = document.createElement('div'); ov.id = 'nx-loc-ov';
     ov.innerHTML =
       '<div class="nx-le-card">'
-      + '<div class="nx-le-head"><span style="font-size:1.4rem">🔑</span><b style="flex:1">NEXUS Location</b><button id="nx-loc-x" aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div>'
-      + '<div class="nx-le-tabs"><button class="nx-le-tab on" data-t="browse">🔎 Louer un objet</button><button class="nx-le-tab" data-t="publish">➕ Mettre en location</button></div>'
+      + '<div class="nx-le-head"><span style="font-size:1.4rem">🔑</span><b style="flex:1">' + esc(window.t('location.title')) + '</b><button id="nx-loc-x" aria-label="' + esc(window.t('common.close')) + '" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div>'
+      + '<div class="nx-le-tabs"><button class="nx-le-tab on" data-t="browse">' + esc(window.t('location.tab_browse')) + '</button><button class="nx-le-tab" data-t="publish">' + esc(window.t('location.tab_publish')) + '</button></div>'
       + '<div class="nx-le-body">'
       + '<div class="nx-le-tab-pane on" id="nx-loc-pane-browse">'
-      + '<div style="background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;border-radius:12px;padding:.8rem 1rem;margin-bottom:.9rem"><b>Louez plutôt qu\'acheter 🔑</b><div style="font-size:.8rem;opacity:.92">Matériel événementiel, outillage BTP, électroménager… Contactez le loueur pour convenir des dates. Caution indicative en direct.</div></div>'
+      + '<div style="background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;border-radius:12px;padding:.8rem 1rem;margin-bottom:.9rem"><b>' + esc(window.t('location.hero_title')) + '</b><div style="font-size:.8rem;opacity:.92">' + esc(window.t('location.hero_desc')) + '</div></div>'
       + '<div id="nx-loc-chips" style="margin-bottom:.7rem"></div>'
       + '<div id="nx-loc-grid"></div></div>'
       + '<div class="nx-le-tab-pane" id="nx-loc-pane-publish">'
-      + '<div style="background:#eef2ff;color:#1e3a8a;border-radius:12px;padding:.7rem 1rem;margin-bottom:.9rem;font-size:.82rem">Proposez un objet à la location et touchez de nouveaux revenus. La mise en relation se fait par WhatsApp ; l\'échange et la caution se règlent en direct.</div>'
+      + '<div style="background:#eef2ff;color:#1e3a8a;border-radius:12px;padding:.7rem 1rem;margin-bottom:.9rem;font-size:.82rem">' + esc(window.t('location.publish_intro')) + '</div>'
       + '<div id="nx-loc-publish-host"></div></div>'
       + '</div></div>';
     document.body.appendChild(ov);
@@ -9556,7 +9556,7 @@ window.addEventListener('unhandledrejection', function(event) {
     });
     // chips catégories
     var chipHost = ov.querySelector('#nx-loc-chips');
-    var allChip = document.createElement('span'); allChip.className = 'nx-le-chip on'; allChip.textContent = 'Tous';
+    var allChip = document.createElement('span'); allChip.className = 'nx-le-chip on'; allChip.textContent = window.t('location.all_cat');
     var chipEls = [allChip]; chipHost.appendChild(allChip);
     allChip.addEventListener('click', function () { curCat = ''; chipEls.forEach(function (x) { x.classList.remove('on'); }); allChip.classList.add('on'); paint(); });
     CATS.forEach(function (label) {
@@ -9569,7 +9569,7 @@ window.addEventListener('unhandledrejection', function(event) {
     buildOverlay(); ov.classList.add('open');
     if (!isEnabled()) {
       ov.querySelector('.nx-le-tabs').style.display = 'none';
-      ov.querySelector('.nx-le-body').innerHTML = '<div style="text-align:center;color:#555;padding:2.5rem 1rem"><div style="font-size:2.4rem">🔑</div><b style="display:block;margin:.6rem 0 .3rem;font-size:1.05rem">NEXUS Location — bientôt disponible</b><div style="font-size:.85rem;color:#888">Cette fonctionnalité est momentanément désactivée. Revenez très vite !</div></div>';
+      ov.querySelector('.nx-le-body').innerHTML = '<div style="text-align:center;color:#555;padding:2.5rem 1rem"><div style="font-size:2.4rem">🔑</div><b style="display:block;margin:.6rem 0 .3rem;font-size:1.05rem">' + esc(window.t('location.coming_soon_title')) + '</b><div style="font-size:.85rem;color:#888">' + esc(window.t('location.coming_soon_desc')) + '</div></div>';
       return;
     }
     // Réactivé après un affichage « bientôt » (body vidé) → reconstruire.
