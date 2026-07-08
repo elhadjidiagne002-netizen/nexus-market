@@ -21464,7 +21464,15 @@ const AdminBoostsPanel = ({ addToast }) => {
       target_category: gtype === 'category_top' ? (sel.category || null) : null,
     };
     const { error } = await sb.from('product_boosts').insert([row]);
-    if (error) { addToast('❌ ' + error.message, 'error'); setBusy(''); return; }
+    if (error) {
+      // [FIX] FK product_boosts_vendor_id_fkey : certains profils (comptes de test/
+      // jamais confirmés via Supabase Auth) n'ont pas de ligne auth.users — message
+      // clair plutôt que l'erreur Postgres brute.
+      const msg = error.code === '23503'
+        ? 'Compte vendeur invalide pour ce produit (profil non lié à un compte Auth) — boost impossible.'
+        : error.message;
+      addToast('❌ ' + msg, 'error'); setBusy(''); return;
+    }
     await syncFlag(String(sel.id));
     addToast('🎁 Boost offert à « ' + (sel.name || '') + ' » (' + daysOf(gtype) + 'j)', 'success');
     setQ(''); setResults([]); setSel(null); setBusy(''); load();
@@ -23991,6 +23999,29 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   // [FIX] États hissés depuis l'IIFE "homepage_editor" — manquants → ReferenceError
   const [showNewBanner, setShowNewBanner] = React.useState(false);
   const [newBannerForm, setNewBannerForm] = React.useState({ badge: "Nouveau", title: "Titre", sub: "Sous-titre", deco: "NX", cls: "slide-0", active: true });
+  // [FIX] Idem pour les onglets Promos/Sections/Confiance/Textes de "Gestion Page d'Accueil"
+  // — mêmes ReferenceError (showNewPromo, adminSections, newTrustForm, adminGlobalTexts…)
+  // signalées en prod (2026-07-08). NB : contrairement à banners/promos/categories
+  // (déjà lues par NexusAdminConfig côté page publique), sections/trust/texts ne sont
+  // pour l'instant sauvegardées qu'en local (storage) — aucun consommateur public.
+  const [showNewPromo, setShowNewPromo] = React.useState(false);
+  const [newPromoForm, setNewPromoForm] = React.useState({ label: "Promotion", title: "Titre\nPromo", cta: "Découvrir", deco: "🎁", cls: "green", active: true });
+  const [adminSections, setAdminSections] = React.useState(() => {
+    try { return storage.get('nexus_admin_sections') || [
+      { id: "flash",        title: "⚡ Ventes Flash",           active: true, count: 8, showCountdown: true },
+      { id: "bestsellers",  title: "🔥 Meilleures Ventes",       active: true, count: 8 },
+      { id: "new",          title: "✨ Nouveautés",              active: true, count: 8 },
+      { id: "recommended",  title: "🎯 Recommandés pour vous",   active: true, count: 8 },
+    ]; } catch(e) { return []; }
+  });
+  const [adminTrustBar, setAdminTrustBar] = React.useState(() => {
+    try { return storage.get('nexus_admin_trust') || []; } catch(e) { return []; }
+  });
+  const [newTrustForm, setNewTrustForm] = React.useState({ icon: "fas fa-star", title: "", sub: "" });
+  const [editTrust, setEditTrust] = React.useState(null);
+  const [adminGlobalTexts, setAdminGlobalTexts] = React.useState(() => {
+    try { return storage.get('nexus_admin_globals') || {}; } catch(e) { return {}; }
+  });
   // [FIX #310] États hissés depuis l'IIFE "flash_sales_vendor"
   const [vFlashSales, setVFlashSales] = React.useState([]);
   const [vFlashForm, setVFlashForm] = React.useState({ productId: "", discount: "20", hours: "24" });
