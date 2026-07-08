@@ -3101,6 +3101,12 @@ function nexusSearch(products, query) {
   return results;
 }
 
+// [FIX RLS] Colonnes réellement GRANT SELECT à `authenticated` sur profiles (iban/ninea/
+// password_hash exclus depuis le durcissement sécu du 2026-07-07). `select("*")` échoue
+// en 403 "permission denied for table profiles" dès qu'une seule colonne du wildcard
+// n'est pas grantée — Postgres exige le privilège sur TOUTES les colonnes pour `*`.
+const PROFILE_SAFE_COLUMNS = "address,admin_approved,approved_at_dt,approved_by,avatar,bank_name,bio,commission_rate,company_name,courier_rating,courier_status,courier_trips,courier_vehicle,courier_zone,created_at,current_lat,current_lng,email,email_confirmed,email_confirmed_at,geolocation,github_avatar,github_id,github_login,home_lat,home_lng,id,is_breeder,is_courier,is_pro,is_trusted,lang,last_login,location_updated_at,logo,name,onboarding_complete,opening_hours,orange_phone,owner_name,payment_method,payout_destination,payout_method,phone,pro_plan,pro_until,rating,rc,referral_code,return_policy,role,shop_category,shop_desc,shop_description,shop_name,status,structure_type,total_sales,trust_computed_at,trust_score,updated_at,vehicle_type,wave_phone,whatsapp_number,whatsapp_prefix";
+
 const DataService = {
   _isRefreshing:  false,   // [JWT-REFRESH] mutex anti-parallèle
   _refreshQueue:  [],      // [JWT-REFRESH] callbacks en attente d'un refresh en cours
@@ -3870,7 +3876,7 @@ const DataService = {
       }
     }
     if (this._sb) {
-      const { data } = await this._sb.from("profiles").select("*");
+      const { data } = await this._sb.from("profiles").select(PROFILE_SAFE_COLUMNS);
       if (data) {
         const map = {};
         data.forEach(u => { const n = normalizeUser(u); map[n.id] = n; });
@@ -4241,7 +4247,7 @@ const DataService = {
     if (!this._sb || !uid) return null;
     try {
       // [PERF FIX] Timeout 2s pour éviter les blocages réseau sur Supabase
-      const query = this._sb.from("profiles").select("*").eq("id", uid).maybeSingle();
+      const query = this._sb.from("profiles").select(PROFILE_SAFE_COLUMNS).eq("id", uid).maybeSingle();
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000));
       const { data, error } = await Promise.race([query, timeout]);
       if (error) {
@@ -7545,7 +7551,7 @@ const VendorProfileEditor = ({ currentUser: currentUser2, addToast }) => {
   React.useEffect(() => {
     const sb = typeof DataService !== 'undefined' && DataService._sb;
     if (!sb || !currentUser2.id) return;
-    sb.from('profiles').select('*').eq('id', currentUser2.id).maybeSingle()
+    sb.from('profiles').select(PROFILE_SAFE_COLUMNS).eq('id', currentUser2.id).maybeSingle()
       .then(({ data, error }) => {
         if (!error && data) {
           setForm(f => ({
@@ -35535,7 +35541,7 @@ const App = ({ onUserChange }) => {
           // Vérifier le rôle admin directement dans Supabase profiles
           if (DataService._sb) {
             const { data: prof } = await DataService._sb
-              .from('profiles').select('*').eq('id', userId).maybeSingle();
+              .from('profiles').select(PROFILE_SAFE_COLUMNS).eq('id', userId).maybeSingle();
             if (prof && prof.role === 'admin') {
               setIsLoading(false);
               handleLogin(normalizeUser(prof));
