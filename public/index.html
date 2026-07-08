@@ -2925,7 +2925,7 @@
       </div>
     </footer>
 
-    <script src="/assets/app.8e6ee7079d.js"></script>
+    <script src="/assets/app.7defba214d.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -6459,6 +6459,13 @@ window.addEventListener('unhandledrejection', function(event) {
   }
   var E = React.createElement;
 
+  // Toast cohérent avec le reste de l'app (window.__nexusToast, réglé par le
+  // composant racine tant qu'il est monté) — remplace les alert() bloquants.
+  function toast(msg, type, duration) {
+    if (typeof window.__nexusToast === 'function') { window.__nexusToast(msg, type || 'info', duration); return; }
+    try { window.dispatchEvent(new CustomEvent('nexus:toast', { detail: { message: msg, type: type || 'info' } })); } catch (e) {}
+  }
+
   // ── Méthode données : courses en cours du coursier ────────────────────────
   Object.assign(DataService, {
     // Résout couriers.id depuis l'id utilisateur (auth). Les tables deliveries /
@@ -6540,6 +6547,16 @@ window.addEventListener('unhandledrejection', function(event) {
     var _eh = React.useState([]), earnHist = _eh[0], setEarnHist = _eh[1];  // historique courier_earnings
     var _se = React.useState(false), showEarn = _se[0], setShowEarn = _se[1];
     var _ps = React.useState(false), pingStale = _ps[0], setPingStale = _ps[1]; // position plus partagée → invisible aux clients
+    var _jf = React.useState(''), jobFilter = _jf[0], setJobFilter = _jf[1]; // filtre texte courses ouvertes
+    var _sh = React.useState(false), showHist = _sh[0], setShowHist = _sh[1]; // historique livraisons terminées
+    var _hist = React.useState([]), history = _hist[0], setHistory = _hist[1];
+    var _hp = React.useState(0), histPage = _hp[0], setHistPage = _hp[1];
+    var _hm = React.useState(true), histMore = _hm[0], setHistMore = _hm[1];
+    var _hl = React.useState(false), histLoading = _hl[0], setHistLoading = _hl[1];
+    var _sp = React.useState(false), showProfile = _sp[0], setShowProfile = _sp[1]; // édition véhicule/zones
+    var _pf = React.useState(null), profileForm = _pf[0], setProfileForm = _pf[1];
+    var _pb = React.useState(false), profileBusy = _pb[0], setProfileBusy = _pb[1];
+    var _zo = React.useState([]), allZones = _zo[0], setAllZones = _zo[1];
 
     var user = props.user || {};
     var userId = user.id;                                   // = profiles.id = auth.uid()
@@ -6577,11 +6594,11 @@ window.addEventListener('unhandledrejection', function(event) {
         setBusy(false);
         if (r && r.ok) {
           var who = (r.buyer_name ? r.buyer_name : 'Mandataire') + (r.buyer_phone ? (' · ' + r.buyer_phone) : '');
-          alert('✅ Course saisie !\n📞 ' + who + '\nAppelez-le pour convenir du retrait.');
+          toast('✅ Course saisie ! 📞 ' + who + ' — appelez-le pour convenir du retrait.', 'success', 6000);
           setOpenJobs(function (l) { return l.filter(function (x) { return x.delivery_id !== job.delivery_id; }); });
           refresh();
-        } else if (r && r.reason === 'already_taken') { alert('Course déjà prise.'); loadOpen(); }
-        else { alert('Impossible : ' + ((r && r.reason) || 'erreur')); }
+        } else if (r && r.reason === 'already_taken') { toast('Course déjà prise.', 'warning'); loadOpen(); }
+        else { toast('Impossible : ' + ((r && r.reason) || 'erreur'), 'error'); }
       });
     }
 
@@ -6595,6 +6612,62 @@ window.addEventListener('unhandledrejection', function(event) {
             .then(function (h) { if (h && h.data) setEarnHist(h.data); }).catch(function () {});
         });
       } catch (e) {}
+    }
+
+    // ── Historique des livraisons terminées (paginé, 10 / page) ───────────────
+    var HIST_PAGE_SIZE = 10;
+    function loadHistory(page) {
+      if (!DataService._sb || !courierRowId) return;
+      setHistLoading(true);
+      var from = page * HIST_PAGE_SIZE, to = from + HIST_PAGE_SIZE - 1;
+      DataService._sb.from('deliveries')
+        .select('id,pickup_label,dropoff_label,delivered_at,courier_payout,distance_km,courier_rating')
+        .eq('courier_id', courierRowId).eq('status', 'delivered')
+        .order('delivered_at', { ascending: false }).range(from, to)
+        .then(function (r) {
+          setHistLoading(false);
+          var rows = (r && r.data) || [];
+          setHistory(function (prev) { return page === 0 ? rows : prev.concat(rows); });
+          setHistMore(rows.length === HIST_PAGE_SIZE);
+          setHistPage(page);
+        }).catch(function () { setHistLoading(false); });
+    }
+    function toggleHistory() {
+      var next = !showHist;
+      setShowHist(next);
+      if (next && history.length === 0) loadHistory(0);
+    }
+
+    // ── Édition profil (véhicule / zones) sans repasser par l'inscription ────
+    function openProfileEditor() {
+      if (!DataService._sb) return;
+      DataService._sb.from('couriers').select('id,vehicle_type,vehicle_plate,zones').eq('user_id', userId).maybeSingle().then(function (r) {
+        if (r && r.data) setProfileForm({ id: r.data.id, vehicle_type: r.data.vehicle_type || 'moto', vehicle_plate: r.data.vehicle_plate || '', zones: r.data.zones || [] });
+        setShowProfile(true);
+      });
+      if (!allZones.length) { try { DataService.getDeliveryZones().then(function (zs) { setAllZones(zs || []); }).catch(function () {}); } catch (e) {} }
+    }
+    function toggleZone(name) {
+      setProfileForm(function (f) {
+        if (!f) return f;
+        var has = f.zones.indexOf(name) >= 0;
+        var zones = has ? f.zones.filter(function (z) { return z !== name; }) : f.zones.concat([name]);
+        return Object.assign({}, f, { zones: zones });
+      });
+    }
+    function saveProfile() {
+      if (!profileForm) return;
+      setProfileBusy(true);
+      DataService._sb.from('couriers').update({
+        vehicle_type: profileForm.vehicle_type,
+        vehicle_plate: profileForm.vehicle_plate,
+        zones: profileForm.zones
+      }).eq('id', profileForm.id).then(function (r) {
+        setProfileBusy(false);
+        if (r && r.error) { toast('Erreur : ' + r.error.message, 'error'); return; }
+        toast('✅ Profil mis à jour', 'success');
+        setShowProfile(false);
+      });
     }
 
     React.useEffect(function () {
@@ -6648,7 +6721,7 @@ window.addEventListener('unhandledrejection', function(event) {
         try {
           if (window.nexusPush && nexusPush.subscribe) {
             nexusPush.subscribe(_t).then(function (ok) {
-              alert(ok ? '🔔 Notifications activées ! Vous serez alerté des nouvelles courses.' : 'Notifications non activées (autorisez-les dans les réglages du téléphone, puis réessayez).');
+              toast(ok ? '🔔 Notifications activées ! Vous serez alerté des nouvelles courses.' : 'Notifications non activées (autorisez-les dans les réglages du téléphone, puis réessayez).', ok ? 'success' : 'warning');
             });
           }
         } catch (e) {}
@@ -6730,11 +6803,11 @@ window.addEventListener('unhandledrejection', function(event) {
         setBusy(false);
         if (r && r.ok) {
           var who = (r.buyer_name ? r.buyer_name : 'Mandataire') + (r.buyer_phone ? (' · ' + r.buyer_phone) : '');
-          alert('✅ Course acceptée !\n📞 ' + who + '\nAppelez-le pour convenir du retrait.');
+          toast('✅ Course acceptée ! 📞 ' + who + ' — appelez-le pour convenir du retrait.', 'success', 6000);
           refresh();
         }
-        else if (r && (r.reason === 'already_taken' || r.reason === 'not_your_turn')) { alert('Course déjà prise / plus disponible.'); refresh(); }
-        else { alert('Impossible d\'accepter : ' + ((r && r.reason) || 'erreur')); refresh(); }
+        else if (r && (r.reason === 'already_taken' || r.reason === 'not_your_turn')) { toast('Course déjà prise / plus disponible.', 'warning'); refresh(); }
+        else { toast('Impossible d\'accepter : ' + ((r && r.reason) || 'erreur'), 'error'); refresh(); }
       });
     }
 
@@ -6743,7 +6816,7 @@ window.addEventListener('unhandledrejection', function(event) {
       DataService.declineDelivery(offer.delivery_id, courierRowId).then(function (res) {
         setBusy(false);
         if (res && !res.ok) {
-          if (res.reason === 'already_taken') addToast('Course déjà prise par un autre coursier.', 'warning');
+          if (res.reason === 'already_taken') toast('Course déjà prise par un autre coursier.', 'warning');
           // 'not_applicable' : course terminée ou annulée — on retire juste l'offre.
         }
         // Retirer l'offre de la liste du coursier dans tous les cas.
@@ -6774,7 +6847,8 @@ window.addEventListener('unhandledrejection', function(event) {
           E('div', null,
             E('div', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem' } }, 'Espace Coursier'),
             E('div', { style: { color: '#9ca3af', fontSize: '.72rem' } }, user.name || 'Coursier'),
-            earned && E('div', { onClick: function () { setShowEarn(function (v) { return !v; }); }, title: 'Voir mes gains', style: { color: '#FDEE42', fontSize: '.74rem', fontWeight: 700, marginTop: 2, cursor: 'pointer' } }, '💰 ' + Math.round(earned.total_earned || 0).toLocaleString('fr-FR') + ' F · ' + (earned.deliveries_done || 0) + ' livr. · ⭐ ' + Number(earned.rating_avg || 5).toFixed(1) + ' ▾')),
+            earned && E('div', { onClick: function () { setShowEarn(function (v) { return !v; }); }, title: 'Voir mes gains', style: { color: '#FDEE42', fontSize: '.74rem', fontWeight: 700, marginTop: 2, cursor: 'pointer' } }, '💰 ' + Math.round(earned.total_earned || 0).toLocaleString('fr-FR') + ' F · ' + (earned.deliveries_done || 0) + ' livr. · ⭐ ' + Number(earned.rating_avg || 5).toFixed(1) + ' ▾'),
+            E('div', { onClick: toggleHistory, title: 'Voir mes livraisons terminées', style: { color: '#9ca3af', fontSize: '.68rem', fontWeight: 600, marginTop: 2, cursor: 'pointer' } }, '📦 Mes livraisons ▾')),
           !embedded && E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer' } }, '×')),
 
         // Bandeau disponibilité
@@ -6785,7 +6859,8 @@ window.addEventListener('unhandledrejection', function(event) {
             E('div', { style: { fontSize: '.7rem', color: '#999' } }, online ? (pingStale ? 'Vous êtes invisible aux clients' : (pos ? 'Position partagée' : 'Position : zone du profil')) : 'Vous ne recevez pas d\'offres')),
           E('button', { onClick: online ? goOffline : goOnline, disabled: busy, style: { padding: '.5rem 1rem', borderRadius: 20, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: '.8rem', background: online ? '#fee2e2' : '#16a34a', color: online ? '#b91c1c' : '#fff' } },
             busy ? '…' : (online ? 'Passer hors ligne' : 'Passer en ligne')),
-          E('button', { onClick: enableNotifs, title: 'Activer les notifications', 'aria-label': 'Activer les notifications', style: { marginLeft: 8, width: 38, height: 38, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#006d40', color: '#fff', fontSize: '1.05rem' } }, '🔔')),
+          E('button', { onClick: enableNotifs, title: 'Activer les notifications', 'aria-label': 'Activer les notifications', style: { marginLeft: 8, width: 38, height: 38, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#006d40', color: '#fff', fontSize: '1.05rem' } }, '🔔'),
+          E('button', { onClick: openProfileEditor, title: 'Modifier véhicule / zones', 'aria-label': 'Modifier mon profil', style: { marginLeft: 8, width: 38, height: 38, borderRadius: '50%', border: 'none', cursor: 'pointer', background: '#f3f4f6', color: '#374151', fontSize: '1.05rem' } }, '🔧')),
 
         // ⚠️ Alerte « position non partagée » : en ligne mais le serveur ne reçoit
         // plus de ping GPS → invisible aux commanditaires. Bouton pour réactiver.
@@ -6811,6 +6886,25 @@ window.addEventListener('unhandledrejection', function(event) {
                     E('span', { style: { fontWeight: 700 } }, fcfa(e.amount), ' ', e.status === 'paid' ? '✅' : '⏳'));
                 })),
           E('div', { style: { fontSize: '.7rem', color: '#999', marginTop: '.4rem' } }, 'L\'admin vous paie par Wave ou Orange Money.')),
+
+        // ── Mes livraisons terminées (repliable, paginé) ──────────────────────
+        showHist && E('div', { style: { padding: '.85rem 1.25rem', background: '#f9fafb', borderBottom: '1px solid #f0f0f0' } },
+          E('div', { style: { fontWeight: 700, fontSize: '.85rem', marginBottom: '.5rem' } }, '📦 Mes livraisons terminées'),
+          history.length === 0 && !histLoading
+            ? E('div', { style: { fontSize: '.8rem', color: '#999' } }, 'Aucune livraison terminée pour le moment.')
+            : E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.4rem', maxHeight: 260, overflowY: 'auto' } },
+                history.map(function (h) {
+                  return E('div', { key: h.id, style: { fontSize: '.78rem', padding: '.4rem 0', borderBottom: '0.5px solid #f0f0f0' } },
+                    E('div', { style: { display: 'flex', justifyContent: 'space-between' } },
+                      E('span', null, h.pickup_label || '—', ' → ', h.dropoff_label || '—'),
+                      E('span', { style: { fontWeight: 700, color: '#16a34a' } }, fcfa(h.courier_payout))),
+                    E('div', { style: { color: '#999', fontSize: '.7rem', marginTop: 2 } },
+                      h.delivered_at ? new Date(h.delivered_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }) : '—',
+                      h.distance_km != null ? (' · ' + h.distance_km + ' km') : '',
+                      h.courier_rating ? (' · ⭐ ' + h.courier_rating) : ''));
+                })),
+          histMore && E('button', { onClick: function () { loadHistory(histPage + 1); }, disabled: histLoading, style: { width: '100%', marginTop: '.6rem', padding: '.5rem', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#006d40', fontWeight: 700, fontSize: '.78rem', cursor: 'pointer' } },
+            histLoading ? '…' : 'Voir plus')),
 
         // Course active
         active.length > 0 && E('div', { style: { padding: '1rem 1.25rem', background: '#f0fdf4' } },
@@ -6882,8 +6976,19 @@ window.addEventListener('unhandledrejection', function(event) {
           E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.6rem' } },
             E('div', { style: { fontSize: '.7rem', fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '.04em' } }, '🟢 Courses disponibles' + (openJobs.length ? ' (' + openJobs.length + ')' : '')),
             E('button', { onClick: function () { loadOpen(); }, style: { background: 'none', border: 'none', color: '#006d40', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600 } }, '↻ Rafraîchir')),
-          openJobs.length === 0 && E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1rem 0' } }, 'Aucune course ouverte pour le moment.'),
-          openJobs.map(function (j) {
+          openJobs.length > 1 && E('input', {
+            type: 'text', value: jobFilter, placeholder: '🔎 Filtrer par adresse (retrait ou livraison)…',
+            onChange: function (e) { setJobFilter(e.target.value); },
+            style: { width: '100%', boxSizing: 'border-box', padding: '.5rem .7rem', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: '.82rem', marginBottom: '.6rem' }
+          }),
+          (function () {
+            var q = jobFilter.trim().toLowerCase();
+            var filteredJobs = !q ? openJobs : openJobs.filter(function (j) {
+              return (j.pickup_label || '').toLowerCase().indexOf(q) >= 0 || (j.dropoff_label || '').toLowerCase().indexOf(q) >= 0;
+            });
+            if (openJobs.length === 0) return E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1rem 0' } }, 'Aucune course ouverte pour le moment.');
+            if (filteredJobs.length === 0) return E('div', { style: { textAlign: 'center', color: '#999', fontSize: '.82rem', padding: '1rem 0' } }, 'Aucune course ne correspond à ce filtre.');
+            return filteredJobs.map(function (j) {
             return E('div', { key: j.delivery_id, style: { border: '1px solid #bbf7d0', borderRadius: 12, padding: '.9rem', marginBottom: '.6rem', background: '#f7fef9' } },
               E('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '.3rem' } },
                 E('span', { style: { fontSize: '.72rem', background: '#f0fdf4', color: '#16a34a', padding: '.15rem .5rem', borderRadius: 6, fontWeight: 600 } }, (j.dist_to_pickup_km != null ? j.dist_to_pickup_km + ' km' : '—') + ' du retrait'),
@@ -6892,7 +6997,32 @@ window.addEventListener('unhandledrejection', function(event) {
               E('div', { style: { fontSize: '.78rem', color: '#555', marginBottom: '.2rem' } }, '🏁 ', j.dropoff_label || '—'),
               j.items_desc && E('div', { style: { fontSize: '.72rem', color: '#888', fontStyle: 'italic', marginBottom: '.4rem' } }, j.items_desc),
               E('button', { onClick: function () { grab(j); }, disabled: busy, style: { width: '100%', padding: '.7rem', borderRadius: 10, border: 'none', background: busy ? '#9ca3af' : '#006d40', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: busy ? 'default' : 'pointer' } }, '🙋 Je prends cette course'));
-          })
+            });
+          })()
+        )
+      ),
+
+      // ── Modal : éditer véhicule / zones (sans repasser par l'inscription) ──
+      showProfile && profileForm && E('div', { onClick: function () { setShowProfile(false); }, style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' } },
+        E('div', { onClick: function (e) { e.stopPropagation(); }, style: { background: '#fff', borderRadius: 16, width: '100%', maxWidth: 380, padding: '1.25rem', maxHeight: '85vh', overflowY: 'auto' } },
+          E('h3', { style: { margin: '0 0 .9rem', fontSize: '1.02rem', fontWeight: 800 } }, '🔧 Mon profil coursier'),
+          E('div', { className: 'form-group' },
+            E('label', { className: 'form-label' }, 'Véhicule'),
+            E('select', { className: 'form-input', value: profileForm.vehicle_type, onChange: function (e) { setProfileForm(function (f) { return Object.assign({}, f, { vehicle_type: e.target.value }); }); } },
+              ['moto', 'voiture', 'velo', 'a_pied'].map(function (v) { return E('option', { key: v, value: v }, v.replace('_', ' ').replace(/^./, function (c) { return c.toUpperCase(); })); }))),
+          E('div', { className: 'form-group' },
+            E('label', { className: 'form-label' }, 'Plaque / immatriculation'),
+            E('input', { className: 'form-input', value: profileForm.vehicle_plate, onChange: function (e) { setProfileForm(function (f) { return Object.assign({}, f, { vehicle_plate: e.target.value }); }); } })),
+          E('div', { className: 'form-group' },
+            E('label', { className: 'form-label' }, 'Zones desservies'),
+            E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '.4rem' } },
+              (allZones.length ? allZones.map(function (z) { return z.name; }) : profileForm.zones).map(function (name) {
+                var on = profileForm.zones.indexOf(name) >= 0;
+                return E('span', { key: name, onClick: function () { toggleZone(name); }, style: { padding: '.35rem .7rem', borderRadius: 99, fontSize: '.78rem', fontWeight: 600, cursor: 'pointer', border: '1px solid ' + (on ? '#006d40' : '#e5e7eb'), background: on ? '#006d40' : '#fff', color: on ? '#fff' : '#374151' } }, name);
+              }))),
+          E('div', { style: { display: 'flex', gap: '.5rem', marginTop: '1rem' } },
+            E('button', { className: 'btn btn-secondary', style: { flex: 1 }, onClick: function () { setShowProfile(false); } }, 'Annuler'),
+            E('button', { className: 'btn btn-primary', style: { flex: 1 }, disabled: profileBusy, onClick: saveProfile }, profileBusy ? '…' : 'Enregistrer'))
         )
       )
     );
@@ -6910,7 +7040,7 @@ window.addEventListener('unhandledrejection', function(event) {
   }
 
   function openDash() {
-    if (!currentUser || !currentUser.id) { alert('Connectez-vous avec un compte coursier.'); return; }
+    if (!currentUser || !currentUser.id) { toast('Connectez-vous avec un compte coursier.', 'warning'); return; }
     var r = getMount();
     var close = function () { if (r) r.render(null); else ReactDOM.unmountComponentAtNode(mountEl); };
     var el = E(CourierDashboard, { onClose: close, user: currentUser });

@@ -1247,6 +1247,66 @@ const NEXUS_TRANSLATIONS = {
     'transport.role_label':     'Transporteur',
     'transport.role_desc':      'Publiez des trajets, vendez des places et transportez des colis',
     'transport.onboarding_info':'Créez d’abord votre compte. Juste après, vous compléterez votre fiche transporteur (véhicule, places, trajets) — validée par notre équipe sous 24h.',
+    'transport.rating_new':      'Nouveau',
+    'transport.trips_done_label':'trajets',
+    'transport.month_earned':    'Ce mois-ci',
+    'transport.package_price_label':'Prix proposé (FCFA)',
+    'transport.trip_full':       'Complet',
+    'transport.invalid_price':   'Indiquez un prix valide.',
+    // ─ NEXUS Élevage (breeder dashboard) ─
+    'breeder.title':             'Mon espace Éleveur',
+    'breeder.not_active_title':  'Profil éleveur non activé',
+    'breeder.not_active_pending':'Votre demande est en cours de validation par notre équipe. Vous serez notifié dès l\'activation.',
+    'breeder.not_active_generic':'Contactez l\'administrateur NEXUS pour activer votre profil éleveur et publier vos annonces bétail/terroir.',
+    'breeder.tab_listings':      'Mes annonces',
+    'breeder.tab_stats':         'Statistiques',
+    'breeder.active_count':      'actives',
+    'breeder.new_listing_btn':   '➕ Publier une annonce',
+    'breeder.cancel':            '✕ Annuler',
+    'breeder.field_name':        'Nom de l\'annonce *',
+    'breeder.field_type':        'Type *',
+    'breeder.field_type_choose': 'Type',
+    'breeder.type_sheep':        'Moutons (Tabaski)',
+    'breeder.type_poultry':      'Volaille',
+    'breeder.type_cattle':       'Bétail (bovins)',
+    'breeder.type_goats':        'Chèvres & Moutons',
+    'breeder.type_equine':       'Chevaux & Ânes',
+    'breeder.type_pets':         'Animaux de compagnie',
+    'breeder.type_other':        'Autres',
+    'breeder.field_race':        'Race',
+    'breeder.field_weight':      'Poids (kg)',
+    'breeder.field_age':         'Âge',
+    'breeder.field_sex':         'Sexe',
+    'breeder.sex_choose':        'Sexe',
+    'breeder.sex_male':          'Mâle',
+    'breeder.sex_female':        'Femelle',
+    'breeder.field_price':       'Prix (FCFA) *',
+    'breeder.field_stock':       'Quantité disponible',
+    'breeder.field_description': 'Description',
+    'breeder.field_photo_url':   'URL photo',
+    'breeder.submit_btn':        '🐏 Publier l\'annonce',
+    'breeder.publishing':        '⏳ Publication…',
+    'breeder.name_req':          'Le nom de l\'annonce est requis.',
+    'breeder.type_req':          'Choisissez un type d\'animal.',
+    'breeder.price_req':         'Indiquez un prix valide.',
+    'breeder.published':         '✅ Annonce publiée !',
+    'breeder.no_listings':       'Aucune annonce pour le moment. Publiez votre premier animal !',
+    'breeder.deactivate':        'Désactiver',
+    'breeder.activate':          'Réactiver',
+    'breeder.deactivated':       'Annonce désactivée',
+    'breeder.activated':         'Annonce réactivée',
+    'breeder.status_active':     'Active',
+    'breeder.status_inactive':   'Inactive',
+    'breeder.position_title':    '📍 Ma position',
+    'breeder.position_set':      'Position partagée — visible sur la carte « éleveurs proches ».',
+    'breeder.position_unset':    'Position non renseignée — invisible sur la carte « éleveurs proches ».',
+    'breeder.update_position_btn':'Mettre à jour ma position',
+    'breeder.position_updated':  '✅ Position mise à jour',
+    'breeder.geoloc_denied':     'Géolocalisation refusée — activez-la dans les réglages du navigateur.',
+    'breeder.geoloc_unsupported':'Géolocalisation non disponible sur cet appareil.',
+    'breeder.stats_total':       'Annonces publiées',
+    'breeder.stats_active':      'Annonces actives',
+    'breeder.stats_inactive':    'Annonces inactives',
     // ─ NEXUS Location (rental) ─
     'location.title':           'NEXUS Location',
     'location.tab_browse':      '🔎 Louer un objet',
@@ -1627,6 +1687,66 @@ const NEXUS_TRANSLATIONS = {
     'transport.role_label':     'Carrier',
     'transport.role_desc':      'Post trips, sell seats and carry packages',
     'transport.onboarding_info':'First create your account. Right after, you\'ll complete your carrier profile (vehicle, seats, trips) — reviewed by our team within 24h.',
+    'transport.rating_new':      'New',
+    'transport.trips_done_label':'trips',
+    'transport.month_earned':    'This month',
+    'transport.package_price_label':'Proposed price (FCFA)',
+    'transport.trip_full':       'Full',
+    'transport.invalid_price':   'Enter a valid price.',
+    // ─ NEXUS Elevage (breeder dashboard) ─
+    'breeder.title':             'My Breeder Space',
+    'breeder.not_active_title':  'Breeder profile not activated',
+    'breeder.not_active_pending':'Your request is being reviewed by our team. You will be notified once activated.',
+    'breeder.not_active_generic':'Contact the NEXUS admin to activate your breeder profile and publish your livestock/local produce listings.',
+    'breeder.tab_listings':      'My listings',
+    'breeder.tab_stats':         'Statistics',
+    'breeder.active_count':      'active',
+    'breeder.new_listing_btn':   '➕ Post a listing',
+    'breeder.cancel':            '✕ Cancel',
+    'breeder.field_name':        'Listing name *',
+    'breeder.field_type':        'Type *',
+    'breeder.field_type_choose': 'Type',
+    'breeder.type_sheep':        'Sheep (Tabaski)',
+    'breeder.type_poultry':      'Poultry',
+    'breeder.type_cattle':       'Cattle',
+    'breeder.type_goats':        'Goats & Sheep',
+    'breeder.type_equine':       'Horses & Donkeys',
+    'breeder.type_pets':         'Pets',
+    'breeder.type_other':        'Other',
+    'breeder.field_race':        'Breed',
+    'breeder.field_weight':      'Weight (kg)',
+    'breeder.field_age':         'Age',
+    'breeder.field_sex':         'Sex',
+    'breeder.sex_choose':        'Sex',
+    'breeder.sex_male':          'Male',
+    'breeder.sex_female':        'Female',
+    'breeder.field_price':       'Price (FCFA) *',
+    'breeder.field_stock':       'Quantity available',
+    'breeder.field_description': 'Description',
+    'breeder.field_photo_url':   'Photo URL',
+    'breeder.submit_btn':        '🐏 Publish listing',
+    'breeder.publishing':        '⏳ Publishing…',
+    'breeder.name_req':          'The listing name is required.',
+    'breeder.type_req':          'Choose an animal type.',
+    'breeder.price_req':         'Enter a valid price.',
+    'breeder.published':         '✅ Listing published!',
+    'breeder.no_listings':       'No listings yet. Post your first animal!',
+    'breeder.deactivate':        'Deactivate',
+    'breeder.activate':          'Reactivate',
+    'breeder.deactivated':       'Listing deactivated',
+    'breeder.activated':         'Listing reactivated',
+    'breeder.status_active':     'Active',
+    'breeder.status_inactive':   'Inactive',
+    'breeder.position_title':    '📍 My location',
+    'breeder.position_set':      'Location shared — visible on the "nearby breeders" map.',
+    'breeder.position_unset':    'Location not set — invisible on the "nearby breeders" map.',
+    'breeder.update_position_btn':'Update my location',
+    'breeder.position_updated':  '✅ Location updated',
+    'breeder.geoloc_denied':     'Location access denied — enable it in your browser settings.',
+    'breeder.geoloc_unsupported':'Geolocation not available on this device.',
+    'breeder.stats_total':       'Listings published',
+    'breeder.stats_active':      'Active listings',
+    'breeder.stats_inactive':    'Inactive listings',
     // ─ NEXUS Location (rental) ─
     'location.title':           'NEXUS Location',
     'location.tab_browse':      '🔎 Rent an item',
@@ -2141,6 +2261,66 @@ const NEXUS_TRANSLATIONS = {
     'transport.role_label':     'Transportër',
     'transport.role_desc':      'Génnal say tukki, jaayal palaas yi te yóbbu colis',
     'transport.onboarding_info':'Sosal sa kont bu jëkk. Ci topp, dinga mat sa fiches transportër (woto, palaas, tukki) — dinañu ko seetlu ci 24h.',
+    'transport.rating_new':      'Bu bees',
+    'transport.trips_done_label':'tukki',
+    'transport.month_earned':    'Weer wii',
+    'transport.package_price_label':'Njëg wone (FCFA)',
+    'transport.trip_full':       'Fees na',
+    'transport.invalid_price':   'Jox njëg bu baax.',
+    // ─ NEXUS Élevage (jaay mala — à faire relire par un locuteur natif) ─
+    'breeder.title':             'Sama espace Jaay-mala',
+    'breeder.not_active_title':  'Profil jaay-mala tëjul',
+    'breeder.not_active_pending':'Sunu ekip dina seetlu sa ndëmm. Dinañu la xamal bu ñu ko activé.',
+    'breeder.not_active_generic':'Jokkoo ak admin NEXUS ngir activé sa profil jaay-mala te génnal say annonce mala/produit local.',
+    'breeder.tab_listings':      'Samay annonce',
+    'breeder.tab_stats':         'Statistik',
+    'breeder.active_count':      'ap nañu dox',
+    'breeder.new_listing_btn':   '➕ Génnal benn annonce',
+    'breeder.cancel':            '✕ Neenal',
+    'breeder.field_name':        'Turu annonce *',
+    'breeder.field_type':        'Xeet *',
+    'breeder.field_type_choose': 'Xeet',
+    'breeder.type_sheep':        'Xar (Tabaski)',
+    'breeder.type_poultry':      'Ginaar',
+    'breeder.type_cattle':       'Nag (bovins)',
+    'breeder.type_goats':        'Bëy & Xar',
+    'breeder.type_equine':       'Fas & Mbaam',
+    'breeder.type_pets':         'Mala kër',
+    'breeder.type_other':        'Yeneen',
+    'breeder.field_race':        'Race',
+    'breeder.field_weight':      'Diis (kg)',
+    'breeder.field_age':         'At',
+    'breeder.field_sex':         'Sexe',
+    'breeder.sex_choose':        'Sexe',
+    'breeder.sex_male':          'Góor',
+    'breeder.sex_female':        'Jigéen',
+    'breeder.field_price':       'Njëg (FCFA) *',
+    'breeder.field_stock':       'Limu am',
+    'breeder.field_description': 'Leeral',
+    'breeder.field_photo_url':   'URL foto',
+    'breeder.submit_btn':        '🐏 Génnal annonce bi',
+    'breeder.publishing':        '⏳ Ap na génn…',
+    'breeder.name_req':          'Tur annonce a laaj.',
+    'breeder.type_req':          'Tannal xeet mala.',
+    'breeder.price_req':         'Jox njëg bu baax.',
+    'breeder.published':         '✅ Annonce génn na !',
+    'breeder.no_listings':       'Amul annonce léegi. Génnal sa mala bu jëkk !',
+    'breeder.deactivate':        'Tëj',
+    'breeder.activate':          'Ubbi',
+    'breeder.deactivated':       'Annonce tëj na',
+    'breeder.activated':         'Annonce ubbi na',
+    'breeder.status_active':     'Ap na dox',
+    'breeder.status_inactive':   'Tëj na',
+    'breeder.position_title':    '📍 Sama bërëb',
+    'breeder.position_set':      'Bërëb wone na — gis nañu la ci karte « jaay-mala yu jege ».',
+    'breeder.position_unset':    'Bërëb wonewul — gisuñu la ci karte « jaay-mala yu jege ».',
+    'breeder.update_position_btn':'Yeesalal sama bërëb',
+    'breeder.position_updated':  '✅ Bërëb yeesal na',
+    'breeder.geoloc_denied':     'Bërëb bañ na — ubbil ko ci paramet navigateur bi.',
+    'breeder.geoloc_unsupported':'Géolocalisation amul ci sa apparëy.',
+    'breeder.stats_total':       'Annonce yu génn',
+    'breeder.stats_active':      'Annonce yu ap dox',
+    'breeder.stats_inactive':    'Annonce yu tëj',
     // ─ NEXUS Location (jëlub — à faire relire par un locuteur natif) ─
     'location.title':           'NEXUS Location',
     'location.tab_browse':      '🔎 Jël benn jumtukaay',
@@ -22249,6 +22429,7 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
   const [allReservations, setAllReservations] = React.useState([]);
   const [showTripForm, setShowTripForm] = React.useState(false);
   const [tripForm, setTripForm] = React.useState({ origin_city:'Dakar', destination_city:'Thiès', departure_at:'', vehicle_type:'voiture', seats_total:4, price_per_seat_fcfa:2000, allows_packages:true });
+  const [packageModal, setPackageModal] = React.useState(null); // { resa, price }
 
   const FCFA = n => Math.round(n||0).toLocaleString('fr-FR') + ' F';
 
@@ -22314,9 +22495,13 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
     catch (e) { addToast(t('common.error') + ' : ' + e.message, 'error'); }
   };
 
-  const acceptPackage = async (resa) => {
-    const price = parseInt(window.prompt(t('transport.package_price_q'), tripForm.price_per_seat_fcfa || '2000'), 10);
-    if (!price || price <= 0) return;
+  const openPackageModal = (resa) => setPackageModal({ resa, price: String(tripForm.price_per_seat_fcfa || 2000) });
+
+  const confirmAcceptPackage = async () => {
+    const price = parseInt(packageModal.price, 10);
+    if (!price || price <= 0) { addToast(t('transport.invalid_price'), 'warning'); return; }
+    const resa = packageModal.resa;
+    setPackageModal(null);
     try {
       await DataService.acceptPackage(resa.id, price);
       addToast(t('transport.package_accepted'), 'success');
@@ -22373,11 +22558,30 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
   const confirmedResa = allReservations.filter(r => r.payment_status === 'paid');
   const totalEarned = confirmedResa.reduce((s,r) => s + (r.price_fcfa||0), 0);
   const pendingPackages = reservations.filter(r => r.booking_type === 'package' && r.status === 'pending_review');
+  const _now = new Date();
+  const monthEarned = confirmedResa.filter(r => {
+    const d = new Date(r.created_at);
+    return d.getMonth() === _now.getMonth() && d.getFullYear() === _now.getFullYear();
+  }).reduce((s,r) => s + (r.price_fcfa||0), 0);
 
   return E('div', null,
     E('div', { style:{ background:'var(--primary)', color:'#fff', padding:'1rem 1.25rem', borderRadius:12, marginBottom:'1rem' } },
       E('div', { style:{ fontWeight:700, fontSize:'1rem' } }, '🚐 ', transporter.name),
-      E('div', { style:{ fontSize:'.82rem', opacity:.85 } }, transporter.company_name || (transporter.vehicle_type + ' · ' + transporter.seats_capacity + ' ' + t('transport.seats_unit')))
+      E('div', { style:{ fontSize:'.82rem', opacity:.85, marginBottom:'.6rem' } }, transporter.company_name || (transporter.vehicle_type + ' · ' + transporter.seats_capacity + ' ' + t('transport.seats_unit'))),
+      E('div', { style:{ display:'flex', gap:'1rem', paddingTop:'.6rem', borderTop:'1px solid rgba(255,255,255,.2)' } },
+        E('div', null,
+          E('div', { style:{ fontWeight:800, fontSize:'.95rem' } }, transporter.rating_count > 0 ? ('⭐ ' + Number(transporter.rating_avg||0).toFixed(1)) : t('transport.rating_new')),
+          E('div', { style:{ fontSize:'.68rem', opacity:.75 } }, transporter.rating_count > 0 ? (transporter.rating_count + ' avis') : '')
+        ),
+        E('div', null,
+          E('div', { style:{ fontWeight:800, fontSize:'.95rem' } }, transporter.trips_done || 0),
+          E('div', { style:{ fontSize:'.68rem', opacity:.75 } }, t('transport.trips_done_label'))
+        ),
+        E('div', null,
+          E('div', { style:{ fontWeight:800, fontSize:'.95rem' } }, FCFA(monthEarned)),
+          E('div', { style:{ fontSize:'.68rem', opacity:.75 } }, t('transport.month_earned'))
+        )
+      )
     ),
 
     E('div', { style:{ display:'flex', gap:'.35rem', marginBottom:'1rem', overflowX:'auto' } },
@@ -22425,7 +22629,10 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
               E('div',{style:{fontWeight:700,fontSize:'.9rem'}}, trip.origin_city, ' → ', trip.destination_city),
               E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)',marginTop:'.15rem'}}, new Date(trip.departure_at).toLocaleString('fr-FR'))
             ),
-            E('span',{style:{fontSize:'.72rem',fontWeight:700,borderRadius:99,padding:'2px 10px',background: trip.status==='scheduled'?'#DCFCE7':trip.status==='cancelled'?'#FEE2E2':'#F3F4F6', color: trip.status==='scheduled'?'#166534':trip.status==='cancelled'?'#991B1B':'#374151'}}, trip.status)
+            E('span',{style:{display:'flex',gap:'.35rem',alignItems:'center'}},
+              trip.status==='scheduled' && trip.seats_available===0 && E('span',{style:{fontSize:'.72rem',fontWeight:700,borderRadius:99,padding:'2px 10px',background:'#FEF3C7',color:'#92400E'}}, t('transport.trip_full')),
+              E('span',{style:{fontSize:'.72rem',fontWeight:700,borderRadius:99,padding:'2px 10px',background: trip.status==='scheduled'?'#DCFCE7':trip.status==='cancelled'?'#FEE2E2':'#F3F4F6', color: trip.status==='scheduled'?'#166534':trip.status==='cancelled'?'#991B1B':'#374151'}}, trip.status)
+            )
           ),
           E('div',{style:{fontSize:'.82rem',color:'var(--text-secondary)',marginBottom:'.5rem'}},
             '💺 ', trip.seats_available, '/', trip.seats_total, ' ' + t('transport.seats_free') + ' · ', FCFA(trip.price_per_seat_fcfa), t('transport.per_seat'),
@@ -22461,7 +22668,7 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
             )
           ),
           r.booking_type==='package' && r.status==='pending_review' && E('div',{style:{display:'flex',gap:'.5rem',marginTop:'.6rem'}},
-            E('button',{className:'btn btn-primary btn-sm',onClick:()=>acceptPackage(r)}, t('transport.accept_price')),
+            E('button',{className:'btn btn-primary btn-sm',onClick:()=>openPackageModal(r)}, t('transport.accept_price')),
             E('button',{className:'btn btn-secondary btn-sm',onClick:()=>rejectPackage(r)}, t('transport.reject'))
           )
         ))
@@ -22483,6 +22690,230 @@ const TransporterDashboard = ({ currentUser, addToast }) => {
           ),
           E('div',{style:{fontWeight:700,color:'var(--primary)'}}, FCFA(r.price_fcfa))
         ))
+      )
+    ),
+
+    // ── Modal : fixer le prix d'un colis (remplace window.prompt) ──────────
+    packageModal && E('div', { onClick:()=>setPackageModal(null), style:{ position:'fixed', inset:0, background:'rgba(0,0,0,.5)', zIndex:9998, display:'flex', alignItems:'center', justifyContent:'center', padding:'1rem' } },
+      E('div', { onClick:e=>e.stopPropagation(), style:{ background:'#fff', borderRadius:16, width:'100%', maxWidth:360, padding:'1.25rem' } },
+        E('h3', { style:{ margin:'0 0 .85rem', fontSize:'1.02rem', fontWeight:800 } }, t('transport.package_price_q')),
+        E('div', { className:'form-group' },
+          E('label', { className:'form-label' }, t('transport.package_price_label')),
+          E('input', { type:'number', min:0, className:'form-input', autoFocus:true, value:packageModal.price, onChange:e=>setPackageModal(m=>({...m, price:e.target.value})) })
+        ),
+        E('div', { style:{ display:'flex', gap:'.5rem', marginTop:'1rem' } },
+          E('button', { className:'btn btn-secondary', style:{flex:1}, onClick:()=>setPackageModal(null) }, t('common.cancel')),
+          E('button', { className:'btn btn-primary', style:{flex:1}, onClick:confirmAcceptPackage }, t('transport.accept_price'))
+        )
+      )
+    )
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// BreederDashboard — espace éleveur (bétail Tabaski / produits du terroir).
+// Mirror structurel de TransporterDashboard. Pas de table dédiée : les annonces
+// sont des lignes `products` avec is_animal=true + animal_specs jsonb (cf.
+// DataService.saveProduct). L'activation (profiles.is_breeder) est décidée par
+// l'admin (RPC admin_set_breeder) — pas d'auto-inscription ici.
+// ════════════════════════════════════════════════════════════════════════════
+const BreederDashboard = ({ currentUser, addToast }) => {
+  const E = React.createElement;
+  const sb = DataService._sb;
+  const [profile, setProfile] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [tab, setTab] = React.useState('listings');
+  const [listings, setListings] = React.useState([]);
+  const [listingsLoading, setListingsLoading] = React.useState(false);
+  const [showForm, setShowForm] = React.useState(false);
+  const [form, setForm] = React.useState({ name:'', animalType:'', animalRace:'', animalPoids:'', animalAge:'', animalSexe:'', price:'', stock:'1', description:'', imageUrl:'' });
+  const [busy, setBusy] = React.useState(false);
+  const [posBusy, setPosBusy] = React.useState(false);
+
+  const ANIMAL_TYPES = [
+    ['sheep', t('breeder.type_sheep')], ['poultry', t('breeder.type_poultry')], ['cattle', t('breeder.type_cattle')],
+    ['goats', t('breeder.type_goats')], ['equine', t('breeder.type_equine')], ['pets', t('breeder.type_pets')], ['other', t('breeder.type_other')],
+  ];
+  const fcfa = eur => Math.round((Number(eur)||0) * 655.957).toLocaleString('fr-FR') + ' F';
+
+  React.useEffect(() => {
+    if (!sb || !currentUser?.id) { setLoading(false); return; }
+    sb.from('profiles').select('id,role,is_breeder,current_lat,current_lng,shop_name,name,phone')
+      .eq('id', currentUser.id).maybeSingle()
+      .then(({ data }) => { setProfile(data || null); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [currentUser?.id]);
+
+  const loadListings = React.useCallback(() => {
+    if (!sb || !currentUser?.id) return;
+    setListingsLoading(true);
+    sb.from('products').select('id,name,price,image_url,active,created_at,stock,animal_specs')
+      .eq('vendor_id', currentUser.id).eq('is_animal', true)
+      .order('created_at', { ascending:false }).limit(60)
+      .then(({ data }) => { setListings(data || []); setListingsLoading(false); })
+      .catch(() => setListingsLoading(false));
+  }, [currentUser?.id]);
+  React.useEffect(() => { if (profile && profile.is_breeder) loadListings(); }, [profile, loadListings]);
+
+  const submitListing = async () => {
+    if (!form.name.trim()) { addToast(t('breeder.name_req'), 'warning'); return; }
+    if (!form.animalType) { addToast(t('breeder.type_req'), 'warning'); return; }
+    const priceFcfa = parseFloat(form.price);
+    if (!priceFcfa || priceFcfa <= 0) { addToast(t('breeder.price_req'), 'warning'); return; }
+    setBusy(true);
+    try {
+      const typeLabel = (ANIMAL_TYPES.find(t2 => t2[0] === form.animalType) || [,form.animalType])[1];
+      await DataService.saveProduct({
+        name: form.name.trim(), category: 'Élevage', price: priceFcfa / 655.957, stock: parseInt(form.stock,10) || 1,
+        description: form.description.trim() || null, imageUrl: form.imageUrl.trim() || null,
+        vendor: currentUser.id, vendorName: (profile && (profile.shop_name || profile.name)) || currentUser.name,
+        active: true, rating: 0, reviewsCount: 0,
+        isAnimal: true, animalSpecs: { type: typeLabel, race: form.animalRace.trim() || null, poids_kg: form.animalPoids || null, age: form.animalAge.trim() || null, sexe: form.animalSexe || null },
+      });
+      addToast(t('breeder.published'), 'success');
+      setShowForm(false);
+      setForm({ name:'', animalType:'', animalRace:'', animalPoids:'', animalAge:'', animalSexe:'', price:'', stock:'1', description:'', imageUrl:'' });
+      loadListings();
+    } catch (e) { addToast(t('common.error') + ' : ' + e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+
+  const toggleListingActive = async (listing) => {
+    try {
+      await sb.from('products').update({ active: !listing.active }).eq('id', listing.id);
+      setListings(ls => ls.map(l => l.id === listing.id ? { ...l, active: !l.active } : l));
+      addToast(listing.active ? t('breeder.deactivated') : t('breeder.activated'), 'info');
+    } catch (e) { addToast(t('common.error') + ' : ' + e.message, 'error'); }
+  };
+
+  const updatePosition = () => {
+    if (!navigator.geolocation) { addToast(t('breeder.geoloc_unsupported'), 'error'); return; }
+    setPosBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        sb.from('profiles').update({ current_lat: p.coords.latitude, current_lng: p.coords.longitude }).eq('id', currentUser.id)
+          .then(() => { setProfile(pr => ({ ...pr, current_lat: p.coords.latitude, current_lng: p.coords.longitude })); addToast(t('breeder.position_updated'), 'success'); })
+          .catch((e) => addToast(t('common.error') + ' : ' + e.message, 'error'))
+          .then(() => setPosBusy(false));
+      },
+      () => { addToast(t('breeder.geoloc_denied'), 'warning'); setPosBusy(false); },
+      { timeout: 8000 }
+    );
+  };
+
+  if (loading) return E('div', { style:{ textAlign:'center', padding:'3rem' } }, E('i', { className:'fas fa-spinner fa-spin', style:{ fontSize:'2rem', color:'var(--primary)' } }));
+
+  // ── Profil pas encore activé par l'admin ──────────────────────────────────
+  if (!profile || !profile.is_breeder) return E('div', { style:{ textAlign:'center', padding:'3rem 1rem' } },
+    E('div', { style:{ fontSize:'3rem', marginBottom:'1rem' } }, '🐏'),
+    E('h3', { style:{ fontWeight:700, marginBottom:'.5rem' } }, t('breeder.not_active_title')),
+    E('p', { style:{ color:'var(--text-secondary)' } }, profile && profile.role === 'breeder' ? t('breeder.not_active_pending') : t('breeder.not_active_generic'))
+  );
+
+  // ── Interface éleveur actif ────────────────────────────────────────────────
+  const activeCount = listings.filter(l => l.active).length;
+  const hasPosition = profile.current_lat != null && profile.current_lng != null;
+
+  return E('div', null,
+    E('div', { style:{ background:'var(--primary)', color:'#fff', padding:'1rem 1.25rem', borderRadius:12, marginBottom:'1rem' } },
+      E('div', { style:{ fontWeight:700, fontSize:'1rem' } }, '🐏 ', profile.shop_name || profile.name || currentUser.name),
+      E('div', { style:{ display:'flex', gap:'1rem', paddingTop:'.6rem', marginTop:'.4rem', borderTop:'1px solid rgba(255,255,255,.2)' } },
+        E('div', null,
+          E('div', { style:{ fontWeight:800, fontSize:'.95rem' } }, listings.length),
+          E('div', { style:{ fontSize:'.68rem', opacity:.75 } }, t('breeder.stats_total'))
+        ),
+        E('div', null,
+          E('div', { style:{ fontWeight:800, fontSize:'.95rem' } }, activeCount),
+          E('div', { style:{ fontSize:'.68rem', opacity:.75 } }, t('breeder.active_count'))
+        )
+      )
+    ),
+
+    E('div', { style:{ display:'flex', gap:'.35rem', marginBottom:'1rem', overflowX:'auto' } },
+      [
+        { id:'listings', label:t('breeder.tab_listings') },
+        { id:'stats',    label:t('breeder.tab_stats') },
+      ].map(tb => E('button', { key:tb.id, onClick:()=>setTab(tb.id), style:{
+        padding:'.4rem .85rem', borderRadius:8, border:'none', cursor:'pointer',
+        fontWeight:tab===tb.id?700:400, fontSize:'.82rem', whiteSpace:'nowrap',
+        background:tab===tb.id?'var(--primary)':'var(--bg-light)',
+        color:tab===tb.id?'#fff':'var(--text-secondary)'
+      }}, tb.label))
+    ),
+
+    // ── Mes annonces ───────────────────────────────────────────────────────
+    tab==='listings' && E('div', null,
+      E('button', { className:'btn btn-primary btn-block', style:{ marginBottom:'1rem' }, onClick:()=>setShowForm(s=>!s) }, showForm ? t('breeder.cancel') : t('breeder.new_listing_btn')),
+      showForm && E('div', { style:{ border:'1.5px solid var(--primary)', borderRadius:12, padding:'1rem', marginBottom:'1rem' } },
+        E('div', { className:'form-group' }, E('label', { className:'form-label' }, t('breeder.field_name')),
+          E('input', { className:'form-input', value:form.name, onChange:e=>setForm(f=>({...f,name:e.target.value})) })),
+        E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('breeder.field_type')),
+            E('select', { className:'form-input', value:form.animalType, onChange:e=>setForm(f=>({...f,animalType:e.target.value})) },
+              E('option', { value:'' }, t('breeder.field_type_choose')),
+              ANIMAL_TYPES.map(([k,label]) => E('option', { key:k, value:k }, label)))),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('breeder.field_race')),
+            E('input', { className:'form-input', value:form.animalRace, onChange:e=>setForm(f=>({...f,animalRace:e.target.value})) }))
+        ),
+        E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('breeder.field_weight')),
+            E('input', { type:'number', min:0, className:'form-input', value:form.animalPoids, onChange:e=>setForm(f=>({...f,animalPoids:e.target.value})) })),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('breeder.field_age')),
+            E('input', { className:'form-input', value:form.animalAge, onChange:e=>setForm(f=>({...f,animalAge:e.target.value})) })),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('breeder.field_sex')),
+            E('select', { className:'form-input', value:form.animalSexe, onChange:e=>setForm(f=>({...f,animalSexe:e.target.value})) },
+              E('option', { value:'' }, t('breeder.sex_choose')),
+              E('option', { value:'M' }, t('breeder.sex_male')),
+              E('option', { value:'F' }, t('breeder.sex_female'))))
+        ),
+        E('div', { className:'form-row', style:{ display:'flex', gap:'.6rem' } },
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('breeder.field_price')),
+            E('input', { type:'number', min:0, className:'form-input', value:form.price, onChange:e=>setForm(f=>({...f,price:e.target.value})) })),
+          E('div', { className:'form-group', style:{ flex:1 } }, E('label', { className:'form-label' }, t('breeder.field_stock')),
+            E('input', { type:'number', min:1, className:'form-input', value:form.stock, onChange:e=>setForm(f=>({...f,stock:e.target.value})) }))
+        ),
+        E('div', { className:'form-group' }, E('label', { className:'form-label' }, t('breeder.field_description')),
+          E('textarea', { className:'form-input', rows:2, value:form.description, onChange:e=>setForm(f=>({...f,description:e.target.value})) })),
+        E('div', { className:'form-group' }, E('label', { className:'form-label' }, t('breeder.field_photo_url')),
+          E('input', { className:'form-input', value:form.imageUrl, onChange:e=>setForm(f=>({...f,imageUrl:e.target.value})) })),
+        E('button', { className:'btn btn-primary btn-block', onClick:submitListing, disabled:busy }, busy ? t('breeder.publishing') : t('breeder.submit_btn'))
+      ),
+      listingsLoading ? E('div', { style:{ textAlign:'center', padding:'1rem' } }, E('i', { className:'fas fa-spinner fa-spin' })) :
+      listings.length===0 ? E('div',{className:'empty-state'},E('p',null,t('breeder.no_listings'))) :
+      E('div',{style:{display:'flex',flexDirection:'column',gap:'.75rem'}},
+        listings.map(l => {
+          const specs = l.animal_specs || {};
+          return E('div',{key:l.id,style:{border:'0.5px solid var(--border)',borderRadius:12,padding:'1rem',display:'flex',gap:'.75rem'}},
+            l.image_url ? E('img',{src:l.image_url,alt:l.name,style:{width:60,height:60,borderRadius:8,objectFit:'cover',flexShrink:0}}) : E('div',{style:{width:60,height:60,borderRadius:8,background:'var(--bg-light)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'1.6rem',flexShrink:0}},'🐏'),
+            E('div',{style:{flex:1,minWidth:0}},
+              E('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'.5rem'}},
+                E('div',{style:{fontWeight:700,fontSize:'.9rem'}}, l.name),
+                E('span',{style:{fontSize:'.68rem',fontWeight:700,borderRadius:99,padding:'2px 8px',whiteSpace:'nowrap',background:l.active?'#DCFCE7':'#F3F4F6',color:l.active?'#166534':'#6B7280'}}, l.active?t('breeder.status_active'):t('breeder.status_inactive'))
+              ),
+              E('div',{style:{fontSize:'.78rem',color:'var(--text-secondary)',marginTop:'.15rem'}}, [specs.type, specs.race, specs.age].filter(Boolean).join(' · ')),
+              E('div',{style:{fontWeight:700,color:'var(--primary)',marginTop:'.3rem'}}, fcfa(l.price)),
+              E('button',{className:'btn btn-secondary btn-sm',style:{marginTop:'.5rem'},onClick:()=>toggleListingActive(l)}, l.active?t('breeder.deactivate'):t('breeder.activate'))
+            )
+          );
+        })
+      )
+    ),
+
+    // ── Statistiques ────────────────────────────────────────────────────────
+    tab==='stats' && E('div', null,
+      E('div',{style:{display:'flex',flexDirection:'column',gap:'.6rem',marginBottom:'1.25rem'}},
+        [
+          [t('breeder.stats_total'), listings.length],
+          [t('breeder.stats_active'), activeCount],
+          [t('breeder.stats_inactive'), listings.length - activeCount],
+        ].map(([label,val]) => E('div',{key:label,style:{background:'var(--bg-light)',borderRadius:10,padding:'.85rem 1rem',display:'flex',justifyContent:'space-between',alignItems:'center'}},
+          E('span',{style:{fontSize:'.85rem',color:'var(--text-secondary)'}}, label),
+          E('span',{style:{fontWeight:800,fontSize:'1.1rem',color:'var(--primary)'}}, val)))
+      ),
+      E('div',{style:{border:'0.5px solid var(--border)',borderRadius:12,padding:'1rem'}},
+        E('div',{style:{fontWeight:700,fontSize:'.88rem',marginBottom:'.5rem'}}, t('breeder.position_title')),
+        E('div',{style:{fontSize:'.8rem',color:'var(--text-secondary)',marginBottom:'.7rem'}}, hasPosition ? t('breeder.position_set') : t('breeder.position_unset')),
+        E('button',{className:'btn btn-secondary btn-block',onClick:updatePosition,disabled:posBusy}, posBusy ? '…' : t('breeder.update_position_btn'))
       )
     )
   );
@@ -33946,6 +34377,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
           { id: "referral",    icon: "users",        label: t("nav.referral") },
           { id: "courier_app",  icon: "motorcycle",   label: t("nav.courier_space") },
           { id: "transporter_app", icon: "shuttle-van", label: "🚐 Espace Transporteur" },
+          { id: "breeder_app", icon: "horse", label: t("breeder.title") },
           { id: "b2b_upgrade", icon: "building",     label: t("nav.b2b_upgrade"), highlight: true },
         ]
     ),
@@ -34050,7 +34482,7 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       setComposeRecipient({ id: order.vendor, name: order.vendorName });
       setShowComposeMessage(true);
     } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope" }), " Vendeur"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => generateInvoicePDF(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-file-pdf" }), " Facture PDF"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto" }, onClick: () => printOrderSlip(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-print" }), " Imprimer"), order.status === "delivered" && !order.returnStatus && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowReturnOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour"), !order.disputeId && /* @__PURE__ */ React.createElement("button", { className: "btn btn-outline btn-sm", style: { flex: "1 1 auto", borderColor: "#dc2626", color: "#dc2626" }, onClick: () => setShowDisputeOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige"), order.disputeId && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center", fontSize: "0.72rem" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-gavel" }), " Litige ", order.disputeStatus === "open" ? "en cours" : "r\xE9solu"), order.returnStatus && /* @__PURE__ */ React.createElement("span", { className: "badge badge-warning", style: { alignSelf: "center" } }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-undo" }), " Retour ", order.returnStatus === "requested" ? "en cours" : order.returnStatus), ["pending_payment", "processing"].includes(order.status) && /* @__PURE__ */ React.createElement("button", { className: "btn btn-secondary btn-sm", style: { flex: "1 1 auto", borderColor: "var(--danger)", color: "var(--danger)" }, onClick: () => setShowCancelOrder(order) }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Annuler"))));
-  }))})()),  !isLoading && view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), !isLoading && view === "courier_app" && React.createElement(CourierApp, { currentUser: currentUser2, addToast }), !isLoading && view === "transporter_app" && React.createElement(TransporterDashboard, { currentUser: currentUser2, addToast }), !isLoading && view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
+  }))})()),  !isLoading && view === "messages" && /* @__PURE__ */ React.createElement(VendorChatInline, { currentUser: currentUser2, addToast }), view === "offers" && /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Mes Offres (", offers.length, ")")), offers.length === 0 ? /* @__PURE__ */ React.createElement("div", { className: "empty-state" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-hand-holding-usd", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("h3", null, "Aucune offre"), /* @__PURE__ */ React.createElement("p", null, "Vous n\\'avez pas encore fait d\\'offre")) : /* @__PURE__ */ React.createElement("div", { className: "table-wrapper" }, /* @__PURE__ */ React.createElement("table", { className: "data-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Produit"), /* @__PURE__ */ React.createElement("th", null, "Prix propos\xE9"), /* @__PURE__ */ React.createElement("th", null, "Vendeur"), /* @__PURE__ */ React.createElement("th", null, "Message"), /* @__PURE__ */ React.createElement("th", null, "Date"), /* @__PURE__ */ React.createElement("th", null, "Statut"))), /* @__PURE__ */ React.createElement("tbody", null, offers.map((offer) => /* @__PURE__ */ React.createElement("tr", { key: offer.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "Produit" }, offer.productName), /* @__PURE__ */ React.createElement("td", { "data-label": "Prix propos\xE9" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(offer.offeredPrice))), /* @__PURE__ */ React.createElement("td", { "data-label": "Vendeur" }, offer.vendorId), /* @__PURE__ */ React.createElement("td", { "data-label": "Message" }, offer.message || "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, new Date(offer.date).toLocaleDateString("fr-FR")), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${offer.status === "accepted" ? "success" : offer.status === "rejected" ? "danger" : "warning"}` }, offer.status === "accepted" ? "Accept\xE9e" : offer.status === "rejected" ? "Refus\xE9e" : "En attente")))))))), !isLoading && view === "courier_app" && React.createElement(CourierApp, { currentUser: currentUser2, addToast }), !isLoading && view === "transporter_app" && React.createElement(TransporterDashboard, { currentUser: currentUser2, addToast }), !isLoading && view === "breeder_app" && React.createElement(BreederDashboard, { currentUser: currentUser2, addToast }), !isLoading && view === "loyalty" && /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(LoyaltyWidget, { currentUser: currentUser2 }), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("div", { className: "card-header" }, /* @__PURE__ */ React.createElement("h2", { className: "card-title" }, "Historique des points")), (() => {
     // [FIX #310] LoyaltyHist supprimé — états hissés dans BuyerDashboard (_loyaltyData)
     const ld = _loyaltyData;
       const pts2 = ld?.points ?? 0;
