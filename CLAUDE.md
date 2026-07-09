@@ -67,8 +67,15 @@ Flux mobile-money/payout : `PAYTECH_SECRET_KEY`. Le code accepte désormais les 
 - **PayTech IPN commande** : `/api/payments/paytech/ipn` (configuré par `paytech/init.js`).
 - **PayTech IPN mobile-money** : `/functions/paytech-webhook` (configuré par `payments-mobile-money.js`).
 - **PayTech IPN payout** : `/functions/paytech-payout-webhook`.
-- **Orphelin (non branché)** : `functions/api/webhooks/paytech.js`.
+- **Alias IPN commande** : `/api/webhooks/paytech` = `functions/api/webhooks/paytech.js`,
+  qui **délègue** désormais à `/api/payments/paytech/ipn` (`export { onRequest } from …`).
+  Auparavant orphelin ET cassé (cherchait `orders.mobile_money_ref = token`, jamais
+  renseigné par le flux commande → 404). Rendu safe pour qu'une URL IPN globale mal
+  configurée côté dashboard PayTech ne puisse plus avaler un paiement (2026-07-09).
 - Tous les webhooks **vérifient la signature** (HMAC SHA-256, anti-replay 5 min).
+- ⚠️ **URL IPN à configurer dans le dashboard PayTech** = `https://nexusmarket.sn/api/payments/paytech/ipn`
+  (ou vide, pour laisser `init.js` fournir l'`ipn_url` par requête). Vérifié vivant :
+  POST non signé → 401 « Hash invalide », GET → 405.
 
 ## Variables d'environnement
 Voir `.env.example`. Le `.env` réel n'est pas versionné. Manquaient à la config :
@@ -114,8 +121,8 @@ Purge des compteurs >24h dans le cron cleanup.
   fichiers). Non bloquant.
 - Réponses API non standardisées (`{error}` vs `{ok:false,error}`) : helper canonique
   = `functions/api/_lib/response.js` (`ok`/`err`) ; migration progressive recommandée.
-- Webhook `functions/api/webhooks/paytech.js` : doublon **non branché**, conservé
-  volontairement (cf. en-tête du fichier) ; à retirer seulement si confirmé inutile.
+- Webhook `functions/api/webhooks/paytech.js` : n'est plus un doublon inerte — il
+  **délègue** au handler IPN canonique (cf. « Endpoints de paiement » ci-dessus).
 - Frontend monolithique (`public/index.html`), pas de TypeScript : refonte hors périmètre.
 
 ### ✅ Déjà résolus — ne plus lister (vérifié 2026-06-16)
