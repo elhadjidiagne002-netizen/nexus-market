@@ -36,8 +36,14 @@ export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'POST') return jsonR({ error: 'POST uniquement' }, 405);
 
-  if (!env.PAYTECH_API_KEY || !env.PAYTECH_API_SECRET)
-    return jsonR({ error: 'PAYTECH_API_KEY / PAYTECH_API_SECRET non configurées' }, 503);
+  // [FIX] Accepter les DEUX conventions de nommage du secret, comme le font déjà
+  // l'IPN, mobile-money, payout et paytech-webhook. init.js était la SEULE fonction
+  // à exiger `PAYTECH_API_SECRET` en dur : si le déploiement a nommé le secret
+  // `PAYTECH_SECRET_KEY` (convention mobile-money/payout), l'init renvoyait 503
+  // « non configurées » alors que l'IPN validait — l'acheteur ne pouvait pas payer.
+  const PAYTECH_API_SECRET = env.PAYTECH_API_SECRET || env.PAYTECH_SECRET_KEY;
+  if (!env.PAYTECH_API_KEY || !PAYTECH_API_SECRET)
+    return jsonR({ error: 'PAYTECH_API_KEY / PAYTECH_API_SECRET (ou PAYTECH_SECRET_KEY) non configurées' }, 503);
 
   // [SEC #2] Authentification RÉELLE : JWT vérifié côté Supabase (signature),
   // au lieu d'un décodage en aveugle (forgeable).
@@ -98,7 +104,7 @@ export async function onRequest({ request, env }) {
         Accept: 'application/json',
         'Content-Type': 'application/json',
         API_KEY: env.PAYTECH_API_KEY,
-        API_SECRET: env.PAYTECH_API_SECRET,
+        API_SECRET: PAYTECH_API_SECRET,
       },
       body: JSON.stringify({
         item_name:   item_name || `Commande NEXUS #${order_id.slice(-8)}`,
@@ -138,14 +144,23 @@ export async function onRequest({ request, env }) {
     }
 
     // 2. Persister la session PayTech en Supabase pour la réconciliation IPN
+    // [FIX] La table stripe_sessions n'a PAS de colonnes `provider` ni `token` :
+    // l'INSERT échouait toujours (avalé par .catch) → session jamais enregistrée
+    // et l'UPDATE de l'IPN (par session_id) ne touchait 0 ligne. On utilise les
+    // vraies colonnes : `payment_intent` porte le token PayTech. `order_id` est de
+    // type UUID → on ne le renseigne que pour un vrai UUID de commande (les kinds
+    // boost/story/transport utilisent un order_id synthétique non-UUID).
+    const isUuid = typeof order_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(order_id);
     await sbSet(env, 'stripe_sessions', {
-      id:          crypto.randomUUID(),
-      order_id:    order_id,
-      session_id:  ref_command,
-      provider:    'paytech',
-      token:       data.token,
-      status:      'pending',
-      created_at:  new Date().toISOString(),
+      id:             crypto.randomUUID(),
+      order_id:       isUuid ? order_id : null,
+      session_id:     ref_command,
+      payment_intent: data.token,
+      user_id:        uid || null,
+      amount:         Math.round(amount),
+      currency:       'XOF',
+      status:         'pending',
+      created_at:     new Date().toISOString(),
     }).catch(() => {});
 
     return jsonR({
