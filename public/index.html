@@ -6448,6 +6448,368 @@ window.addEventListener('unhandledrejection', function(event) {
 })();
 </script>
 
+<!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS ON DEMAND — module autonome (liste de courses + assistant IA)
+     Remplace le fallback plein-page (OnDemandPanel, ancien design .card/.btn,
+     dans app.js) pour les clics "On Demand" depuis le nouvel accueil : s'ouvre
+     en modal PAR-DESSUS #nx-proto-overlay, sans navigation, même pattern que
+     Coursier/Pros/Élevage. Écrit dans la même table `ondemand_requests`
+     (aucun changement de schéma). Event dédié 'nexus:open-ondemand-shopper'
+     (cf. ROUTES['on demand'] plus bas) — n'interfère pas avec
+     'nexus:open-on-demand' (deep-link ?open=ondemand + onglet admin).
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  if (typeof DataService === 'undefined' || typeof React === 'undefined') {
+    console.warn('[OnDemand] DataService/React absent'); return;
+  }
+  const E = React.createElement;
+  const overlay = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 10060, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '1rem', overflowY: 'auto' };
+  const card = { background: '#fff', borderRadius: 16, maxWidth: 600, width: '100%', marginTop: '2vh', marginBottom: '2vh' };
+  const lbl = { fontSize: '.72rem', color: '#666', margin: '0 0 .25rem', fontWeight: 600, display: 'block' };
+  const inp = { width: '100%', padding: '.6rem .7rem', border: '1.5px solid #e5e7eb', borderRadius: 10, fontSize: '.85rem', marginBottom: '.7rem', boxSizing: 'border-box' };
+  const CATS = ['Électronique', 'Mode & Vêtements', 'Alimentation', 'Maison & Déco', 'Beauté & Santé', 'Informatique', 'Sport & Loisirs', 'Auto-Moto', 'Autres'];
+  const EMPTY_ITEM = { name: '', qty: '1', budget: '', category: 'Autres', notes: '' };
+  const STATUS = {
+    pending:    { label: 'En attente',    color: '#b45309', bg: '#fffbeb', border: 'rgba(234,179,8,.3)' },
+    processing: { label: 'En recherche',  color: '#1d4ed8', bg: '#eff6ff', border: 'rgba(29,78,216,.25)' },
+    replied:    { label: 'Réponse reçue', color: '#15803d', bg: '#f0fdf4', border: 'rgba(0,109,64,.25)' },
+    closed:     { label: 'Clôturée',      color: '#4b5563', bg: '#f3f4f6', border: '#e5e7eb' },
+  };
+  function toast(m, ty, d) { if (typeof window.__nexusToast === 'function') window.__nexusToast(m, ty || 'info', d); }
+  function StatusBadge(status) {
+    const st = STATUS[status] || STATUS.pending;
+    return E('span', { style: { fontSize: '.72rem', fontWeight: 700, padding: '.25rem .65rem', borderRadius: 99, color: st.color, background: st.bg, border: '1px solid ' + st.border, whiteSpace: 'nowrap' } }, st.label);
+  }
+
+  function OnDemandModal(props) {
+    const user = props.user;
+    const guestMode = !user || !user.id;
+    const [view, setView] = React.useState(guestMode ? 'form' : 'list');
+    const [requests, setRequests] = React.useState([]);
+    const [loading, setLoading] = React.useState(!guestMode);
+    const [selected, setSelected] = React.useState(null);
+    const [saving, setSaving] = React.useState(false);
+
+    const [items, setItems] = React.useState([Object.assign({}, EMPTY_ITEM)]);
+    const [message, setMessage] = React.useState('');
+    const [phone, setPhone] = React.useState((user && (user.phone || user.telephone)) || '');
+
+    const [aiInput, setAiInput] = React.useState('');
+    const [aiMessages, setAiMessages] = React.useState([{ role: 'assistant', content: 'Bonjour ! Dites-moi ce que vous cherchez (produit, quantité, budget) et je vous aide à construire votre liste.' }]);
+    const [aiLoading, setAiLoading] = React.useState(false);
+    const [aiPanel, setAiPanel] = React.useState(true);
+    const chatRef = React.useRef(null);
+
+    React.useEffect(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; }, [aiMessages]);
+
+    const load = React.useCallback(() => {
+      if (guestMode || !DataService._sb) { setLoading(false); return; }
+      setLoading(true);
+      DataService._sb.from('ondemand_requests').select('*').eq('buyer_id', user.id).order('created_at', { ascending: false })
+        .then(r => { if (!r.error) setRequests(r.data || []); })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    }, [user && user.id]);
+    React.useEffect(() => { load(); }, [load]);
+
+    const addItem = () => setItems(p => p.concat([Object.assign({}, EMPTY_ITEM)]));
+    const removeItem = i => setItems(p => p.filter((_, idx) => idx !== i));
+    const updateItem = (i, field, val) => setItems(p => p.map((it, idx) => idx === i ? Object.assign({}, it, { [field]: val }) : it));
+
+    function callGroq(userMsg) {
+      setAiLoading(true);
+      const history = [
+        { role: 'system', content: 'Tu es l’assistant de commande NEXUS Market Sénégal. Tu aides les clients à construire leur liste de courses pour des produits introuvables sur le site. Tu parles français et comprends le wolof.\n\nTon rôle :\n1. Comprendre ce que veut le client (produit, caractéristiques, budget, quantité)\n2. L’aider à détailler (marque, couleur, taille, usage)\n3. Suggérer un budget réaliste en FCFA\n4. Quand tu as assez d’infos sur UN article, ajoute-le OBLIGATOIREMENT avec ce format JSON sur une seule ligne sans explication avant:\n\nADD_ITEM:{"name":"Nom produit","qty":1,"budget":15000,"category":"Electronique","notes":"précisions"}\n\n5. Après chaque ajout, demande s’il y a d’autres articles.\n6. Si client dit c’est tout, résume.\n\nCatégories : Electronique, Mode & Vetements, Alimentation, Maison & Deco, Beaute & Sante, Informatique, Sport & Loisirs, Auto-Moto, Autres.\nConnais les prix du marché sénégalais (FCFA). Sois chaleureux et efficace.' },
+      ].concat(aiMessages.map(m => ({ role: m.role, content: m.content.replace(/```json[\s\S]*?```/g, '[Article ajouté]') }))).concat([{ role: 'user', content: userMsg }]);
+      return fetch('/api/ai', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'llama-3.3-70b-versatile', max_tokens: 600, temperature: 0.5, messages: history }),
+      })
+        .then(res => { if (!res.ok) throw new Error('Groq ' + res.status); return res.json(); })
+        .then(data => {
+          const reply = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || 'Désolé, je n’ai pas compris.';
+          let parsedItem = null;
+          const m = reply.match(/ADD_ITEM:(\{[^\n]+\})/);
+          if (m) { try { const p = JSON.parse(m[1]); if (p.name) parsedItem = p; } catch (e) {} }
+          setAiMessages(prev => prev.concat([{ role: 'assistant', content: reply, parsedItem }]));
+          if (parsedItem) {
+            const newItem = { name: parsedItem.name || '', qty: String(parsedItem.qty || '1'), budget: String(parsedItem.budget || ''), category: parsedItem.category || 'Autres', notes: parsedItem.notes || '' };
+            setItems(prev => {
+              const emptyIdx = prev.findIndex(it => !it.name.trim());
+              if (emptyIdx >= 0) { const upd = prev.slice(); upd[emptyIdx] = newItem; return upd; }
+              return prev.concat([newItem]);
+            });
+            toast('Article ajouté : ' + newItem.name, 'success', 3000);
+          }
+        })
+        .catch(e => { setAiMessages(prev => prev.concat([{ role: 'assistant', content: 'Erreur : ' + e.message + '. Vérifiez votre connexion et réessayez.' }])); })
+        .finally(() => setAiLoading(false));
+    }
+
+    function sendAiMessage() {
+      const msg = aiInput.trim();
+      if (!msg || aiLoading) return;
+      setAiMessages(prev => prev.concat([{ role: 'user', content: msg }]));
+      setAiInput('');
+      callGroq(msg);
+    }
+
+    function handleSubmit() {
+      const validItems = items.filter(it => it.name.trim().length >= 2);
+      if (!validItems.length) { toast('Ajoutez au moins un article à votre liste', 'error'); return; }
+      if (!phone.trim()) { toast('Votre numéro de téléphone est requis', 'error'); return; }
+      setSaving(true);
+      const row = {
+        id: crypto.randomUUID(),
+        buyer_id: (user && user.id) || ('guest_' + Date.now()),
+        buyer_name: (user && user.name) || 'Visiteur',
+        buyer_phone: phone.trim(),
+        buyer_email: (user && user.email) || '',
+        items: validItems,
+        message: message.trim(),
+        status: 'pending',
+        created_at: new Date().toISOString(),
+      };
+      const op = DataService._sb ? DataService._sb.from('ondemand_requests').insert(row) : Promise.reject(new Error('Service indisponible'));
+      op.then(r => {
+        if (r && r.error) throw r.error;
+        try {
+          const adminWa = (typeof NEXUS_CONFIG !== 'undefined' && NEXUS_CONFIG.admin && NEXUS_CONFIG.admin.whatsapp) || '';
+          if (adminWa) {
+            const summary = validItems.slice(0, 3).map(it => '• ' + it.name + (Number(it.qty) > 1 ? ' ×' + it.qty : '')).join('\n');
+            const waMsg = encodeURIComponent(
+              '🛒 Nouvelle demande NEXUS OnDemand\n\nClient : ' + row.buyer_name + '\nTel : ' + phone +
+              '\n\nArticles (' + validItems.length + ') :\n' + summary +
+              (validItems.length > 3 ? '\n… et ' + (validItems.length - 3) + ' autre(s)' : '') +
+              (message ? '\n\nMessage : ' + message : '')
+            );
+            window.open('https://wa.me/' + adminWa.replace(/\D/g, '') + '?text=' + waMsg, '_blank');
+          }
+        } catch (e) {}
+        toast('Demande envoyée ! Nous revenons vers vous rapidement.', 'success', 8000);
+        setItems([Object.assign({}, EMPTY_ITEM)]);
+        setMessage('');
+        if (guestMode) { props.onClose && props.onClose(); } else { setView('list'); load(); }
+      })
+      .catch(e => toast('Erreur : ' + e.message, 'error'))
+      .finally(() => setSaving(false));
+    }
+
+    function Header(title) {
+      return E('div', { style: { background: '#006d40', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 10, borderRadius: '16px 16px 0 0', position: 'sticky', top: 0, zIndex: 2 } },
+        E('span', { style: { fontSize: '1.3rem' } }, '🛒'),
+        E('span', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem', flex: 1 } }, title),
+        E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { background: 'none', border: 'none', color: '#fff', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1 } }, '×')
+      );
+    }
+
+    // ══════════════════════════════ VUE LISTE ══════════════════════════════
+    if (view === 'list') {
+      return E('div', { style: overlay, onClick: props.onClose },
+        E('div', { style: Object.assign({}, card, { maxWidth: 560 }), onClick: e => e.stopPropagation() },
+          Header('On Demand — Mes demandes'),
+          E('div', { style: { padding: '1.25rem' } },
+            E('div', { style: { background: 'linear-gradient(135deg,#1a1a2e,#16213e)', borderRadius: 14, padding: '1rem 1.15rem', marginBottom: '1.1rem', color: '#fff' } },
+              E('div', { style: { fontWeight: 800, fontSize: '.92rem', marginBottom: '.5rem' } }, 'Comment ça marche ?'),
+              E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.3rem', fontSize: '.78rem', color: 'rgba(255,255,255,.75)' } },
+                ['1️⃣ Listez ce que vous cherchez', '2️⃣ On vous trouve le meilleur prix', '3️⃣ On vous recontacte sous 24h', '4️⃣ Vous validez, on livre'].map((s, i) => E('div', { key: i }, s))
+              )
+            ),
+            E('button', { onClick: () => setView('form'), style: { width: '100%', padding: '.8rem', background: '#FDEE42', color: '#1a1a1a', border: 'none', borderRadius: 10, fontWeight: 800, fontSize: '.88rem', cursor: 'pointer', marginBottom: '1.1rem' } }, '📋 Créer ma liste'),
+            loading ? E('div', { style: { textAlign: 'center', padding: '1.5rem' } }, E('div', { className: 'spinner', style: { width: 28, height: 28, margin: '0 auto' } })) :
+            requests.length === 0
+              ? E('div', { style: { textAlign: 'center', padding: '1.5rem', color: '#888' } },
+                  E('div', { style: { fontSize: '2rem', marginBottom: '.5rem' } }, '🛒'),
+                  E('div', { style: { fontWeight: 700, marginBottom: '.25rem', color: '#333' } }, 'Aucune demande pour l’instant'),
+                  E('div', { style: { fontSize: '.8rem' } }, 'Créez votre première liste de courses ci-dessus.')
+                )
+              : E('div', { style: { border: '1px solid #eee', borderRadius: 12, overflow: 'hidden' } },
+                  requests.map((req, ri) => E('div', {
+                      key: req.id,
+                      onClick: () => { setSelected(req); setView('detail'); },
+                      style: { padding: '.85rem 1rem', borderBottom: ri < requests.length - 1 ? '1px solid #eee' : 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '.6rem' }
+                    },
+                      E('div', { style: { minWidth: 0 } },
+                        E('div', { style: { fontWeight: 700, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                          '📋 ', req.items.length, ' article', req.items.length > 1 ? 's' : '', ' — ', ((req.items[0] && req.items[0].name) || '').slice(0, 28)
+                        ),
+                        E('div', { style: { fontSize: '.74rem', color: '#888' } }, new Date(req.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }))
+                      ),
+                      StatusBadge(req.status)
+                    )
+                  )
+                )
+          )
+        )
+      );
+    }
+
+    // ══════════════════════════════ VUE DÉTAIL ══════════════════════════════
+    if (view === 'detail' && selected) {
+      return E('div', { style: overlay, onClick: props.onClose },
+        E('div', { style: Object.assign({}, card, { maxWidth: 560 }), onClick: e => e.stopPropagation() },
+          Header('Détail de la demande'),
+          E('div', { style: { padding: '1.25rem' } },
+            E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' } },
+              E('button', { onClick: () => { setSelected(null); setView('list'); }, style: { background: 'none', border: 'none', color: '#006d40', fontWeight: 700, cursor: 'pointer', fontSize: '.85rem' } }, '← Retour'),
+              StatusBadge(selected.status)
+            ),
+            E('div', { style: { border: '1px solid #eee', borderRadius: 12, marginBottom: '1rem' } },
+              selected.items.map((it, i) => E('div', { key: i, style: { display: 'flex', gap: '.7rem', padding: '.75rem 1rem', borderBottom: i < selected.items.length - 1 ? '1px solid #eee' : 'none', alignItems: 'flex-start' } },
+                  E('div', { style: { background: '#006d40', color: '#fff', borderRadius: '50%', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '.76rem', flexShrink: 0 } }, i + 1),
+                  E('div', { style: { flex: 1, minWidth: 0 } },
+                    E('div', { style: { fontWeight: 700, fontSize: '.88rem' } }, it.name),
+                    E('div', { style: { display: 'flex', gap: '.6rem', fontSize: '.74rem', color: '#888', flexWrap: 'wrap', marginTop: '.15rem' } },
+                      E('span', null, '📦 Qté : ', it.qty),
+                      it.budget && E('span', null, '💰 ', parseInt(it.budget, 10).toLocaleString('fr-FR'), ' FCFA max'),
+                      it.category && E('span', null, '🏷️ ', it.category)
+                    )
+                  )
+                )
+              )
+            ),
+            selected.message && E('div', { style: { background: '#f9fafb', borderRadius: 10, padding: '.8rem 1rem', marginBottom: '1rem', fontSize: '.85rem', color: '#555' } }, '💬 ', selected.message),
+            selected.status === 'replied' && selected.admin_reply
+              ? E('div', { style: { background: 'rgba(0,109,64,.06)', border: '2px solid rgba(0,109,64,.25)', borderRadius: 14, padding: '1rem' } },
+                  E('div', { style: { display: 'flex', alignItems: 'center', gap: '.4rem', fontWeight: 800, color: '#006d40', marginBottom: '.6rem', fontSize: '.88rem' } }, '✅ Réponse NEXUS'),
+                  E('div', { style: { fontSize: '.86rem', lineHeight: 1.55, color: '#333', whiteSpace: 'pre-wrap', marginBottom: '.85rem' } }, selected.admin_reply),
+                  E('button', {
+                    onClick: () => {
+                      const phone2 = (typeof NEXUS_CONFIG !== 'undefined' && NEXUS_CONFIG.admin && NEXUS_CONFIG.admin.whatsapp) || '';
+                      const waMsg = encodeURIComponent('👋 Bonjour ! Je souhaite passer commande suite à votre réponse NEXUS OnDemand.\n\nDemande : ' + selected.items.map(it => it.name).join(', '));
+                      window.open('https://wa.me/' + phone2.replace(/\D/g, '') + '?text=' + waMsg, '_blank');
+                    },
+                    style: { width: '100%', padding: '.7rem', background: '#25D366', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, cursor: 'pointer' }
+                  }, '💬 Contacter pour commander')
+                )
+              : E('div', { style: { background: '#fffbeb', border: '1.5px solid rgba(234,179,8,.3)', borderRadius: 14, padding: '1rem', textAlign: 'center' } },
+                  E('div', { style: { fontSize: '1.4rem', marginBottom: '.4rem' } }, '⏳'),
+                  E('div', { style: { fontWeight: 700, color: '#92400e', fontSize: '.86rem' } }, 'En attente de réponse'),
+                  E('div', { style: { fontSize: '.78rem', color: '#92400e', marginTop: '.2rem' } }, 'On vous recontacte généralement sous 24h au ', selected.buyer_phone, '.')
+                )
+          )
+        )
+      );
+    }
+
+    // ══════════════════════════════ VUE FORMULAIRE ══════════════════════════════
+    const validCount = items.filter(it => it.name.trim()).length;
+    return E('div', { style: overlay, onClick: props.onClose },
+      E('div', { style: card, onClick: e => e.stopPropagation() },
+        Header('On Demand — Ma liste de courses'),
+        E('div', { style: { padding: '1.25rem' } },
+
+          !guestMode && E('button', { onClick: () => setView('list'), style: { background: 'none', border: 'none', color: '#006d40', fontWeight: 700, cursor: 'pointer', fontSize: '.85rem', marginBottom: '.8rem', padding: 0 } }, '← Mes demandes'),
+
+          E('div', { style: { border: '2px solid #006d40', borderRadius: 14, overflow: 'hidden', marginBottom: '1.1rem' } },
+            E('div', {
+              style: { background: 'linear-gradient(135deg,#1a1a2e,#16213e)', padding: '.75rem 1rem', display: 'flex', alignItems: 'center', gap: '.6rem', cursor: 'pointer' },
+              onClick: () => setAiPanel(p => !p),
+            },
+              E('div', { style: { width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg,#FDEE42,#f5c800)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0 } }, '🤖'),
+              E('div', { style: { flex: 1 } },
+                E('div', { style: { color: '#fff', fontWeight: 800, fontSize: '.86rem' } }, 'Assistant IA'),
+                E('div', { style: { color: 'rgba(255,255,255,.55)', fontSize: '.68rem' } }, 'Décrivez ce que vous cherchez')
+              ),
+              validCount > 0 && E('span', { style: { background: 'rgba(253,238,66,.18)', color: '#FDEE42', borderRadius: 20, padding: '2px 9px', fontSize: '.68rem', fontWeight: 700 } }, validCount, ' article', validCount > 1 ? 's' : ''),
+              E('i', { className: 'fas fa-chevron-' + (aiPanel ? 'up' : 'down'), style: { color: 'rgba(255,255,255,.6)', fontSize: '.75rem' } })
+            ),
+            aiPanel && E('div', null,
+              E('div', { ref: chatRef, style: { height: 230, overflowY: 'auto', padding: '.8rem .9rem', display: 'flex', flexDirection: 'column', gap: '.55rem', background: '#f9fafb' } },
+                aiMessages.map((m, mi) => E('div', { key: mi, style: { display: 'flex', gap: '.4rem', alignItems: 'flex-start', flexDirection: m.role === 'user' ? 'row-reverse' : 'row' } },
+                    m.role === 'assistant' && E('div', { style: { width: 24, height: 24, borderRadius: '50%', background: '#006d40', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.6rem', flexShrink: 0, marginTop: 2 } }, '🤖'),
+                    E('div', {
+                        style: {
+                          maxWidth: '82%', background: m.role === 'user' ? '#006d40' : '#fff',
+                          color: m.role === 'user' ? '#fff' : '#222',
+                          borderRadius: m.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                          padding: '.45rem .75rem', fontSize: '.8rem', lineHeight: 1.45,
+                          boxShadow: '0 1px 3px rgba(0,0,0,.07)', border: m.parsedItem ? '1.5px solid #059669' : 'none',
+                        }
+                      },
+                      m.content.split('\n').filter(l => l.indexOf('ADD_ITEM:') !== 0 && l.indexOf('```') === -1).map((line, li) => E('div', { key: li }, line || ' ')),
+                      m.parsedItem && E('div', { style: { marginTop: '.35rem', background: 'rgba(5,150,105,.1)', borderRadius: 8, padding: '.3rem .6rem', fontSize: '.72rem', fontWeight: 700, color: '#059669' } },
+                        '✅ Ajouté : ', m.parsedItem.name
+                      )
+                    )
+                  )
+                ),
+                aiLoading && E('div', { style: { display: 'flex', gap: '.4rem', alignItems: 'center' } },
+                  E('div', { style: { width: 24, height: 24, borderRadius: '50%', background: '#006d40', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.6rem', flexShrink: 0 } }, '🤖'),
+                  E('div', { style: { background: '#fff', borderRadius: 12, padding: '.35rem .7rem', fontSize: '.8rem', color: '#999' } }, '…')
+                )
+              ),
+              E('div', { style: { padding: '.55rem .75rem', borderTop: '1px solid #eee', display: 'flex', gap: '.4rem', background: '#fff' } },
+                E('input', {
+                  type: 'text', style: Object.assign({}, inp, { marginBottom: 0, flex: 1 }),
+                  value: aiInput, placeholder: 'Ex : un chargeur iPhone pas cher…',
+                  onChange: e => setAiInput(e.target.value),
+                  onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAiMessage(); } },
+                  disabled: aiLoading,
+                }),
+                E('button', {
+                  onClick: sendAiMessage, disabled: aiLoading || !aiInput.trim(),
+                  style: { padding: '0 .9rem', border: 'none', borderRadius: 10, background: '#006d40', color: '#fff', fontWeight: 700, cursor: 'pointer', flexShrink: 0 }
+                }, aiLoading ? '…' : '➤')
+              )
+            )
+          ),
+
+          E('p', { style: Object.assign({}, lbl, { fontSize: '.8rem', marginBottom: '.5rem' }) }, 'Vos articles (', validCount, ')'),
+          items.map((it, i) => E('div', { key: i, style: { background: '#f9fafb', border: '1.5px solid #eee', borderRadius: 12, padding: '.8rem .9rem', marginBottom: '.6rem' } },
+              E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '.5rem' } },
+                E('span', { style: { fontWeight: 700, color: '#006d40', fontSize: '.82rem' } }, 'Article ', i + 1),
+                items.length > 1 && E('button', { onClick: () => removeItem(i), style: { background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '.75rem' } }, '🗑️ Retirer')
+              ),
+              E('div', { style: { display: 'grid', gridTemplateColumns: '1fr 70px', gap: '.5rem', marginBottom: '.5rem' } },
+                E('input', { type: 'text', style: Object.assign({}, inp, { marginBottom: 0 }), value: it.name, placeholder: 'Ex : Chargeur iPhone 14…', onChange: e => updateItem(i, 'name', e.target.value) }),
+                E('input', { type: 'number', min: '1', max: '99', style: Object.assign({}, inp, { marginBottom: 0, textAlign: 'center' }), value: it.qty, onChange: e => updateItem(i, 'qty', e.target.value) })
+              ),
+              E('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '.5rem' } },
+                E('input', { type: 'number', style: Object.assign({}, inp, { marginBottom: 0 }), value: it.budget, placeholder: 'Budget max (optionnel)', onChange: e => updateItem(i, 'budget', e.target.value) }),
+                E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: it.category, onChange: e => updateItem(i, 'category', e.target.value) },
+                  CATS.map(c => E('option', { key: c, value: c }, c))
+                )
+              )
+            )
+          ),
+          E('button', { onClick: addItem, style: { width: '100%', padding: '.6rem', border: '1.5px dashed #006d40', borderRadius: 10, background: 'none', color: '#006d40', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer', marginBottom: '1.1rem' } }, '+ Ajouter un article'),
+
+          E('p', { style: lbl }, '📞 Votre téléphone (on vous recontacte)'),
+          E('input', { type: 'tel', style: inp, value: phone, placeholder: '77 123 45 67', onChange: e => setPhone(e.target.value) }),
+
+          E('p', { style: lbl }, 'Message (optionnel)'),
+          E('textarea', { style: Object.assign({}, inp, { resize: 'vertical' }), rows: 2, value: message, placeholder: 'Précisions utiles pour votre demande…', onChange: e => setMessage(e.target.value) }),
+
+          E('button', {
+            onClick: handleSubmit, disabled: saving,
+            style: { width: '100%', padding: '.85rem', background: saving ? '#9ca3af' : '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.9rem', cursor: saving ? 'default' : 'pointer' }
+          }, saving ? 'Envoi…' : '📤 Envoyer ma demande')
+        )
+      )
+    );
+  }
+
+  let mountEl = null, root = null, currentUser = null;
+  function getMount() {
+    if (!mountEl) { mountEl = document.createElement('div'); mountEl.id = 'nexus-ondemand-root'; document.body.appendChild(mountEl); }
+    if (!root && window.ReactDOM) root = ReactDOM.createRoot ? ReactDOM.createRoot(mountEl) : null;
+    return root;
+  }
+  function openModal() {
+    const r = getMount();
+    const close = () => { if (r) r.render(null); else ReactDOM.unmountComponentAtNode(mountEl); };
+    const el = E(OnDemandModal, { onClose: close, user: currentUser });
+    if (r) r.render(el); else ReactDOM.render(el, mountEl);
+  }
+  window.addEventListener('nexus:set-user', e => { currentUser = e.detail || null; });
+  window.addEventListener('nexus:open-ondemand-shopper', () => openModal());
+
+  console.info('[NEXUS] Module On Demand chargé ✅');
+})();
+</script>
+
 
 <!-- NEXUS COURSIER dashboard injecte -->
 <!-- ════════════════════════════════════════════════════════════════════════
@@ -12133,7 +12495,13 @@ function initProto(){
   /* table : texte du lien (normalisé) → action */
   var ROUTES={
     'coursier express':EVT('nexus:open-courier'),'coursier à la demande':EVT('nexus:open-courier'),
-    'on demand':function(){hideProto();evt('nexus:open-on-demand');},'on demand — liste de courses':function(){hideProto();evt('nexus:open-on-demand');},
+    /* [FIX] On Demand quittait le nouveau design (hideProto + page React pleine
+       page à l'ancien style) contrairement à Coursier/Pros/Élevage qui s'ouvrent
+       en modal SANS quitter l'accueil. Événement dédié 'nexus:open-ondemand-shopper'
+       → nouveau module autonome (cf. section "NEXUS ON DEMAND" plus bas) ;
+       'nexus:open-on-demand' reste inchangé pour ses autres usages (deep-link
+       ?open=ondemand, onglet admin de suivi des demandes). */
+    'on demand':EVT('nexus:open-ondemand-shopper'),'on demand — liste de courses':EVT('nexus:open-ondemand-shopper'),
     'nexus pro':EVT('nexus:open-pros'),'nexus pro — artisans proches':EVT('nexus:open-pros'),'devenir artisan (nexus pro)':REG('pro'),
     'élevage & terroir':EVT('nexus:open-local-elevage'),'élevage & produits locaux':EVT('nexus:open-local-elevage'),'devenir éleveur / producteur':REG('breeder'),
     'troc':EVT('nexus:open-troc'),'nexus troc — échanger sans argent':EVT('nexus:open-troc'),
