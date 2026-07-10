@@ -2905,8 +2905,8 @@
             <div style="font-weight:700;font-size:1rem;margin:0 0 .5rem">Télécharger l'appli</div>
             <p style="color:rgba(255,255,255,.7);font-size:.85rem;margin:0 0 1rem">L'expérience NEXUS dans votre poche.</p>
             <div style="display:flex;gap:.75rem;flex-wrap:wrap">
-              <button style="background:#000;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:.5rem;padding:.5rem 1rem;display:flex;align-items:center;gap:.5rem;cursor:pointer"><span style="font-size:1.2rem">📱</span><span><div style="font-size:.65rem;text-transform:uppercase;opacity:.7">Disponible sur</div><div style="font-size:.8rem;font-weight:700">App Store</div></span></button>
-              <button style="background:#000;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:.5rem;padding:.5rem 1rem;display:flex;align-items:center;gap:.5rem;cursor:pointer"><span style="font-size:1.2rem">▶️</span><span><div style="font-size:.65rem;text-transform:uppercase;opacity:.7">Disponible sur</div><div style="font-size:.8rem;font-weight:700">Google Play</div></span></button>
+              <button onclick="window.nexusDownloadApp('ios')" style="background:#000;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:.5rem;padding:.5rem 1rem;display:flex;align-items:center;gap:.5rem;cursor:pointer"><span style="font-size:1.2rem">📱</span><span><div style="font-size:.65rem;text-transform:uppercase;opacity:.7">Disponible sur</div><div style="font-size:.8rem;font-weight:700">App Store</div></span></button>
+              <button onclick="window.nexusDownloadApp('android')" style="background:#000;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:.5rem;padding:.5rem 1rem;display:flex;align-items:center;gap:.5rem;cursor:pointer"><span style="font-size:1.2rem">▶️</span><span><div style="font-size:.65rem;text-transform:uppercase;opacity:.7">Disponible sur</div><div style="font-size:.8rem;font-weight:700">Google Play</div></span></button>
             </div>
           </div>
         </div>
@@ -2928,6 +2928,81 @@
         <p style="color:rgba(255,255,255,.5);font-size:.75rem;margin:.25rem 0 0">© 2026 NEXUS Market — Marketplace B2B &amp; B2C au Sénégal. Paiement sécurisé Orange Money, Wave, carte bancaire. Livraison partout au Sénégal.</p>
       </div>
     </footer>
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         TÉLÉCHARGER L'APPLI — les apps ne sont pas encore publiées sur l'App
+         Store ni le Play Store. En attendant, les boutons "Télécharger" (footer
+         statique + footer #nx-proto-overlay) déclenchent l'installation PWA
+         réelle du site (manifest.json déjà complet : icônes, standalone…) :
+           - Android/Chrome/Edge : prompt d'installation natif du navigateur
+             (window.nexusInstall(), déjà câblé côté app.js sur
+             'beforeinstallprompt' — mais jamais appelé par aucun bouton avant
+             ce fix).
+           - iOS/Safari : pas d'API d'installation programmable → guide pas-à-
+             pas (Partager → Sur l'écran d'accueil).
+         ════════════════════════════════════════════════════════════════════ -->
+    <script>
+    (function () {
+      function isStandalone() {
+        return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+      }
+      function toast(msg, type, dur) {
+        if (typeof window.__nexusToast === 'function') { window.__nexusToast(msg, type || 'info', dur); return; }
+        alert(msg);
+      }
+      function showIosInstallGuide() {
+        var old = document.getElementById('nexus-ios-install-modal');
+        if (old) old.remove();
+        var overlay = document.createElement('div');
+        overlay.id = 'nexus-ios-install-modal';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10070;display:flex;align-items:center;justify-content:center;padding:1rem;';
+        var steps = [
+          ['Ouvrez ce site dans <strong>Safari</strong> et appuyez sur l’icône de partage <strong>⬆️</strong> en bas de l’écran.'],
+          ['Faites défiler et appuyez sur <strong>« Sur l’écran d’accueil »</strong>.'],
+          ['Appuyez sur <strong>« Ajouter »</strong> — l’icône NEXUS Market apparaît sur votre écran d’accueil, comme une vraie app.'],
+        ];
+        var stepsHtml = steps.map(function (s, i) {
+          return '<div style="display:flex;gap:.7rem;align-items:flex-start;margin-bottom:' + (i < steps.length - 1 ? '.85rem' : '0') + '">' +
+            '<div style="background:#006d40;color:#fff;border-radius:50%;width:24px;height:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.78rem">' + (i + 1) + '</div>' +
+            '<div style="font-size:.88rem;color:#333;line-height:1.5">' + s[0] + '</div>' +
+          '</div>';
+        }).join('');
+        overlay.innerHTML =
+          '<div style="background:#fff;border-radius:16px;max-width:360px;width:100%;overflow:hidden;font-family:inherit">' +
+            '<div style="background:#006d40;padding:1rem 1.25rem;display:flex;align-items:center;gap:10px">' +
+              '<span style="font-size:1.3rem">📱</span>' +
+              '<span style="color:#fff;font-weight:700;font-size:1rem;flex:1">Installer NEXUS Market</span>' +
+              '<button aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.3rem;cursor:pointer;line-height:1">×</button>' +
+            '</div>' +
+            '<div style="padding:1.25rem">' +
+              '<p style="margin:0 0 1rem;color:#666;font-size:.85rem">NEXUS Market n’est pas encore sur l’App Store — mais vous pouvez l’installer comme une vraie app en 3 étapes :</p>' +
+              stepsHtml +
+            '</div>' +
+          '</div>';
+        overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.remove(); });
+        overlay.querySelector('button[aria-label="Fermer"]').addEventListener('click', function () { overlay.remove(); });
+        document.body.appendChild(overlay);
+      }
+      // Exposé globalement : appelé par les boutons des deux footers (statique + overlay).
+      window.nexusDownloadApp = function (store) {
+        if (store === 'ios') { showIosInstallGuide(); return; }
+        // Android / autres : installation PWA native si le navigateur la propose
+        // (Chrome/Edge — Android ET desktop). window.nexusInstall vient de app.js.
+        if (window.nexusCanInstall && typeof window.nexusInstall === 'function') {
+          window.nexusInstall().then(function (outcome) {
+            if (outcome === 'accepted') toast('✅ Application installée !', 'success', 6000);
+            else if (outcome === 'dismissed') toast('Installation annulée.', 'info', 4000);
+          }).catch(function () {});
+          return;
+        }
+        if (isStandalone()) {
+          toast('✅ L’application est déjà installée sur cet appareil.', 'info', 5000);
+        } else {
+          toast('Ouvrez ce site avec Chrome sur Android pour installer l’application.', 'info', 7000);
+        }
+      };
+    })();
+    </script>
 
     <script src="/assets/app.86d0c998b0.js"></script>
 
@@ -11819,8 +11894,8 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <h4 class="font-bold text-lg mb-3" data-i18n="footer.download_app">Télécharger l'appli</h4>
       <p class="text-sm text-white/70 mb-4">L'expérience NEXUS dans votre poche.</p>
       <div class="flex flex-wrap gap-3">
-        <button class="bg-black text-white px-4 py-2 rounded-lg border border-white/20 flex items-center gap-2 hover:bg-white/10 transition-all"><span class="material-symbols-outlined">phone_iphone</span><div class="text-left"><p class="text-[10px] uppercase">Disponible sur</p><p class="text-xs font-bold">App Store</p></div></button>
-        <button class="bg-black text-white px-4 py-2 rounded-lg border border-white/20 flex items-center gap-2 hover:bg-white/10 transition-all"><span class="material-symbols-outlined">android</span><div class="text-left"><p class="text-[10px] uppercase">Disponible sur</p><p class="text-xs font-bold">Google Play</p></div></button>
+        <button onclick="window.nexusDownloadApp('ios')" class="bg-black text-white px-4 py-2 rounded-lg border border-white/20 flex items-center gap-2 hover:bg-white/10 transition-all"><span class="material-symbols-outlined">phone_iphone</span><div class="text-left"><p class="text-[10px] uppercase">Disponible sur</p><p class="text-xs font-bold">App Store</p></div></button>
+        <button onclick="window.nexusDownloadApp('android')" class="bg-black text-white px-4 py-2 rounded-lg border border-white/20 flex items-center gap-2 hover:bg-white/10 transition-all"><span class="material-symbols-outlined">android</span><div class="text-left"><p class="text-[10px] uppercase">Disponible sur</p><p class="text-xs font-bold">Google Play</p></div></button>
       </div>
     </div>
   </div>
