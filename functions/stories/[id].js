@@ -13,9 +13,14 @@ async function handle({ request, env, params }) {
   if (!s || s.status !== 'active' || (!s.mux_playback_id && !s.video_url)) return render404(origin, "Cette vidéo n'est plus disponible.");
 
   // Deux sources possibles : Mux (HLS adaptatif) ou upload direct (MP4 dans Storage).
+  // [ÉGRESS] Pour l'upload direct, on NE pointe PLUS sur l'URL Supabase brute mais
+  // sur le proxy caché Cloudflare /stories/media/:id (cf. functions/stories/media/
+  // [id].js) → l'égress du MP4 sort de Supabase et passe par le cache Cloudflare
+  // (gratuit). Vaut aussi pour og:video/JSON-LD : un crawler ne tape Supabase
+  // qu'une seule fois (remplissage du cache) au lieu de retélécharger à chaque vue.
   const isMux = !!s.mux_playback_id;
   const url = `${origin}/stories/${encodeURIComponent(s.id)}`;
-  const hls = isMux ? `https://stream.mux.com/${s.mux_playback_id}.m3u8` : s.video_url;
+  const hls = isMux ? `https://stream.mux.com/${s.mux_playback_id}.m3u8` : `${origin}/stories/media/${encodeURIComponent(s.id)}`;
   const poster = isMux ? `https://image.mux.com/${s.mux_playback_id}/thumbnail.jpg?width=720&fit_mode=preserve` : '';
   const title = s.title || `Vidéo produit — ${s.category || 'NEXUS'}`;
   const desc = (s.description || `Découvrez ${title} en vidéo sur NEXUS Stories${s.city ? ' à ' + s.city : ''}.`).replace(/\s+/g, ' ').slice(0, 300);
@@ -50,7 +55,7 @@ ${ld}
 </head><body>
 <div class="wrap">
 <a class="top" href="${esc(origin)}/stories">← NEXUS Stories</a>
-<video id="v" controls playsinline autoplay muted${poster ? ` poster="${esc(poster)}"` : ''}></video>
+<video id="v" controls playsinline muted preload="none"${poster ? ` poster="${esc(poster)}"` : ''}></video>
 <div class="meta">
 <div class="t">${esc(title)}</div>
 ${s.category ? `<div class="d">${esc(s.category)}${s.city ? ' · ' + esc(s.city) : ''}${s.vendor_name ? ' · ' + esc(s.vendor_name) : ''}</div>` : ''}
