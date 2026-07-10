@@ -2,6 +2,8 @@
 // Helpers du centre de notifications : gating par événement + journalisation
 // dans email_logs / whatsapp_logs. Tolérant aux pannes (ne casse jamais l'envoi).
 import { supabase, sendEmail } from './utils.js';
+import { sendWhatsAppDirect } from './wa-send.js';
+import { isValidPhone, normalizePhone } from './validate.js';
 
 // Substitution {{clé}} (+ {{#if clé}}...{{/if}} basique) pour les templates serveur.
 function applyVars(str, vars) {
@@ -105,6 +107,49 @@ const DEFAULTS = {
     html: wrap('Le prix a baissé', '<p>Bonjour {{buyer_name}},</p><p>Le prix de <strong>{{product_name}}</strong> a baissé{{#if discount_pct}} de {{discount_pct}}%{{/if}} — désormais <strong>{{new_price}}</strong>.{{#if product_url}}<br><br><a href="{{product_url}}" style="color:#00853E;font-weight:700">En profiter →</a>{{/if}}</p>') },
 };
 
+// Gabarits texte WhatsApp (courts, sans HTML) par clé d'événement — même
+// couverture que DEFAULTS (email) pour généraliser : partout où un email
+// serveur est envoyé, un message WhatsApp équivalent part aussi (si un
+// téléphone est disponible et qu'un fournisseur WhatsApp est configuré).
+const WA_DEFAULTS = {
+  payment_received: '✅ NEXUS Market — Paiement reçu pour la commande #{{order_id}} ({{total}} FCFA). Merci {{buyer_name}} !',
+  refund_processed: '💸 NEXUS Market — Remboursement de {{amount}} FCFA effectué pour la commande #{{order_id}}.',
+  payout_processed: '💰 NEXUS Market — Virement de {{amount_fcfa}} FCFA effectué. Merci {{vendor_name}} !',
+  payout_failed: '⚠️ NEXUS Market — Échec du virement de {{amount_fcfa}} FCFA ({{reason}}). Notre équipe revient vers vous.',
+  payout_requested: '⏳ NEXUS Market — Demande de virement de {{amount_fcfa}} FCFA bien reçue, en cours de traitement.',
+  admin_payout_request: '💸 NEXUS Admin — {{vendor_name}} demande un retrait de {{amount_fcfa}} FCFA via {{method}}.',
+
+  order_confirmed: '🛒 NEXUS Market — Commande #{{order_id}} confirmée. Merci {{buyer_name}} !{{#if total}} Montant : {{total}}.{{/if}}',
+  order_processing: '📦 NEXUS Market — Commande #{{order_id}} en cours de préparation.',
+  order_shipped: '🚚 NEXUS Market — Commande #{{order_id}} expédiée !{{#if tracking_number}} Suivi : {{tracking_number}}.{{/if}}',
+  order_in_transit: '🛵 NEXUS Market — Commande #{{order_id}} en route. Le livreur arrive bientôt.',
+  order_delivered: '✅ NEXUS Market — Commande #{{order_id}} livrée. Merci de votre confiance !',
+  order_cancelled: '❌ NEXUS Market — Commande #{{order_id}} annulée.{{#if reason}} Motif : {{reason}}.{{/if}}',
+
+  vendor_new_order: '🎉 NEXUS Market — Nouvelle commande #{{order_id}} reçue{{#if total}} ({{total}}){{/if}}. Préparez l\'expédition.',
+  new_offer: '💰 NEXUS Market — {{kind_label}} reçue sur « {{story_title}} » de {{buyer_name}}{{#if buyer_phone}} ({{buyer_phone}}){{/if}}.{{#if amount}} Montant : {{amount}}.{{/if}}',
+  offer_submitted: '✅ NEXUS Market — Votre {{kind_label}} sur « {{story_title}} » a été transmise{{#if amount}} pour {{amount}}{{/if}}. Le vendeur vous contactera.',
+
+  vendor_approved: '✅ NEXUS Market — Votre boutique {{shop_name}} est validée. Vous pouvez vendre dès maintenant !',
+  vendor_rejected: 'NEXUS Market — Votre dossier vendeur n\'a pas été validé.{{#if reason}} Motif : {{reason}}.{{/if}}',
+  low_stock: '📉 NEXUS Market — Stock faible : {{product_name}} ({{stock}} restant). Pensez à réapprovisionner.',
+  product_moderated: 'NEXUS Market — Votre produit {{product_name}} a été modéré et n\'est plus visible.{{#if reason}} Motif : {{reason}}.{{/if}}',
+
+  quote_request: '📨 NEXUS Market — {{buyer_name}} vous demande un devis. Répondez depuis votre tableau de bord.',
+  quote_sent: '📄 NEXUS Market — Le vendeur vous a transmis un devis{{#if total}} de {{total}}{{/if}}.',
+
+  admin_new_vendor: '🆕 NEXUS Admin — Nouveau vendeur inscrit : {{vendor_name}}. Validez-le depuis l\'admin.',
+  admin_new_dispute: '⚖️ NEXUS Admin — Nouveau litige #{{dispute_id}} ouvert.{{#if order_id}} Commande : {{order_id}}.{{/if}}',
+
+  welcome: '👋 Bienvenue sur NEXUS Market, {{name}} ! Découvrez des milliers de produits, payez en toute sécurité et faites-vous livrer partout au Sénégal.',
+  new_message: '💬 NEXUS Market — Nouveau message{{#if from_name}} de {{from_name}}{{/if}}. Connectez-vous pour y répondre.',
+  return_requested: '↩️ NEXUS Market — Votre demande de retour pour la commande #{{order_id}} est bien enregistrée.',
+  dispute_opened: '⚖️ NEXUS Market — Un litige a été ouvert pour la commande #{{order_id}}. Notre équipe l\'examine.',
+
+  stock_back: '🔔 NEXUS Market — {{product_name}} est de nouveau en stock ! Commandez vite avant rupture.',
+  price_drop: '📉 NEXUS Market — Le prix de {{product_name}} a baissé{{#if discount_pct}} de {{discount_pct}}%{{/if}} : désormais {{new_price}}.',
+};
+
 // Mapping clé d'événement serveur → identifiant de template de l'éditeur admin
 // (app_config.nexus_email_templates). La plupart sont identiques ; seul
 // order_confirmed diffère (l'éditeur l'appelle order_confirmation).
@@ -181,6 +226,69 @@ export async function sendEventEmail(env, eventKey, to, vars = {}) {
     await logEmail(env, { ...logBase, status: 'failed' });
     return { ok: false, error: e.message };
   }
+}
+
+/**
+ * Envoi d'un message WhatsApp serveur par clé d'événement : gating + gabarit
+ * texte (WA_DEFAULTS) + substitution + envoi (Green API / repli WAHA) +
+ * journalisation whatsapp_logs. Ne lève jamais. Généralise à tous les
+ * événements pour lesquels un email serveur est envoyé (cf. sendEventEmail) :
+ * dès qu'un téléphone est disponible, le message WhatsApp part en parallèle.
+ */
+export async function sendEventWhatsApp(env, eventKey, phone, vars = {}) {
+  if (!isValidPhone(phone)) return { skipped: 'no_recipient' };
+  const greenConfigured = !!(env.GREEN_API_INSTANCE_ID && env.GREEN_API_TOKEN);
+  const wahaConfigured  = !!(env.WAHA_BASE_URL && env.WAHA_API_KEY);
+  if (!greenConfigured && !wahaConfigured) return { skipped: 'no_provider' };
+
+  const cfg = await getEventConfig(env, eventKey);
+  if (cfg && cfg.whatsapp_enabled === false) return { skipped: 'disabled' };
+
+  const tpl = WA_DEFAULTS[eventKey];
+  if (!tpl) return { skipped: 'no_template' };
+  const message = applyVars(tpl, vars).trim();
+  if (!message) return { skipped: 'empty_message' };
+
+  const logRow = { phone: normalizePhone(phone), message, template: eventKey, user_id: vars._userId || null };
+  try {
+    const r = await sendWhatsAppDirect(env, { phone, message });
+    if (r && r.ok) {
+      await logWhatsApp(env, { ...logRow, status: 'sent', green_id: r.id || null, context: { provider: r.provider } });
+      return { ok: true, provider: r.provider };
+    }
+    await logWhatsApp(env, { ...logRow, status: 'failed', error_msg: r && r.error, context: { provider_attempted: r && r.provider } });
+    return { ok: false, error: r && r.error };
+  } catch (e) {
+    await logWhatsApp(env, { ...logRow, status: 'failed', error_msg: e.message });
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Résout le téléphone d'un utilisateur (profiles.phone) à partir de son UUID. */
+export async function resolvePhone(env, userId) {
+  if (!userId) return null;
+  try {
+    const sb = supabase(env);
+    const rows = await sb.from('profiles').select('phone', `id=eq.${encodeURIComponent(userId)}`);
+    const p = Array.isArray(rows) && rows[0];
+    return (p && p.phone) || null;
+  } catch (_) { return null; }
+}
+
+/**
+ * Envoi combiné email + WhatsApp pour un même événement (mêmes vars, mêmes
+ * templates de contenu adaptés au canal). `recipient` = { email?, phone?,
+ * userId? } — si `phone` est absent mais `userId` fourni, le téléphone est
+ * résolu via profiles. Chaque canal est best-effort et indépendant de l'autre.
+ */
+export async function sendEventNotification(env, eventKey, recipient = {}, vars = {}) {
+  const { email, phone, userId } = recipient;
+  const waPhone = phone || (userId ? await resolvePhone(env, userId) : null);
+  const [emailResult, whatsappResult] = await Promise.all([
+    email ? sendEventEmail(env, eventKey, email, vars) : Promise.resolve({ skipped: 'no_recipient' }),
+    waPhone ? sendEventWhatsApp(env, eventKey, waPhone, vars) : Promise.resolve({ skipped: 'no_recipient' }),
+  ]);
+  return { email: emailResult, whatsapp: whatsappResult };
 }
 
 /**

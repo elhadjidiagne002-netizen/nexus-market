@@ -27,61 +27,10 @@ import { normalizePhone, isValidPhone, isValidMessage } from './_lib/validate.js
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
 import { getEventConfig, logWhatsApp } from './_lib/notify.js';
 import { isInternalCall, requireAuth } from './_lib/utils.js';
-
-// Envoi via Green API. Retour uniforme { ok, id?, error?, detail? }.
-async function sendViaGreenApi(env, { chatId, message }) {
-  const instanceId = env.GREEN_API_INSTANCE_ID;
-  const apiToken   = env.GREEN_API_TOKEN;
-  const baseUrl    = env.GREEN_API_BASE_URL || 'https://api.greenapi.com';
-  if (!instanceId || !apiToken) return { ok: false, error: 'Green API non configurée' };
-
-  let res;
-  try {
-    res = await fetch(`${baseUrl}/waInstance${instanceId}/sendMessage/${apiToken}`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ chatId, message }),
-    });
-  } catch (err) {
-    return { ok: false, error: 'Green API injoignable : ' + err.message };
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    // 466 = quota mensuel du plan Developer (gratuit) Green API dépassé —
-    // cause vérifiée des échecs d'envoi depuis 2026-06-12 (cf.
-    // green-api.com/en/docs/api/466-error-example-body/).
-    const errorMsg = res.status === 466
-      ? 'Quota mensuel Green API dépassé (plan Developer/gratuit)'
-      : 'Green API ' + res.status;
-    return { ok: false, error: errorMsg, detail: data, httpStatus: res.status };
-  }
-  return { ok: true, id: data.idMessage || null };
-}
-
-// Envoi via WAHA (fallback). Même contrat de retour que sendViaGreenApi.
-// API : POST {WAHA_BASE_URL}/api/sendText { chatId, text, session } + X-Api-Key.
-async function sendViaWaha(env, { chatId, message }) {
-  const base    = (env.WAHA_BASE_URL || '').replace(/\/+$/, '');
-  const apiKey  = env.WAHA_API_KEY;
-  const session = env.WAHA_SESSION || 'default';
-  if (!base || !apiKey) return { ok: false, error: 'WAHA non configurée', notConfigured: true };
-
-  let res;
-  try {
-    res = await fetch(`${base}/api/sendText`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
-      body:    JSON.stringify({ chatId, text: message, session }),
-    });
-  } catch (err) {
-    return { ok: false, error: 'WAHA injoignable : ' + err.message };
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    return { ok: false, error: 'WAHA ' + res.status + (data && data.message ? ' : ' + data.message : ''), detail: data };
-  }
-  return { ok: true, id: (data && (data.id || data.messageId)) || null };
-}
+// Logique d'envoi (Green API + repli WAHA) partagée avec sendEventWhatsApp
+// (notify.js), qui appelle l'envoi en process depuis les autres functions
+// serveur sans repasser par un fetch HTTP vers cet endpoint.
+import { sendViaGreenApi, sendViaWaha } from './_lib/wa-send.js';
 
 export async function onRequestPost(ctx) {
   const { request, env } = ctx;

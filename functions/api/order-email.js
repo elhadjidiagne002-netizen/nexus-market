@@ -4,7 +4,7 @@
 // invité inclus). Appelé par le trigger DB trg_order_confirm_email via pg_net.
 // Rend le template (éditeur admin ou défaut de marque) via sendEventEmail.
 import { isInternalCall, json, err, options } from './_lib/utils.js';
-import { sendEventEmail } from './_lib/notify.js';
+import { sendEventNotification } from './_lib/notify.js';
 
 // orders.total est observé en EUR (cf. CLAUDE.md ; les triggers WhatsApp font la
 // même conversion). On affiche donc le montant converti en FCFA, formaté fr-FR.
@@ -45,11 +45,12 @@ export async function onRequest({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return err('JSON invalide', 400); }
   const {
-    to, order_id, buyer_name, total, vendor_email,
+    to, order_id, buyer_name, buyer_phone, total, vendor_email,
     vendor_name, buyer_address, shipping_city, tracking_number, created_at, products,
   } = body || {};
 
-  if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(to))) {
+  const toValid = to && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(to));
+  if (!toValid && !buyer_phone) {
     return json({ ok: true, skipped: 'no_recipient' });
   }
 
@@ -59,10 +60,10 @@ export async function onRequest({ request, env }) {
   let orderDate = '';
   try { if (created_at) orderDate = new Date(created_at).toLocaleDateString('fr-FR'); } catch { /* ignore */ }
 
-  // Email acheteur : "commande confirmée". Variables alignées sur le template
-  // configurable order_confirmation (buyer_name, order_id, order_date, total,
-  // tracking, address, vendor_name, items).
-  const rBuyer = await sendEventEmail(env, 'order_confirmed', to, {
+  // Email + WhatsApp acheteur : "commande confirmée". Variables alignées sur le
+  // template configurable order_confirmation (buyer_name, order_id, order_date,
+  // total, tracking, address, vendor_name, items).
+  const rBuyer = await sendEventNotification(env, 'order_confirmed', { email: toValid ? to : null, phone: buyer_phone }, {
     buyer_name: buyer_name || 'Client',
     order_id: orderRef,
     order_date: orderDate,
@@ -74,10 +75,13 @@ export async function onRequest({ request, env }) {
     _orderId: order_id || null,
   });
 
-  // Email vendeur (optionnel) : "nouvelle commande" — complément de la notif in-app/push.
+  // Email vendeur (optionnel) : "nouvelle commande" — complément de la notif
+  // in-app/push. WhatsApp NON dupliqué ici : le trigger DB
+  // trg_new_order_vendor_whatsapp envoie déjà un message équivalent au vendeur
+  // à l'INSERT de la commande (cf. sql/2026_06_16_fix_orders_whatsapp_trigger_left_uuid.sql).
   let rVendor = null;
   if (vendor_email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(vendor_email))) {
-    rVendor = await sendEventEmail(env, 'vendor_new_order', vendor_email, {
+    rVendor = await sendEventNotification(env, 'vendor_new_order', { email: vendor_email }, {
       vendor_name: vendor_name || 'Vendeur',
       order_id: orderRef,
       total: totalStr,

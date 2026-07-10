@@ -6,7 +6,7 @@
 // On vérifie le hash HMAC avant de marquer la commande paid.
 // ============================================================
 
-import { sendEventEmail } from '../../_lib/notify.js';
+import { sendEventNotification } from '../../_lib/notify.js';
 
 // orders.total est en EUR (convention tranchée) → affichage FCFA = round(total × 655.957).
 const EUR_TO_FCFA = 655.957;
@@ -257,7 +257,7 @@ export async function onRequest({ request, env }) {
 
   // 5. Créer une notification in-app
   if (isPaid) {
-    const orders = await sbGet(env, `orders?id=eq.${encodeURIComponent(order_id)}&select=buyer_id,total,buyer_email,buyer_name`);
+    const orders = await sbGet(env, `orders?id=eq.${encodeURIComponent(order_id)}&select=buyer_id,total,buyer_email,buyer_name,buyer_phone`);
     const order = orders?.[0];
     if (order?.buyer_id) {
       await fetch(`${env.SUPABASE_URL}/rest/v1/notifications`, {
@@ -280,15 +280,15 @@ export async function onRequest({ request, env }) {
         }),
       });
     }
-    // Email acheteur : paiement reçu (centre de notifications)
-    if (order?.buyer_email) {
-      await sendEventEmail(env, 'payment_received', order.buyer_email, {
+    // Email + WhatsApp acheteur : paiement reçu (centre de notifications)
+    if (order?.buyer_email || order?.buyer_phone) {
+      await sendEventNotification(env, 'payment_received', { email: order.buyer_email, phone: order.buyer_phone }, {
         buyer_name: order.buyer_name || 'Client',
         order_id:   order_id,
         total:      Math.round((Number(order.total) || 0) * EUR_TO_FCFA).toLocaleString('fr-FR'),
         _userId:    order.buyer_id || null,
         _orderId:   order_id,
-      }).catch(e => console.warn('[PayTech IPN] email:', e.message));
+      }).catch(e => console.warn('[PayTech IPN] notify:', e.message));
     }
   }
 

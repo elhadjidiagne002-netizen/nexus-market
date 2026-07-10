@@ -15,7 +15,7 @@
 //   POST   /api/stock-alerts/migrate      → migrer localStorage → Supabase
 // ============================================================
 
-import { sendEventEmail } from './_lib/notify.js';
+import { sendEventNotification } from './_lib/notify.js';
 // [SEC #2] JWT vérifié côté Supabase (signature) plutôt que décodé en aveugle.
 import { requireAuth } from './_lib/utils.js';
 
@@ -154,9 +154,9 @@ export async function onRequest({ request, env, params }) {
         created_at: new Date().toISOString(),
       });
 
-      // Email "de nouveau en stock" (centre de notifications)
-      if (env.RESEND_API_KEY && alert.user_email) {
-        await sendEventEmail(env, 'stock_back', alert.user_email, {
+      // Email + WhatsApp "de nouveau en stock" (centre de notifications)
+      if (alert.user_email || alert.user_id) {
+        await sendEventNotification(env, 'stock_back', { email: alert.user_email, userId: alert.user_id }, {
           buyer_name: 'Client', product_name: product.name,
           product_url: notifyPayload.url, _userId: alert.user_id || null,
         }).catch(() => {});
@@ -204,8 +204,8 @@ export async function onRequest({ request, env, params }) {
         title: payload.title, message: payload.message, link: payload.url,
         read: false, created_at: new Date().toISOString(),
       });
-      if (env.RESEND_API_KEY && a.user_email) {
-        await sendEventEmail(env, 'price_drop', a.user_email, {
+      if (a.user_email || a.user_id) {
+        await sendEventNotification(env, 'price_drop', { email: a.user_email, userId: a.user_id }, {
           buyer_name: 'Client', product_name: product.name,
           new_price: fcfa(newPrice), discount_pct: pct, product_url: payload.url, _userId: a.user_id || null,
         }).catch(() => {});

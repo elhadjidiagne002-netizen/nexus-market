@@ -3,7 +3,7 @@
  * IPN PayTech pour les mises à jour de statut de transfert vendeur
  */
 import { createClient } from "@supabase/supabase-js";
-import { sendEventEmail } from "./api/_lib/notify.js";
+import { sendEventNotification } from "./api/_lib/notify.js";
 
 async function sha256hex(str) {
   const encoded = new TextEncoder().encode(str);
@@ -153,14 +153,16 @@ export async function onRequestPost(context) {
     }).catch(e => console.warn("[payout-webhook] notif:", e.message));
   }
 
-  // Email vendeur (centre de notifications : payout_processed / payout_failed)
-  if (payout.vendor_email && (newStatus === "paid" || newStatus === "failed")) {
-    await sendEventEmail(env, newStatus === "paid" ? "payout_processed" : "payout_failed", payout.vendor_email, {
+  // Email + WhatsApp vendeur (centre de notifications : payout_processed / payout_failed)
+  if ((newStatus === "paid" || newStatus === "failed") && (payout.vendor_email || payout.vendor_id)) {
+    await sendEventNotification(env, newStatus === "paid" ? "payout_processed" : "payout_failed", {
+      email: payout.vendor_email, userId: payout.vendor_id || null,
+    }, {
       vendor_name: payout.vendor_name || "Vendeur",
       amount_fcfa: (payout.amount_xof || 0).toLocaleString("fr-FR"),
       reason: newStatus === "failed" ? (payout.failure_reason || type_event || "") : "",
       _userId: payout.vendor_id || null,
-    }).catch(e => console.warn("[payout-webhook] email:", e.message));
+    }).catch(e => console.warn("[payout-webhook] notify:", e.message));
   }
 
   console.log(`[payout-webhook] ${payout.id} → ${newStatus}`);

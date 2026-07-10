@@ -19,7 +19,7 @@
 //   Endpoint URL : https://<votre-site>.pages.dev/api/webhooks/stripe
 //   Événements  : payment_intent.succeeded, payment_intent.payment_failed, charge.refunded
 
-import { sendEventEmail } from '../_lib/notify.js';
+import { sendEventNotification } from '../_lib/notify.js';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -93,7 +93,7 @@ export async function onRequestPost(context) {
             try {
               const hdrs = { "Content-Type":"application/json", apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
               // Récupérer l'acheteur de la commande (colonne buyer_id — cf. schéma orders)
-              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=buyer_id,buyer_email,buyer_name,total`, { headers: hdrs });
+              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}&select=buyer_id,buyer_email,buyer_name,buyer_phone,total`, { headers: hdrs });
               const oData = await oRes.json();
               const order = oData?.[0] || {};
               const buyerId = order.buyer_id;
@@ -110,9 +110,9 @@ export async function onRequestPost(context) {
                 method: "POST", headers: { "Content-Type": "application/json", "X-Internal-Secret": env.INTERNAL_API_SECRET || env.CRON_SECRET || env.SUPABASE_SERVICE_KEY || "" },
                 body: JSON.stringify({ userId: buyerId, title: "✅ Paiement confirmé", body: `${amountFcfa.toLocaleString('fr-FR')} FCFA reçu — commande #${orderId.slice(-6)}`, url: `/?order=${orderId}` }),
               });
-              // Email acheteur : paiement reçu (centre de notifications)
-              if (order.buyer_email) {
-                await sendEventEmail(env, "payment_received", order.buyer_email, {
+              // Email + WhatsApp acheteur : paiement reçu (centre de notifications)
+              if (order.buyer_email || order.buyer_phone) {
+                await sendEventNotification(env, "payment_received", { email: order.buyer_email, phone: order.buyer_phone }, {
                   buyer_name: order.buyer_name || "Client", order_id: orderId,
                   total: amountFcfa.toLocaleString('fr-FR'), _userId: buyerId, _orderId: orderId,
                 }).catch(() => {});
@@ -140,16 +140,16 @@ export async function onRequestPost(context) {
           orderId:         rOrderId,
           kind:            "refunded",
         });
-        // Email acheteur : remboursement effectué (centre de notifications)
-        if (rOrderId && SB_URL && SB_KEY && env.RESEND_API_KEY) {
+        // Email + WhatsApp acheteur : remboursement effectué (centre de notifications)
+        if (rOrderId && SB_URL && SB_KEY) {
           context.waitUntil((async () => {
             try {
               const hdrs = { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
-              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(rOrderId)}&select=buyer_id,buyer_email,buyer_name`, { headers: hdrs });
+              const oRes = await fetch(`${SB_URL}/rest/v1/orders?id=eq.${encodeURIComponent(rOrderId)}&select=buyer_id,buyer_email,buyer_name,buyer_phone`, { headers: hdrs });
               const o = (await oRes.json())?.[0];
-              if (o?.buyer_email) {
+              if (o?.buyer_email || o?.buyer_phone) {
                 const amt = Math.round((pi.amount_refunded || 0) / 100 * 655.957);
-                await sendEventEmail(env, "refund_processed", o.buyer_email, {
+                await sendEventNotification(env, "refund_processed", { email: o.buyer_email, phone: o.buyer_phone }, {
                   buyer_name: o.buyer_name || "Client", order_id: rOrderId,
                   amount: amt.toLocaleString("fr-FR"), _userId: o.buyer_id || null, _orderId: rOrderId,
                 });

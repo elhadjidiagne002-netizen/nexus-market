@@ -81,6 +81,25 @@ Flux mobile-money/payout : `PAYTECH_SECRET_KEY`. Le code accepte désormais les 
 Voir `.env.example`. Le `.env` réel n'est pas versionné. Manquaient à la config :
 `PAYTECH_API_KEY/SECRET`, `RESEND_API_KEY`, `ADMIN_USER_ID`.
 
+## WhatsApp — généralisé à tous les événements email (2026-07-10)
+`functions/api/_lib/notify.js` expose désormais `sendEventWhatsApp` (gabarits texte
+`WA_DEFAULTS`, gating `notification_events.whatsapp_enabled`, log `whatsapp_logs`) et
+`sendEventNotification(env, eventKey, {email, phone, userId}, vars)` qui envoie EMAIL +
+WHATSAPP en parallèle pour le même événement (best-effort, indépendants). Tous les
+appelants de `sendEventEmail` ont été migrés vers `sendEventNotification` : webhooks
+paiement (Stripe, PayTech), payout (demande/traité/échoué), offres sur story, stock
+faible/de retour/baisse de prix, `notify-user.js` (résout email+téléphone via
+`profiles`), `notify-admin.js` (env `ADMIN_PHONE` en plus de `ADMIN_EMAIL`),
+`order-email.js` (commande confirmée acheteur). L'envoi WhatsApp direct (sans repasser
+par un fetch HTTP vers `/api/whatsapp`) vit dans `functions/api/_lib/wa-send.js`
+(partagé avec l'endpoint HTTP, qui l'utilise pour rester dédupliqué). ⚠️ Le vendeur
+n'a PAS de WhatsApp doublé sur `vendor_new_order` : le trigger DB
+`trg_new_order_vendor_whatsapp` (SQL, sur INSERT orders) envoie déjà un message
+équivalent — `order-email.js` reste email-only pour ce cas précis. 3 triggers DB
+(`_order_confirm_email`, `_offer_emails`, `_low_stock_alert`) ont été mis à jour
+(`sql/2026_07_10_generalize_whatsapp_notifications.sql`, appliqué en prod) pour
+transmettre `buyer_phone`/`vendor_phone`/`phone` aux endpoints correspondants.
+
 ## WhatsApp — double fournisseur (Green API + WAHA)
 `functions/api/whatsapp.js` essaie **Green API** en premier (`GREEN_API_INSTANCE_ID`/
 `GREEN_API_TOKEN`), puis bascule automatiquement sur **WAHA** (self-hosted, Render

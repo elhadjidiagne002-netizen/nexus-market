@@ -3,7 +3,7 @@
  * POST /payout-request → Crée une demande de retrait vendeur via PayTech Transfer
  */
 import { createClient } from "@supabase/supabase-js";
-import { sendEventEmail } from "./api/_lib/notify.js";
+import { sendEventNotification } from "./api/_lib/notify.js";
 
 const MIN_PAYOUT_XOF = 1000;
 
@@ -219,18 +219,18 @@ export async function onRequestPost(context) {
     console.warn("[payout-request] ADMIN_USER_ID absent/invalide — notification admin ignorée (email envoyé à la place).");
   }
 
-  // Emails (centre de notifications) : accusé au vendeur + alerte à l'admin.
+  // Emails + WhatsApp (centre de notifications) : accusé au vendeur + alerte à l'admin.
   const _amtFcfa = amountInt.toLocaleString("fr-FR");
-  if (vendorEmail) {
-    await sendEventEmail(env, "payout_requested", vendorEmail, {
+  if (vendorEmail || user.id) {
+    await sendEventNotification(env, "payout_requested", { email: vendorEmail, userId: user.id }, {
       vendor_name: vendorName, amount_fcfa: _amtFcfa, _userId: user.id,
-    }).catch(e => console.warn("[payout-request] email vendeur:", e.message));
+    }).catch(e => console.warn("[payout-request] notify vendeur:", e.message));
   }
-  if (env.ADMIN_EMAIL) {
-    await sendEventEmail(env, "admin_payout_request", env.ADMIN_EMAIL, {
+  if (env.ADMIN_EMAIL || env.ADMIN_PHONE) {
+    await sendEventNotification(env, "admin_payout_request", { email: env.ADMIN_EMAIL, phone: env.ADMIN_PHONE }, {
       vendor_name: vendorName, amount_fcfa: _amtFcfa,
       method: method === "mobile" ? PROVIDERS[provider] : "virement bancaire",
-    }).catch(e => console.warn("[payout-request] email admin:", e.message));
+    }).catch(e => console.warn("[payout-request] notify admin:", e.message));
   }
 
   return json(201, {

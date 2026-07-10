@@ -4,7 +4,7 @@
 // admin_new_dispute, …) sans connaître l'adresse admin. Auth requise + rate limit.
 import { options, json, err, requireAuth } from './_lib/utils.js';
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
-import { sendEventEmail } from './_lib/notify.js';
+import { sendEventNotification } from './_lib/notify.js';
 
 const ALLOWED = new Set([
   'admin_new_vendor', 'admin_new_dispute', 'admin_payout_request',
@@ -17,8 +17,10 @@ export async function onRequest({ request, env }) {
   const [user, authError] = await requireAuth(request, env);
   if (authError) return authError;
 
-  if (!env.ADMIN_EMAIL) return json({ ok: true, skipped: 'no_admin_email' });
-  if (!env.RESEND_API_KEY) return json({ ok: true, skipped: 'no_resend' });
+  // ADMIN_PHONE (optionnel) : envoie aussi le message WhatsApp équivalent à
+  // l'admin, en plus de l'email ADMIN_EMAIL — généralisation du centre de
+  // notifications aux événements admin.
+  if (!env.ADMIN_EMAIL && !env.ADMIN_PHONE) return json({ ok: true, skipped: 'no_admin_contact' });
 
   let body;
   try { body = await request.json(); } catch { return err('JSON invalide', 400); }
@@ -28,6 +30,6 @@ export async function onRequest({ request, env }) {
   const rl = await rateLimit(env, `notifadmin:${clientIp(request)}`, 20, 60);
   if (!rl.allowed) return tooManyRequests(rl.resetAt);
 
-  const r = await sendEventEmail(env, event, env.ADMIN_EMAIL, (vars && typeof vars === 'object') ? vars : {});
-  return json({ ok: !!(r && (r.ok || r.skipped)), result: r });
+  const r = await sendEventNotification(env, event, { email: env.ADMIN_EMAIL, phone: env.ADMIN_PHONE }, (vars && typeof vars === 'object') ? vars : {});
+  return json({ ok: !!(r.email?.ok || r.email?.skipped || r.whatsapp?.ok || r.whatsapp?.skipped), result: r });
 }
