@@ -10,12 +10,78 @@
  *   GREEN_API_TOKEN        = (token Green API — SECRET, à mettre en variable chiffrée)
  *   GREEN_API_BASE_URL     = https://xxxx.api.greenapi.com
  *   NEXUS_WA_SECRET        = (secret partagé — SECRET, à mettre en variable chiffrée)
+ *
+ * [FALLBACK WAHA] Green API a un quota mensuel strict sur le plan gratuit
+ * (cf. erreur 466, memory whatsapp-green-api-quota-466). Pour ne plus jamais
+ * dépendre d'un seul fournisseur, tout échec Green API (quota dépassé,
+ * instance déconnectée, panne réseau...) bascule automatiquement sur une
+ * instance WAHA (WhatsApp HTTP API, self-hosted — https://waha.devlike.pro),
+ * SI elle est configurée. Sans ces variables, comportement inchangé
+ * (Green API seul, comme avant) :
+ *   WAHA_BASE_URL  = https://votre-instance-waha.example.com (SANS slash final)
+ *   WAHA_API_KEY   = (clé API WAHA — SECRET)
+ *   WAHA_SESSION   = default (nom de la session WhatsApp WAHA, optionnel)
  */
 
 import { normalizePhone, isValidPhone, isValidMessage } from './_lib/validate.js';
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
 import { getEventConfig, logWhatsApp } from './_lib/notify.js';
 import { isInternalCall, requireAuth } from './_lib/utils.js';
+
+// Envoi via Green API. Retour uniforme { ok, id?, error?, detail? }.
+async function sendViaGreenApi(env, { chatId, message }) {
+  const instanceId = env.GREEN_API_INSTANCE_ID;
+  const apiToken   = env.GREEN_API_TOKEN;
+  const baseUrl    = env.GREEN_API_BASE_URL || 'https://api.greenapi.com';
+  if (!instanceId || !apiToken) return { ok: false, error: 'Green API non configurée' };
+
+  let res;
+  try {
+    res = await fetch(`${baseUrl}/waInstance${instanceId}/sendMessage/${apiToken}`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ chatId, message }),
+    });
+  } catch (err) {
+    return { ok: false, error: 'Green API injoignable : ' + err.message };
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // 466 = quota mensuel du plan Developer (gratuit) Green API dépassé —
+    // cause vérifiée des échecs d'envoi depuis 2026-06-12 (cf.
+    // green-api.com/en/docs/api/466-error-example-body/).
+    const errorMsg = res.status === 466
+      ? 'Quota mensuel Green API dépassé (plan Developer/gratuit)'
+      : 'Green API ' + res.status;
+    return { ok: false, error: errorMsg, detail: data, httpStatus: res.status };
+  }
+  return { ok: true, id: data.idMessage || null };
+}
+
+// Envoi via WAHA (fallback). Même contrat de retour que sendViaGreenApi.
+// API : POST {WAHA_BASE_URL}/api/sendText { chatId, text, session } + X-Api-Key.
+async function sendViaWaha(env, { chatId, message }) {
+  const base    = (env.WAHA_BASE_URL || '').replace(/\/+$/, '');
+  const apiKey  = env.WAHA_API_KEY;
+  const session = env.WAHA_SESSION || 'default';
+  if (!base || !apiKey) return { ok: false, error: 'WAHA non configurée', notConfigured: true };
+
+  let res;
+  try {
+    res = await fetch(`${base}/api/sendText`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
+      body:    JSON.stringify({ chatId, text: message, session }),
+    });
+  } catch (err) {
+    return { ok: false, error: 'WAHA injoignable : ' + err.message };
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { ok: false, error: 'WAHA ' + res.status + (data && data.message ? ' : ' + data.message : ''), detail: data };
+  }
+  return { ok: true, id: (data && (data.id || data.messageId)) || null };
+}
 
 export async function onRequestPost(ctx) {
   const { request, env } = ctx;
@@ -49,11 +115,11 @@ export async function onRequestPost(ctx) {
   }
 
   // [FIX] Plus de tokens en dur (fuite de secrets) — tout vient de l'environnement.
-  const instanceId = env.GREEN_API_INSTANCE_ID;
-  const apiToken   = env.GREEN_API_TOKEN;
-  const baseUrl    = env.GREEN_API_BASE_URL || 'https://api.greenapi.com';
-  if (!instanceId || !apiToken) {
-    return json({ ok: false, error: 'Green API non configurée' }, 503, corsHeaders);
+  // Au moins UN des deux fournisseurs (Green API ou WAHA) doit être configuré.
+  const greenConfigured = !!(env.GREEN_API_INSTANCE_ID && env.GREEN_API_TOKEN);
+  const wahaConfigured  = !!(env.WAHA_BASE_URL && env.WAHA_API_KEY);
+  if (!greenConfigured && !wahaConfigured) {
+    return json({ ok: false, error: 'Aucun fournisseur WhatsApp configuré (Green API ni WAHA)' }, 503, corsHeaders);
   }
 
   // ── Validation des entrées ──────────────────────────────────────────────
@@ -81,41 +147,58 @@ export async function onRequestPost(ctx) {
   const chatId = (raw.startsWith('221') ? raw : raw.length === 9 ? '221' + raw : raw) + '@c.us';
   const logRow = { phone: raw, message: body.message, template: body.event || null, user_id: body.userId || null };
 
-  let res;
-  try {
-    res = await fetch(`${baseUrl}/waInstance${instanceId}/sendMessage/${apiToken}`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ chatId, message: body.message }),
+  // ── Envoi : Green API en priorité, bascule automatique sur WAHA si Green
+  //    API échoue (quota 466, instance déconnectée, panne réseau...) et que
+  //    WAHA est configuré. Sans WAHA configuré : comportement inchangé.
+  let result = null;
+  let providerUsed = null;
+  let greenError = null;
+
+  if (greenConfigured) {
+    result = await sendViaGreenApi(env, { chatId, message: body.message });
+    providerUsed = 'green-api';
+    if (!result.ok) greenError = result;
+  }
+
+  if ((!result || !result.ok) && wahaConfigured) {
+    const wahaResult = await sendViaWaha(env, { chatId, message: body.message });
+    providerUsed = 'waha';
+    result = wahaResult;
+  }
+
+  if (!result || !result.ok) {
+    // Les deux fournisseurs (ou le seul configuré) ont échoué.
+    const primaryMsg = greenError
+      ? (greenError.httpStatus === 466
+          ? 'Quota mensuel Green API dépassé (plan Developer/gratuit) — passez sur le plan Business payant sur green-api.com.'
+          : greenError.error)
+      : null;
+    const errorMsg = [primaryMsg, result && result.error].filter(Boolean).join(' | ') || 'Échec de l\'envoi WhatsApp';
+    await logWhatsApp(env, {
+      ...logRow, status: 'failed', error_msg: errorMsg,
+      context: { provider_attempted: providerUsed, green_configured: greenConfigured, waha_configured: wahaConfigured },
     });
-  } catch(err) {
-    await logWhatsApp(env, { ...logRow, status: 'failed', error_msg: 'Green API injoignable : ' + err.message });
-    return json({ ok: false, error: 'Green API injoignable : ' + err.message }, 502, corsHeaders);
+    return json({ ok: false, error: errorMsg, detail: result && result.detail }, 502, corsHeaders);
   }
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    // [FIX] 466 = quota mensuel du plan Developer (gratuit) Green API dépassé —
-    // cause vérifiée des échecs d'envoi depuis 2026-06-12 (cf. green-api.com/en/
-    // docs/api/466-error-example-body/). Message explicite au lieu de forcer à
-    // rechercher la signification d'un code HTTP non-standard à chaque incident.
-    const errorMsg = res.status === 466
-      ? 'Quota mensuel Green API dépassé (plan Developer/gratuit) — passez sur le plan Business payant sur green-api.com pour rétablir l\'envoi.'
-      : 'Green API ' + res.status;
-    await logWhatsApp(env, { ...logRow, status: 'failed', error_msg: errorMsg });
-    return json({ ok: false, error: errorMsg, detail: data }, res.status, corsHeaders);
-  }
-
-  await logWhatsApp(env, { ...logRow, status: 'sent', green_id: data.idMessage || null });
-  return json({ ok: true, idMessage: data.idMessage, chatId }, 200, corsHeaders);
+  // [OBSERVABILITÉ] provider dans `context` (pas de colonne dédiée) pour repérer
+  // en un coup d'œil si WAHA a dû prendre le relais de Green API.
+  await logWhatsApp(env, {
+    ...logRow, status: 'sent', green_id: result.id || null,
+    context: { provider: providerUsed, fallback: providerUsed === 'waha' },
+  });
+  return json({ ok: true, idMessage: result.id, chatId, provider: providerUsed }, 200, corsHeaders);
 }
 
 export async function onRequestGet(ctx) {
+  const env = ctx.env;
   return json({
-    service:    'NEXUS WhatsApp Gateway',
-    instance:   ctx.env.GREEN_API_INSTANCE_ID || '7107631852',
-    status:     'ready',
-    timestamp:  new Date().toISOString(),
+    service:         'NEXUS WhatsApp Gateway',
+    instance:        env.GREEN_API_INSTANCE_ID || '7107631852',
+    greenApiReady:   !!(env.GREEN_API_INSTANCE_ID && env.GREEN_API_TOKEN),
+    wahaReady:       !!(env.WAHA_BASE_URL && env.WAHA_API_KEY),
+    status:          'ready',
+    timestamp:       new Date().toISOString(),
   }, 200, { 'Access-Control-Allow-Origin': '*' });
 }
 

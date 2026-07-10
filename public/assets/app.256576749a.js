@@ -19329,6 +19329,13 @@ const WhatsAppAdminPanel = ({ addToast }) => {
   const [_waChecking,_setWaChecking]= React.useState(false);
   const [_waState,  _setWaState]  = React.useState(null);   // 'authorized' | 'notAuthorized' | ...
   const [_ambSend,  _setAmbSend]  = React.useState(false);
+  // [FIX WAHA] Statut RÉEL des fournisseurs (lit les variables d'env Cloudflare
+  // via GET /api/whatsapp) — contrairement aux champs du formulaire ci-dessous
+  // (Supabase, sans effet sur l'envoi réel), ceci reflète ce qui compte vraiment.
+  const [_providerStatus, _setProviderStatus] = React.useState(null);
+  React.useEffect(() => {
+    fetch('/api/whatsapp').then(r => r.json()).then(_setProviderStatus).catch(() => {});
+  }, []);
   const WE = React.createElement;
 
   const saveWA = async () => {
@@ -19374,6 +19381,17 @@ const WhatsAppAdminPanel = ({ addToast }) => {
       )
     ),
     WE('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+      // [FIX WAHA] \u00c9tat r\u00e9el des deux fournisseurs (variables d'env Cloudflare).
+      _providerStatus && WE('div', { style:{ display:'flex', gap:'.6rem', flexWrap:'wrap' } },
+        WE('span', { style:{ fontSize:'.78rem', fontWeight:700, padding:'.3rem .7rem', borderRadius:99,
+          background: _providerStatus.greenApiReady ? '#DCFCE7' : '#FEE2E2',
+          color: _providerStatus.greenApiReady ? '#166534' : '#991B1B' } },
+          (_providerStatus.greenApiReady ? '\ud83d\udfe2 ' : '\ud83d\udd34 ') + 'Green API (principal)'),
+        WE('span', { style:{ fontSize:'.78rem', fontWeight:700, padding:'.3rem .7rem', borderRadius:99,
+          background: _providerStatus.wahaReady ? '#DCFCE7' : '#F3F4F6',
+          color: _providerStatus.wahaReady ? '#166534' : '#6B7280' } },
+          (_providerStatus.wahaReady ? '\ud83d\udfe2 ' : '\u26aa ') + 'WAHA (secours)' + (_providerStatus.wahaReady ? '' : ' \u2014 non configur\u00e9')),
+      ),
       // [FIX] Les champs ci-dessous \u00e9taient trompeurs : "Sauvegarder" \u00e9crit dans
       // Supabase (whatsapp_config/app_config), mais l'envoi R\u00c9EL des messages
       // (functions/api/whatsapp.js) lit exclusivement les variables d'environnement
@@ -19396,6 +19414,16 @@ const WhatsAppAdminPanel = ({ addToast }) => {
         ' \u2192 Cr\u00e9er une instance \u2192 Scanner le QR code avec votre t\u00e9l\u00e9phone. ',
         WE('strong',null,'Erreur 466 lors d\u2019un envoi = quota mensuel du plan gratuit (Developer) d\u00e9pass\u00e9'),
         ' \u2014 passez sur le plan payant (Business) pour r\u00e9tablir l\u2019envoi.'
+      ),
+      // [FIX WAHA] Fallback automatique \u2014 bascule sur WAHA si Green API \u00e9choue.
+      WE('div', { className:'alert alert-info', style:{ fontSize:'.82rem' } },
+        WE('i',{className:'fas fa-life-ring'}), ' ',
+        WE('strong',null,'Secours WAHA : '),
+        'si Green API \u00e9choue (quota, d\u00e9connexion, panne), l\u2019envoi bascule automatiquement sur une instance ',
+        WE('a',{href:'https://waha.devlike.pro',target:'_blank',style:{color:'var(--primary)'}},'WAHA'),
+        ' (self-hosted) quand elle est configur\u00e9e via ',
+        WE('code',null,'WAHA_BASE_URL'),' / ',WE('code',null,'WAHA_API_KEY'),
+        ' (Cloudflare Pages \u2192 Environment variables). Aucun r\u00e9glage ici.'
       ),
       WE('div', { className:'form-row' },
         WE('div', { className:'form-group' },
