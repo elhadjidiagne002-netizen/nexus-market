@@ -81,6 +81,17 @@ Flux mobile-money/payout : `PAYTECH_SECRET_KEY`. Le code accepte désormais les 
 Voir `.env.example`. Le `.env` réel n'est pas versionné. Manquaient à la config :
 `PAYTECH_API_KEY/SECRET`, `RESEND_API_KEY`, `ADMIN_USER_ID`.
 
+## WhatsApp — double fournisseur (Green API + WAHA)
+`functions/api/whatsapp.js` essaie **Green API** en premier (`GREEN_API_INSTANCE_ID`/
+`GREEN_API_TOKEN`), puis bascule automatiquement sur **WAHA** (self-hosted, Render
+Starter, `WAHA_BASE_URL`/`WAHA_API_KEY`/`WAHA_SESSION=nexus-market`) si Green API échoue
+(quota 466, instance déconnectée, panne réseau). Sans variables `WAHA_*` configurées,
+comportement inchangé (Green API seul). Le panneau admin WhatsApp (React) affiche l'état
+réel des deux via `GET /api/whatsapp` — les champs Instance ID/Token du même panneau
+(Supabase `whatsapp_config`) n'ont **aucun effet** sur l'envoi réel, gardés uniquement
+pour le bouton diagnostic « Vérifier la connexion ». Détails/pièges de déploiement WAHA :
+mémoire `whatsapp-green-api-quota-466`.
+
 ## Vérifications avant commit
 - `node --check <fichier.js>` sur les functions modifiées (runtime Workers, pas de test runner backend).
 - Tests E2E : `tests/checkout.spec.js` (Playwright, nécessite un serveur lancé).
