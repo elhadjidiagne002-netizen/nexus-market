@@ -19374,10 +19374,28 @@ const WhatsAppAdminPanel = ({ addToast }) => {
       )
     ),
     WE('div', { style:{ padding:'1.25rem', display:'flex', flexDirection:'column', gap:'1rem' } },
+      // [FIX] Les champs ci-dessous \u00e9taient trompeurs : "Sauvegarder" \u00e9crit dans
+      // Supabase (whatsapp_config/app_config), mais l'envoi R\u00c9EL des messages
+      // (functions/api/whatsapp.js) lit exclusivement les variables d'environnement
+      // Cloudflare GREEN_API_INSTANCE_ID / GREEN_API_TOKEN \u2014 jamais cette table
+      // (fix s\u00e9cu 2026-07 : le token ne doit plus transiter par le bundle client).
+      // Un admin qui "corrigeait" ces champs en pensant r\u00e9parer l'envoi ne changeait
+      // donc rien en r\u00e9alit\u00e9. Seul "V\u00e9rifier la connexion" reste utile ici (test
+      // direct Green API depuis le navigateur, ind\u00e9pendant de cette sauvegarde).
+      WE('div', { className:'alert alert-warning', style:{ fontSize:'.82rem' } },
+        WE('i',{className:'fas fa-triangle-exclamation'}), ' ',
+        WE('strong',null,'Ces champs ne pilotent PAS l\u2019envoi r\u00e9el.'),
+        ' L\u2019envoi des messages lit les variables d\u2019environnement Cloudflare ',
+        WE('code',null,'GREEN_API_INSTANCE_ID'),' / ',WE('code',null,'GREEN_API_TOKEN'),
+        ' (Cloudflare Pages \u2192 Settings \u2192 Environment variables) \u2014 pas cette sauvegarde. ',
+        'Utilisez ce formulaire uniquement pour \u00ab\u00a0V\u00e9rifier la connexion\u00a0\u00bb (diagnostic direct Green API).'
+      ),
       WE('div', { className:'alert alert-info', style:{ fontSize:'.82rem' } },
         WE('i',{className:'fas fa-info-circle'}), ' Compte gratuit sur ',
         WE('a',{href:'https://green-api.com',target:'_blank',style:{color:'var(--primary)'}},'green-api.com'),
-        ' \u2192 Cr\u00e9er une instance \u2192 Scanner le QR code avec votre t\u00e9l\u00e9phone.'
+        ' \u2192 Cr\u00e9er une instance \u2192 Scanner le QR code avec votre t\u00e9l\u00e9phone. ',
+        WE('strong',null,'Erreur 466 lors d\u2019un envoi = quota mensuel du plan gratuit (Developer) d\u00e9pass\u00e9'),
+        ' \u2014 passez sur le plan payant (Business) pour r\u00e9tablir l\u2019envoi.'
       ),
       WE('div', { className:'form-row' },
         WE('div', { className:'form-group' },

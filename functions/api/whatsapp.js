@@ -95,8 +95,15 @@ export async function onRequestPost(ctx) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    await logWhatsApp(env, { ...logRow, status: 'failed', error_msg: 'Green API ' + res.status });
-    return json({ ok: false, error: 'Green API ' + res.status, detail: data }, res.status, corsHeaders);
+    // [FIX] 466 = quota mensuel du plan Developer (gratuit) Green API dépassé —
+    // cause vérifiée des échecs d'envoi depuis 2026-06-12 (cf. green-api.com/en/
+    // docs/api/466-error-example-body/). Message explicite au lieu de forcer à
+    // rechercher la signification d'un code HTTP non-standard à chaque incident.
+    const errorMsg = res.status === 466
+      ? 'Quota mensuel Green API dépassé (plan Developer/gratuit) — passez sur le plan Business payant sur green-api.com pour rétablir l\'envoi.'
+      : 'Green API ' + res.status;
+    await logWhatsApp(env, { ...logRow, status: 'failed', error_msg: errorMsg });
+    return json({ ok: false, error: errorMsg, detail: data }, res.status, corsHeaders);
   }
 
   await logWhatsApp(env, { ...logRow, status: 'sent', green_id: data.idMessage || null });
