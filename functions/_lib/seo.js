@@ -9,6 +9,17 @@ export function esc(s) {
   return String(s == null ? '' : s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 }
 
+// [ÉGRESS] Réécrit une image du bucket Storage `nexus-images` vers le proxy caché
+// Cloudflare, en URL ABSOLUE (les crawlers exigent une og:image absolue) :
+// https://…supabase.co/.../nexus-images/<path> → {origin}/img/<path>. Les URLs
+// externes / og-image par défaut restent inchangées. Coupe l'égress Supabase des
+// images indexées (crawlers Google/WhatsApp/Facebook) + WebP/AVIF si Imagor configuré.
+export function proxyImg(url, origin) {
+  if (!url || typeof url !== 'string') return url;
+  const m = url.match(/\/storage\/v1\/object\/public\/nexus-images\/(.+)$/);
+  return m ? `${origin || ''}/img/${m[1]}` : url;
+}
+
 // [ANTI-CONTOURNEMENT RT-01] Masque les coordonnées (numéros sénégalais, liens
 // WhatsApp/Telegram) glissées dans les titres/descriptions, sur les pages publiques
 // indexées — pour que le contact passe par la plateforme (escrow + commission).
@@ -61,7 +72,7 @@ export function renderListingPage(o) {
   const priceTxt = o.priceFcfa ? `${Number(o.priceFcfa).toLocaleString('fr-FR')} FCFA` : '';
   const desc = redactContact(String(o.description || `${title} — ${o.category || ''} ${o.city || ''} sur NEXUS Market Sénégal.`)
     .replace(/\s+/g, ' ').trim()).slice(0, 300);
-  const img = o.image || `${o.origin}/og-image.png`;
+  const img = proxyImg(o.image, o.origin) || `${o.origin}/og-image.png`;
 
   // ── Product ────────────────────────────────────────────────
   const product = {
@@ -166,7 +177,7 @@ export function renderListPage(o) {
   const url = o.url;
   const items = Array.isArray(o.items) ? o.items : [];
   const desc = String(o.description || '').replace(/\s+/g, ' ').trim().slice(0, 300);
-  const img = o.image || `${o.origin}/og-image.png`;
+  const img = proxyImg(o.image, o.origin) || `${o.origin}/og-image.png`;
 
   const itemList = {
     '@type': 'ItemList', name: o.title, numberOfItems: items.length,
@@ -191,7 +202,8 @@ export function renderListPage(o) {
   const cards = items.map(it => {
     const link = `${o.origin}/${listingSeg(it.kind)}/${encodeURIComponent(it.id)}`;
     const priceTxt = it.priceFcfa ? `${Number(it.priceFcfa).toLocaleString('fr-FR')} FCFA` : '';
-    return `<a class="card" href="${esc(link)}">${it.image ? `<img src="${esc(it.image)}" alt="${esc(it.title)}" loading="lazy">` : '<div class="ph"></div>'}<div class="ci"><div class="ct">${esc(it.title)}</div>${priceTxt ? `<div class="cp">${esc(priceTxt)}</div>` : ''}</div></a>`;
+    const itImg = proxyImg(it.image, o.origin);
+    return `<a class="card" href="${esc(link)}">${itImg ? `<img src="${esc(itImg)}" alt="${esc(it.title)}" loading="lazy">` : '<div class="ph"></div>'}<div class="ci"><div class="ct">${esc(it.title)}</div>${priceTxt ? `<div class="cp">${esc(priceTxt)}</div>` : ''}</div></a>`;
   }).join('');
 
   return `<!DOCTYPE html><html lang="fr"><head>

@@ -2903,6 +2903,16 @@ async function nexusUploadPdf(file) {
   return /^https?:\/\//i.test(j.url) ? j.url : new URL(j.url, location.origin).href;
 }
 
+// [ÉGRESS] Réécrit une URL d'image du bucket Storage `nexus-images` vers le proxy
+// caché Cloudflare /img/ (cf. functions/img/[[path]].js) → l'égress image sort de
+// Supabase et passe par le cache Cloudflare (gratuit), + WebP/AVIF si Imagor est
+// configuré. Les URLs externes / data: / déjà proxifiées restent inchangées
+// (pas d'open proxy). Sûr sur null/non-string.
+const nexusImg = (u) => {
+  if (!u || typeof u !== 'string') return u;
+  const m = u.match(/\/storage\/v1\/object\/public\/nexus-images\/(.+)$/);
+  return m ? '/img/' + m[1] : u;
+};
 const normalizeProduct = (p) => {
   if (!p) return p;
   return {
@@ -2914,7 +2924,9 @@ const normalizeProduct = (p) => {
     originalPrice: p.original_price ?? p.originalPrice ?? null,
     stock:         p.stock,
     description:   p.description,
-    imageUrl:      p.image_url   || p.imageUrl   || null,
+    image_url:     nexusImg(p.image_url),
+    images:        Array.isArray(p.images) ? p.images.map(nexusImg) : p.images,
+    imageUrl:      nexusImg(p.image_url   || p.imageUrl   || null),
     vendor:        p.vendor_id   || p.vendor      || null,
     vendorName:    p.vendor_name || p.vendorName  || '',
     rating:        p.rating      || 0,
