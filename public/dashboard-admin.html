@@ -66,6 +66,7 @@
       <button data-view="couriers" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">two_wheeler</span> Coursiers</button>
       <button data-view="newsletter" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">mail</span> Newsletter</button>
       <button data-view="config" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">settings</span> Configuration</button>
+      <button data-view="diagnostic" class="navbtn w-full flex items-center gap-3 px-3 py-2.5 rounded-lg nav-inactive"><span class="material-symbols-outlined">monitor_heart</span> Diagnostic &amp; Tests</button>
     </nav>
   </aside>
   <div id="overlay" class="hidden fixed inset-0 bg-black/40 z-40 lg:hidden"></div>
@@ -227,6 +228,39 @@
       </div>
     </section>
 
+    <section class="view" data-view="diagnostic">
+      <h1 class="text-2xl font-bold mb-1">Diagnostic &amp; Tests</h1>
+      <p class="text-on-surface-variant text-sm mb-6">État des intégrations et envois de test (SMS, WhatsApp).</p>
+
+      <div class="bg-white rounded-xl border border-outline-variant mb-6">
+        <div class="p-4 border-b border-surface-container flex items-center justify-between">
+          <h2 class="font-bold flex items-center gap-2"><span class="material-symbols-outlined text-primary">monitor_heart</span> État des intégrations</h2>
+          <button onclick="loadDiagnostics()" class="text-sm bg-surface-container-low px-3 py-1.5 rounded-lg hover:bg-surface-container">🔄 Rafraîchir</button>
+        </div>
+        <div id="diagList" class="divide-y divide-surface-container text-sm"><div class="p-4 text-on-surface-variant">Cliquez sur « Diagnostic &amp; Tests » pour charger…</div></div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-outline-variant p-5 mb-6">
+        <h2 class="font-bold mb-3 flex items-center gap-2"><span class="material-symbols-outlined text-primary">sms</span> Test SMS (httpSMS)</h2>
+        <div class="flex flex-col gap-3" style="max-width:28rem">
+          <input id="smsPhone" type="tel" placeholder="+221771234567" class="border border-outline-variant rounded-lg px-3 py-2 text-sm">
+          <input id="smsMsg" type="text" value="NEXUS Market — test httpSMS ✅" class="border border-outline-variant rounded-lg px-3 py-2 text-sm">
+          <button id="smsBtn" onclick="sendTestSms()" class="bg-primary text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:brightness-110 flex items-center justify-center gap-2"><span class="material-symbols-outlined text-[18px]">send</span> Envoyer le SMS de test</button>
+          <div id="smsResult" class="text-sm"></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-outline-variant p-5">
+        <h2 class="font-bold mb-3 flex items-center gap-2"><span class="material-symbols-outlined text-primary">chat</span> Test WhatsApp</h2>
+        <div class="flex flex-col gap-3" style="max-width:28rem">
+          <input id="waPhone" type="tel" placeholder="+221771234567" class="border border-outline-variant rounded-lg px-3 py-2 text-sm">
+          <input id="waMsg" type="text" value="NEXUS Market — test WhatsApp ✅" class="border border-outline-variant rounded-lg px-3 py-2 text-sm">
+          <button id="waBtn" onclick="sendTestWhatsApp()" class="bg-primary text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:brightness-110 flex items-center justify-center gap-2"><span class="material-symbols-outlined text-[18px]">send</span> Envoyer le WhatsApp de test</button>
+          <div id="waResult" class="text-sm"></div>
+        </div>
+      </div>
+    </section>
+
   </main>
 </div>
 
@@ -278,6 +312,74 @@ function showView(v) {
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('overlay').classList.add('hidden');
   }
+  if (v === 'diagnostic') loadDiagnostics();
+}
+
+// ── Diagnostic & tests d'intégrations (SMS / WhatsApp) ──────────────────────
+async function diagAuthHeaders() {
+  let token = null;
+  try { const { data: { session } } = await sb.auth.getSession(); token = session && session.access_token; } catch (_) {}
+  return token ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }
+               : { 'Content-Type': 'application/json' };
+}
+
+async function loadDiagnostics() {
+  const box = document.getElementById('diagList');
+  if (!box) return;
+  box.innerHTML = '<div class="p-4 text-on-surface-variant">Chargement…</div>';
+  try {
+    const r = await fetch('/api/admin/diagnostics', { headers: await diagAuthHeaders() });
+    if (!r.ok) { box.innerHTML = '<div class="p-4" style="color:#DC2626">Erreur HTTP ' + r.status + ((r.status === 401 || r.status === 403) ? ' — accès admin requis / session expirée.' : '') + '</div>'; return; }
+    const d = await r.json();
+    const dot = (ok) => ok === true ? '<span style="color:#16A34A;font-weight:800">✅</span>' : ok === false ? '<span style="color:#DC2626;font-weight:800">❌</span>' : '<span style="color:#9CA3AF">—</span>';
+    const row = (label, ok, detail) => '<div class="p-3 flex items-center justify-between"><span class="font-semibold">' + label + '</span><span class="flex items-center gap-2">' + (detail ? '<span class="text-on-surface-variant text-xs">' + detail + '</span>' : '') + dot(ok) + '</span></div>';
+    const io = d.imageProxy || {}, ob = d.notificationOutbox || {};
+    box.innerHTML =
+      row('Supabase', d.supabase && d.supabase.configured) +
+      row('PayTech', d.paytech && d.paytech.configured) +
+      row('Email — Resend', d.email && d.email.resend) +
+      row('Email — Brevo (secours)', d.email && d.email.brevo) +
+      row('WhatsApp — Green API', d.whatsapp && d.whatsapp.greenApi) +
+      row('WhatsApp — WAHA (repli)', d.whatsapp && d.whatsapp.waha) +
+      row('SMS — httpSMS', d.sms && d.sms.httpsms) +
+      row('Proxy image — Imagor', io.imagorConfigured ? (io.imagorUp !== false) : false, io.imagorConfigured ? (io.imagorUp === true ? 'en ligne' : io.imagorUp === false ? 'injoignable' : '') : 'non configuré') +
+      row('Push (VAPID)', d.push && d.push.vapid) +
+      (ob && !ob.error ? row('File notifications (retry)', (ob.failed || 0) === 0, 'attente ' + (ob.pending || 0) + ' · échec ' + (ob.failed || 0)) : '') +
+      '<div class="p-3 text-xs text-on-surface-variant">Dernière vérif : ' + (d.time || '') + '</div>';
+  } catch (e) { box.innerHTML = '<div class="p-4" style="color:#DC2626">Erreur : ' + e.message + '</div>'; }
+}
+
+async function sendTestSms() {
+  const phone = (document.getElementById('smsPhone').value || '').trim();
+  const message = (document.getElementById('smsMsg').value || '').trim();
+  const out = document.getElementById('smsResult');
+  const btn = document.getElementById('smsBtn');
+  if (!phone || !message) { out.innerHTML = '<span style="color:#DC2626">Numéro et message requis.</span>'; return; }
+  btn.disabled = true; out.textContent = 'Envoi…';
+  try {
+    const r = await fetch('/api/sms', { method: 'POST', headers: await diagAuthHeaders(), body: JSON.stringify({ phone, message }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) out.innerHTML = '<span style="color:#16A34A">✅ Transmis via ' + (d.provider || 'httpsms') + '. Vérifiez la réception sur le téléphone.</span>';
+    else if (d.skipped) out.innerHTML = '<span style="color:#D97706">⚠️ httpSMS non configuré (' + d.skipped + ') — renseignez HTTPSMS_API_KEY / HTTPSMS_FROM.</span>';
+    else out.innerHTML = '<span style="color:#DC2626">❌ Échec (HTTP ' + r.status + ') : ' + (d.error || 'inconnu') + '</span>';
+  } catch (e) { out.innerHTML = '<span style="color:#DC2626">❌ ' + e.message + '</span>'; }
+  btn.disabled = false;
+}
+
+async function sendTestWhatsApp() {
+  const phone = (document.getElementById('waPhone').value || '').trim();
+  const message = (document.getElementById('waMsg').value || '').trim();
+  const out = document.getElementById('waResult');
+  const btn = document.getElementById('waBtn');
+  if (!phone || !message) { out.innerHTML = '<span style="color:#DC2626">Numéro et message requis.</span>'; return; }
+  btn.disabled = true; out.textContent = 'Envoi…';
+  try {
+    const r = await fetch('/api/whatsapp', { method: 'POST', headers: await diagAuthHeaders(), body: JSON.stringify({ phone, message, event: 'admin_test' }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) out.innerHTML = '<span style="color:#16A34A">✅ Envoyé via ' + (d.provider || 'whatsapp') + '. Vérifiez la réception.</span>';
+    else out.innerHTML = '<span style="color:#DC2626">❌ Échec (HTTP ' + r.status + ') : ' + (d.error || 'inconnu') + '</span>';
+  } catch (e) { out.innerHTML = '<span style="color:#DC2626">❌ ' + e.message + '</span>'; }
+  btn.disabled = false;
 }
 
 async function approveVendor(uid) {
