@@ -23,7 +23,7 @@
  *   WAHA_SESSION   = default (nom de la session WhatsApp WAHA, optionnel)
  */
 
-import { normalizePhone, isValidPhone, isValidMessage } from './_lib/validate.js';
+import { normalizePhone, isValidPhone, isValidMessage, toE164 } from './_lib/validate.js';
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
 import { getEventConfig, logWhatsApp } from './_lib/notify.js';
 import { isInternalCall, requireAuth } from './_lib/utils.js';
@@ -91,9 +91,10 @@ export async function onRequestPost(ctx) {
   const rl = await rateLimit(env, `wa:${clientIp(request)}`, 10, 60);
   if (!rl.allowed) return tooManyRequests(rl.resetAt, corsHeaders);
 
-  // Normaliser le numéro → format 221XXXXXXXXX@c.us
+  // Normaliser le numéro → E.164 sans '+' (libphonenumber-js, défaut Sénégal),
+  // puis chatId 221XXXXXXXXX@c.us. `raw` (chiffres bruts) conservé pour le log.
   const raw    = normalizePhone(body.phone);
-  const chatId = (raw.startsWith('221') ? raw : raw.length === 9 ? '221' + raw : raw) + '@c.us';
+  const chatId = toE164(body.phone) + '@c.us';
   const logRow = { phone: raw, message: body.message, template: body.event || null, user_id: body.userId || null };
 
   // ── Envoi : Green API en priorité, bascule automatique sur WAHA si Green

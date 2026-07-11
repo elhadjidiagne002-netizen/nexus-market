@@ -3,11 +3,11 @@
 // l'endpoint HTTP /api/whatsapp (functions/api/whatsapp.js) et sendEventWhatsApp
 // (notify.js), qui appelle l'envoi EN PROCESS (pas de fetch HTTP interne) depuis
 // les autres functions serveur (webhooks paiement, payout, offres, stock...).
-import { normalizePhone } from './validate.js';
+import { toE164 } from './validate.js';
 
 export function toChatId(phone) {
-  const raw = normalizePhone(phone);
-  return (raw.startsWith('221') ? raw : raw.length === 9 ? '221' + raw : raw) + '@c.us';
+  // E.164 sans '+' (libphonenumber-js, défaut Sénégal) → chatId Green API/WAHA.
+  return toE164(phone) + '@c.us';
 }
 
 // Envoi via Green API. Retour uniforme { ok, id?, error?, detail? }.
