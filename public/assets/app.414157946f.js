@@ -19358,6 +19358,67 @@ const SqlScriptsPanel = () => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
+// SystemDiagnosticsPanel — État agrégé de TOUTES les intégrations (Admin → Config)
+// Appelle GET /api/admin/diagnostics (requireAdmin) et affiche une grille de statuts.
+// N'utilise PAS DataService.apiFetch (renvoie null si apiUrl vide) → fetch direct
+// avec le token de session Supabase.
+// ════════════════════════════════════════════════════════════════════════════
+const SystemDiagnosticsPanel = ({ addToast }) => {
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [loadErr, setLoadErr] = React.useState(null);
+  const D = React.createElement;
+
+  const load = async () => {
+    setLoading(true); setLoadErr(null);
+    try {
+      let token = null;
+      try { const s = await (DataService._sb && DataService._sb.auth.getSession()); token = s && s.data && s.data.session && s.data.session.access_token; } catch (_) {}
+      if (!token) token = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+      const res = await fetch('/api/admin/diagnostics', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      if (!res.ok) { setLoadErr('HTTP ' + res.status); setLoading(false); return; }
+      setData(await res.json());
+    } catch (e) { setLoadErr(e.message); }
+    setLoading(false);
+  };
+  React.useEffect(() => { load(); }, []);
+
+  const Row = (label, ok, detail) => D('div', { key: label, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '.55rem .75rem', borderBottom: '1px solid var(--border,#eee)' } },
+    D('span', { style: { fontWeight: 600, fontSize: '.9rem' } }, label),
+    D('span', { style: { fontSize: '.85rem', display: 'flex', alignItems: 'center', gap: '.5rem' } },
+      detail ? D('span', { style: { color: 'var(--text-secondary,#6b7280)', fontSize: '.78rem' } }, detail) : null,
+      D('span', { style: { fontWeight: 800, color: ok === true ? '#16A34A' : ok === false ? '#DC2626' : '#9CA3AF' } }, ok === true ? '✅' : ok === false ? '❌' : '—')
+    )
+  );
+
+  return D('div', { className: 'card', style: { marginBottom: '1.5rem' } },
+    D('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      D('h2', { className: 'card-title' }, '🩺 Diagnostic système'),
+      D('button', { onClick: load, disabled: loading, className: 'btn btn-sm', style: { cursor: 'pointer' } }, loading ? '…' : '🔄 Rafraîchir')
+    ),
+    loadErr
+      ? D('div', { style: { padding: '1rem', color: '#DC2626' } }, 'Erreur : ' + loadErr + ((loadErr.indexOf('401') >= 0 || loadErr.indexOf('403') >= 0) ? ' — accès admin requis / session expirée.' : ''))
+      : !data
+        ? D('div', { style: { padding: '1rem' } }, 'Chargement…')
+        : D('div', { style: { padding: '.25rem .5rem' } },
+          Row('Supabase', !!(data.supabase && data.supabase.configured)),
+          Row('PayTech', !!(data.paytech && data.paytech.configured)),
+          Row('Email — Resend', !!(data.email && data.email.resend)),
+          Row('Email — Brevo (secours)', !!(data.email && data.email.brevo)),
+          Row('WhatsApp — Green API', !!(data.whatsapp && data.whatsapp.greenApi)),
+          Row('WhatsApp — WAHA (repli)', !!(data.whatsapp && data.whatsapp.waha)),
+          Row('SMS — httpSMS', !!(data.sms && data.sms.httpsms)),
+          Row('Proxy image — Imagor', (data.imageProxy && data.imageProxy.imagorConfigured) ? (data.imageProxy.imagorUp === false ? false : true) : false,
+            (data.imageProxy && data.imageProxy.imagorConfigured) ? (data.imageProxy.imagorUp === true ? 'en ligne' : data.imageProxy.imagorUp === false ? 'injoignable' : '') : 'non configuré (sert l\'original)'),
+          Row('Push (VAPID)', !!(data.push && data.push.vapid)),
+          (data.notificationOutbox && !data.notificationOutbox.error)
+            ? Row('File notifications (retry)', (data.notificationOutbox.failed || 0) === 0, 'en attente: ' + (data.notificationOutbox.pending || 0) + ' · échouées: ' + (data.notificationOutbox.failed || 0))
+            : null,
+          D('div', { style: { padding: '.6rem .75rem', fontSize: '.72rem', color: 'var(--text-secondary,#6b7280)' } }, 'Dernière vérif : ' + (data.time || ''))
+        )
+  );
+};
+
 // WhatsAppAdminPanel — Config Green API dans Admin → Configuration
 // ════════════════════════════════════════════════════════════════════════════
 const WhatsAppAdminPanel = ({ addToast }) => {
@@ -26976,7 +27037,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
