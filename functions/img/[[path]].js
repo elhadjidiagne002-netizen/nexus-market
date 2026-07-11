@@ -76,7 +76,10 @@ export async function onRequest(context) {
   const base = (env.SUPABASE_URL || '').replace(/\/+$/, '');
   const sourceUrl = `${base}/storage/v1/object/public/nexus-images/${objectPath}`;
 
-  // [DEBUG TEMPORAIRE] Rapporte le statut/l'erreur RÉELS renvoyés par Imagor
+  // [DEBUG TEMPORAIRE v2 — force un nouveau build pour relire IMAGOR_SECRET frais,
+  // au cas où "Retry deployment" réutiliserait l'instantané de variables figé du
+  // déploiement précédent plutôt que la valeur tout juste sauvegardée.]
+  // Rapporte le statut/l'erreur RÉELS renvoyés par Imagor
   // (jamais la signature ni le secret) — pour diagnostiquer un fallback silencieux
   // (mismatch de secret, ALLOWED_SOURCES, etc). À retirer une fois confirmé.
   if (request.headers.get('X-Imagor-Debug') === '1') {
