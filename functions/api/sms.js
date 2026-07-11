@@ -53,7 +53,7 @@ async function sendViaHttpSms(to, message, env) {
     return { ok: false, provider: 'httpsms', raw: { error: 'httpSMS injoignable : ' + err.message } };
   }
   const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, provider: 'httpsms', raw: data };
+  return { ok: res.ok, status: res.status, provider: 'httpsms', raw: data };
 }
 
 // ── Handler ──────────────────────────────────────────────────
@@ -91,8 +91,11 @@ export async function onRequest({ request, env }) {
   try {
     const result = await sendViaHttpSms(phone, message, env);
     if (!result.ok) {
-      console.error('[SMS] Échec httpSMS:', JSON.stringify(result.raw));
-      return json({ error: 'Échec envoi SMS', provider: result.provider }, 502);
+      console.error('[SMS] Échec httpSMS:', result.status, JSON.stringify(result.raw));
+      // Détail renvoyé à l'appelant (auth admin requis) pour diagnostiquer :
+      // téléphone hors-ligne, `from` ≠ numéro enregistré, clé invalide, quota…
+      const detail = (result.raw && (result.raw.message || result.raw.error || (result.raw.data && result.raw.data.message))) || result.raw;
+      return json({ error: 'Échec envoi SMS', provider: result.provider, httpsms_status: result.status, detail }, 502);
     }
     return json({ ok: true, provider: result.provider });
   } catch (err) {
