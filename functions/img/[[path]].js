@@ -59,17 +59,6 @@ export async function onRequest(context) {
   const objectPath = Array.isArray(params.path) ? params.path.join('/') : String(params.path || '');
   if (!objectPath) return new Response('Not found', { status: 404 });
 
-  // [DEBUG TEMPORAIRE] Diagnostic booléen (jamais la valeur) pour vérifier que
-  // les variables Imagor sont bien vues par le runtime — à retirer une fois le
-  // branchement confirmé. Activé uniquement via en-tête explicite.
-  if (request.headers.get('X-Imagor-Debug') === '1') {
-    return new Response(JSON.stringify({
-      imagor_base_url_set: !!env.IMAGOR_BASE_URL,
-      imagor_secret_set: !!env.IMAGOR_SECRET,
-      imagor_base_url_value_length: (env.IMAGOR_BASE_URL || '').length,
-    }), { headers: { 'Content-Type': 'application/json' } });
-  }
-
   const url = new URL(request.url);
   const qp = url.searchParams;
   const w = Math.max(0, parseInt(qp.get('w') || '0', 10) || 0);
@@ -86,6 +75,23 @@ export async function onRequest(context) {
   // URL arbitraire fournie par l'appelant → pas d'open proxy / SSRF).
   const base = (env.SUPABASE_URL || '').replace(/\/+$/, '');
   const sourceUrl = `${base}/storage/v1/object/public/nexus-images/${objectPath}`;
+
+  // [DEBUG TEMPORAIRE] Rapporte le statut/l'erreur RÉELS renvoyés par Imagor
+  // (jamais la signature ni le secret) — pour diagnostiquer un fallback silencieux
+  // (mismatch de secret, ALLOWED_SOURCES, etc). À retirer une fois confirmé.
+  if (request.headers.get('X-Imagor-Debug') === '1') {
+    const out = { imagor_base_url_set: !!env.IMAGOR_BASE_URL, imagor_secret_set: !!env.IMAGOR_SECRET };
+    if (env.IMAGOR_BASE_URL) {
+      try {
+        const imagorUrl = await buildImagorUrl(env, sourceUrl, { w, h: 0, fmt, q });
+        const r = await fetch(imagorUrl);
+        out.imagor_status = r.status;
+        out.imagor_content_type = r.headers.get('Content-Type');
+        out.imagor_error_body_preview = r.ok ? null : (await r.text()).slice(0, 300);
+      } catch (e) { out.imagor_fetch_error = e.message; }
+    }
+    return new Response(JSON.stringify(out), { headers: { 'Content-Type': 'application/json' } });
+  }
 
   // Clé de cache : chemin + variantes de transfo (w/h/fmt/q) → chaque variante cachée.
   const cacheKeyUrl = `${url.origin}/img/${objectPath}?w=${w}&h=${h}&fmt=${fmt}&q=${q}`;
