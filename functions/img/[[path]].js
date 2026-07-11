@@ -59,6 +59,17 @@ export async function onRequest(context) {
   const objectPath = Array.isArray(params.path) ? params.path.join('/') : String(params.path || '');
   if (!objectPath) return new Response('Not found', { status: 404 });
 
+  // [DEBUG TEMPORAIRE] Diagnostic booléen (jamais la valeur) pour vérifier que
+  // les variables Imagor sont bien vues par le runtime — à retirer une fois le
+  // branchement confirmé. Activé uniquement via en-tête explicite.
+  if (request.headers.get('X-Imagor-Debug') === '1') {
+    return new Response(JSON.stringify({
+      imagor_base_url_set: !!env.IMAGOR_BASE_URL,
+      imagor_secret_set: !!env.IMAGOR_SECRET,
+      imagor_base_url_value_length: (env.IMAGOR_BASE_URL || '').length,
+    }), { headers: { 'Content-Type': 'application/json' } });
+  }
+
   const url = new URL(request.url);
   const qp = url.searchParams;
   const w = Math.max(0, parseInt(qp.get('w') || '0', 10) || 0);
