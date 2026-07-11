@@ -6204,14 +6204,14 @@ const initStripe = () => {
 // ════════════════════════════════════════════════════════════════════════════
 // NexusSmsService — SMS transactionnels (Sénégal-first)
 // ────────────────────────────────────────────────────────────────────────────
-// Architecture 3 niveaux :
-//   1. Backend  POST /api/sms/send  — provider réel (AT / Orange / Twilio)
-//   2. Simulation locale            — console.info + toast (mode démo)
+// Architecture 2 niveaux :
+//   1. Backend  POST /api/sms  — passerelle httpSMS (téléphone Android + SIM)
+//   2. Simulation locale       — console.info + toast (mode démo)
 //
-// Providers supportés côté serveur :
-//   Africa's Talking : ~25 FCFA/SMS, sandbox gratuit, meilleure couverture SN
-//   Orange SMS API   : opérateur local, délivrance prioritaire réseau Orange SN
-//   Twilio           : international, fallback fiable, ~60 FCFA/SMS
+// Passerelle côté serveur (2026-07-11) :
+//   httpSMS : SMS via un téléphone Android + SIM sénégalaise (forfait local,
+//             quasi gratuit). Open-source, self-hostable ou SaaS httpsms.com.
+//             Remplace les providers payants AT / Orange / Twilio (retirés).
 //
 // Normalisation numéros sénégalais :
 //   "771234567"        → "+221771234567"
@@ -27235,11 +27235,11 @@ CREATE POLICY "Service role only" ON invoice_sequences
         ].map(function(s, i){ return React.createElement('div', { key: i, className: 'stat-card' }, React.createElement('div', { className: 'stat-label' }, s[0]), React.createElement('div', { className: 'stat-value', style: { fontSize: '1rem' } }, s[1])); })
       ),
       React.createElement('div', { className: 'card', style: { marginBottom: '1.5rem' } },
-        React.createElement('div', { className: 'card-header' }, React.createElement('h2', { className: 'card-title' }, 'Providers SMS')),
+        React.createElement('div', { className: 'card-header' }, React.createElement('h2', { className: 'card-title' }, 'Passerelle SMS')),
         React.createElement('div', { style: { padding: '1rem', lineHeight: 2 } },
-          React.createElement('div', null, React.createElement('strong', null, '🌍 Africa\'s Talking'), ' — ~25 FCFA/SMS, sandbox gratuit. Env: ', React.createElement('code', null, 'SMS_PROVIDER=africas_talking + AT_API_KEY + AT_USERNAME')),
-          React.createElement('div', null, React.createElement('strong', null, '🟠 Orange SMS API'), ' — ~30 FCFA/SMS, opérateur local SN. Env: ', React.createElement('code', null, 'ORANGE_SMS_TOKEN=Bearer_...')),
-          React.createElement('div', null, React.createElement('strong', null, '🌐 Twilio'), ' — ~60 FCFA/SMS, international. Env: ', React.createElement('code', null, 'TWILIO_SID + TWILIO_TOKEN + TWILIO_FROM'))
+          React.createElement('div', null, React.createElement('strong', null, '📱 httpSMS'), ' — SMS via un téléphone Android + SIM sénégalaise (forfait local, quasi gratuit). Open-source, self-hostable ou SaaS httpsms.com.'),
+          React.createElement('div', null, 'Env: ', React.createElement('code', null, 'HTTPSMS_API_KEY + HTTPSMS_FROM (+221…) [+ HTTPSMS_BASE_URL si self-hosté]')),
+          React.createElement('div', { style: { fontSize: '.8rem', color: 'var(--text-secondary)', marginTop: '.4rem' } }, 'Les providers payants (Africa’s Talking / Orange / Twilio) ont été retirés le 2026-07-11.')
         )
       ),
       React.createElement('div', { className: 'card' },

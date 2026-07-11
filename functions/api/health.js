@@ -14,7 +14,7 @@ export async function onRequest(context) {
         runtime: 'cloudflare-pages-functions',
         supabase: !!(context.env.SUPABASE_URL && context.env.SUPABASE_SERVICE_KEY),
         paytech: !!(context.env.PAYTECH_API_KEY && context.env.PAYTECH_API_SECRET),
-        sms: context.env.SMS_PROVIDER || 'simulate',
+        sms: (context.env.HTTPSMS_API_KEY && context.env.HTTPSMS_FROM) ? 'httpsms' : 'not_configured',
         imgbb: !!context.env.IMGBB_API_KEY,
         email: { resend: !!context.env.RESEND_API_KEY, brevo: !!context.env.BREVO_API_KEY }
       }
