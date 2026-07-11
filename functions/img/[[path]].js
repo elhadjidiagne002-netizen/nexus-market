@@ -79,26 +79,6 @@ export async function onRequest(context) {
   const base = (env.SUPABASE_URL || '').replace(/\/+$/, '');
   const sourceUrl = `${base}/storage/v1/object/public/nexus-images/${objectPath}`;
 
-  // [DEBUG TEMPORAIRE v2 — force un nouveau build pour relire IMAGOR_SECRET frais,
-  // au cas où "Retry deployment" réutiliserait l'instantané de variables figé du
-  // déploiement précédent plutôt que la valeur tout juste sauvegardée.]
-  // Rapporte le statut/l'erreur RÉELS renvoyés par Imagor
-  // (jamais la signature ni le secret) — pour diagnostiquer un fallback silencieux
-  // (mismatch de secret, ALLOWED_SOURCES, etc). À retirer une fois confirmé.
-  if (request.headers.get('X-Imagor-Debug') === '1') {
-    const out = { imagor_base_url_set: !!env.IMAGOR_BASE_URL, imagor_secret_set: !!env.IMAGOR_SECRET };
-    if (env.IMAGOR_BASE_URL) {
-      try {
-        const imagorUrl = await buildImagorUrl(env, sourceUrl, { w, h: 0, fmt, q });
-        const r = await fetch(imagorUrl);
-        out.imagor_status = r.status;
-        out.imagor_content_type = r.headers.get('Content-Type');
-        out.imagor_error_body_preview = r.ok ? null : (await r.text()).slice(0, 300);
-      } catch (e) { out.imagor_fetch_error = e.message; }
-    }
-    return new Response(JSON.stringify(out), { headers: { 'Content-Type': 'application/json' } });
-  }
-
   // Clé de cache : chemin + variantes de transfo (w/h/fmt/q) → chaque variante cachée.
   const cacheKeyUrl = `${url.origin}/img/${objectPath}?w=${w}&h=${h}&fmt=${fmt}&q=${q}`;
   const cacheKey = new Request(cacheKeyUrl, { method: 'GET' });
