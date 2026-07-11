@@ -4258,9 +4258,14 @@ const DataService = {
   async _fetchProfile(uid) {
     if (!this._sb || !uid) return null;
     try {
-      // [PERF FIX] Timeout 2s pour éviter les blocages réseau sur Supabase
+      // [PERF FIX] Timeout pour éviter les blocages réseau sur Supabase.
+      // [FIX RÔLE ADMIN 2026-07-11] Relevé 2s→8s : depuis le Sénégal vers Supabase
+      // (eu-west-3, Paris), l'aller-retour sur réseau mobile dépassait souvent 2s →
+      // _fetchProfile timeout → repli _buildProfileFromAuthUser qui lit role dans
+      // user_metadata (absent pour les comptes Google) → l'admin retombait en 'buyer'.
+      // Un timeout plus large laisse le profil (role=admin) se charger vraiment.
       const query = this._sb.from("profiles").select(PROFILE_SAFE_COLUMNS).eq("id", uid).maybeSingle();
-      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000));
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 8000));
       const { data, error } = await Promise.race([query, timeout]);
       if (error) {
         const _msg = error.message || "";
