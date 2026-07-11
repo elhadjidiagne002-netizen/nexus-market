@@ -288,7 +288,52 @@ export async function sendEventNotification(env, eventKey, recipient = {}, vars 
     email ? sendEventEmail(env, eventKey, email, vars) : Promise.resolve({ skipped: 'no_recipient' }),
     waPhone ? sendEventWhatsApp(env, eventKey, waPhone, vars) : Promise.resolve({ skipped: 'no_recipient' }),
   ]);
+
+  // [OUTBOX] Retry différé : si un canal a RÉELLEMENT échoué (ok=false, ≠ skipped),
+  // on l'enfile pour un nouvel essai par /cron/notify-retry. On ne rejoue que le
+  // canal en échec (statut par canal) → jamais de doublon sur le canal déjà passé.
+  try {
+    const emailStatus = channelOutboxStatus(!!email, emailResult);
+    const waStatus = channelOutboxStatus(!!waPhone, whatsappResult);
+    if (emailStatus === 'pending' || waStatus === 'pending') {
+      const errParts = [emailStatus === 'pending' && `email:${emailResult && emailResult.error}`,
+                        waStatus === 'pending' && `wa:${whatsappResult && whatsappResult.error}`].filter(Boolean);
+      await enqueueOutbox(env, {
+        event_key: eventKey,
+        recipient: { email: email || null, phone: waPhone || null, userId: userId || null },
+        vars: vars && typeof vars === 'object' ? vars : {},
+        email_status: emailStatus,
+        whatsapp_status: waStatus,
+        last_error: errParts.join(' | ').slice(0, 500) || null,
+        next_retry_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      });
+    }
+  } catch (e) { console.warn('[notify] enqueueOutbox:', e.message); }
+
   return { email: emailResult, whatsapp: whatsappResult };
+}
+
+/**
+ * Traduit le résultat d'un canal en statut outbox :
+ *   'sent'    → envoyé (ok)
+ *   'skipped' → pas de destinataire / désactivé / pas de provider / pas de template
+ *   'pending' → échec RÉEL (ok=false) → à rejouer
+ */
+export function channelOutboxStatus(hasRecipient, result) {
+  if (!hasRecipient || !result) return 'skipped';
+  if (result.ok) return 'sent';
+  if (result.skipped) return 'skipped';
+  return 'pending';
+}
+
+/** Insère une ligne dans notification_outbox (best-effort ; ne lève jamais). */
+export async function enqueueOutbox(env, row) {
+  try {
+    const sb = supabase(env);
+    await sb.from('notification_outbox').insert(row);
+  } catch (e) {
+    console.warn('[notify] enqueueOutbox insert:', e.message);
+  }
 }
 
 /**

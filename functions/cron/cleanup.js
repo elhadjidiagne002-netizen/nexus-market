@@ -183,6 +183,9 @@ async function runCleanup(env) {
   // ── 8b. Compteurs de rate limiting de plus de 24h ────────────────────────
   await del('rate_limits', `window_start=lt.${ago(1)}`, 'rate_limits_24h');
 
+  // ── 8c. Outbox de notifications : lignes traitées (done/failed) > 30 jours ─
+  await del('notification_outbox', `status=in.(done,failed)&updated_at=lt.${ago(30)}`, 'notification_outbox_30d');
+
   // ── 9. Produits inactifs sans commande depuis 1 an ────────────────────────
   // On ne supprime PAS — on log seulement pour que l'admin décide
   try {
