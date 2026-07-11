@@ -11060,6 +11060,115 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
 </script>
 <!-- ============== FIN MODULES SESSION & NOTIFS COURSIER ============== -->
 
+<!-- ============== NEXUS — SCANNER QR COURSIER (html5-qrcode, lazy-load) ============== -->
+<!--
+  Scanner de QR/code-barres pour le coursier : ouvre la caméra, décode le QR de
+  retrait présenté par l'acheteur, et NAVIGUE vers la commande (le coursier
+  confirme ensuite avec le bouton existant — le scan ne mute AUCUNE donnée, il
+  réduit juste la recherche manuelle + exige la présence physique du QR).
+  · Lib html5-qrcode chargée en lazy (uniquement à la 1re ouverture).
+  · Bouton flottant 📷 visible SEULEMENT pour un coursier connecté.
+  · API : window.nexusOpenScanner(onResult?) · event 'nexus:open-scanner'
+          · émet 'nexus:scan-result' {raw, target} pour tout handler custom.
+-->
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_SCANNER__) return; window.__NEXUS_SCANNER__ = true;
+
+  var LIB = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
+  var libP = null;
+  function ensureLib() {
+    if (window.Html5Qrcode) return Promise.resolve(window.Html5Qrcode);
+    if (libP) return libP;
+    libP = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = LIB; s.async = true;
+      s.onload = function () { window.Html5Qrcode ? resolve(window.Html5Qrcode) : reject(new Error('html5-qrcode introuvable')); };
+      s.onerror = function () { libP = null; reject(new Error('Échec chargement html5-qrcode')); };
+      document.head.appendChild(s);
+    });
+    return libP;
+  }
+
+  // Extrait une cible d'un texte scanné : URL ?order=/?product=, token NEXUS-PICKUP:, UUID nu.
+  var UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  function parseTarget(text) {
+    text = String(text || '').trim();
+    var m;
+    if ((m = text.match(/[?&]order=([0-9a-f-]{36})/i))) return { type: 'order', id: m[1] };
+    if ((m = text.match(/^NEXUS-PICKUP:([0-9a-f-]{36})/i))) return { type: 'order', id: m[1] };
+    if ((m = text.match(/[?&]product=([0-9a-f-]{36})/i))) return { type: 'product', id: m[1] };
+    if ((m = text.match(UUID)) && /^[0-9a-f-]{36}$/i.test(text)) return { type: 'order', id: text };
+    return { type: 'text', value: text };
+  }
+
+  var modal = null, scanner = null;
+  function close() {
+    try { if (scanner) { scanner.stop().then(function () { try { scanner.clear(); } catch (_) {} }).catch(function () {}); } } catch (_) {}
+    scanner = null;
+    if (modal) { modal.remove(); modal = null; }
+  }
+
+  function open(onResult) {
+    if (modal) return;
+    modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px';
+    modal.innerHTML =
+      '<div style="color:#fff;font-weight:800;margin-bottom:12px;font-size:1.05rem">📷 Scanner le QR de retrait</div>' +
+      '<div id="nx-scan-box" style="width:min(90vw,360px);aspect-ratio:1;background:#000;border-radius:14px;overflow:hidden"></div>' +
+      '<div id="nx-scan-msg" style="color:#cbd5e1;font-size:.85rem;margin-top:12px;text-align:center;max-width:320px;line-height:1.4">Placez le QR de l\'acheteur dans le cadre.</div>' +
+      '<button id="nx-scan-close" style="margin-top:16px;background:#fff;color:#111;border:none;border-radius:10px;padding:11px 26px;font-weight:700;cursor:pointer">Fermer</button>';
+    document.body.appendChild(modal);
+    modal.querySelector('#nx-scan-close').onclick = close;
+    var msg = modal.querySelector('#nx-scan-msg');
+
+    ensureLib().then(function (H) {
+      scanner = new H('nx-scan-box', { verbose: false });
+      return scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 230, height: 230 } },
+        function (decoded) {
+          try { scanner.stop().catch(function () {}); } catch (_) {}
+          var t = parseTarget(decoded);
+          try { window.dispatchEvent(new CustomEvent('nexus:scan-result', { detail: { raw: decoded, target: t } })); } catch (_) {}
+          if (typeof onResult === 'function') { close(); onResult(decoded, t); return; }
+          // Action par défaut : ouvrir la commande / le produit, sinon rechercher.
+          close();
+          if (t.type === 'order') location.href = '/?order=' + encodeURIComponent(t.id);
+          else if (t.type === 'product') location.href = '/?product=' + encodeURIComponent(t.id);
+          else if (t.value) location.href = '/?q=' + encodeURIComponent(t.value);
+        },
+        function () { /* erreurs de frame ignorées (bruit) */ }
+      );
+    }).catch(function (e) {
+      var em = (e && e.message) ? e.message : (typeof e === 'string' ? e : 'accès refusé');
+      if (msg) msg.textContent = 'Caméra indisponible (' + em + '). Autorisez la caméra dans votre navigateur, puis réessayez.';
+    });
+  }
+
+  window.nexusOpenScanner = open;
+  window.addEventListener('nexus:open-scanner', function (e) { open(e && e.detail && e.detail.onResult); });
+
+  // Bouton flottant 📷 — visible UNIQUEMENT pour un coursier connecté.
+  var fab = null;
+  function isCourier(u) { return !!(u && (u.is_courier || u.role === 'courier')); }
+  function showFab(show) {
+    if (show && !fab) {
+      fab = document.createElement('button');
+      fab.type = 'button'; fab.title = 'Scanner un QR de retrait'; fab.textContent = '📷';
+      fab.style.cssText = 'position:fixed;right:16px;bottom:212px;z-index:9996;width:52px;height:52px;border-radius:50%;border:none;background:#D97706;color:#fff;font-size:1.35rem;box-shadow:0 4px 14px rgba(0,0,0,.3);cursor:pointer';
+      fab.onclick = function () { open(); };
+      document.body.appendChild(fab);
+    } else if (!show && fab) { fab.remove(); fab = null; }
+  }
+  window.addEventListener('nexus:set-user', function (e) { showFab(isCourier(e && e.detail)); });
+  window.addEventListener('nexus:logout', function () { showFab(false); });
+  console.info('[NEXUS] Scanner QR coursier prêt ✅');
+})();
+</script>
+<!-- ============== FIN SCANNER QR COURSIER ============== -->
+
 <!-- ════════════════════════════════════════════════════════════════════════
      NEXUS — PUSH GLOBAL (tous les utilisateurs connectés, ordi + smartphone)
      ──────────────────────────────────────────────────────────────────────────
