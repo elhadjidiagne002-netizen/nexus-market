@@ -17355,6 +17355,33 @@ const MessageComposeModal = ({ currentUser: currentUser2, recipientId, recipient
     )
   );
 };
+// [QR RETRAIT] Code de retrait présenté par l'acheteur au coursier : encode
+// "NEXUS-PICKUP:<orderId>", lu par le scanner coursier (module __NEXUS_SCANNER__)
+// → navigue vers la commande. Ne s'affiche que pour les commandes ACTIVES.
+// Utilise qrcodejs (window.QRCode, chargé en defer) ; si absent, rien n'est rendu.
+const NexusPickupQR = ({ orderId, status }) => {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el || !orderId) return;
+    el.innerHTML = "";
+    let tries = 0;
+    const render = () => {
+      if (window.QRCode) {
+        try { new window.QRCode(el, { text: "NEXUS-PICKUP:" + orderId, width: 148, height: 148 }); } catch (e) {}
+      } else if (tries++ < 30) { setTimeout(render, 200); }
+    };
+    render();
+  }, [orderId]);
+  if (!orderId || status === "delivered" || status === "cancelled") return null;
+  return React.createElement("div", { style: { display:"flex", flexDirection:"column", alignItems:"center", gap:"0.5rem", background:"var(--bg-light)", borderRadius:"12px", padding:"1rem", marginBottom:"1.25rem" } },
+    React.createElement("div", { style:{ fontWeight:700, fontSize:"0.85rem", display:"flex", alignItems:"center", gap:"0.4rem" } },
+      React.createElement("i", { className:"fas fa-qrcode text-primary" }), " Code de retrait"),
+    React.createElement("div", { ref: ref, style:{ background:"#fff", padding:"8px", borderRadius:"8px", lineHeight:0 } }),
+    React.createElement("div", { style:{ fontSize:"0.72rem", color:"var(--text-secondary)", textAlign:"center", maxWidth:"260px", lineHeight:1.4 } },
+      "Présentez ce QR au coursier à la remise pour confirmer la livraison.")
+  );
+};
 const TrackingModal = ({ order, onClose }) => {
   // Calcul des timestamps simulés basés sur la date de commande
   const orderDate = new Date(order.date);
@@ -17435,6 +17462,9 @@ const TrackingModal = ({ order, onClose }) => {
           )
         )
       ),
+
+      // [QR] Code de retrait à scanner par le coursier (commandes actives uniquement)
+      React.createElement(NexusPickupQR, { orderId: order.id, status: order.status }),
 
       // Transporteur + lien de suivi externe
       React.createElement("div", { style:{
