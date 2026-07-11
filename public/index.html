@@ -239,6 +239,12 @@
     </script>
     <!-- Librairies utilitaires — defer: ne bloquent plus le rendu -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- [RECHERCHE] Fuse.js — recherche floue tolérante aux fautes (repli substring si absent) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+    <!-- [QR] qrcodejs (navigateur) — génération QR retrait commande / paiement Wave-OM. window.QRCode -->
+    <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <!-- [SÉCURITÉ] DOMPurify — assainit le HTML injecté (ceinture anti-XSS) -->
+    <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <!-- [NEXUS STORIES] hls.js — lecture HLS Mux (Chrome/Firefox/Android ; Safari/iOS = natif) -->
     <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
     <!-- [NEXUS STORIES] mux-embed — analytics d'engagement vidéo (Mux Data) -->
@@ -12454,13 +12460,31 @@ function initProto(){
   var sp=document.getElementById('nxp-searchPanel');
   var CATS=['Électronique','Mode','Alimentation','Maison & Déco','Beauté & Santé','Auto & Moto'];
   var ALL_PRODS=Object.keys(NXP_PRODS).map(function(k){return NXP_PRODS[k];});
+  /* [RECHERCHE] Filtre flou tolérant aux fautes via Fuse.js ("labtop"→"laptop").
+     Repli sur la recherche sous-chaîne si Fuse absent (CDN échoué) → jamais cassé. */
+  function nxpFuzzy(items,q,keys){
+    q=(q||'').trim();
+    if(!q||!Array.isArray(items)||!items.length)return items;
+    if(window.Fuse){
+      try{
+        var f=new window.Fuse(items,{keys:keys,threshold:0.4,ignoreLocation:true,minMatchCharLength:2});
+        var r=f.search(q);
+        if(r.length)return r.map(function(x){return x.item;});
+        /* aucun résultat flou → repli sous-chaîne (ex. requête très courte) */
+      }catch(e){}
+    }
+    var qq=q.toLowerCase();
+    return items.filter(function(it){
+      return keys.some(function(k){return String(it&&it[k]||'').toLowerCase().indexOf(qq)>=0;});
+    });
+  }
   function recentSearches(){try{return JSON.parse(localStorage.getItem('nx_recent_search')||'[]');}catch(e){return[];}}
   function pushRecentSearch(q){var r=recentSearches().filter(function(x){return x!==q;});r.unshift(q);r=r.slice(0,5);localStorage.setItem('nx_recent_search',JSON.stringify(r));}
   function renderSearch(q){
     q=(q||'').trim().toLowerCase();var html='';
     if(!q){var rs=recentSearches();if(rs.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Recherches récentes</p>'+rs.map(function(t){return'<button data-sq="'+t+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-on-surface-variant">history</span>'+t+'</button>';}).join('')+'</div>';}
     html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+CATS.slice(0,5).map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}
-    else{var cats=CATS.filter(function(c){return c.toLowerCase().indexOf(q)>=0;});var prods=ALL_PRODS.filter(function(p){return String(p.id).indexOf('nxp-')!==0 && p.name.toLowerCase().indexOf(q)>=0;}).slice(0,6);if(cats.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+cats.map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}if(prods.length){html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Produits</p>'+prods.map(function(p){return'<button data-sp-prod="'+p.id+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-3"><img src="'+p.img+'" alt="'+_esc(p.name)+'" class="w-9 h-9 object-contain rounded bg-surface-container-low"/><span class="flex-1">'+p.name+'</span><span class="text-primary font-bold text-xs">'+p.price+' F</span></button>';}).join('')+'</div>';}if(!cats.length&&!prods.length){html='<div class="p-4 text-sm text-on-surface-variant text-center">Aucun résultat pour « '+q+' »</div>';}}
+    else{var cats=CATS.filter(function(c){return c.toLowerCase().indexOf(q)>=0;});var prods=nxpFuzzy(ALL_PRODS.filter(function(p){return String(p.id).indexOf('nxp-')!==0;}),q,['name']).slice(0,6);if(cats.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+cats.map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}if(prods.length){html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Produits</p>'+prods.map(function(p){return'<button data-sp-prod="'+p.id+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-3"><img src="'+p.img+'" alt="'+_esc(p.name)+'" class="w-9 h-9 object-contain rounded bg-surface-container-low"/><span class="flex-1">'+p.name+'</span><span class="text-primary font-bold text-xs">'+p.price+' F</span></button>';}).join('')+'</div>';}if(!cats.length&&!prods.length){html='<div class="p-4 text-sm text-on-surface-variant text-center">Aucun résultat pour « '+q+' »</div>';}}
     if(sp)sp.innerHTML=html;
   }
   function doSearch(v){ v=(v||'').trim(); if(!v) return; pushRecentSearch(v); if(sp)sp.classList.add('hidden'); nxpShowAll({q:v}); }
@@ -12549,10 +12573,11 @@ function initProto(){
       if(opts.pmaxEur!=null){prods=prods.filter(function(p){return parseFloat(p.price)<=opts.pmaxEur;});ax=ax.filter(function(a){return (a.price_fcfa||0)/655.957<=opts.pmaxEur;});}
       /* Filtre catégorie pour les annonces (les produits sont déjà filtrés côté serveur) */
       if(opts.cat)ax=ax.filter(function(a){return (a.category||'')===opts.cat;});
-      /* Recherche texte (nom + catégorie pour produits ; description + catégorie pour annonces) */
-      if(opts.q){var qq=opts.q.toLowerCase();
-        prods=prods.filter(function(p){return ((p.name||'')+' '+(p.category||'')).toLowerCase().indexOf(qq)>=0;});
-        ax=ax.filter(function(a){return ((a.description||'')+' '+(a.category||'')).toLowerCase().indexOf(qq)>=0;});
+      /* Recherche texte FLOUE (Fuse.js, tolérante aux fautes) : nom+catégorie pour
+         les produits, description+catégorie pour les annonces. */
+      if(opts.q){
+        prods=nxpFuzzy(prods,opts.q,['name','category']);
+        ax=nxpFuzzy(ax,opts.q,['description','category']);
       }
       var cards=ax.map(axCard).concat(prods.map(sbCard));
       /* Emplacement AdSense rectangle inséré dans la grille (toutes les 8 cartes) */
