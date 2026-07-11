@@ -19,12 +19,15 @@
 
 const ONE_YEAR = 60 * 60 * 24 * 365;
 
-// base64url d'un ArrayBuffer/Uint8Array.
+// base64url d'un ArrayBuffer/Uint8Array — AVEC padding `=` (comme thumbor/imagor :
+// base64.urlsafe_b64encode côté serveur GARDE le `=` final ; le retirer produit
+// une signature de longueur différente → "url signature mismatch" quel que soit
+// le secret). Alphabet URL-safe (- _), padding conservé.
 function b64url(buf) {
   const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf;
   let s = '';
   for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 // Signature thumbor/imagor : base64url(HMAC-SHA1(secret, cheminAprèsSignature)).
