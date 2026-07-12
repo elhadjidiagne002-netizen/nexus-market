@@ -10,6 +10,7 @@
 //
 //   GET|HEAD /stories/media/:id  → le MP4, cache 1 an, Accept-Ranges.
 import { sbGetOne } from '../../_lib/seo.js';
+import { getMediaObject, objectPathFromPublicUrl } from '../../_lib/r2media.js';
 
 const ONE_YEAR = 60 * 60 * 24 * 365;
 const PLAYABLE = new Set(['active', 'closed', 'pending_payment']);
@@ -36,12 +37,20 @@ export async function onRequest(context) {
 
   let full = cache ? await cache.match(cacheKey) : null;
   if (!full) {
-    // cf.cacheEverything/cacheTtl : Cloudflare met aussi en cache la réponse
-    // Supabase au niveau fetch → double filet contre l'égress récurrent.
-    const upstream = await fetch(s.video_url, { cf: { cacheEverything: true, cacheTtl: ONE_YEAR } });
-    if (!upstream.ok) return new Response('Upstream error', { status: 502 });
-    const buf = await upstream.arrayBuffer();
-    const ct = upstream.headers.get('Content-Type') || 'video/mp4';
+    // [R2] Lecture R2-first + repli Supabase + peuplement R2 (auto-migration).
+    // Sans binding MEDIA_BUCKET → 100 % Supabase (comportement inchangé).
+    const objectPath = objectPathFromPublicUrl(s.video_url, 'nexus-stories');
+    let buf, ct;
+    const media = objectPath ? await getMediaObject(context, 'nexus-stories', objectPath) : { error: 'no_path' };
+    if (media && media.buf) {
+      buf = media.buf; ct = media.contentType || 'video/mp4';
+    } else {
+      // Repli ultime : fetch direct de l'URL stockée (ex. si elle porte un token).
+      const upstream = await fetch(s.video_url, { cf: { cacheEverything: true, cacheTtl: ONE_YEAR } });
+      if (!upstream.ok) return new Response('Upstream error', { status: 502 });
+      buf = await upstream.arrayBuffer();
+      ct = upstream.headers.get('Content-Type') || 'video/mp4';
+    }
     full = new Response(buf, {
       status: 200,
       headers: {

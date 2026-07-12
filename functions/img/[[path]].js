@@ -17,6 +17,8 @@
 //
 //   GET|HEAD /img/:path  → image, cache 1 an immutable.
 
+import { getMediaObject } from '../_lib/r2media.js';
+
 const ONE_YEAR = 60 * 60 * 24 * 365;
 
 // base64url d'un ArrayBuffer/Uint8Array — AVEC padding `=` (comme thumbor/imagor :
@@ -92,23 +94,25 @@ export async function onRequest(context) {
     return r;
   }
 
-  // Fetch : via Imagor si configuré (WebP/AVIF + resize), sinon original Supabase.
+  // Fetch : via Imagor si configuré (WebP/AVIF + resize), sinon original.
+  // [R2] L'original passe par le read-through R2 (repli Supabase + peuplement R2,
+  // no-op sans binding MEDIA_BUCKET). Le chemin Imagor lit encore la source
+  // Supabase (images = poids négligeable, ~119 Ko ; l'égress lourd était les vidéos).
   const imagorReady = !!env.IMAGOR_BASE_URL;
-  let upstream = null;
+  let buf = null, ct = 'image/jpeg';
   if (imagorReady) {
     try {
       const imagorUrl = await buildImagorUrl(env, sourceUrl, { w, h, fmt, q });
-      upstream = await fetch(imagorUrl, { cf: { cacheEverything: true, cacheTtl: ONE_YEAR } });
-      if (!upstream.ok) upstream = null; // repli sur l'original ci-dessous
-    } catch (_) { upstream = null; }
+      const up = await fetch(imagorUrl, { cf: { cacheEverything: true, cacheTtl: ONE_YEAR } });
+      if (up.ok) { buf = await up.arrayBuffer(); ct = up.headers.get('Content-Type') || 'image/webp'; }
+    } catch (_) { /* repli original ci-dessous */ }
   }
-  if (!upstream) {
-    upstream = await fetch(sourceUrl, { cf: { cacheEverything: true, cacheTtl: ONE_YEAR } });
-    if (!upstream.ok) return new Response('Not found', { status: upstream.status === 404 ? 404 : 502, headers: { 'Cache-Control': 'public, max-age=60' } });
+  if (buf === null) {
+    const media = await getMediaObject(context, 'nexus-images', objectPath);
+    if (media.error) return new Response('Not found', { status: media.error === 404 ? 404 : 502, headers: { 'Cache-Control': 'public, max-age=60' } });
+    buf = media.buf; ct = media.contentType || 'image/jpeg';
   }
 
-  const buf = await upstream.arrayBuffer();
-  const ct = upstream.headers.get('Content-Type') || 'image/jpeg';
   const resp = new Response(request.method === 'HEAD' ? null : buf, {
     status: 200,
     headers: {
