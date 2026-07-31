@@ -96,6 +96,49 @@ script GTM injecté ; (3) **nouvelle session** (sessionStorage vidé) → consen
 relu, **gtag chargé sans aucun clic**, `dataLayer` alimenté, bannière non réaffichée.
 Contrôle inverse : avec `'essential'`, ni GA4 ni pixel FB — le garde-fou tient.
 
+## 2026-07-31 — Refonte accueil : barre catégorie, réassurance retirée, FB + social login
+
+Quatre changements demandés sur `public/index.html` / `public/assets/app.js`.
+
+1. **Barre `#nxp-catBar`** (sous le header) : remplacée. Elle listait des
+   raccourcis de services (Coursier Express, On Demand, NEXUS Pro, Élevage,
+   Location, Covoiturage, Troc, Chat, Assistant IA, Ventes Flash, Déposer une
+   annonce) — désormais un filtre **catégorie/type de produit** (Tous, Électronique,
+   Mode, Maison & Déco, Beauté & Santé, Alimentation, Informatique, Produits
+   locaux, Auto & Moto, Ventes Flash), chaque clic appelant `nxpShowAll({cat})`
+   via la table `ROUTES` déjà existante (`CAT()`). Ajouté 2 entrées manquantes à
+   `ROUTES` (`informatique`, `produits locaux`). Les raccourcis retirés restent
+   accessibles via les widgets bas-gauche et le tiroir hamburger — rien n'a
+   disparu, juste déplacé de cette barre précise.
+2. **Bande réassurance** (Protection acheteur / Wave·OM / Livraison / Vendeurs
+   vérifiés) : retirée. Elle existait en **double** — une fois dans l'overlay
+   statique (`index.html`), une fois dans le composant React `HomeStoriesRow`-
+   adjacent du bundle (`app.js`, section « BANDE RÉASSURANCE (refonte) ») —
+   supprimée aux deux endroits, sinon elle restait visible pour les utilisateurs
+   dont la vue n'utilise pas l'overlay.
+3. **Aperçu Facebook dans « Suivez-nous »** : ajout d'une iframe Page Plugin
+   officielle (`facebook.com/plugins/page.php`) en plus du lien existant.
+   `facebook.com` était déjà autorisé en `frame-src` CSP — aucune modif CSP
+   nécessaire. `loading="lazy"`, dégradation propre si bloqué par un adblocker
+   (le lien texte reste la voie de repli).
+4. **Connexion sociale proactive** : `GoogleOneTapProvider` (prompt natif Google
+   coin haut-droit) était **entièrement codé mais jamais monté** dans l'arbre
+   React — oubli confirmé, le `clientId` Google est bien configuré dans
+   `NEXUS_CONFIG.google.clientId`. Monté à la racine, gardé par `!currentUser2`.
+   Comme One Tap ne couvre QUE Google (pas d'équivalent Facebook), ajout d'un
+   second composant **`NexusSocialPrompt`** : bannière bas-droite, apparaît après
+   4 s pour un visiteur non connecté, propose Google **et** Facebook (réutilise
+   `GoogleSignInButton`/`FacebookSignInButton` déjà existants, zéro logique
+   d'auth dupliquée), fermeture mémorisée en sessionStorage (revient à la
+   session suivante).
+
+**Vérifié en local** (SW purgé) : nouvelle barre catégorie rend 10 items
+corrects ; bande réassurance absente **partout** dans le DOM (les 2 occurrences
+avaient été trouvées puis retirées) ; bannière sociale apparaît après le délai
+avec les 2 boutons + fermeture fonctionnelle (testé clic réel, disparition
+confirmée après re-render) ; zéro erreur console. Bundle renommé
+`app.898c5ddef1.js` → `app.6624f30b26.js`.
+
 ## 2026-07-31 — Boutons « Ajouter au panier » affichant du code source (Fuse.js)
 
 **Symptôme** : sur l'accueil, chaque carte produit affichait, à la place du bouton,

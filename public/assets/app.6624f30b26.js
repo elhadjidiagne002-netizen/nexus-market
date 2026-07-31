@@ -13776,6 +13776,71 @@ const GoogleOneTapProvider = ({ onLogin }) => {
 };
 // ── Fin GoogleOneTapProvider ───────────────────────────────────────────────────
 
+// ══════════════════════════════════════════════════════════════════════════════
+// NexusSocialPrompt — bannière proactive « continuez avec Google/Facebook »
+// ── One Tap (ci-dessus) ne couvre QUE Google, il n'existe pas d'équivalent natif
+// pour Facebook. Cette bannière offre les DEUX options en un clic, réutilisant les
+// boutons GoogleSignInButton/FacebookSignInButton déjà existants (aucune logique
+// d'auth dupliquée). Apparaît une fois par session pour un visiteur non connecté,
+// après un court délai (laisse le temps de voir la page avant de solliciter).
+// Fermeture mémorisée en sessionStorage : ne réapparaît pas à chaque navigation
+// interne, mais revient à la session suivante (cohérent avec les autres
+// préférences UI éphémères du site, ex. panier invité).
+// ══════════════════════════════════════════════════════════════════════════════
+const NexusSocialPrompt = ({ currentUser }) => {
+  const DISMISS_KEY = 'nexus_ss_social_prompt_dismissed';
+  const [dismissed, setDismissed] = React.useState(() => {
+    try { return sessionStorage.getItem(DISMISS_KEY) === '1'; } catch (_) { return false; }
+  });
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => {
+    if (currentUser || dismissed) return;
+    const t = setTimeout(() => setVisible(true), 4000);
+    return () => clearTimeout(t);
+  }, [currentUser, dismissed]);
+
+  if (currentUser || dismissed || !visible) return null;
+  // Rien à proposer si aucun des deux providers n'est activé — éviter une
+  // bannière vide (les boutons se masquent eux-mêmes, mais on court-circuite ici).
+  if (NEXUS_CONFIG.google?.enabled === false && NEXUS_CONFIG.facebook?.enabled === false) return null;
+
+  const dismiss = () => {
+    setVisible(false);
+    setDismissed(true);
+    try { sessionStorage.setItem(DISMISS_KEY, '1'); } catch (_) {}
+  };
+
+  return React.createElement('div', {
+    role: 'complementary',
+    'aria-label': 'Connexion rapide',
+    style: {
+      position: 'fixed', right: '1.1rem', bottom: '1.1rem', zIndex: 9975,
+      width: 'min(320px, calc(100vw - 2rem))', background: '#fff',
+      borderRadius: '14px', boxShadow: '0 12px 36px rgba(0,0,0,.18)',
+      border: '1px solid #e5e5e5', padding: '1rem 1rem 0.75rem',
+    },
+  },
+    React.createElement('button', {
+      type: 'button', onClick: dismiss, 'aria-label': 'Fermer',
+      style: { position: 'absolute', top: '.4rem', right: '.4rem', border: 'none', background: 'none',
+        cursor: 'pointer', fontSize: '1.15rem', color: '#8a8a8a', lineHeight: 1, padding: '.3rem' },
+    }, '×'),
+    React.createElement('p', { style: { fontWeight: 800, fontSize: '.92rem', marginBottom: '.15rem', paddingRight: '1.25rem' } },
+      '👋 Un compte en 5 secondes'),
+    React.createElement('p', { style: { fontSize: '.8rem', color: '#666', marginBottom: '.65rem' } },
+      'Continuez avec Google ou Facebook — sans mot de passe à retenir.'),
+    React.createElement(GoogleSignInButton, { label: 'Continuer avec Google' }),
+    React.createElement(FacebookSignInButton, { label: 'Continuer avec Facebook' }),
+    React.createElement('button', {
+      type: 'button', onClick: dismiss,
+      style: { display: 'block', width: '100%', textAlign: 'center', background: 'none', border: 'none',
+        color: '#8a8a8a', fontSize: '.78rem', margin: '.6rem 0 .2rem', cursor: 'pointer', textDecoration: 'underline' },
+    }, 'Plus tard')
+  );
+};
+// ── Fin NexusSocialPrompt ───────────────────────────────────────────────────
+
 const LoginForm = ({ onLogin, targetRole, onForgot, onSwitchToRegister }) => {
   const { addToast } = useToast();
   const [email, setEmail] = useState("");
@@ -32601,21 +32666,6 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
 
 
 
-    // ── BANDE RÉASSURANCE (refonte) ──
-    React.createElement('div', { className: 'home-section', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: '0.6rem', margin: '0.5rem 0 0.25rem' } },
-      [['🛡️', 'Protection acheteur', 'Payé au vendeur après réception'],
-       ['💳', 'Wave · Orange Money', '& carte bancaire'],
-       ['🚚', 'Livraison partout', 'Dakar & toutes les régions'],
-       ['🏪', 'Vendeurs vérifiés', 'Boutiques contrôlées']].map(function (it, i) {
-        return React.createElement('div', { key: i, style: { display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#fff', border: '1px solid var(--border)', borderRadius: 12, padding: '0.55rem 0.8rem' } },
-          React.createElement('span', { style: { fontSize: '1.35rem', lineHeight: 1 } }, it[0]),
-          React.createElement('div', null,
-            React.createElement('div', { style: { fontWeight: 800, fontSize: '.8rem', color: 'var(--text-primary)' } }, it[1]),
-            React.createElement('div', { style: { fontSize: '.68rem', color: 'var(--text-secondary)' } }, it[2])
-          )
-        );
-      })
-    ),
     React.createElement(HomeStoriesRow, { user: currentUser2 }),
     // ── FLASH SALES ──
     flashProducts.length > 0 && React.createElement('div', { className: 'home-section' },
@@ -36271,6 +36321,15 @@ const App = ({ onUserChange }) => {
     },
   }),
   /* @__PURE__ */ React.createElement(CookieBanner, null),
+  /* [ONE TAP] Propose Google (prompt natif Google, coin haut-droit) à tout
+     visiteur non connecté. Composant existait déjà (GoogleOneTapProvider,
+     défini plus haut) mais n'était jamais monté nulle part — oubli, pas un choix
+     (le clientId Google est bien configuré dans NEXUS_CONFIG.google.clientId).
+     Guard !currentUser2 : sans ça, le prompt réapparaîtrait pour un utilisateur
+     déjà connecté à chaque re-render, ce que le composant ne vérifie pas lui-même. */
+  !currentUser2 && React.createElement(GoogleOneTapProvider, { onLogin: handleLogin }),
+  /* Bannière « continuez avec Google/Facebook », cf. NexusSocialPrompt. */
+  React.createElement(NexusSocialPrompt, { currentUser: currentUser2 }),
   /* MessagingCenter global — ouvert par le badge header ou depuis une page produit */
   showMessaging && currentUser2 && typeof MessagingCenter !== 'undefined' && React.createElement(MessagingCenter, {
     currentUser:    currentUser2,
