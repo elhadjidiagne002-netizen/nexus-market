@@ -3,6 +3,20 @@
 Marketplace (Sénégal) : frontend monolithique `public/index.html` (React via CDN) +
 backend serverless **Cloudflare Pages Functions** (`functions/`) + **Supabase** (Postgres/Auth).
 
+## 📓 JOURNAL.md — à tenir à jour à CHAQUE session
+
+`JOURNAL.md` (racine du repo) est un historique chronologique lisible par l'humain
+de ce qui a été fait projet, pourquoi, et l'état des chantiers — pour que l'utilisateur
+n'ait pas à rouvrir d'anciennes conversations pour se souvenir du contexte. Différent
+de ce fichier (CLAUDE.md = référence technique/pièges, non chronologique).
+
+**Règle** : à la fin de toute session de travail non triviale (fix, feature, migration,
+incident, décision), ajouter une entrée en haut de `JOURNAL.md` (le plus récent en
+premier) résumant : ce qui a été fait, pourquoi (le problème/besoin), et l'état final
+(déployé/vérifié/en attente de quoi). Mettre aussi à jour les sections « État actuel
+des intégrations » et « Chantiers en attente » en bas du fichier si elles ont changé.
+Pas besoin pour de la pure exploration/lecture sans changement.
+
 ## Architecture
 - **Frontend** : `public/index.html` (single-file, React global, ~37k lignes).
 - **Backend** : `functions/**` — chaque fichier = une route Cloudflare Pages Function.
