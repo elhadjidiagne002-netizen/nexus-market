@@ -6,6 +6,26 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-07-31 — Lecture log console prod : CSP beacon Cloudflare + SMS 502 en attente
+
+Analyse d'un export console de `nexusmarket.sn` fourni par l'utilisateur.
+- **Une seule vraie erreur** : `POST /api/sms` → **502**. La route est vivante
+  et le gate d'auth OK (probe non signée → 401) ; le 502 vient donc de httpSMS
+  lui-même (clé, `HTTPSMS_FROM` ≠ numéro enregistré, téléphone passerelle
+  hors-ligne, ou quota). Le détail est déjà exposé depuis `675bf92` mais n'est
+  visible que dans le toast admin, pas dans la console. **En attente** : le
+  texte du toast pour trancher.
+- **CSP** : ajout de `https://static.cloudflareinsights.com` à `script-src` et
+  de `https://cloudflareinsights.com` à `connect-src` (`public/_headers`). Le
+  beacon Web Analytics est injecté par Cloudflare, pas par le repo — il ne
+  figurait donc pas dans le grep d'origines ayant servi à bâtir la CSP. La CSP
+  restant en **Report-Only**, c'est du nettoyage de bruit, rien n'était bloqué.
+- **Reste du log = bruit, rien à corriger** : `ERR_BLOCKED_BY_CLIENT`
+  (adblocker du navigateur de test) ; `ERR_NAME_NOT_RESOLVED` sur Supabase +
+  WebSockets fermés + `r.stripe.com` = coupure internet locale en cours de
+  session, pas un incident serveur ; avertissement Tailwind CDN (dette connue) ;
+  `beforeinstallprompt.preventDefault()` = comportement voulu de `nexusInstall()`.
+
 ## 2026-07-12 — Panne Supabase (402) + migration R2 activée
 
 **Incident** : la période de grâce Fair Use a expiré (11 juil.) → Supabase a
