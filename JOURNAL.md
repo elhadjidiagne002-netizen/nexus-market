@@ -96,6 +96,40 @@ script GTM injecté ; (3) **nouvelle session** (sessionStorage vidé) → consen
 relu, **gtag chargé sans aucun clic**, `dataLayer` alimenté, bannière non réaffichée.
 Contrôle inverse : avec `'essential'`, ni GA4 ni pixel FB — le garde-fou tient.
 
+## 2026-07-31 — Boutons « Télécharger l'appli » : guide de repli + libellés honnêtes
+
+**Demande** : utiliser les boutons existants pour proposer le téléchargement de
+l'app directement depuis le site, sans passer par les stores (absents).
+
+**État constaté** : la solution PWA (« Add to Home Screen ») avait déjà été
+câblée lors d'une session précédente (`window.nexusDownloadApp` → guide iOS 3
+étapes, ou `window.nexusInstall()` sur Android/Chrome via `beforeinstallprompt`).
+Vérifié fonctionnel côté infra : manifest 200, 4 icônes 200, `sw.js` 200 avec
+handler `fetch` (critère d'installabilité requis). **Mais** :
+1. Sur Android/Bureau, quand `beforeinstallprompt` ne s'était pas déclenché
+   (heuristique d'engagement Chrome non déterministe — pas garanti au 1er
+   chargement) ou n'existe pas du tout (**Firefox**), le clic tombait sur un
+   simple toast **sans issue** : aucun moyen d'installer.
+2. Les boutons affichaient « Disponible sur App Store / Google Play » avec le
+   style pilule noire des vrais badges de store — trompeur, alors que les apps
+   n'y sont pas.
+
+**Corrigé** (`public/index.html`, script + 4 boutons dans les 2 footers) :
+- Guide manuel de repli (`showManualInstallGuide`), même format que le guide
+  iOS existant, avec détection UA à 4 branches : Firefox Android (menu ⋮ →
+  Installer), Chrome/Edge Android (menu ⋮ → Installer l'application), Chrome/
+  Edge Bureau (icône ⊕ dans la barre d'adresse), autres navigateurs (invite à
+  changer de navigateur — Safari desktop ne supporte pas l'installation PWA).
+- Libellés relabellés : « Disponible sur / App Store » → « Installer sur /
+  iPhone · iPad », idem Android → « Installer sur / Android · Bureau ». Style
+  visuel (pilules noires) conservé — familier, reste crédible.
+
+**Vérifié en local** : clic bouton Android → modal repli Chrome/Bureau (2
+étapes, texte correct) ; fermeture du modal fonctionnelle ; clic bouton iOS →
+guide 3 étapes inchangé ; les 4 boutons (footer statique + overlay) affichent
+les nouveaux libellés ; zéro erreur console. Pas de changement dans `app.js` →
+pas de renommage de bundle nécessaire.
+
 ## 2026-07-31 — Refonte accueil : barre catégorie, réassurance retirée, FB + social login
 
 Quatre changements demandés sur `public/index.html` / `public/assets/app.js`.
