@@ -19628,13 +19628,33 @@ const ServicesConfigPanel = ({ addToast }) => {
   const E = React.createElement;
   const [smsTestPhone, setSmsTestPhone] = React.useState('');
   const [smsTesting, setSmsTesting] = React.useState(false);
+  // [FIX DIAGNOSTIC] Appel DIRECT à /api/sms — l'ancien chemin (NexusSmsService.
+  // sendOtp → send → _sendBackend) masquait les vrais échecs derrière : un garde
+  // `cfg.enabled`, une déduplication 60s (retente = false silencieux), et un
+  // repli _simulate() qui renvoie toujours true en cas d'échec réseau. Résultat :
+  // message générique "Vérifiez la config" sans aucun détail exploitable.
   const testSms = async () => {
     const phone = smsTestPhone.replace(/\D/g, '');
     if (phone.length < 8) { addToast('Saisissez un numéro valide', 'warning'); return; }
     setSmsTesting(true);
     try {
-      const r = await NexusSmsService.sendOtp('+221' + phone.replace(/^221/, ''), '123456', 10);
-      addToast(r && r.ok ? '✅ SMS de test envoyé !' : '❌ Échec SMS : ' + (r && r.error || 'Vérifiez la config'), r && r.ok ? 'success' : 'error');
+      let token = null;
+      try { const s = await (DataService._sb && DataService._sb.auth.getSession()); token = s && s.data && s.data.session && s.data.session.access_token; } catch (_) {}
+      if (!token) token = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+      const res = await fetch('/api/sms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        body: JSON.stringify({ phone: '+221' + phone.replace(/^221/, ''), message: 'NEXUS Market — test SMS ✅' }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) {
+        addToast('✅ Transmis via ' + (d.provider || 'httpsms'), 'success');
+      } else if (d.skipped) {
+        addToast('⚠️ httpSMS non configuré (' + d.skipped + ')', 'warning');
+      } else {
+        const detail = d.detail ? (typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail)) : '';
+        addToast('❌ Échec (HTTP ' + res.status + (d.httpsms_status ? ', httpSMS ' + d.httpsms_status : '') + ') : ' + (d.error || 'inconnu') + (detail ? ' — ' + detail : ''), 'error', 9000);
+      }
     } catch(e) { addToast('❌ Erreur : ' + e.message, 'error'); }
     setSmsTesting(false);
   };
