@@ -6303,9 +6303,16 @@ const NexusSmsService = {
   // ── Enregistrer dans Supabase (non bloquant) ─────────────────────────────
   _persistLog(to, type, preview, status) {
     if (DataService && DataService._sb) {
-      DataService._sb.from('sms_logs').insert({
-        to_number: to, type, preview: preview.slice(0, 80), status, sent_at: new Date().toISOString(),
-      }).catch(() => {});
+      // [FIX] .insert(...) renvoie un thenable (pas une vraie Promise) → .catch()
+      // direct peut lever "catch is not a function". Promise.resolve(...) le
+      // normalise en vraie Promise pour que .catch() marche toujours.
+      try {
+        Promise.resolve(
+          DataService._sb.from('sms_logs').insert({
+            to_number: to, type, preview: preview.slice(0, 80), status, sent_at: new Date().toISOString(),
+          })
+        ).catch(() => {});
+      } catch (_) { /* journalisation best-effort, ne doit jamais bloquer l'envoi SMS */ }
     }
   },
 
