@@ -240,7 +240,24 @@
     <!-- Librairies utilitaires — defer: ne bloquent plus le rendu -->
     <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <!-- [RECHERCHE] Fuse.js — recherche floue tolérante aux fautes (repli substring si absent) -->
-    <script defer src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+    <!-- ⚠️ type="module" OBLIGATOIRE (pas defer) : le bundle UMD de Fuse v7 commence par
+         `var e,t;e=this,t=function(){…}` — en script CLASSIQUE ce `var t` de premier niveau
+         devient window.t et ÉCRASE notre alias i18n (chargé avant, via app.js), ce qui faisait
+         afficher le CODE SOURCE de la factory Fuse dans les boutons « Ajouter au panier ».
+         En module, les `var` restent dans la portée du module ; window.Fuse est quand même
+         exporté car la fin du bundle cible `globalThis`. Un module est déjà différé. -->
+    <script type="module" src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+    <!-- [I18N] Accès i18n robuste pour le HTML statique (overlay d'accueil, modules IIFE).
+         `window.t` n'est qu'un ALIAS court posé par app.js : n'importe quelle lib tierce
+         minifiée déclarant un `var t` global l'écrase (cf. Fuse ci-dessus). window.nexusI18n
+         est un namespace, donc sûr. Toujours passer par nxT() ici, jamais par window.t.
+         nxT(clé, vars, repli) → repli utilisé si i18n pas encore chargé (sinon la clé). -->
+    <script>
+      window.nxT = function (key, vars, fallback) {
+        var f = window.nexusI18n && window.nexusI18n.t;
+        return typeof f === 'function' ? f(key, vars) : (fallback != null ? fallback : key);
+      };
+    </script>
     <!-- [QR] qrcodejs (navigateur) — génération QR retrait commande / paiement Wave-OM. window.QRCode -->
     <script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
     <!-- [SÉCURITÉ] DOMPurify — assainit le HTML injecté (ceinture anti-XSS) -->
@@ -9968,12 +9985,12 @@ window.addEventListener('unhandledrejection', function(event) {
   function specHtml(p) {
     var s = p.rental_specs || {};
     var prices = [];
-    if (s.price_per_day) prices.push(fcfa(s.price_per_day) + window.t('location.per_day'));
-    if (s.price_per_week) prices.push(fcfa(s.price_per_week) + window.t('location.per_week'));
+    if (s.price_per_day) prices.push(fcfa(s.price_per_day) + window.nxT('location.per_day'));
+    if (s.price_per_week) prices.push(fcfa(s.price_per_week) + window.nxT('location.per_week'));
     var l1 = prices.length ? '<div style="color:#1d4ed8;font-weight:800;margin-top:2px">' + esc(prices.join(' · ')) + '</div>' : '';
     var meta = [];
-    if (s.deposit_fcfa) meta.push(window.t('location.deposit') + ' ' + fcfa(s.deposit_fcfa));
-    if (s.min_days) meta.push(window.t('location.min_days_short') + ' ' + s.min_days + window.t('location.days_unit'));
+    if (s.deposit_fcfa) meta.push(window.nxT('location.deposit') + ' ' + fcfa(s.deposit_fcfa));
+    if (s.min_days) meta.push(window.nxT('location.min_days_short') + ' ' + s.min_days + window.nxT('location.days_unit'));
     if (s.condition) meta.push(s.condition);
     if (s.region) meta.push('📍 ' + s.region);
     var l2 = meta.length ? '<div style="color:#666;font-size:.68rem;margin-top:2px">' + esc(meta.join(' · ')) + '</div>' : '';
@@ -9982,7 +9999,7 @@ window.addEventListener('unhandledrejection', function(event) {
 
   // ── Grille location + contact WhatsApp ───────────────────────────────────────
   function renderGrid(host, products) {
-    if (!products.length) { host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem .5rem">' + esc(window.t('location.empty')) + '</div>'; return; }
+    if (!products.length) { host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem .5rem">' + esc(window.nxT('location.empty')) + '</div>'; return; }
     var ids = products.map(function (p) { return p.vendor_id; }).filter(Boolean);
     loadPhones(ids).then(function (phones) {
       var grid = document.createElement('div'); grid.className = 'nx-le-grid';
@@ -9994,16 +10011,16 @@ window.addEventListener('unhandledrejection', function(event) {
           (imgOf(p) ? '<img src="' + esc(imgOf(p)) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '<div style="height:110px;background:#eef2ff;display:flex;align-items:center;justify-content:center;font-size:1.8rem">🔑</div>')
           + '<div class="p"><div style="font-weight:700;line-height:1.2">' + esc(p.name || '') + '</div>'
           + specHtml(p)
-          + '<div style="font-size:.68rem;color:#888;margin-top:3px">🏪 ' + esc(p.vendor_name || ph.shop_name || window.t('location.lessor')) + '</div></div>';
+          + '<div style="font-size:.68rem;color:#888;margin-top:3px">🏪 ' + esc(p.vendor_name || ph.shop_name || window.nxT('location.lessor')) + '</div></div>';
         var btnWrap = document.createElement('div'); btnWrap.style.cssText = 'padding:0 .6rem .6rem';
         var b = document.createElement('button');
-        b.textContent = window.t('location.contact_btn');
+        b.textContent = window.nxT('location.contact_btn');
         b.style.cssText = 'width:100%;padding:.45rem;border:none;border-radius:8px;background:#25D366;color:#fff;font-weight:700;font-size:.72rem;cursor:pointer';
         b.addEventListener('click', function (ev) {
           ev.stopPropagation();
           var phone = (ph.phone || '').replace(/\D/g, '');
-          var tarif = s.price_per_day ? (' (' + fcfa(s.price_per_day) + window.t('location.per_day') + ')') : '';
-          var msg = window.t('location.wa_message', { name: p.name || '', price: tarif });
+          var tarif = s.price_per_day ? (' (' + fcfa(s.price_per_day) + window.nxT('location.per_day') + ')') : '';
+          var msg = window.nxT('location.wa_message', { name: p.name || '', price: tarif });
           if (phone) { if (phone.length === 9 && phone[0] === '7') phone = '221' + phone; window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(msg), '_blank'); }
           else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
         });
@@ -10020,45 +10037,45 @@ window.addEventListener('unhandledrejection', function(event) {
     host.innerHTML = '';
     var wrap = document.createElement('div');
     function field(label, html) { var d = document.createElement('div'); d.className = 'nx-loc-field'; d.innerHTML = '<label>' + label + '</label>' + html; return d; }
-    var nameEl = field(window.t('location.field_name'), '<input maxlength="90" placeholder="Ex. Sono 500W + 2 enceintes">'); var nameI = nameEl.querySelector('input');
-    var catEl = field(window.t('location.field_category'), '<select><option value="">' + esc(window.t('location.field_choose')) + '</option>' + CATS.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('') + '</select>'); var catI = catEl.querySelector('select');
-    var photoEl = field(window.t('location.field_photo'), '<input type="file" accept="image/*">'); var photoI = photoEl.querySelector('input');
+    var nameEl = field(window.nxT('location.field_name'), '<input maxlength="90" placeholder="Ex. Sono 500W + 2 enceintes">'); var nameI = nameEl.querySelector('input');
+    var catEl = field(window.nxT('location.field_category'), '<select><option value="">' + esc(window.nxT('location.field_choose')) + '</option>' + CATS.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('') + '</select>'); var catI = catEl.querySelector('select');
+    var photoEl = field(window.nxT('location.field_photo'), '<input type="file" accept="image/*">'); var photoI = photoEl.querySelector('input');
     var photoPrev = document.createElement('div'); photoPrev.style.cssText = 'font-size:.72rem;color:#666;margin-top:2px';
-    var pdEl = field(window.t('location.field_price_day'), '<input type="number" min="0" placeholder="5000">'); var pdI = pdEl.querySelector('input');
-    var pwEl = field(window.t('location.field_price_week'), '<input type="number" min="0" placeholder="25000">'); var pwI = pwEl.querySelector('input');
-    var depEl = field(window.t('location.field_deposit'), '<input type="number" min="0" placeholder="20000">'); var depI = depEl.querySelector('input');
-    var minEl = field(window.t('location.field_min_days'), '<input type="number" min="1" value="1">'); var minI = minEl.querySelector('input');
-    var condEl = field(window.t('location.field_condition'), '<input maxlength="60" placeholder="Ex. Très bon état, livraison possible">'); var condI = condEl.querySelector('input');
-    var regEl = field(window.t('location.field_region'), '<select><option value="">' + esc(window.t('location.field_choose')) + '</option>' + REGIONS.map(function (r) { return '<option>' + esc(r) + '</option>'; }).join('') + '</select>'); var regI = regEl.querySelector('select');
+    var pdEl = field(window.nxT('location.field_price_day'), '<input type="number" min="0" placeholder="5000">'); var pdI = pdEl.querySelector('input');
+    var pwEl = field(window.nxT('location.field_price_week'), '<input type="number" min="0" placeholder="25000">'); var pwI = pwEl.querySelector('input');
+    var depEl = field(window.nxT('location.field_deposit'), '<input type="number" min="0" placeholder="20000">'); var depI = depEl.querySelector('input');
+    var minEl = field(window.nxT('location.field_min_days'), '<input type="number" min="1" value="1">'); var minI = minEl.querySelector('input');
+    var condEl = field(window.nxT('location.field_condition'), '<input maxlength="60" placeholder="Ex. Très bon état, livraison possible">'); var condI = condEl.querySelector('input');
+    var regEl = field(window.nxT('location.field_region'), '<select><option value="">' + esc(window.nxT('location.field_choose')) + '</option>' + REGIONS.map(function (r) { return '<option>' + esc(r) + '</option>'; }).join('') + '</select>'); var regI = regEl.querySelector('select');
 
     // Upload photo (bucket nexus-stories, même pattern que "Vendre un article")
     photoI.addEventListener('change', function () {
       var file = photoI.files && photoI.files[0]; if (!file) return;
       var c = sb(); var u = curUser();
-      if (!c || !u || !u.id) { toast(window.t('location.photo_login_req')); return; }
-      if (!/^image\//.test(file.type || '')) { toast(window.t('location.photo_pick_img')); return; }
-      if (file.size > 5 * 1024 * 1024) { toast(window.t('location.photo_too_big')); return; }
-      photoPrev.textContent = window.t('location.photo_uploading');
+      if (!c || !u || !u.id) { toast(window.nxT('location.photo_login_req')); return; }
+      if (!/^image\//.test(file.type || '')) { toast(window.nxT('location.photo_pick_img')); return; }
+      if (file.size > 5 * 1024 * 1024) { toast(window.nxT('location.photo_too_big')); return; }
+      photoPrev.textContent = window.nxT('location.photo_uploading');
       var ext = ((file.name || '').split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
       var path = 'location/' + u.id + '/' + Date.now() + '.' + ext;
       c.storage.from('nexus-stories').upload(path, file, { contentType: file.type, upsert: true }).then(function (res) {
         if (res.error) throw res.error;
         f.imageUrl = c.storage.from('nexus-stories').getPublicUrl(path).data.publicUrl;
-        photoPrev.textContent = window.t('location.photo_added');
-      }).catch(function (e) { photoPrev.textContent = window.t('location.photo_failed') + (e.message || e); });
+        photoPrev.textContent = window.nxT('location.photo_added');
+      }).catch(function (e) { photoPrev.textContent = window.nxT('location.photo_failed') + (e.message || e); });
     });
 
     var submit = document.createElement('button');
-    submit.textContent = window.t('location.submit_btn');
+    submit.textContent = window.nxT('location.submit_btn');
     submit.style.cssText = 'width:100%;padding:.7rem;border:none;border-radius:10px;background:#1d4ed8;color:#fff;font-weight:800;font-size:.9rem;cursor:pointer;margin-top:.4rem';
     submit.addEventListener('click', function () {
       var u = curUser();
-      if (!u || !u.id) { toast(window.t('location.publish_login_req')); try { window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'login' } })); } catch (_) {} return; }
+      if (!u || !u.id) { toast(window.nxT('location.publish_login_req')); try { window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'login' } })); } catch (_) {} return; }
       var name = nameI.value.trim(), cat = catI.value, pd = parseInt(pdI.value, 10);
-      if (!name || !cat) { toast(window.t('location.name_cat_req')); return; }
+      if (!name || !cat) { toast(window.nxT('location.name_cat_req')); return; }
       var minDay = CFG.rental_min_day_fcfa || 100;
-      if (!pd || pd < minDay) { toast(window.t('location.price_invalid', { min: fcfa(minDay) })); return; }
-      if (!window.DataService || !DataService.saveProduct) { toast(window.t('location.service_unavailable')); return; }
+      if (!pd || pd < minDay) { toast(window.nxT('location.price_invalid', { min: fcfa(minDay) })); return; }
+      if (!window.DataService || !DataService.saveProduct) { toast(window.nxT('location.service_unavailable')); return; }
       var specs = {
         category: cat,
         price_per_day: pd,
@@ -10068,20 +10085,20 @@ window.addEventListener('unhandledrejection', function(event) {
         condition: condI.value.trim() || null,
         region: regI.value || null
       };
-      submit.disabled = true; submit.textContent = window.t('location.publishing');
+      submit.disabled = true; submit.textContent = window.nxT('location.publishing');
       // price (colonne canonique) = prix/jour converti en EUR (convention EUR de la pile).
       DataService.saveProduct({
         name: name, category: cat, price: pd / EUR_TO_XOF, stock: 1,
         description: condI.value.trim() || null, imageUrl: f.imageUrl || null,
-        vendor: u.id, vendorName: u.name || u.shop_name || window.t('location.lessor'),
+        vendor: u.id, vendorName: u.name || u.shop_name || window.nxT('location.lessor'),
         active: true, rating: 0, reviewsCount: 0,
         isRental: true, rentalSpecs: specs
       }).then(function () {
-        toast(window.t('location.published'), { bg: '#1d4ed8', duration: 5000 });
+        toast(window.nxT('location.published'), { bg: '#1d4ed8', duration: 5000 });
         open(); switchTab('browse');
       }).catch(function (e) {
-        submit.disabled = false; submit.textContent = window.t('location.submit_btn');
-        toast(window.t('location.error') + (e.message || e));
+        submit.disabled = false; submit.textContent = window.nxT('location.submit_btn');
+        toast(window.nxT('location.error') + (e.message || e));
       });
     });
 
@@ -10106,7 +10123,7 @@ window.addEventListener('unhandledrejection', function(event) {
   }
   function paint() {
     var host = ov.querySelector('#nx-loc-grid');
-    host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem">' + esc(window.t('common.loading')) + '</div>';
+    host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem">' + esc(window.nxT('common.loading')) + '</div>';
     loadRentals(curCat).then(function (list) { renderGrid(host, list); });
   }
   function buildOverlay() {
@@ -10114,15 +10131,15 @@ window.addEventListener('unhandledrejection', function(event) {
     ov = document.createElement('div'); ov.id = 'nx-loc-ov';
     ov.innerHTML =
       '<div class="nx-le-card">'
-      + '<div class="nx-le-head"><span style="font-size:1.4rem">🔑</span><b style="flex:1">' + esc(window.t('location.title')) + '</b><button id="nx-loc-x" aria-label="' + esc(window.t('common.close')) + '" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div>'
-      + '<div class="nx-le-tabs"><button class="nx-le-tab on" data-t="browse">' + esc(window.t('location.tab_browse')) + '</button><button class="nx-le-tab" data-t="publish">' + esc(window.t('location.tab_publish')) + '</button></div>'
+      + '<div class="nx-le-head"><span style="font-size:1.4rem">🔑</span><b style="flex:1">' + esc(window.nxT('location.title')) + '</b><button id="nx-loc-x" aria-label="' + esc(window.nxT('common.close')) + '" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div>'
+      + '<div class="nx-le-tabs"><button class="nx-le-tab on" data-t="browse">' + esc(window.nxT('location.tab_browse')) + '</button><button class="nx-le-tab" data-t="publish">' + esc(window.nxT('location.tab_publish')) + '</button></div>'
       + '<div class="nx-le-body">'
       + '<div class="nx-le-tab-pane on" id="nx-loc-pane-browse">'
-      + '<div style="background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;border-radius:12px;padding:.8rem 1rem;margin-bottom:.9rem"><b>' + esc(window.t('location.hero_title')) + '</b><div style="font-size:.8rem;opacity:.92">' + esc(window.t('location.hero_desc')) + '</div></div>'
+      + '<div style="background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff;border-radius:12px;padding:.8rem 1rem;margin-bottom:.9rem"><b>' + esc(window.nxT('location.hero_title')) + '</b><div style="font-size:.8rem;opacity:.92">' + esc(window.nxT('location.hero_desc')) + '</div></div>'
       + '<div id="nx-loc-chips" style="margin-bottom:.7rem"></div>'
       + '<div id="nx-loc-grid"></div></div>'
       + '<div class="nx-le-tab-pane" id="nx-loc-pane-publish">'
-      + '<div style="background:#eef2ff;color:#1e3a8a;border-radius:12px;padding:.7rem 1rem;margin-bottom:.9rem;font-size:.82rem">' + esc(window.t('location.publish_intro')) + '</div>'
+      + '<div style="background:#eef2ff;color:#1e3a8a;border-radius:12px;padding:.7rem 1rem;margin-bottom:.9rem;font-size:.82rem">' + esc(window.nxT('location.publish_intro')) + '</div>'
       + '<div id="nx-loc-publish-host"></div></div>'
       + '</div></div>';
     document.body.appendChild(ov);
@@ -10133,7 +10150,7 @@ window.addEventListener('unhandledrejection', function(event) {
     });
     // chips catégories
     var chipHost = ov.querySelector('#nx-loc-chips');
-    var allChip = document.createElement('span'); allChip.className = 'nx-le-chip on'; allChip.textContent = window.t('location.all_cat');
+    var allChip = document.createElement('span'); allChip.className = 'nx-le-chip on'; allChip.textContent = window.nxT('location.all_cat');
     var chipEls = [allChip]; chipHost.appendChild(allChip);
     allChip.addEventListener('click', function () { curCat = ''; chipEls.forEach(function (x) { x.classList.remove('on'); }); allChip.classList.add('on'); paint(); });
     CATS.forEach(function (label) {
@@ -10146,7 +10163,7 @@ window.addEventListener('unhandledrejection', function(event) {
     buildOverlay(); ov.classList.add('open');
     if (!isEnabled()) {
       ov.querySelector('.nx-le-tabs').style.display = 'none';
-      ov.querySelector('.nx-le-body').innerHTML = '<div style="text-align:center;color:#555;padding:2.5rem 1rem"><div style="font-size:2.4rem">🔑</div><b style="display:block;margin:.6rem 0 .3rem;font-size:1.05rem">' + esc(window.t('location.coming_soon_title')) + '</b><div style="font-size:.85rem;color:#888">' + esc(window.t('location.coming_soon_desc')) + '</div></div>';
+      ov.querySelector('.nx-le-body').innerHTML = '<div style="text-align:center;color:#555;padding:2.5rem 1rem"><div style="font-size:2.4rem">🔑</div><b style="display:block;margin:.6rem 0 .3rem;font-size:1.05rem">' + esc(window.nxT('location.coming_soon_title')) + '</b><div style="font-size:.85rem;color:#888">' + esc(window.nxT('location.coming_soon_desc')) + '</div></div>';
       return;
     }
     // Réactivé après un affichage « bientôt » (body vidé) → reconstruire.
@@ -12170,7 +12187,7 @@ function card(p){
     +'<div class="flex items-center gap-1 mb-1.5">'+starsHtml(p.rating)+'<span class="text-[11px] font-bold text-on-surface ml-0.5">'+ratingNum(p)+'</span><span class="text-[11px] text-on-surface-variant">('+reviewsOf(p)+')</span></div>'
     +'<p class="text-[11px] text-on-surface-variant mb-2 flex items-center gap-1"><span class="material-symbols-outlined text-[14px] text-primary">local_shipping</span>'+deliveryOf(p)+'</p>'
     +'<div class="flex items-center justify-between mb-3"><p class="text-primary font-bold text-md">'+p.price+' F</p><span class="text-[10px] font-bold text-primary bg-primary-container px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Protection acheteur"><span class="material-symbols-outlined text-[12px]">shield</span>Protégé</span></div>'
-    +'<button class="mt-auto bg-surface-container-highest text-on-surface py-2 rounded font-bold text-xs uppercase hover:bg-primary hover:text-white transition-all shadow-sm nxp-atc" data-pid="'+p.id+'" data-i18n="product.addToCart">'+(window.t?window.t('product.addToCart'):'Ajouter au panier')+'</button>'
+    +'<button class="mt-auto bg-surface-container-highest text-on-surface py-2 rounded font-bold text-xs uppercase hover:bg-primary hover:text-white transition-all shadow-sm nxp-atc" data-pid="'+p.id+'" data-i18n="product.addToCart">'+window.nxT('product.addToCart',null,'Ajouter au panier')+'</button>'
     +'</div>';
 }
 
@@ -12205,7 +12222,7 @@ function flashCard(name,price,oldPrice,disc,img){
     +'<h4 class="text-sm font-semibold mb-1">'+name+'</h4>'
     +'<p class="text-primary font-bold text-xl">'+price+' F</p>'
     +'<p class="text-on-surface-variant text-sm line-through mb-3">'+oldPrice+' F</p>'
-    +'<button class="mt-auto w-full bg-primary text-on-primary py-2.5 rounded-lg font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all" data-i18n="product.addToCart">'+(window.t?window.t('product.addToCart'):'Ajouter au panier')+'</button>'
+    +'<button class="mt-auto w-full bg-primary text-on-primary py-2.5 rounded-lg font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all" data-i18n="product.addToCart">'+window.nxT('product.addToCart',null,'Ajouter au panier')+'</button>'
     +'</div>';
 }
 
@@ -12383,7 +12400,7 @@ function initProto(){
         +'<h4 class="text-sm font-semibold mb-1 truncate">'+(p.name||'Produit')+'</h4>'
         +'<p class="text-primary font-bold text-xl">'+fcfa.toLocaleString('fr-FR')+' F</p>'
         +(oldp?'<p class="text-on-surface-variant text-sm line-through mb-3">'+oldp.toLocaleString('fr-FR')+' F</p>':'<div class="mb-3"></div>')
-        +'<button class="mt-auto w-full bg-primary text-on-primary py-2.5 rounded-lg font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all nxp-atc" data-pid="'+pid+'" data-i18n="product.addToCart">'+(window.t?window.t('product.addToCart'):'Ajouter au panier')+'</button>'
+        +'<button class="mt-auto w-full bg-primary text-on-primary py-2.5 rounded-lg font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all nxp-atc" data-pid="'+pid+'" data-i18n="product.addToCart">'+window.nxT('product.addToCart',null,'Ajouter au panier')+'</button>'
         +'</div>';
     }
     function render(cards){ if(cards){ fsEl.innerHTML=cards; if(section)section.style.display=''; } else hide(); }
@@ -12636,7 +12653,7 @@ function initProto(){
     var pid=b.getAttribute('data-pid');var p=NXP_PRODS[pid];
     if(p){try{window.dispatchEvent(new CustomEvent('nexus:add-to-cart',{detail:{id:pid,name:p.name,price:parseFloat(p.price.replace(/\s/g,''))/655.957,img:p.img,stock:10}}));}catch(e2){}}
     var _origLabel=b.textContent;
-    b.textContent=(window.t?window.t('cart.added_short'):'✓ Ajouté');b.classList.add('bg-primary','text-white');setTimeout(function(){b.textContent=_origLabel;b.classList.remove('bg-primary','text-white');},1500);
+    b.textContent=window.nxT('cart.added_short',null,'✓ Ajouté');b.classList.add('bg-primary','text-white');setTimeout(function(){b.textContent=_origLabel;b.classList.remove('bg-primary','text-white');},1500);
   });
 
   /* ════════════════════════════════════════════════════════════════════
@@ -12778,7 +12795,7 @@ function initProto(){
         var price=parseFloat((priceTxt+'').replace(/[^\d]/g,''))/655.957||0;
         evt('nexus:add-to-cart',{name:name,price:price,stock:10});
         var _origLabel=bt.textContent;
-        bt.textContent=(window.t?window.t('cart.added_short'):'✓ Ajouté');setTimeout(function(){bt.textContent=_origLabel;},1500);
+        bt.textContent=window.nxT('cart.added_short',null,'✓ Ajouté');setTimeout(function(){bt.textContent=_origLabel;},1500);
       });
     }
   })();

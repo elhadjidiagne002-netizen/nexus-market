@@ -6,6 +6,39 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-07-31 — Boutons « Ajouter au panier » affichant du code source (Fuse.js)
+
+**Symptôme** : sur l'accueil, chaque carte produit affichait, à la place du bouton,
+le **code source minifié d'une fonction** en majuscules
+(`FUNCTION E(N){VAR I=ARGUMENTS.LENGTH>1…`).
+
+**Cause racine** : le bundle **UMD de Fuse.js v7.0.0** commence par
+`var e,t;e=this,t=function(){…}`. Chargé en script **classique** (`defer`), ce
+`var t` de premier niveau devient `window.t` et **écrase l'alias i18n** posé par
+`app.js` (`window.t = t`, i18n.js:2585). Comme `defer` s'exécute *après* `app.js`,
+Fuse gagnait toujours. Les cartes de l'overlay statique étant rendues plus tard
+(après le fetch produits), leur `window.t('product.addToCart')` retournait la
+factory Fuse → concaténée en chaîne = son code source (majuscules dues à la
+classe CSS `uppercase`). Vérifié en direct : `window.nexusI18n.t === window.t`
+était `false`, et `window.t('product.addToCart')` renvoyait `function e(n){…}`.
+
+**Correctifs** (`public/index.html`, les deux) :
+1. Fuse chargé en **`type="module"`** au lieu de `defer` → les `var` restent dans
+   la portée du module, plus aucune fuite. `window.Fuse` reste exporté car la fin
+   du bundle cible `globalThis` (et un module est déjà différé).
+2. Nouveau helper **`window.nxT(clé, vars, repli)`** lisant `window.nexusI18n.t`
+   (namespace, non écrasable par une lib tierce) ; **les 53 appels `window.t(`**
+   du fichier y ont été migrés. `window.t` reste un alias de confort mais plus
+   aucun code du repo n'en dépend.
+
+**Vérifié en local** (`static-py`, SW purgé) : `window.t` est de nouveau la
+fonction i18n, `Fuse` chargé, recherche floue OK (`"ordinateru"` → « Ordinateur
+Portable HP »), **43 boutons** rendus, tous « Ajouter au panier », zéro code
+source, aucune erreur console.
+
+⚠️ **Règle à retenir** : ne jamais dépendre d'un **alias global d'une lettre**
+(`window.t`) dans le HTML statique — toujours `window.nexusI18n` / `window.nxT`.
+
 ## 2026-07-31 — Lecture log console prod : CSP beacon Cloudflare + SMS 502 en attente
 
 Analyse d'un export console de `nexusmarket.sn` fourni par l'utilisateur.
