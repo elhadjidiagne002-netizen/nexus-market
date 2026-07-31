@@ -23575,6 +23575,64 @@ const AdminLivraisonPanel = ({ addToast }) => {
     addToast('🤖 Dispatch auto : '+(list[0].name||'coursier')+' ('+(list[0].distance_km!=null?list[0].distance_km+' km':'')+')','success');
   };
 
+  // PROPOSER la course à un coursier — y compris HORS LIGNE — au lieu de la lui
+  // imposer. Différence avec assignCourier() : la course n'est PAS attribuée, le
+  // coursier reçoit une offre qu'il accepte lui-même depuis son tableau de bord.
+  // Le RPC le repasse « disponible » côté serveur ; le WhatsApp sert à le faire
+  // revenir dans l'app avant l'expiration (défaut 15 min).
+  const [offeringId, setOfferingId] = React.useState(null);
+  const offerToCourier = async (deliveryId, courierId, minutes) => {
+    if (!courierId) return;
+    setOfferingId(deliveryId + ':' + courierId);
+    const r = await DataService.adminOfferDelivery(deliveryId, courierId, minutes || 15);
+    if (!r || !r.ok) {
+      const RAISONS = {
+        deja_attribuee:        'course déjà attribuée à un coursier',
+        course_introuvable:    'course introuvable',
+        coursier_introuvable:  'coursier introuvable',
+        coursier_non_actif:    'coursier non actif (en attente ou suspendu)',
+        statut_non_proposable: 'statut de course non proposable',
+      };
+      addToast('❌ Proposition impossible : ' + (RAISONS[r && r.reason] || (r && r.reason) || 'erreur'), 'error', 7000);
+      setOfferingId(null); load(); return;
+    }
+    const co  = r.courier || {};
+    const dv  = r.delivery || {};
+    const fin = r.expires_at ? new Date(r.expires_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+    // Message d'incitation : ce qu'il gagne, où, et jusqu'à quand c'est à lui.
+    const msg =
+      '🛵 *NEXUS Market — une course pour toi' + (co.name ? ', ' + co.name : '') + '*\n\n' +
+      '📍 Retrait : '   + (dv.pickup_label  || dv.pickup_city   || '—') + '\n' +
+      '🎯 Livraison : ' + (dv.dropoff_label || dv.delivery_city || '—') + '\n' +
+      (dv.distance_km != null ? '📏 Distance : ' + dv.distance_km + ' km\n' : '') +
+      (dv.items_desc ? '📦 Colis : ' + dv.items_desc + '\n' : '') +
+      '💰 Ta rémunération : *' + FCFA(dv.courier_payout || 0) + '*\n\n' +
+      '⏳ Elle est réservée pour toi' + (fin ? " jusqu'à *" + fin + '*' : '') + '.\n' +
+      'Tu viens d\'être remis en ligne : ouvre l\'application et appuie sur « Accepter ».\n' +
+      '👉 ' + window.location.origin + '/?coursier=1\n\n' +
+      'Sans réponse de ta part, la course repartira aux autres coursiers.';
+    let wa = { ok: false };
+    try {
+      if (typeof NexusWA !== 'undefined' && NexusWA.send) wa = await NexusWA.send(co.whatsapp || co.phone, msg, 'courier_offer');
+    } catch (_) {}
+    // Notification in-app en complément : il la verra même sans WhatsApp.
+    try {
+      DataService.addNotification(courierId, {
+        type: 'system', title: '🛵 Course proposée',
+        message: 'Une course vous est réservée' + (fin ? " jusqu'à " + fin : '') + ' — ' + FCFA(dv.courier_payout || 0) + '.',
+        link: '/?coursier=1',
+      });
+    } catch (_) {}
+    addToast(
+      '✅ Course proposée à ' + (co.name || 'ce coursier') +
+      (r.forced_online ? ' (remis en ligne)' : '') +
+      (fin ? ' — jusqu\'à ' + fin : '') +
+      (wa && wa.ok ? ' · WhatsApp envoyé' : ' · ⚠️ WhatsApp NON envoyé'),
+      wa && wa.ok ? 'success' : 'warning', 8000
+    );
+    setOfferingId(null); load();
+  };
+
   const _pendingCouriers = couriers.filter(c => c.status === 'pending').length;
   const TABS = [
     { id:'overview',   label:'📊 Vue d\'ensemble' },
@@ -23665,6 +23723,10 @@ const AdminLivraisonPanel = ({ addToast }) => {
             const st = DR_STATUS[d.status]||DR_STATUS.pending;
             const co = couriers.find(c=>c.user_id===d.courier_id);
             const avail = couriers.filter(c=>(c.status==='active'||c.courier_status==='available')&&(!c.zones||!c.zones.length||c.zones.includes(d.delivery_city)));
+            // Proposables = TOUS les coursiers approuvés, hors ligne compris (le RPC
+            // refuse de toute façon un coursier non 'active'). Triés en ligne d'abord.
+            const _offerables = couriers.filter(c=>c.status==='active'&&c.user_id)
+              .slice().sort((a,b)=>(b.is_available?1:0)-(a.is_available?1:0));
             return E('tr',{key:d.id},
               E('td',null,E('code',{style:{fontSize:'.75rem'}},'#'+(d.order_id||'').slice(0,8).toUpperCase())),
               E('td',{style:{fontSize:'.78rem'}},d.pickup_city),
@@ -23686,7 +23748,21 @@ const AdminLivraisonPanel = ({ addToast }) => {
                     title:'Attribuer automatiquement au plus proche',
                     style:{fontSize:'.72rem',padding:'.25rem .5rem',borderRadius:6,border:'none',background:'var(--primary)',color:'#fff',cursor:'pointer',fontWeight:700},
                     onClick:()=>autoAssign(d.id)
-                  },'🤖 Auto')
+                  },'🤖 Auto'),
+                  // PROPOSER (≠ assigner) : liste TOUS les coursiers actifs, y compris
+                  // hors ligne — c'est tout l'intérêt quand personne n'est connecté.
+                  // Le RPC les remet en ligne et leur envoie un WhatsApp d'incitation.
+                  _offerables.length>0&&E('select',{
+                    title:'Proposer la course à un coursier (le remet en ligne + WhatsApp). Il reste libre d\'accepter.',
+                    disabled: offeringId && offeringId.startsWith(d.id),
+                    style:{fontSize:'.75rem',padding:'.2rem .4rem',borderRadius:6,border:'1px solid #25D366',background:'#f0fdf4',color:'#166534',fontWeight:600},
+                    onChange:e=>{ const v=e.target.value; e.target.value=''; if(v) offerToCourier(d.id,v); },
+                    value:''
+                  },
+                    E('option',{value:''}, offeringId && offeringId.startsWith(d.id) ? 'Envoi…' : '📲 Proposer…'),
+                    _offerables.map(c=>E('option',{key:'off-'+c.id,value:c.user_id},
+                      (c.is_available?'🟢 ':'⚫ ')+c.name+(c.is_available?'':' (hors ligne)')))
+                  )
                 )
               )
             );

@@ -6,6 +6,64 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-07-31 — Admin : proposer une course à un coursier hors ligne (+ WhatsApp)
+
+**Besoin** : pouvoir remettre un coursier en ligne même s'il ne l'est pas, lui
+proposer une course et le relancer par WhatsApp pour qu'il se connecte et accepte.
+
+**Ce qui manquait** : l'admin n'avait que deux options sur une course sans coursier :
+- `admin_assign_delivery` → attribution **forcée** (`status='accepted'`) au nom d'un
+  coursier qui n'a rien accepté et n'est peut-être pas devant son téléphone ;
+- « 🤖 Auto » → ne voit que les coursiers **en ligne** (`nearby_couriers` exige
+  `is_available=true` + position < 30 min) → ne trouve rien en heures creuses.
+
+L'entre-deux — *proposer* à un coursier précis, hors ligne — n'existait pas.
+
+**Nouveau RPC `admin_offer_delivery(delivery, courier, minutes=15, force_online=true)`**
+(`sql/2026_07_31_admin_offer_delivery.sql`, appliqué en prod) :
+1. remet le coursier en ligne (`couriers.is_available=true`,
+   `profiles.courier_status='available'`) ;
+2. crée une **offre ciblée** dans `delivery_offers` (`pending`, `seq=-5` pour
+   passer devant la cascade) à **expiration longue** (15 min vs 40 s) ;
+3. neutralise les autres offres en cours sur cette course ;
+4. repasse la course en `searching`.
+
+La course **n'est pas attribuée** : `accept_delivery` exige justement une offre
+`pending` au nom du coursier — c'est ce qui lui permet d'accepter lui-même depuis
+son tableau de bord (`getCourierOffers` la voit, même s'il se croit hors ligne).
+Passé le délai, `dispatch_tick` expire l'offre et la cascade normale reprend.
+
+**Front** : `DataService.adminOfferDelivery` + sélecteur « 📲 Proposer… » dans
+l'onglet Courses du panneau Livraison admin, listant **tous** les coursiers actifs
+(🟢 en ligne / ⚫ hors ligne, en ligne d'abord). Envoie ensuite le WhatsApp
+(rémunération, trajet, heure limite, lien) + une notification in-app.
+
+**Pièges rencontrés (tous corrigés)** :
+- `deliveries` n'a **pas** de `pickup_city`/`delivery_city` — ces noms n'existent
+  que dans le mapping JS de l'admin. Vraies colonnes : `pickup_label`/`pickup_zone`,
+  `dropoff_label`/`dropoff_zone`. Détecté par le test, sinon erreur à l'exécution.
+- `courier_status` canonique = **`available`** (pas `online`) : le panneau admin
+  filtre dessus.
+- `notification_events.whatsapp_enabled` a pour défaut **false** → la ligne
+  `courier_offer` est insérée avec `true` explicite, sinon l'envoi serait
+  silencieusement ignoré (gating serveur ET client).
+- `REVOKE ... FROM PUBLIC` **ne suffit pas** : les privilèges par défaut Supabase
+  accordent EXECUTE à `anon` **directement**. Il faut `REVOKE ... FROM anon`.
+- `location_updated_at` volontairement **non** rafraîchi : le faire simulerait une
+  position fraîche que le coursier n'a pas envoyée, et `nearby_couriers` le
+  proposerait à des clients sur une position périmée.
+
+**Vérifié** : appels réels du RPC dans des blocs `DO` terminés par une exception
+(donc intégralement annulés — aucune écriture en prod). Cas nominal : coursier
+hors ligne → `is_available` f→t, `courier_status=available`, 1 offre `pending`
+`seq=-5`, course `searching`, payload WhatsApp complet. Garde-fous : non-admin →
+« admin requis » ; coursier suspendu → refus ; course déjà attribuée → refus.
+Anon via PostgREST → 401 « permission denied ». Base contrôlée après coup : zéro
+résidu. Bundle renommé `app.28bb9e68e7.js` → `app.898c5ddef1.js`.
+
+⚠️ **Non vérifié visuellement** : le sélecteur lui-même (le panneau exige une
+session admin). Syntaxe, montage React et absence d'erreur console contrôlés.
+
 ## 2026-07-31 — GA4 ne collectait quasiment rien (consentement en sessionStorage)
 
 **État des lieux demandé sur Brevo / HubSpot / GA4** :

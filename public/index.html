@@ -3027,7 +3027,7 @@
     })();
     </script>
 
-    <script src="/assets/app.28bb9e68e7.js"></script>
+    <script src="/assets/app.898c5ddef1.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -5587,6 +5587,25 @@ window.addEventListener('unhandledrejection', function(event) {
       if (!this._sb) return { ok: false, reason: 'offline' };
       try {
         var r = await this._sb.rpc('admin_assign_delivery', { p_delivery_id: deliveryId, p_courier_id: courierId });
+        return (!r.error && r.data) ? r.data : { ok: false, reason: r.error && r.error.message };
+      } catch (e) { return { ok: false, reason: e.message }; }
+    },
+
+    // [ADMIN] PROPOSER une course à un coursier — même hors ligne — sans la lui
+    // attribuer d'office. Le remet « disponible » côté serveur et crée une offre
+    // prioritaire à expiration longue (défaut 15 min, contre 40 s pour la cascade
+    // auto) : le temps qu'il lise le WhatsApp et ouvre l'app. Il reste libre
+    // d'accepter ou non ; passé le délai, la cascade normale reprend.
+    // courierId = couriers.user_id (= auth.uid du coursier).
+    async adminOfferDelivery(deliveryId, courierId, minutes) {
+      if (!this._sb) return { ok: false, reason: 'offline' };
+      try {
+        var r = await this._sb.rpc('admin_offer_delivery', {
+          p_delivery_id: deliveryId,
+          p_courier_id: courierId,
+          p_minutes: minutes || 15,
+          p_force_online: true
+        });
         return (!r.error && r.data) ? r.data : { ok: false, reason: r.error && r.error.message };
       } catch (e) { return { ok: false, reason: e.message }; }
     },
