@@ -100,6 +100,10 @@ export async function onRequest(context) {
   // Supabase (images = poids négligeable, ~119 Ko ; l'égress lourd était les vidéos).
   const imagorReady = !!env.IMAGOR_BASE_URL;
   let buf = null, ct = 'image/jpeg';
+  // [DIAG] Source réelle de l'octet servi — 'imagor' passe par Render+Supabase,
+  // pas par R2 (voir commentaire au-dessus). Retiré une fois la migration R2
+  // confirmée stable en production.
+  let mediaSource = 'imagor';
   if (imagorReady) {
     try {
       const imagorUrl = await buildImagorUrl(env, sourceUrl, { w, h, fmt, q });
@@ -110,7 +114,7 @@ export async function onRequest(context) {
   if (buf === null) {
     const media = await getMediaObject(context, 'nexus-images', objectPath);
     if (media.error) return new Response('Not found', { status: media.error === 404 ? 404 : 502, headers: { 'Cache-Control': 'public, max-age=60' } });
-    buf = media.buf; ct = media.contentType || 'image/jpeg';
+    buf = media.buf; ct = media.contentType || 'image/jpeg'; mediaSource = media.source;
   }
 
   const resp = new Response(request.method === 'HEAD' ? null : buf, {
@@ -120,10 +124,12 @@ export async function onRequest(context) {
       'Content-Length': String(buf.byteLength),
       'Cache-Control': `public, max-age=${ONE_YEAR}, immutable`,
       'CF-Cache-Status': 'MISS',
+      'X-Media-Source': mediaSource,
+      'X-Media-Bucket-Bound': env.MEDIA_BUCKET ? 'yes' : 'no',
     },
   });
   if (cache) {
-    const toCache = new Response(buf, { status: 200, headers: { 'Content-Type': ct, 'Cache-Control': `public, max-age=${ONE_YEAR}, immutable` } });
+    const toCache = new Response(buf, { status: 200, headers: { 'Content-Type': ct, 'Cache-Control': `public, max-age=${ONE_YEAR}, immutable`, 'X-Media-Source': mediaSource, 'X-Media-Bucket-Bound': env.MEDIA_BUCKET ? 'yes' : 'no' } });
     if (context.waitUntil) context.waitUntil(cache.put(cacheKey, toCache));
     else await cache.put(cacheKey, toCache);
   }

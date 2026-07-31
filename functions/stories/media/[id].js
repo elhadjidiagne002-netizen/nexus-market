@@ -40,10 +40,10 @@ export async function onRequest(context) {
     // [R2] Lecture R2-first + repli Supabase + peuplement R2 (auto-migration).
     // Sans binding MEDIA_BUCKET → 100 % Supabase (comportement inchangé).
     const objectPath = objectPathFromPublicUrl(s.video_url, 'nexus-stories');
-    let buf, ct;
+    let buf, ct, mediaSource = 'supabase-direct';
     const media = objectPath ? await getMediaObject(context, 'nexus-stories', objectPath) : { error: 'no_path' };
     if (media && media.buf) {
-      buf = media.buf; ct = media.contentType || 'video/mp4';
+      buf = media.buf; ct = media.contentType || 'video/mp4'; mediaSource = media.source;
     } else {
       // Repli ultime : fetch direct de l'URL stockée (ex. si elle porte un token).
       const upstream = await fetch(s.video_url, { cf: { cacheEverything: true, cacheTtl: ONE_YEAR } });
@@ -58,6 +58,11 @@ export async function onRequest(context) {
         'Content-Length': String(buf.byteLength),
         'Accept-Ranges': 'bytes',
         'Cache-Control': `public, max-age=${ONE_YEAR}, immutable`,
+        // [DIAG] Prouve la source réelle sans avoir à deviner : r2 | supabase | supabase-direct
+        // (supabase-direct = objectPathFromPublicUrl a échoué, repli total). Retiré une fois
+        // la migration R2 confirmée stable en production.
+        'X-Media-Source': mediaSource,
+        'X-Media-Bucket-Bound': env.MEDIA_BUCKET ? 'yes' : 'no',
       },
     });
     if (cache) {
@@ -73,6 +78,8 @@ export async function onRequest(context) {
     'Content-Type': ct,
     'Accept-Ranges': 'bytes',
     'Cache-Control': `public, max-age=${ONE_YEAR}, immutable`,
+    'X-Media-Source': full.headers.get('X-Media-Source') || 'edge-cache',
+    'X-Media-Bucket-Bound': full.headers.get('X-Media-Bucket-Bound') || 'unknown',
   };
 
   // ── Range (seek vidéo) servi depuis le buffer en cache, sans toucher Supabase.
