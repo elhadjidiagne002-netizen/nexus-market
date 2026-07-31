@@ -10168,10 +10168,27 @@ const SafeLineChart = ({ data, dataKey = "ventes", label = "Ventes", color = "#0
 // Les tokens JWT restent dans localStorage via les helpers dédiés ci-dessous.
 // Le panier invité et les produits récemment vus utilisent sessionStorage (UI session).
 const _memStore = new Map();
+// [CONSENTEMENT] `cookie_consent` est la SEULE clé persistée en localStorage.
+// Motif : en sessionStorage, le choix de l'utilisateur était perdu à chaque nouvelle
+// session → la bannière se réaffichait sans fin ET, surtout, GA4/pixel (qui exigent
+// consent === 'all') n'étaient jamais chargés avant le clic, donc presque jamais.
+// Persister un consentement est explicitement prévu par le RGPD (c'est même
+// nécessaire : sans mémoire, on redemande indéfiniment). Aucune donnée métier
+// n'est concernée — la règle « pas de localStorage » reste valable pour le reste.
+const _CONSENT_LS = 'nexus_cookie_consent';
 const storage = {
   get(key) {
+    if (key === 'cookie_consent') {
+      try {
+        const ls = localStorage.getItem(_CONSENT_LS);
+        if (ls !== null) return JSON.parse(ls);
+        // Repli : session en cours ouverte avant la bascule → on ne redemande pas.
+        const ss = sessionStorage.getItem('nexus_ss_cookie_consent');
+        return ss ? JSON.parse(ss) : null;
+      } catch(e) { return null; }
+    }
     // Panier invité et préférences UI → sessionStorage (acceptable, session locale)
-    if (key === 'guest_cart' || key === 'cookie_consent' || key === 'onboarding_done' || key === 'nexus_setup_done') {
+    if (key === 'guest_cart' || key === 'onboarding_done' || key === 'nexus_setup_done') {
       try { const v = sessionStorage.getItem('nexus_ss_' + key); return v ? JSON.parse(v) : null; } catch(e) { return null; }
     }
     return _memStore.has(key) ? _memStore.get(key) : null;
@@ -10185,14 +10202,26 @@ const storage = {
     return [];
   },
   set(key, value) {
-    if (key === 'guest_cart' || key === 'cookie_consent' || key === 'onboarding_done' || key === 'nexus_setup_done') {
+    if (key === 'cookie_consent') {
+      // Écrit dans les deux : localStorage porte le choix d'une visite à l'autre,
+      // sessionStorage garde la compatibilité avec le code lisant l'ancienne clé.
+      try { localStorage.setItem(_CONSENT_LS, JSON.stringify(value)); } catch(e) {}
+      try { sessionStorage.setItem('nexus_ss_cookie_consent', JSON.stringify(value)); } catch(e) {}
+      return true;
+    }
+    if (key === 'guest_cart' || key === 'onboarding_done' || key === 'nexus_setup_done') {
       try { sessionStorage.setItem('nexus_ss_' + key, JSON.stringify(value)); } catch(e) {}
       return true;
     }
     _memStore.set(key, value);
     return true;
   },
-  remove(key) { _memStore.delete(key); try { sessionStorage.removeItem('nexus_ss_' + key); } catch(e) {} },
+  remove(key) {
+    _memStore.delete(key);
+    try { sessionStorage.removeItem('nexus_ss_' + key); } catch(e) {}
+    // Retirer son consentement doit l'effacer partout, sinon il « revient ».
+    if (key === 'cookie_consent') { try { localStorage.removeItem(_CONSENT_LS); } catch(e) {} }
+  },
   delete(key) { return this.remove(key); }
 };
 // ═══════════════════════════════════════════════════════════════════════════
@@ -19712,7 +19741,7 @@ const ServicesConfigPanel = ({ addToast }) => {
           const btn = modal.querySelector('#_resetConfirm');
           inp.addEventListener('input', () => { const ok = inp.value === 'RESET'; btn.disabled = !ok; btn.style.opacity = ok?'1':'.4'; });
           modal.querySelector('#_resetCancel').addEventListener('click', () => document.body.removeChild(modal));
-          btn.addEventListener('click', () => { document.body.removeChild(modal); _memStore.clear(); ['nexus_ss_guest_cart','nexus_ss_cookie_consent','nexus_ss_onboarding_done','nexus_ss_nexus_setup_done'].forEach(k => { try { sessionStorage.removeItem(k); } catch(e){} }); window.location.reload(); });
+          btn.addEventListener('click', () => { document.body.removeChild(modal); _memStore.clear(); ['nexus_ss_guest_cart','nexus_ss_cookie_consent','nexus_ss_onboarding_done','nexus_ss_nexus_setup_done'].forEach(k => { try { sessionStorage.removeItem(k); } catch(e){} }); try { localStorage.removeItem(_CONSENT_LS); } catch(e){} window.location.reload(); });
           inp.focus();
         } }, E('i',{className:'fas fa-trash'}), ' Reset données')
       )

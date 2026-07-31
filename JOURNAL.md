@@ -6,6 +6,38 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-07-31 — GA4 ne collectait quasiment rien (consentement en sessionStorage)
+
+**État des lieux demandé sur Brevo / HubSpot / GA4** :
+- **Brevo** : clé configurée (`/api/health` → `brevo:true`), mais utilisé **uniquement
+  comme secours e-mail** derrière Resend (`notify.js`). Aucun usage CRM (pas de
+  synchro contacts, pas de listes, pas de scénarios).
+- **HubSpot** : **totalement absent** du projet.
+- **GA4** : ID `G-2N3MPBQ6Z8` en dur dans le bundle, mais **ne collectait presque rien**.
+
+**Cause** : `loadGtag()` exige `cookie_consent === 'all'` (correct RGPD), or le
+consentement était stocké en **`sessionStorage`** → **perdu à chaque nouvelle
+session**. Conséquences : la bannière se réaffichait à chaque visite, et GA4 (comme
+le pixel Facebook) n'était jamais chargé avant le clic — donc quasiment jamais.
+Vérifié en prod : sur une visite fraîche, `gtag` = `undefined`, aucun script Google.
+
+**Correctif** : `cookie_consent` devient la **seule** clé persistée en `localStorage`
+(`nexus_cookie_consent`), avec repli de lecture sur l'ancienne clé sessionStorage
+pour ne pas re-solliciter les sessions déjà ouvertes. Écriture dans les deux ;
+suppression dans les deux (retirer son consentement doit vraiment l'effacer). La
+règle « pas de localStorage pour les données métier » reste valable — un
+consentement n'en est pas une, et le RGPD suppose au contraire qu'on le mémorise.
+
+⚠️ **Bundle renommé** `app.2a3fd760ad.js` → **`app.28bb9e68e7.js`** (+ référence
+dans `index.html`) : `/assets/*` est servi `immutable` 1 an, éditer en place ne
+livre rien.
+
+**Vérifié en local** (SW purgé, 3 scénarios) : (1) visite vierge → bannière affichée,
+`gtag` absent ; (2) clic « Tout accepter » → `localStorage` écrit, gtag chargé,
+script GTM injecté ; (3) **nouvelle session** (sessionStorage vidé) → consentement
+relu, **gtag chargé sans aucun clic**, `dataLayer` alimenté, bannière non réaffichée.
+Contrôle inverse : avec `'essential'`, ni GA4 ni pixel FB — le garde-fou tient.
+
 ## 2026-07-31 — Boutons « Ajouter au panier » affichant du code source (Fuse.js)
 
 **Symptôme** : sur l'accueil, chaque carte produit affichait, à la place du bouton,
