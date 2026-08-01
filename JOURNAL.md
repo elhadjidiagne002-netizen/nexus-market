@@ -6,6 +6,33 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-01 — Shims React ESM pour Framer Motion (infra dormante)
+
+**Contexte** : évaluation des technos à utiliser pour la suite. Verdict = rester
+sur **React 18 + Tailwind** (déjà en place, CDN, zéro build) ; TypeScript / Vite /
+Express / MySQL / Rust / Redis écartés (chacun impliquerait une réécriture
+d'architecture ou fait doublon avec Postgres/Workers). **Framer Motion** = le seul
+ajout possible sans casser le modèle « zéro build ».
+
+**Piège vérifié en conditions réelles** (pas supposé) : Framer Motion importé en
+ESM (`esm.sh`) charge sa PROPRE copie de React → 2 instances coexistantes → hooks
+cassés (« Invalid hook call »). Reproduit : `React ESM === global` renvoyait
+`false`. Solution testée et validée : un **import map** qui redirige `react`,
+`react/jsx-runtime`, `react-dom`, `react-dom/client` vers 4 shims qui réexportent
+le `window.React`/`window.ReactDOM` déjà chargés en UMD → une seule instance
+(`=== global` devient `true`). Animation `opacity 0→1` menée à terme en preview.
+
+Deux pièges annexes trouvés au passage : (1) `?external=react,react-dom,react/jsx-runtime`
+sur esm.sh renvoie 404 (le `/` casse le parsing de la query) → n'externaliser que
+`react,react-dom` ; (2) le shim doit exporter `useInsertionEffect` (+ `useTransition`,
+`useDeferredValue`) sinon Framer Motion échoue à l'import.
+
+**Livré ce commit** : les 4 fichiers `public/vendor/*-shim.mjs` UNIQUEMENT.
+⚠️ **Infra dormante** : rien ne les utilise tant que l'import map n'est pas ajouté
+à `index.html` ET qu'aucun composant n'importe Framer Motion. Aucun impact sur le
+site en l'état. Câblage (import map + 1er composant animé) à faire quand un besoin
+d'animation précis est identifié — pas encore décidé.
+
 ## 2026-07-31 — Admin : proposer une course à un coursier hors ligne (+ WhatsApp)
 
 **Besoin** : pouvoir remettre un coursier en ligne même s'il ne l'est pas, lui
