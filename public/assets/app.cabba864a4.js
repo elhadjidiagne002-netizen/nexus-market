@@ -20247,16 +20247,23 @@ const NotifAdminPhoneCard = ({ addToast }) => {
   const [phone, setPhone] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
-  const uid = () => (typeof DataService !== "undefined" && DataService._user && DataService._user.id) || null;
+  // Résout l'id de l'admin connecté depuis la SESSION Supabase (source fiable),
+  // avec repli sur DataService._user. Async : DataService._user n'est pas toujours
+  // peuplé dans ce contexte (cause du « Session admin introuvable »).
+  const uid = async (sb) => {
+    try { const u = (typeof DataService !== "undefined" && DataService._user && DataService._user.id); if (u) return u; } catch (_) {}
+    try { const r = await (sb && sb.auth && sb.auth.getUser()); const id = r && r.data && r.data.user && r.data.user.id; if (id) return id; } catch (_) {}
+    try { const s = await (sb && sb.auth && sb.auth.getSession()); return (s && s.data && s.data.session && s.data.session.user && s.data.session.user.id) || null; } catch (_) { return null; }
+  };
   React.useEffect(() => { (async () => {
-    const sb = _notifSb(), id = uid();
+    const sb = _notifSb(); const id = sb ? await uid(sb) : null;
     if (!sb || !id) { setLoading(false); return; }
     try { const { data } = await sb.from("profiles").select("phone").eq("id", id).maybeSingle(); setPhone((data && data.phone) || ""); }
     catch (_) {}
     setLoading(false);
   })(); }, []);
   const save = async () => {
-    const sb = _notifSb(), id = uid();
+    const sb = _notifSb(); const id = sb ? await uid(sb) : null;
     if (!sb || !id) { addToast?.("Session admin introuvable.", "error"); return; }
     // Normalisation E.164 sénégalais : 77xxxxxxx → +22177xxxxxxx ; garde un + initial.
     let p = String(phone || "").trim().replace(/[^\d+]/g, "");
