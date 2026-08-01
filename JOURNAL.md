@@ -6,6 +6,41 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-01 — Égress Supabase qui remonte : fuites média dans le bundle React
+
+**Symptôme** : l'utilisateur voit l'égress Supabase remonter alors que « ça doit
+tourner sur Cloudflare ». Diagnostic : R2 ne couvre QUE le stockage média ; l'égress
+inclut aussi REST/Realtime/Auth. Investigation (logs storage/realtime + tailles).
+
+**Écartés** : produits minuscules (184 o de moyenne, zéro base64 inline) ; Realtime
+intermittent (« no connected users » régulier, se coupe) ; storage média = poignée
+d'accès sur 18h. Rien qui explique une montée régulière… sauf les accès **directs**
+`/object/public/nexus-stories/*.mp4` + `/nexus-images/*` avec UA navigateur = média
+tiré en DIRECT de supabase.co, contournant les proxies Cloudflare.
+
+**Cause racine — 3 fuites, toutes dans le rendu (l'overlay statique était corrigé,
+pas le reste)** :
+1. **Lecteur de stories** (`app.js`, `v.src = cur.video_url`) : jouait le MP4
+   complet (~12 Mo) depuis supabase.co à CHAQUE lecture.
+2. **Aperçu vidéo des cartes stories** (`app.js`, `<video src=s.video_url
+   preload=metadata>`) : **chaque visite de l'accueil** préchargeait les métadonnées
+   de ~6 MP4 bruts depuis Supabase → probablement le plus gros levier de la montée.
+3. **Cartes Ventes Flash** (`index.html`, `flashCardHtml`) : image produit en
+   `src=image_url` brut, alors que `sbCard` appliquait déjà la réécriture `/img/`.
+
+**Fix** : (1)+(2) → `/stories/media/:id` (proxy Cloudflare + R2, cache 1 an) au lieu
+de `video_url` ; (3) → même regex `→ /img/` que `sbCard`. Repli sur l'URL brute
+seulement si l'id manque. La page SEO story (`og:video`) et les vidéos d'avis
+(URL externes type YouTube) étaient déjà OK.
+
+**Vérifié en local** (SW purgé) : accueil = **0 média brut supabase.co** (110 images,
+2 vidéos) — tout via `/img/` et `/stories/media/`. Zéro erreur console. Bundle
+renommé `app.c55b8bb98b.js` → `app.66579bad69.js`.
+
+⚠️ Règle (déjà en mémoire, re-confirmée) : JAMAIS de `video_url`/`image_url`
+supabase.co brut dans le rendu — toujours `/stories/media/:id` (vidéo) ou `/img/`
+(image). Vérifier LES DEUX chemins de rendu : overlay statique ET bundle React.
+
 ## 2026-08-01 — Ouverture du panier animée (Framer Motion, sans conflit CSS)
 
 Demande : animer l'ouverture du panier (`CartGrouped`), après la bannière sociale.

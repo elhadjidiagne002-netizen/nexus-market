@@ -12522,8 +12522,13 @@ const NexusStoriesWidget = ({ user }) => {
     if (hlsRef.current) { try { hlsRef.current.destroy(); } catch (_) {} hlsRef.current = null; }
     // Upload direct (MP4 dans Storage) : lecture native par URL. Prioritaire car
     // ne nécessite ni HLS ni Mux.
+    // [ÉGRESS] Servir via le PROXY /stories/media/:id (cache Cloudflare + R2),
+    // JAMAIS le video_url supabase.co brut : sinon chaque lecture retélécharge le
+    // MP4 complet (~12 Mo) depuis l'égress Supabase. L'overlay statique le faisait
+    // déjà ; le lecteur React était resté sur l'URL directe (fuite). Repli sur
+    // video_url seulement si l'id manque (ne devrait pas arriver).
     if (cur.video_url && !cur.mux_playback_id) {
-      v.src = cur.video_url;
+      v.src = cur.id ? ('/stories/media/' + cur.id) : cur.video_url;
     } else if (cur.mux_playback_id) {
       const src = 'https://stream.mux.com/' + cur.mux_playback_id + '.m3u8';
       if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = src; }
@@ -32151,7 +32156,7 @@ const HomeStoriesRow = ({ user }) => {
   // video directe (#t=0.1), sinon emoji.
   const thumb = (s) => {
     if (s.mux_playback_id) return E('img', { src: 'https://image.mux.com/' + s.mux_playback_id + '/thumbnail.jpg?width=400&height=300&fit_mode=smartcrop', alt: s.title || 'Story', loading: 'lazy', style: { width: '100%', height: '100%', objectFit: 'cover' }, onError: function (e) { e.target.style.display = 'none'; } });
-    if (s.video_url) return E('video', { src: s.video_url + '#t=0.1', muted: true, playsInline: true, preload: 'metadata', tabIndex: -1, style: { width: '100%', height: '100%', objectFit: 'cover', background: '#000', pointerEvents: 'none' } });
+    if (s.video_url) return E('video', { src: (s.id ? ('/stories/media/' + s.id) : s.video_url) + '#t=0.1', muted: true, playsInline: true, preload: 'metadata', tabIndex: -1, style: { width: '100%', height: '100%', objectFit: 'cover', background: '#000', pointerEvents: 'none' } });
     return E('div', { style: { fontSize: '2.4rem' } }, '🎬');
   };
   const card = (s) => E('div', { key: s.id, className: 'flash-card', onClick: function () { open(s.id); } },
