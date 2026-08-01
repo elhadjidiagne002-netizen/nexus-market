@@ -243,6 +243,30 @@ affiches à publier.
 | Samedi | Coursier (#2) / Élevage (#4) |
 | Dimanche | Devenir vendeur (#10) / Paiement sécurisé (#12) |
 
+## 🆕 Fonctionnalités sans affiche — comblées (2026-08-01)
+
+Audit de couverture : les 41 affiches ci-dessus couvraient déjà toutes les
+verticales et campagnes de recrutement, sauf 2 services actifs du site.
+Fichiers en **SVG** (vectoriel), pas PNG comme les 41 premières — ouvrir dans
+un navigateur ou un éditeur (Figma/Illustrator) pour exporter en PNG si besoin
+d'un format directement postable sur Facebook/Instagram.
+
+### 42. 🛒 NEXUS On Demand — liste de courses
+**Titre :** Envoyez votre liste, on fait vos courses
+**Sous‑titre :** Marché, pharmacie, boutique de quartier · Suivi en direct
+**Légende :**
+> 🛒 Pas le temps de faire vos courses ? Envoyez votre liste sur NEXUS On Demand — marché, pharmacie, boutique de quartier — et recevez tout à votre porte, suivi en direct 📍.
+> 👉 nexusmarket.sn/on-demand
+> #NexusOnDemand #Courses #Sénégal #LivraisonExpress
+
+### 43. ⚡ Annonces Express — sans compte
+**Titre :** Vendez en 2 minutes
+**Sous‑titre :** Publiez gratuitement, sans compte · Contact WhatsApp direct · 30 jours en ligne
+**Légende :**
+> ⚡ Un objet à vendre, là, maintenant ? Pas besoin de compte ! Publie ton annonce en 2 minutes sur NEXUS Market — photo, prix, et les acheteurs te contactent directement sur WhatsApp 💬.
+> 👉 nexusmarket.sn
+> #AnnoncesExpress #Gratuit #SansCompte #Sénégal
+
 ## ✅ Checklist avant de poster
 - [ ] Logo NEXUS + `nexusmarket.sn` visibles sur l'affiche
 - [ ] Couleurs de la charte respectées

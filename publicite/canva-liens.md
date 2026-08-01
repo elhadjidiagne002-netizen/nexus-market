@@ -47,6 +47,8 @@ Asset logo NX uploadé dans Canva : `MAHNiOVoNk4` (réutilisé sur chaque affich
 | 39 | NEXUS Covoiturage (côté utilisateur) | [39-covoiturage.png](39-covoiturage.png) | DAHOsZqtgoo |
 | 40 | Assistant IA (côté utilisateur) | [40-assistant-ia.png](40-assistant-ia.png) | DAHOsQXBCV0 |
 | 41 | Blog NEXUS | [41-blog-nexus.png](41-blog-nexus.png) | DAHOsdUfA8U |
+| 42 | NEXUS On Demand (côté utilisateur) | [42-on-demand.svg](42-on-demand.svg) | — (SVG généré, pas de design Canva) |
+| 43 | Annonces Express (côté utilisateur) | [43-annonces-express.svg](43-annonces-express.svg) | — (SVG généré, pas de design Canva) |
 
 ## Aperçus
 
