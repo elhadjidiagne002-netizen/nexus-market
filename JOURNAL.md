@@ -6,6 +6,51 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-01 — Alertes WhatsApp admin sur les événements actionnables
+
+**Demande** : l'admin notifié par WhatsApp « après chaque action » pour se connecter
+si une action est requise. Recadré (auto-notif sur CHAQUE clic = spam + quota Green
+API) vers les événements **actionnables**. Périmètre choisi par l'utilisateur : les 3
+admin existants + inscription coursier + chaque nouvelle commande.
+
+**Constat** : l'infra existait déjà à 90 %. 3 événements admin (`admin_new_vendor`,
+`admin_payout_request`, `admin_new_dispute`) étaient câblés (déclencheurs frontend +
+serveur) et envoyaient email + WhatsApp via `sendEventNotification`, mais leur
+`whatsapp_enabled` était **false** → WhatsApp bloqué par le gating. Les déclencheurs :
+vendeur (app.js:14231), litige (app.js:5452), retrait (payout-request.js, serveur).
+
+**Bloqueur trouvé** : AUCUN numéro admin configuré — les 2 profils `role='admin'` ont
+`phone=null`, et `env.ADMIN_PHONE` (Cloudflare) est incertain/non défini. Sans numéro,
+rien ne part en WhatsApp (l'email part, `ADMIN_EMAIL=nx@nexusmarket.sn` défini).
+
+**Implémenté** :
+- DB (`admin_whatsapp_notifications`) : `whatsapp_enabled=true` sur les 3 existants +
+  2 nouveaux événements `admin_new_courier` / `admin_new_order` (email+WA activés).
+- `notify.js` : gabarits email + WhatsApp des 2 nouveaux + helper **`resolveAdminContact(env)`**
+  = `env.ADMIN_PHONE` sinon **téléphone du profil admin** (ADMIN_USER_ID prioritaire,
+  sinon 1er `role='admin'` avec téléphone). → l'admin gère son numéro in-app, sans
+  toucher à Cloudflare.
+- `notify-admin.js` : `admin_new_courier`/`admin_new_order` ajoutés à ALLOWED ; usage
+  de `resolveAdminContact`.
+- `payout-request.js` : usage de `resolveAdminContact` (repli profil).
+- `order-email.js` : déclenche `admin_new_order` à CHAQUE commande (endpoint appelé
+  par le trigger DB `trg_order_confirm_email`, tous modes de paiement/invité).
+- Bundle : après l'insertion de candidature coursier (`register`, app.js:22521),
+  `EmailService.notifyAdmin('admin_new_courier', …)`.
+
+⚠️ **PRÉREQUIS pour recevoir les WhatsApp** : renseigner le numéro admin, soit
+`ADMIN_PHONE` dans Cloudflare (E.164, +221…), soit le champ `phone` du profil admin
+(via `resolveAdminContact`). Tant qu'aucun n'est fait, seuls les EMAILS partent.
+
+**Réglage in-app (choix utilisateur : « depuis le tableau de bord admin »)** : ajout
+d'une carte **« 📲 Numéro d'alerte admin »** en tête du Centre de notifications admin
+(`NotifAdminPhoneCard`). Enregistre `profiles.phone` de l'admin connecté (normalisation
+E.164 sénégalaise), lu ensuite par `resolveAdminContact`. L'admin définit donc son
+numéro sans toucher à Cloudflare ; vide = WhatsApp admin désactivé (emails maintenus).
+
+Bundle renommé `app.66579bad69.js` → `app.a22582ecaa.js`. Non vérifié en live (envoi
+réel WhatsApp dépend du numéro saisi + d'un vrai événement) — syntaxe + migration OK.
+
 ## 2026-08-01 — Égress Supabase qui remonte : fuites média dans le bundle React
 
 **Symptôme** : l'utilisateur voit l'égress Supabase remonter alors que « ça doit

@@ -89,6 +89,10 @@ const DEFAULTS = {
     html: wrap('Nouveau vendeur inscrit', '<p>Un nouveau vendeur vient de s\'inscrire et attend validation.</p><p style="margin:14px 0 4px"><strong>Nom :</strong> {{vendor_name}}</p>{{#if vendor_email}}<p style="margin:4px 0"><strong>Email :</strong> {{vendor_email}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Validez-le depuis l\'admin → Vendeurs.</p>') },
   admin_new_dispute: { subject: '⚖️ Nouveau litige #{{dispute_id}}',
     html: wrap('Nouveau litige ouvert', '<p>Un litige vient d\'être ouvert.</p><p style="margin:14px 0 4px"><strong>Litige :</strong> #{{dispute_id}}</p>{{#if order_id}}<p style="margin:4px 0"><strong>Commande :</strong> {{order_id}}</p>{{/if}}{{#if buyer_name}}<p style="margin:4px 0"><strong>Acheteur :</strong> {{buyer_name}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Traitez-le depuis l\'admin → Litiges.</p>') },
+  admin_new_courier: { subject: '🛵 Nouveau coursier : {{courier_name}}',
+    html: wrap('Nouveau coursier inscrit', '<p>Un coursier vient de candidater et attend validation.</p><p style="margin:14px 0 4px"><strong>Nom :</strong> {{courier_name}}</p>{{#if courier_phone}}<p style="margin:4px 0"><strong>Téléphone :</strong> {{courier_phone}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Validez-le depuis l\'admin → Livraison → Coursiers.</p>') },
+  admin_new_order: { subject: '🛒 Nouvelle commande #{{order_id}}{{#if amount_fcfa}} — {{amount_fcfa}} FCFA{{/if}}',
+    html: wrap('Nouvelle commande', '<p>Une nouvelle commande vient d\'être passée sur NEXUS Market.</p><p style="margin:14px 0 4px"><strong>Commande :</strong> #{{order_id}}</p>{{#if amount_fcfa}}<p style="margin:4px 0"><strong>Montant :</strong> {{amount_fcfa}} FCFA</p>{{/if}}{{#if buyer_name}}<p style="margin:4px 0"><strong>Acheteur :</strong> {{buyer_name}}</p>{{/if}}{{#if payment_method}}<p style="margin:4px 0"><strong>Paiement :</strong> {{payment_method}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Suivez-la depuis l\'admin → Commandes.</p>') },
 
   // ── Compte & relation client ────────────────────────────────────────────────
   welcome: { subject: '👋 Bienvenue sur NEXUS Market !',
@@ -140,6 +144,8 @@ const WA_DEFAULTS = {
 
   admin_new_vendor: '🆕 NEXUS Admin — Nouveau vendeur inscrit : {{vendor_name}}. Validez-le depuis l\'admin.',
   admin_new_dispute: '⚖️ NEXUS Admin — Nouveau litige #{{dispute_id}} ouvert.{{#if order_id}} Commande : {{order_id}}.{{/if}}',
+  admin_new_courier: '🛵 NEXUS Admin — Nouveau coursier : {{courier_name}}{{#if courier_phone}} ({{courier_phone}}){{/if}}. À valider dans l\'admin.',
+  admin_new_order: '🛒 NEXUS Admin — Nouvelle commande #{{order_id}}{{#if amount_fcfa}} — {{amount_fcfa}} FCFA{{/if}}{{#if buyer_name}} de {{buyer_name}}{{/if}}.',
 
   welcome: '👋 Bienvenue sur NEXUS Market, {{name}} ! Découvrez des milliers de produits, payez en toute sécurité et faites-vous livrer partout au Sénégal.',
   new_message: '💬 NEXUS Market — Nouveau message{{#if from_name}} de {{from_name}}{{/if}}. Connectez-vous pour y répondre.',
@@ -340,6 +346,33 @@ export async function enqueueOutbox(env, row) {
  * Config d'un événement : { email_enabled, whatsapp_enabled } ou null si inconnu
  * (événement non catalogué → on n'applique aucun gating, l'envoi a lieu).
  */
+/**
+ * Contact admin pour les alertes internes (email + téléphone WhatsApp).
+ * Priorité du téléphone : env.ADMIN_PHONE, sinon le téléphone du PROFIL admin
+ * (ADMIN_USER_ID en priorité, sinon 1er profil role='admin' avec un téléphone).
+ * → l'admin peut gérer son numéro depuis son profil in-app, sans avoir à toucher
+ *   une variable Cloudflare. Best-effort : renvoie phone=null si rien de trouvé
+ *   (l'envoi WhatsApp est alors simplement sauté, l'email part quand même).
+ */
+export async function resolveAdminContact(env) {
+  const email = env.ADMIN_EMAIL || null;
+  let phone = env.ADMIN_PHONE || null;
+  if (!phone) {
+    try {
+      const sb = supabase(env);
+      let rows = null;
+      if (env.ADMIN_USER_ID) {
+        rows = await sb.from('profiles').select('phone', `id=eq.${encodeURIComponent(env.ADMIN_USER_ID)}&phone=not.is.null&limit=1`);
+      }
+      if (!(Array.isArray(rows) && rows[0] && rows[0].phone)) {
+        rows = await sb.from('profiles').select('phone', 'role=eq.admin&phone=not.is.null&limit=1');
+      }
+      if (Array.isArray(rows) && rows[0] && rows[0].phone) phone = rows[0].phone;
+    } catch (e) { console.warn('[notify] resolveAdminContact:', e.message); }
+  }
+  return { email, phone };
+}
+
 export async function getEventConfig(env, eventKey) {
   if (!eventKey) return null;
   try {

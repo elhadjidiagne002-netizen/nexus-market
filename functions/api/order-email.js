@@ -4,7 +4,7 @@
 // invité inclus). Appelé par le trigger DB trg_order_confirm_email via pg_net.
 // Rend le template (éditeur admin ou défaut de marque) via sendEventEmail.
 import { isInternalCall, json, err, options } from './_lib/utils.js';
-import { sendEventNotification } from './_lib/notify.js';
+import { sendEventNotification, resolveAdminContact } from './_lib/notify.js';
 
 // orders.total est observé en EUR (cf. CLAUDE.md ; les triggers WhatsApp font la
 // même conversion). On affiche donc le montant converti en FCFA, formaté fr-FR.
@@ -89,5 +89,23 @@ export async function onRequest({ request, env }) {
     }).catch(() => null);
   }
 
-  return json({ ok: true, buyer: rBuyer, vendor: rVendor });
+  // Alerte ADMIN : "nouvelle commande". Déclenché ici car order-email.js est
+  // appelé par le trigger DB trg_order_confirm_email à CHAQUE commande (tous
+  // modes de paiement, checkout invité inclus) → couverture fiable. Gaté par
+  // notification_events.admin_new_order (whatsapp_enabled) ; téléphone résolu
+  // via env.ADMIN_PHONE ou le profil admin. Best-effort, n'échoue jamais l'appel.
+  let rAdmin = null;
+  try {
+    const adminContact = await resolveAdminContact(env);
+    if (adminContact.email || adminContact.phone) {
+      rAdmin = await sendEventNotification(env, 'admin_new_order', adminContact, {
+        order_id: orderRef,
+        amount_fcfa: totalStr ? totalStr.replace(/\s*FCFA$/, '') : '',
+        buyer_name: buyer_name || 'Client',
+        payment_method: (body && body.payment_method) || '',
+      }).catch(() => null);
+    }
+  } catch (_) { /* best-effort */ }
+
+  return json({ ok: true, buyer: rBuyer, vendor: rVendor, admin: rAdmin });
 }

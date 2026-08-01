@@ -20239,6 +20239,53 @@ const _saveAllTemplates = (t) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 const _notifSb = () => (typeof DataService !== "undefined" ? DataService?._sb : null) || (typeof window !== "undefined" ? window.__sb : null) || null;
 
+// Numéro WhatsApp qui reçoit les ALERTES ADMIN (nouveau vendeur, retrait, litige,
+// coursier, commande…). Enregistré dans profiles.phone de l'admin connecté — c'est
+// ce que lit resolveAdminContact() côté serveur (repli si env.ADMIN_PHONE absent).
+const NotifAdminPhoneCard = ({ addToast }) => {
+  const E = React.createElement;
+  const [phone, setPhone] = React.useState("");
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const uid = () => (typeof DataService !== "undefined" && DataService._user && DataService._user.id) || null;
+  React.useEffect(() => { (async () => {
+    const sb = _notifSb(), id = uid();
+    if (!sb || !id) { setLoading(false); return; }
+    try { const { data } = await sb.from("profiles").select("phone").eq("id", id).maybeSingle(); setPhone((data && data.phone) || ""); }
+    catch (_) {}
+    setLoading(false);
+  })(); }, []);
+  const save = async () => {
+    const sb = _notifSb(), id = uid();
+    if (!sb || !id) { addToast?.("Session admin introuvable.", "error"); return; }
+    // Normalisation E.164 sénégalais : 77xxxxxxx → +22177xxxxxxx ; garde un + initial.
+    let p = String(phone || "").trim().replace(/[^\d+]/g, "");
+    if (p && !p.startsWith("+")) { p = p.replace(/^0+/, ""); if (p.length === 9) p = "221" + p; p = "+" + p; }
+    if (p && p.replace(/\D/g, "").length < 8) { addToast?.("Numéro invalide (format +221…).", "warning"); return; }
+    setSaving(true);
+    try {
+      const { error } = await sb.from("profiles").update({ phone: p || null, updated_at: new Date().toISOString() }).eq("id", id);
+      if (error) throw error;
+      setPhone(p); addToast?.("✅ Numéro d'alerte admin enregistré.", "success");
+    } catch (e) { addToast?.("Échec : " + (e.message || ""), "error"); }
+    setSaving(false);
+  };
+  return E("div", { className: "card" },
+    E("div", { className: "card-header" }, E("h2", { className: "card-title", style: { margin: 0 } }, "📲 Numéro d'alerte admin")),
+    E("div", { style: { padding: "0 1rem 1rem" } },
+      E("p", { style: { fontSize: ".8rem", color: "var(--text-secondary)", margin: "0 0 .6rem" } },
+        "WhatsApp qui reçoit les alertes admin ci-dessous (nouveau vendeur, retrait, litige, coursier, commande). Laissez vide pour désactiver le WhatsApp admin (les emails continuent)."),
+      loading ? E("div", { style: { color: "var(--text-secondary)", fontSize: ".82rem" } }, "Chargement…")
+      : E("div", { style: { display: "flex", gap: ".5rem", flexWrap: "wrap" } },
+          E("input", { type: "tel", value: phone, onChange: e => setPhone(e.target.value), placeholder: "+221 77 123 45 67",
+            style: { flex: 1, minWidth: "180px", padding: ".55rem .75rem", borderRadius: "8px", border: "1px solid var(--border)", fontSize: ".9rem" } }),
+          E("button", { className: "btn btn-primary btn-sm", onClick: save, disabled: saving, style: { flexShrink: 0 } },
+            saving ? E("i", { className: "fas fa-spinner fa-spin" }) : E("i", { className: "fas fa-save" }), " Enregistrer")
+        )
+    )
+  );
+};
+
 const NotifChannelsCard = ({ addToast }) => {
   const E = React.createElement;
   const [rows, setRows]       = React.useState([]);
@@ -20433,6 +20480,7 @@ const EmailTemplatesPanel = ({ addToast, currentUser }) => {
 
   return E("div",{style:{display:"flex",flexDirection:"column",gap:"1.25rem"}},
 
+    E(NotifAdminPhoneCard,{addToast}),
     E(NotifChannelsCard,{addToast}),
     E(ManualWhatsAppCard,{addToast}),
     E(NotifLogsCard,null),
@@ -22526,6 +22574,9 @@ const CourierApp = ({ currentUser, addToast }) => {
     }).select().single();
     if (error) { addToast('Erreur : ' + error.message, 'error'); return; }
     setCourier(data); setRegStep('pending');
+    // [NOTIF ADMIN] Un coursier candidate → alerte l'admin (email + WhatsApp) pour
+    // qu'il valide. Même mécanisme que admin_new_vendor. Best-effort, non bloquant.
+    try { EmailService.notifyAdmin('admin_new_courier', { courier_name: regForm.name || 'Coursier', courier_phone: regForm.phone || '' }); } catch(_){}
     addToast('✅ Candidature envoyée ! Vous serez notifié sous 24h.', 'success');
   };
 

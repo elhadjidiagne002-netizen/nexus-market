@@ -3,7 +3,7 @@
  * POST /payout-request → Crée une demande de retrait vendeur via PayTech Transfer
  */
 import { createClient } from "@supabase/supabase-js";
-import { sendEventNotification } from "./api/_lib/notify.js";
+import { sendEventNotification, resolveAdminContact } from "./api/_lib/notify.js";
 
 const MIN_PAYOUT_XOF = 1000;
 
@@ -226,8 +226,9 @@ export async function onRequestPost(context) {
       vendor_name: vendorName, amount_fcfa: _amtFcfa, _userId: user.id,
     }).catch(e => console.warn("[payout-request] notify vendeur:", e.message));
   }
-  if (env.ADMIN_EMAIL || env.ADMIN_PHONE) {
-    await sendEventNotification(env, "admin_payout_request", { email: env.ADMIN_EMAIL, phone: env.ADMIN_PHONE }, {
+  const _adminContact = await resolveAdminContact(env);
+  if (_adminContact.email || _adminContact.phone) {
+    await sendEventNotification(env, "admin_payout_request", _adminContact, {
       vendor_name: vendorName, amount_fcfa: _amtFcfa,
       method: method === "mobile" ? PROVIDERS[provider] : "virement bancaire",
     }).catch(e => console.warn("[payout-request] notify admin:", e.message));
