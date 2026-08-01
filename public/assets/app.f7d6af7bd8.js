@@ -13787,6 +13787,43 @@ const GoogleOneTapProvider = ({ onLogin }) => {
 // interne, mais revient à la session suivante (cohérent avec les autres
 // préférences UI éphémères du site, ex. panier invité).
 // ══════════════════════════════════════════════════════════════════════════════
+// ── Chargeur Framer Motion (à la demande) ────────────────────────────────────
+// Importé depuis esm.sh, avec ?external=react,react-dom : la lib utilise ALORS
+// le specifier bare `react`, résolu par l'IMPORT MAP d'index.html vers les shims
+// public/vendor/*-shim.mjs → une seule instance de React (jamais une copie).
+// Chargement UNIQUEMENT quand on va réellement animer (visiteur non connecté),
+// jamais pour un utilisateur connecté. Échec (esm.sh bloqué/hors-ligne) → null,
+// le composant retombe sur une animation CSS. Aucune dépendance dure.
+let __nexusFM = null, __nexusFMPromise = null;
+function loadFramerMotion() {
+  if (__nexusFM) return Promise.resolve(__nexusFM);
+  if (__nexusFMPromise) return __nexusFMPromise;
+  __nexusFMPromise = import('https://esm.sh/framer-motion@11?external=react,react-dom')
+    .then((m) => { __nexusFM = m; return m; })
+    .catch((e) => { console.info('[FramerMotion] non chargé → fallback CSS :', e && e.message); return null; });
+  return __nexusFMPromise;
+}
+function useFramerMotion(active) {
+  const [fm, setFm] = React.useState(__nexusFM);
+  React.useEffect(() => {
+    if (fm || !active) return;
+    let alive = true;
+    loadFramerMotion().then((m) => { if (alive && m) setFm(m); });
+    return () => { alive = false; };
+  }, [fm, active]);
+  return fm;
+}
+// Keyframe du fallback CSS (utilisé seulement si Framer Motion n'a pas chargé).
+(function injectSocialKeyframe() {
+  try {
+    if (typeof document === 'undefined' || document.getElementById('nx-social-anim')) return;
+    const s = document.createElement('style');
+    s.id = 'nx-social-anim';
+    s.textContent = '@keyframes nxSocialIn{from{opacity:0;transform:translateY(24px) scale(.96)}to{opacity:1;transform:none}}';
+    (document.head || document.documentElement).appendChild(s);
+  } catch (_) {}
+})();
+
 const NexusSocialPrompt = ({ currentUser }) => {
   const DISMISS_KEY = 'nexus_ss_social_prompt_dismissed';
   const [dismissed, setDismissed] = React.useState(() => {
@@ -13794,16 +13831,22 @@ const NexusSocialPrompt = ({ currentUser }) => {
   });
   const [visible, setVisible] = React.useState(false);
 
+  // Providers off → rien à proposer (les boutons se masquent seuls, on coupe avant).
+  const providersOff = NEXUS_CONFIG.google?.enabled === false && NEXUS_CONFIG.facebook?.enabled === false;
+  const active = !currentUser && !dismissed && !providersOff;
+  const fm = useFramerMotion(active);           // ne charge FM que si on va animer
+  const reduce = React.useRef(false);
   React.useEffect(() => {
-    if (currentUser || dismissed) return;
+    try { reduce.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) {}
+  }, []);
+
+  React.useEffect(() => {
+    if (!active) return;
     const t = setTimeout(() => setVisible(true), 4000);
     return () => clearTimeout(t);
-  }, [currentUser, dismissed]);
+  }, [active]);
 
-  if (currentUser || dismissed || !visible) return null;
-  // Rien à proposer si aucun des deux providers n'est activé — éviter une
-  // bannière vide (les boutons se masquent eux-mêmes, mais on court-circuite ici).
-  if (NEXUS_CONFIG.google?.enabled === false && NEXUS_CONFIG.facebook?.enabled === false) return null;
+  const show = active && visible;
 
   const dismiss = () => {
     setVisible(false);
@@ -13811,33 +13854,56 @@ const NexusSocialPrompt = ({ currentUser }) => {
     try { sessionStorage.setItem(DISMISS_KEY, '1'); } catch (_) {}
   };
 
-  return React.createElement('div', {
-    role: 'complementary',
-    'aria-label': 'Connexion rapide',
-    style: {
-      position: 'fixed', right: '1.1rem', bottom: '1.1rem', zIndex: 9975,
-      width: 'min(320px, calc(100vw - 2rem))', background: '#fff',
-      borderRadius: '14px', boxShadow: '0 12px 36px rgba(0,0,0,.18)',
-      border: '1px solid #e5e5e5', padding: '1rem 1rem 0.75rem',
-    },
-  },
+  const cardStyle = {
+    position: 'fixed', right: '1.1rem', bottom: '1.1rem', zIndex: 9975,
+    width: 'min(320px, calc(100vw - 2rem))', background: '#fff',
+    borderRadius: '14px', boxShadow: '0 12px 36px rgba(0,0,0,.18)',
+    border: '1px solid #e5e5e5', padding: '1rem 1rem 0.75rem',
+  };
+  const cardChildren = () => [
     React.createElement('button', {
-      type: 'button', onClick: dismiss, 'aria-label': 'Fermer',
+      key: 'x', type: 'button', onClick: dismiss, 'aria-label': 'Fermer',
       style: { position: 'absolute', top: '.4rem', right: '.4rem', border: 'none', background: 'none',
         cursor: 'pointer', fontSize: '1.15rem', color: '#8a8a8a', lineHeight: 1, padding: '.3rem' },
     }, '×'),
-    React.createElement('p', { style: { fontWeight: 800, fontSize: '.92rem', marginBottom: '.15rem', paddingRight: '1.25rem' } },
+    React.createElement('p', { key: 't1', style: { fontWeight: 800, fontSize: '.92rem', marginBottom: '.15rem', paddingRight: '1.25rem' } },
       '👋 Un compte en 5 secondes'),
-    React.createElement('p', { style: { fontSize: '.8rem', color: '#666', marginBottom: '.65rem' } },
+    React.createElement('p', { key: 't2', style: { fontSize: '.8rem', color: '#666', marginBottom: '.65rem' } },
       'Continuez avec Google ou Facebook — sans mot de passe à retenir.'),
-    React.createElement(GoogleSignInButton, { label: 'Continuer avec Google' }),
-    React.createElement(FacebookSignInButton, { label: 'Continuer avec Facebook' }),
+    React.createElement(GoogleSignInButton, { key: 'g', label: 'Continuer avec Google' }),
+    React.createElement(FacebookSignInButton, { key: 'f', label: 'Continuer avec Facebook' }),
     React.createElement('button', {
-      type: 'button', onClick: dismiss,
+      key: 'l', type: 'button', onClick: dismiss,
       style: { display: 'block', width: '100%', textAlign: 'center', background: 'none', border: 'none',
         color: '#8a8a8a', fontSize: '.78rem', margin: '.6rem 0 .2rem', cursor: 'pointer', textDecoration: 'underline' },
-    }, 'Plus tard')
-  );
+    }, 'Plus tard'),
+  ];
+
+  // Chemin animé (Framer Motion prêt) : AnimatePresence gère l'entrée ET la sortie.
+  // AnimatePresence reste monté (même quand rien à afficher) pour pouvoir jouer
+  // l'animation de sortie au moment du dismiss / de la connexion.
+  if (fm && fm.motion && fm.AnimatePresence) {
+    const { motion, AnimatePresence } = fm;
+    const from  = reduce.current ? { opacity: 0 } : { opacity: 0, y: 24, scale: 0.96 };
+    const to    = reduce.current ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 };
+    return React.createElement(AnimatePresence, null,
+      show && React.createElement(motion.div, {
+        key: 'nx-social',
+        role: 'complementary', 'aria-label': 'Connexion rapide',
+        initial: from, animate: to, exit: from,
+        transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] },
+        style: cardStyle,
+      }, cardChildren())
+    );
+  }
+
+  // Fallback CSS (Framer Motion indisponible) : entrée animée par keyframe,
+  // sortie immédiate (pas d'exit animé sans FM, mais 100% fonctionnel).
+  if (!show) return null;
+  return React.createElement('div', {
+    role: 'complementary', 'aria-label': 'Connexion rapide',
+    style: { ...cardStyle, animation: reduce.current ? 'none' : 'nxSocialIn .3s ease-out both' },
+  }, cardChildren());
 };
 // ── Fin NexusSocialPrompt ───────────────────────────────────────────────────
 

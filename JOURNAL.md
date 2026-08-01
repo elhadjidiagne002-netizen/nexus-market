@@ -6,6 +6,42 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-01 — Framer Motion câblé : bannière de connexion sociale animée
+
+Suite du commit précédent (shims dormants) : import map câblé + 1ère animation.
+
+**Import map** (`index.html`, placé AVANT le 1er `<script type="module">` = Fuse,
+sinon ignoré) : `react`/`react-dom`/`react/jsx-runtime`/`react-dom/client` →
+shims `public/vendor/*-shim.mjs`. Vérifié dans le vrai contexte du site :
+`import('react')` renvoie bien l'instance globale (`=== window.React` : true).
+
+**Hébergement Framer Motion — décision** : esm.sh ne produit PAS de fichier ESM
+vraiment autonome pour framer-motion (bundle-deps / `*`-prefix / `?bundle` testés :
+tous laissent ~90 sous-imports `framer-motion/dist/...` + `motion-dom`/`motion-utils`).
+Le vendorer localement = mirrorer ~90 fichiers ou introduire un bundler (build step,
+hors périmètre). → Chargement **runtime depuis esm.sh** (`import('https://esm.sh/
+framer-motion@11?external=react,react-dom')`), déjà validé. `?external=react,react-dom`
+= la lib émet `import "react"` en bare → capté par l'import map → même React. Risque
+égress ≠ média (chargé 1×, caché navigateur longtemps, + fallback dur). `esm.sh`
+ajouté à `script-src` (CSP report-only).
+
+**`NexusSocialPrompt`** (bundle) réécrit :
+- Loader FM **à la demande** (`useFramerMotion(active)`) : ne charge la lib QUE pour
+  un visiteur non connecté qui va voir la bannière — jamais pour un connecté.
+- `AnimatePresence` + `motion.div` : anime l'ENTRÉE (opacity/y/scale) ET la SORTIE
+  (l'apport réel vs CSS — le fondu de sortie au dismiss).
+- Respect `prefers-reduced-motion` : opacity seule, sans translation/scale.
+- **Fallback CSS** (keyframe `nxSocialIn` injectée) si esm.sh échoue/bloqué → la
+  bannière apparaît quand même, entrée animée, sortie immédiate. Aucune dépendance
+  dure à esm.sh.
+
+**Vérifié en local** (SW purgé, onglet au 1er plan pour éviter le throttling rAF) :
+import map OK (React unique), FM chargé, bannière à 4s **animée par FM** (transform
+inline présent, pas le fallback), settled opacity 1, 4 boutons ; **sortie animée**
+confirmée (à 140ms après clic Fermer : encore présente, opacity 0.14 → retrait à
+~500ms) ; flag dismiss mémorisé ; keyframe fallback injectée ; zéro erreur console.
+Bundle renommé `app.6624f30b26.js` → `app.f7d6af7bd8.js`.
+
 ## 2026-08-01 — Shims React ESM pour Framer Motion (infra dormante)
 
 **Contexte** : évaluation des technos à utiliser pour la suite. Verdict = rester
