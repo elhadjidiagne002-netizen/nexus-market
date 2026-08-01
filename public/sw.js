@@ -45,7 +45,7 @@ const BYPASS_HOSTS = [
 // ── Routes API à ne jamais mettre en cache ────────────────────────────────────
 // [FIX] Toutes les routes /api/ ne doivent JAMAIS être mises en cache
 // Cloudflare Functions gèrent leur propre cache via Cache-Control
-const BYPASS_PATHS = ["/api/"];
+const BYPASS_PATHS = ["/api/", "/downloads/"]; // /downloads/ : APK téléchargé directement, jamais mis en cache SW
 
 // ── Icônes par type de notification ──────────────────────────────────────────
 const PUSH_ICONS = {

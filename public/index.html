@@ -2933,7 +2933,7 @@
                    PWA directe (nexusDownloadApp). Libellé honnête tout en gardant
                    l'affordance visuelle familière (pilules noires). -->
               <button onclick="window.nexusDownloadApp('ios')" style="background:#000;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:.5rem;padding:.5rem 1rem;display:flex;align-items:center;gap:.5rem;cursor:pointer"><span style="font-size:1.2rem">📱</span><span><div style="font-size:.65rem;text-transform:uppercase;opacity:.7">Installer sur</div><div style="font-size:.8rem;font-weight:700">iPhone / iPad</div></span></button>
-              <button onclick="window.nexusDownloadApp('android')" style="background:#000;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:.5rem;padding:.5rem 1rem;display:flex;align-items:center;gap:.5rem;cursor:pointer"><span style="font-size:1.2rem">🤖</span><span><div style="font-size:.65rem;text-transform:uppercase;opacity:.7">Installer sur</div><div style="font-size:.8rem;font-weight:700">Android / Bureau</div></span></button>
+              <button onclick="window.nexusDownloadApp('android')" style="background:#000;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:.5rem;padding:.5rem 1rem;display:flex;align-items:center;gap:.5rem;cursor:pointer"><span style="font-size:1.2rem">🤖</span><span><div style="font-size:.65rem;text-transform:uppercase;opacity:.7">Télécharger l'APK</div><div style="font-size:.8rem;font-weight:700">pour Android</div></span></button>
             </div>
           </div>
         </div>
@@ -2958,19 +2958,20 @@
 
     <!-- ════════════════════════════════════════════════════════════════════
          TÉLÉCHARGER L'APPLI — les apps ne sont pas encore publiées sur l'App
-         Store ni le Play Store. En attendant, les boutons "Télécharger" (footer
-         statique + footer #nx-proto-overlay) déclenchent l'installation PWA
-         réelle du site (manifest.json déjà complet : icônes, standalone…) :
-           - Chrome/Edge (Android ET Bureau) : prompt d'installation natif si le
-             navigateur le propose déjà (window.nexusInstall(), câblé côté app.js
-             sur 'beforeinstallprompt').
-           - [FIX] Sans ce prompt natif (heuristique d'engagement Chrome non
-             satisfaite au 1er chargement, ou navigateur sans 'beforeinstallprompt'
-             — Firefox ne le supporte pas du tout), l'utilisateur tombait sur un
-             simple toast, une impasse. Remplacé par un guide manuel pas-à-pas,
-             adapté à la plateforme détectée (menu du navigateur → Installer /
-             Ajouter à l'écran d'accueil) — même principe que le guide iOS déjà en
-             place, qui lui n'a jamais d'API programmable.
+         Store ni le Play Store.
+           - Android : téléchargement DIRECT du vrai fichier .apk
+             (/downloads/nexus-market.apk — package TWA signé, généré via
+             PWABuilder à partir de ce même site, cf. "NEXUS Market - Google
+             Play package/" à la racine du repo — dossier NON déployé, il
+             contient aussi la clé privée de signature). Un guide s'affiche
+             APRÈS le téléchargement pour l'étape "Sources inconnues", requise
+             par Android pour toute app installée hors Play Store — ce n'est
+             pas contournable, c'est une protection du système lui-même.
+           - iOS : pas d'équivalent — un fichier .ipa brut téléchargé depuis
+             Safari ne s'installe pas sans TestFlight ou un certificat
+             entreprise Apple (hors périmètre : review Apple / Mac+Xcode
+             requis, aucun fichier .ipa disponible). Guide "Sur l'écran
+             d'accueil" (PWA) conservé, seule solution 100% sous contrôle.
          ════════════════════════════════════════════════════════════════════ -->
     <script>
     (function () {
@@ -2981,7 +2982,7 @@
         if (typeof window.__nexusToast === 'function') { window.__nexusToast(msg, type || 'info', dur); return; }
         alert(msg);
       }
-      // Modal générique (structure partagée iOS + guide manuel Android/Bureau).
+      // Modal générique (structure partagée iOS + guide post-téléchargement APK).
       function showInstallModal(intro, steps) {
         var old = document.getElementById('nexus-install-modal');
         if (old) old.remove();
@@ -3020,59 +3021,35 @@
           ]
         );
       }
-      // [FIX] Guide de repli quand 'beforeinstallprompt' ne s'est pas déclenché
-      // (Chrome/Edge Android ou Bureau) ou n'existe pas du tout (Firefox, autres).
-      // Sans ça, ces visiteurs n'avaient AUCUN moyen d'installer l'app.
-      function showManualInstallGuide() {
-        var ua = navigator.userAgent || '';
-        var isAndroid = /Android/i.test(ua);
-        var isFirefox = /Firefox/i.test(ua) && !/Seamonkey/i.test(ua);
-        var isChromium = /Chrome|Chromium|Edg\//i.test(ua) && !/OPR\//i.test(ua);
-        var intro, steps;
-        if (isFirefox && isAndroid) {
-          intro = 'NEXUS Market n’est pas encore sur le Play Store — installez-la directement depuis Firefox :';
-          steps = [
-            'Appuyez sur le menu <strong>⋮</strong> en haut à droite de Firefox.',
-            'Appuyez sur <strong>« Installer »</strong> (ou « Ajouter à l’écran d’accueil »).',
-          ];
-        } else if (isAndroid && isChromium) {
-          intro = 'NEXUS Market n’est pas encore sur le Play Store — installez-la directement depuis votre navigateur :';
-          steps = [
-            'Appuyez sur le menu <strong>⋮</strong> en haut à droite de votre navigateur.',
-            'Appuyez sur <strong>« Installer l’application »</strong> (ou « Ajouter à l’écran d’accueil »).',
-            'L’icône NEXUS Market apparaît sur votre écran d’accueil, comme une vraie app.',
-          ];
-        } else if (isChromium) {
-          intro = 'NEXUS Market n’est pas encore sur les stores — installez-la directement depuis votre navigateur, en 2 clics :';
-          steps = [
-            'Repérez l’icône d’installation <strong>⊕</strong> tout à droite de la barre d’adresse (ou le menu <strong>⋮</strong> → « Installer NEXUS Market »).',
-            'Cliquez dessus puis confirmez — l’app s’ouvre dans sa propre fenêtre, comme un vrai logiciel.',
-          ];
-        } else {
-          intro = 'L’installation directe fonctionne avec Chrome, Edge ou Firefox. Ouvrez nexusmarket.sn avec l’un de ces navigateurs pour installer l’application en un clic.';
-          steps = [];
-        }
-        showInstallModal(intro, steps);
+      // Déclenche le téléchargement RÉEL du fichier .apk (pas un guide, pas un
+      // prompt — un vrai fichier qui arrive dans le dossier Téléchargements).
+      function downloadApk() {
+        var a = document.createElement('a');
+        a.href = '/downloads/nexus-market.apk';
+        a.download = 'NEXUS-Market.apk';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Guide affiché APRÈS coup, pas avant : le fichier part immédiatement,
+        // ces 3 étapes ne servent qu'à l'installer une fois arrivé sur l'appareil.
+        showInstallModal(
+          'Le fichier <strong>NEXUS-Market.apk</strong> est en cours de téléchargement (notification de téléchargement, ou dossier « Téléchargements »).',
+          [
+            'Ouvrez le fichier téléchargé.',
+            'Android affiche généralement un avertissement <strong>« Sources inconnues »</strong> — c’est normal pour toute app installée hors Play Store, pas une erreur. Appuyez sur <strong>« Paramètres »</strong> puis autorisez cette source, ou <strong>« Installer quand même »</strong> selon la version.',
+            'Appuyez sur <strong>« Installer »</strong> — NEXUS Market apparaît ensuite parmi vos applications, comme une app normale.',
+          ]
+        );
+        try { if (typeof gtag === 'function') gtag('event', 'apk_download'); } catch (_) {}
       }
       // Exposé globalement : appelé par les boutons des deux footers (statique + overlay).
       window.nexusDownloadApp = function (store) {
         if (store === 'ios') { showIosInstallGuide(); return; }
-        // Android / Bureau : installation PWA native si le navigateur la propose
-        // déjà (Chrome/Edge). window.nexusInstall vient de app.js.
-        if (window.nexusCanInstall && typeof window.nexusInstall === 'function') {
-          window.nexusInstall().then(function (outcome) {
-            if (outcome === 'accepted') toast('✅ Application installée !', 'success', 6000);
-            else if (outcome === 'dismissed') toast('Installation annulée.', 'info', 4000);
-          }).catch(function () {});
-          return;
-        }
         if (isStandalone()) {
           toast('✅ L’application est déjà installée sur cet appareil.', 'info', 5000);
           return;
         }
-        // [FIX] Avant : toast sans issue si le prompt natif n'était pas prêt.
-        // Maintenant : guide manuel adapté à la plateforme détectée.
-        showManualInstallGuide();
+        downloadApk();
       };
     })();
     </script>
@@ -12106,7 +12083,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <p class="text-sm text-white/70 mb-4">L'expérience NEXUS dans votre poche.</p>
       <div class="flex flex-wrap gap-3">
         <button onclick="window.nexusDownloadApp('ios')" class="bg-black text-white px-4 py-2 rounded-lg border border-white/20 flex items-center gap-2 hover:bg-white/10 transition-all"><span class="material-symbols-outlined">phone_iphone</span><div class="text-left"><p class="text-[10px] uppercase">Installer sur</p><p class="text-xs font-bold">iPhone / iPad</p></div></button>
-        <button onclick="window.nexusDownloadApp('android')" class="bg-black text-white px-4 py-2 rounded-lg border border-white/20 flex items-center gap-2 hover:bg-white/10 transition-all"><span class="material-symbols-outlined">android</span><div class="text-left"><p class="text-[10px] uppercase">Installer sur</p><p class="text-xs font-bold">Android / Bureau</p></div></button>
+        <button onclick="window.nexusDownloadApp('android')" class="bg-black text-white px-4 py-2 rounded-lg border border-white/20 flex items-center gap-2 hover:bg-white/10 transition-all"><span class="material-symbols-outlined">android</span><div class="text-left"><p class="text-[10px] uppercase">Télécharger l'APK</p><p class="text-xs font-bold">pour Android</p></div></button>
       </div>
     </div>
   </div>

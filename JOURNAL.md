@@ -96,6 +96,60 @@ script GTM injecté ; (3) **nouvelle session** (sessionStorage vidé) → consen
 relu, **gtag chargé sans aucun clic**, `dataLayer` alimenté, bannière non réaffichée.
 Contrôle inverse : avec `'essential'`, ni GA4 ni pixel FB — le garde-fou tient.
 
+## 2026-08-01 — Bouton Android : vrai fichier .apk téléchargé (pas un guide)
+
+**Demande** : le bouton « Télécharger l'appli » doit livrer le **vrai fichier**
+à un visiteur déjà prêt à installer — pas une invite/un guide d'abord.
+
+**Trouvé** : un APK réel existait déjà, non versionné, à la racine du repo
+(`NEXUS Market - Google Play package/NEXUS Market.apk`, 1,3 Mo — package TWA
+signé, généré via PWABuilder). Le dossier contient aussi **`signing.keystore`
++ le mot de passe en clair** (`signing-key-info.txt`) : la clé privée de
+signature de l'app. **Copié uniquement l'`.apk`** vers `public/downloads/
+nexus-market.apk` — jamais le dossier entier, jamais le keystore. `.gitignore`
+excluait déjà `NEXUS*/` (anticipé par une session précédente) ; le nouveau
+chemin `public/downloads/` n'est pas concerné, vérifié avec `git check-ignore`.
+
+Découverte au passage : `public/.well-known/assetlinks.json` (Digital Asset
+Links, vérification TWA — supprime la barre d'adresse Chrome une fois l'app
+installée, rendu 100% natif) était **déjà publié et fonctionnel** en prod
+avec 2 entrées TWA. Ma première copie l'aurait écrasé en perdant la 2e entrée
+(`dev.pages.nexus_market_asb.twa`) — repéré via `git diff` avant commit,
+restauré (`git checkout --`), aucune modification nécessaire sur ce fichier.
+
+**iOS** : question posée à l'utilisateur — aucun fichier `.ipa` n'existe dans
+le projet, et même s'il existait, iOS ne sait pas installer un `.ipa` brut
+téléchargé depuis Safari (contrairement à Android) sans TestFlight (compte
+Apple Developer 99$/an + Mac/Xcode + review Apple) ou certificat entreprise
+(hors ToS Apple pour distribution publique, risque de révocation). Réponse :
+garder le guide PWA existant (« Sur l'écran d'accueil »), seule solution
+100% sous contrôle sans infrastructure Apple.
+
+**Implémenté** (`public/index.html`) : `nexusDownloadApp('android')` déclenche
+maintenant un vrai `<a download>` vers `/downloads/nexus-market.apk`
+(remplace l'ancienne logique PWA-install-first + guide de repli, devenue
+inutile puisque le fichier réel est maintenant l'action principale). Un guide
+s'affiche **après** le téléchargement (pas avant) pour l'étape « Sources
+inconnues » — avertissement Android réel et non contournable pour toute app
+hors Play Store, pas une erreur du site. Libellés des 4 boutons (footer
+statique + overlay) : « Télécharger l'APK / pour Android » (honnête, reflète
+l'action réelle) ; iOS inchangé (« Installer sur / iPhone · iPad »).
+
+`public/_headers` : nouvelle règle `/downloads/*` — `Content-Type:
+application/vnd.android.package-archive`, `Content-Disposition: attachment`,
+cache modéré (1h, PAS immutable : le fichier sera remplacé à chaque nouvelle
+version sans changer de nom). `public/sw.js` : `/downloads/` ajouté à
+`BYPASS_PATHS` (pas d'intérêt à mettre en cache SW un binaire de 1,3 Mo).
+
+**Vérifié en local** : SHA256 de la copie = SHA256 de l'original (octet pour
+octet) ; `fetch HEAD` sur `/downloads/nexus-market.apk` → 200, taille exacte
+1 347 317 octets ; clic réel sur le bouton Android → vrai lien de
+téléchargement déclenché (`href` + `download` corrects) + guide post-
+téléchargement avec les 3 bonnes étapes ; bouton iOS non affecté ; zéro
+erreur console. En-têtes HTTP (Content-Type, Content-Disposition) non
+vérifiables en local (serveur Python de dev, ne lit pas `_headers` — à
+confirmer une fois en prod).
+
 ## 2026-07-31 — Boutons « Télécharger l'appli » : guide de repli + libellés honnêtes
 
 **Demande** : utiliser les boutons existants pour proposer le téléchargement de
