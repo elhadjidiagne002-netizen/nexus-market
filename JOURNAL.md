@@ -6,6 +6,35 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-01 — Ouverture du panier animée (Framer Motion, sans conflit CSS)
+
+Demande : animer l'ouverture du panier (`CartGrouped`), après la bannière sociale.
+
+**Découverte** : le panier **s'animait déjà** — `.modal-overlay` a un `@keyframes
+fadeIn` (0.2s) et `.modal` un `slideUp` (0.25s) définis en CSS. Un premier essai
+naïf (poser des `motion.div` par-dessus) a créé un **conflit** : une animation CSS
+écrase le style inline → FM masqué (transform mesuré 24px = le CSS, pas mes 16px FM).
+
+**Résolu** : l'overlay + le panneau deviennent `motion.div` UNIQUEMENT quand FM est
+chargé, et dans ce cas on neutralise l'anim CSS via `style:{animation:'none'}` inline
+→ FM prend le relais (fondu + montée 16px + scale 0.97→1, easing [.16,1,.3,1],
+cohérent avec la bannière). Si FM absent (esm.sh bloqué, ou pas encore chargé au
+1er open) → éléments `div` normaux, AUCUNE prop d'anim, l'anim CSS existante
+(fadeIn/slideUp) sert de **fallback** — le panier s'anime dans tous les cas.
+`prefers-reduced-motion` : opacity seule. Animation à l'ENTRÉE ; fermeture immédiate
+(comme avant). Chargement FM à la demande via le `useFramerMotion` partagé.
+
+Réutilise l'infra du commit précédent (import map + shims + loader) — zéro nouvelle
+dépendance, zéro changement CSP.
+
+**Vérifié en local** (SW purgé) : FM préchargé → ouverture pilotée FM (mid-anim
+`matrix(0.97,0,0,0.97,0,16)`, `animationName:none` sur overlay ET panneau, settle
+opacity 1 / transform none) ; FM absent → fallback CSS `slideUp` actif ; bouton
+fermer interactif ; zéro erreur console. ⚠️ Sur le tout 1er open avant que FM soit
+en cache, léger remount `div`→`motion.div` (CSS puis FM) — cosmétique, accepté pour
+garder le chargement à la demande (pas de FM préchargé pour tous). Bundle renommé
+`app.f7d6af7bd8.js` → `app.c55b8bb98b.js`.
+
 ## 2026-08-01 — Framer Motion câblé : bannière de connexion sociale animée
 
 Suite du commit précédent (shims dormants) : import map câblé + 1ère animation.
