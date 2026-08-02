@@ -6,6 +6,41 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (octies) — Câblage front du fallback PayTech → PayDunya
+
+**Demande** : câbler le fallback côté front (après le squelette backend PayDunya).
+
+**Point clé** : ~8 sites d'appel à l'init PayTech dans `app.js` + 1 dans
+`index.html`, mais **quasi tous passent par un helper partagé**
+`DataService.paymentFetch(path, options)` → câblage en UN seul endroit possible.
+
+**Fait (`public/assets/app.js`)** :
+- `DataService.paymentFetch` (def ~L4554) : si `path` = `/api/payments/paytech/init`
+  et que l'appel échoue (réseau/timeout OU réponse non-ok), retente le MÊME payload
+  contre `/api/payments/paydunya/init`. Si PayDunya n'est pas configuré (503) ou
+  injoignable → on renvoie la réponse/erreur PayTech d'origine → **comportement
+  identique à aujourd'hui tant que PayDunya n'a pas de clés**. Extrait en `doFetch()`
+  interne (garde le timeout 20s AbortController).
+- Site publication STORY (~L12628) : converti de `fetch` brut vers
+  `DataService.paymentFetch` → hérite du fallback + retire la gestion manuelle du token.
+- Les autres sites (transport dans index.html, checkout commande, boost, abo pro,
+  b2b, flash…) utilisent déjà `paymentFetch` → couverts automatiquement.
+
+**Cache-busting** : bundle renommé `app.cabba864a4.js` → **`app.2051ad115d.js`**
+(git mv + hash de contenu) + référence MAJ dans `index.html` (sinon Cloudflare/
+navigateurs servent l'ancien bundle immutable — cf. mémoire app-bundle-hash).
+
+**Vérif (local static-py:5598, SW purgé)** : `node --check` OK ; app boote et rend
+l'overlay (1519 éléments), 0 erreur console ; fallback présent dans le bundle servi ;
+nouveau bundle bien référencé. Le fallback lui-même (bascule réelle) n'est testable
+qu'avec de vraies clés PayDunya en sandbox.
+
+**État** : commité + poussé. Fallback ACTIF côté front mais INERTE tant que
+PAYDUNYA_* absentes (PayDunya renvoie 503 → repli sur PayTech). Reste à faire
+utilisateur : clés sandbox PayDunya + test bout-en-bout d'une bascule.
+
+---
+
 ## 2026-08-02 (septies) — PayDunya en fallback de PayTech (squelette, dormant)
 
 **Demande** : prototyper une intégration PayDunya (Wave/OM) en `fetch`/WebCrypto,

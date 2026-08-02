@@ -4572,11 +4572,30 @@ async signOut() {
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
     if (token) headers["Authorization"] = `Bearer ${token}`;
     // Timeout court : si la fonction de paiement est injoignable, on echoue vite.
-    const ctrl = new AbortController();
-    const tid  = setTimeout(() => ctrl.abort(), 20000);
+    const doFetch = async (p) => {
+      const ctrl = new AbortController();
+      const tid  = setTimeout(() => ctrl.abort(), 20000);
+      try { return await fetch(p, { ...options, headers, signal: ctrl.signal }); }
+      finally { clearTimeout(tid); }
+    };
+    // [FALLBACK PAIEMENT] PayTech = agregateur PRINCIPAL. Si l'init PayTech echoue
+    // (reseau/timeout OU reponse non-ok : cles absentes, PayTech down, quota...),
+    // on retente le MEME payload contre l'agregateur de SECOURS PayDunya. Tant que
+    // PayDunya n'est pas configure cote serveur, son init renvoie 503 -> on retombe
+    // sur la reponse PayTech d'origine (comportement identique a aujourd'hui).
+    if (!/\/api\/payments\/paytech\/init$/.test(path)) {
+      return await doFetch(path);
+    }
+    const altPath = path.replace("/paytech/init", "/paydunya/init");
     try {
-      return await fetch(path, { ...options, headers, signal: ctrl.signal });
-    } finally { clearTimeout(tid); }
+      const res = await doFetch(path);
+      if (res && res.ok) return res;
+      try { const alt = await doFetch(altPath); if (alt && alt.ok) return alt; } catch (_) {}
+      return res; // PayDunya indispo/non configure -> on renvoie l'erreur PayTech d'origine
+    } catch (e) {
+      try { const alt = await doFetch(altPath); if (alt) return alt; } catch (_) {}
+      throw e; // PayTech ET PayDunya injoignables -> erreur reseau initiale
+    }
   },
   async apiFetch(path, options = {}) {
     const _apiBase = (NEXUS_CONFIG.apiUrl || "").endsWith("/") ? NEXUS_CONFIG.apiUrl.slice(0,-1) : (NEXUS_CONFIG.apiUrl || "");
@@ -12625,9 +12644,9 @@ const NexusStoriesWidget = ({ user }) => {
         toast(t('stories.paid_publish', { fee: (Number(j.fee) || 0).toLocaleString('fr-FR') }), 'info', 6000);
         try {
           var _origin = window.location.origin;
-          var _pr = await fetch('/api/payments/paytech/init', {
+          // [FALLBACK] via DataService.paymentFetch → PayTech puis PayDunya en secours.
+          var _pr = await DataService.paymentFetch('/api/payments/paytech/init', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
             body: JSON.stringify({ kind: 'story', story_id: j.storyId, order_id: j.storyId, amount: j.fee, item_name: 'Publication NEXUS Story', success_url: _origin + '/?stories=1', cancel_url: _origin + '/?stories=1' }),
           });
           var _pj = await _pr.json().catch(function () { return {}; });
