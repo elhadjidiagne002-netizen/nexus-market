@@ -6,6 +6,96 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (bis) — Audit SEO complet nexusmarket.sn : catalogue produit invisible pour Google
+
+**Demande** : audit SEO complet du site via le skill `seo-audit`.
+
+**Incident d'orchestration** : les 8 agents spécialisés (technical/content/schema/
+sitemap/geo/ecommerce/sxo/backlinks) ont été lancés avec `isolation: "worktree"`
+par erreur (pertinent pour des agents qui modifient du code, pas pour de
+l'analyse en lecture seule). Résultat : leurs écritures dans
+`nexusmarket.sn-audit/findings/` ont atterri dans des copies isolées du repo,
+7 des 8 worktrees ont été auto-nettoyés en fin d'exécution → **~450k tokens de
+travail perdus, irrécupérables**. Leçon retenue : ne plus utiliser
+`isolation: "worktree"` pour des agents de recherche/audit pur ; le laisser
+réservé aux agents qui commitent du code.
+
+**Découverte fortuite** : ce dossier `nexusmarket.sn-audit/` contenait déjà un
+audit complet du **2026-07-02** (score 71/100, correctifs déjà appliqués et
+vérifiés — `_headers` déplacé dans `public/`, sitemap.xml nettoyé de 28 URLs
+legacy, schema shippingDetails/returnPolicy ajouté, 12 `alt` manquants
+corrigés). Cet audit a été préservé (archivé en `*-2026-07-02.md/json`) avant
+que le nouveau rapport ne soit écrit par-dessus.
+
+**Après accord utilisateur** (rédiger le rapport moi-même plutôt que relancer
+8 agents), audit refait en solo via `curl` + lecture directe du code.
+
+**Finding critique découvert** (le plus important de la session) :
+`functions/sitemap-listings.xml.js` interroge la table `products` (le vrai
+catalogue, avec le schema le plus riche du site — Product/Offer/
+shippingDetails/MerchantReturnPolicy, confirmé en prod) mais avec un filtre
+PostgREST `id=not.like.a0000001*` — probablement invalide sur `products.id`
+qui est une colonne **UUID** (l'opérateur `like` est un opérateur texte).
+`sbGet()` avale silencieusement toute erreur HTTP (`catch { return []; }`) →
+le sitemap dynamique en prod ne contient que 3 URLs (2 `/annonce/` + 1 `/pro/`),
+**zéro `/produit/`**, alors que `llms.txt` du site revendique "des milliers de
+produits". Autrement dit : la quasi-totalité du catalogue, avec le meilleur
+schema SEO du site, n'est probablement jamais soumise à l'indexation Google.
+**Non vérifié en base** (pas de token Supabase management dispo dans cet
+environnement) — à confirmer avec
+`node scripts/db-query.mjs "SELECT count(*) FROM products WHERE active"`.
+
+**Autres findings** : `robots.txt` toujours contradictoire pour les bots IA
+(signalé en juillet, non corrigé — fix dashboard Cloudflare, pas code) ;
+scripts synchrones bloquants sur l'accueil (React/ReactDOM/Tailwind CDN
+runtime, ce dernier explicitement déconseillé en prod par Tailwind) ; CSP
+toujours en `report-only` ; lien mort dans `llms.txt`
+(`/categorie/mode-vetements` → 404, vrai slug `/categorie/mode`) ; meta
+descriptions parfois quasi vides sur les fiches annonce à description courte
+(ex. `"fluide"`).
+
+**État final** : rapport complet dans `nexusmarket.sn-audit/FULL-AUDIT-REPORT.md`
++ `ACTION-PLAN.md` + `audit-data.json` (score global 62/100, en recul par
+rapport à juillet — nouveau problème détecté, pas une régression des acquis).
+SXO, backlinks et images **non réévalués** cette passe (recherche SERP live,
+Common Crawl, captures d'écran nécessiteraient de relancer les agents
+spécialisés, correctement cette fois, sans isolation worktree). **Rien
+d'appliqué au code** — c'est un audit, pas une intervention ; le fix du filtre
+`sitemap-listings.xml.js` est en tête de l'`ACTION-PLAN.md` mais reste à faire.
+
+---
+
+## 2026-08-02 — Réduction de la pollution de contexte Claude Code (git status + permissions)
+
+**Demande** : identifier et implémenter les mécanismes d'économie de tokens pour
+Claude Code, côté projet.
+
+**Constat** : `git status` (injecté à chaque tour de conversation) remontait **387
+entrées**, dont **363 provenant d'un dépôt `claude-seo-main` cloné par erreur à la
+racine du projet** (confirmé doublon : le vrai clone de travail vit dans
+`Downloads/claude-seo-main`, séparé). S'y ajoutaient des dumps DB (`db_cluster-*.backup`
+8,8 Mo + .gz), un export CSV de contacts (PII), un zip de certificat domaine — tous
+untracked, jamais nettoyés.
+
+**Implémenté** :
+- `.gitignore` : ajout de `claude-seo-main/`, `db_cluster-*.backup*`,
+  `contacts-nexus-*.csv`, `google.com!*.zip` → `git status` passe de 387 à 22 lignes.
+  Non destructif (fichiers conservés sur disque, juste sortis du suivi git).
+- `.claude/settings.json` (nouveau, partagé/committé) : liste blanche de permissions
+  pour les commandes read-only récurrentes identifiées dans les transcripts
+  (`node --check *`, `git -C <projet> status/log/diff/branch *`, `tasklist *`) —
+  réduit les prompts de permission répétés.
+
+**État final** : appliqué et vérifié. **En attente côté utilisateur** (non scriptable
+depuis ce terminal, nécessite une session interactive) : désactiver les plugins/MCP
+inutilisés (marketing/sales/finance/SEO) qui gonflent le system prompt de chaque
+session sans rapport avec ce projet, via `/plugin` ou `/mcp`. Restent aussi en attente
+de décision utilisateur : les 13 suppressions non commitées dans `publicite/`
+(commit ou restauration ?) et le sort du dossier `claude-seo-main/` sur disque
+(supprimer ou déplacer hors du repo ?).
+
+---
+
 ## 2026-08-01 — Alertes WhatsApp admin sur les événements actionnables
 
 **Demande** : l'admin notifié par WhatsApp « après chaque action » pour se connecter
