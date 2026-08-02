@@ -6,6 +6,43 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (undecies) — Régression CSP : CSS Leaflet bloqué (cartes cassées) — CORRIGÉ
+
+**Découverte en préparant le « suivi coursier »** : le suivi coursier — et TOUTE une
+couche cartographique — existe **déjà**, mature, via `window.NexusMap` (Leaflet, défini
+index.html ~L9068) :
+- `track(el, delivery)` : marqueurs retrait/dépôt/coursier + **abonnement Realtime**
+  (postgres_changes UPDATE deliveries → position coursier live) + polling + ETA + partage.
+- `nearby(el, point, couriers)` (coursiers proches + clustering), `fleet` (admin),
+  `pickLocation` (pin d'adresse **draggable** — pour le checkout), `locateMe`, `openDirections`.
+- Composant `DeliveryTrackingModal` (L6554) déjà branché.
+
+**Régression introduite par la CSP enforce (commit c541e4a)** : Leaflet + markercluster
+sont chargés depuis `cdn.jsdelivr.net`. Ma `style-src` autorisait cdnjs mais **PAS
+jsdelivr** → le **CSS Leaflet/markercluster était bloqué** en enforce → cartes cassées
+(les tuiles OSM en `<img>` passent via `img-src https:`, mais sans le CSS Leaflet la
+carte est inutilisable). C'était exactement un des « flux dynamiques non testés » signalés
+lors de l'activation de la CSP (le suivi coursier ne se charge qu'à l'ouverture du modal).
+
+**Fix** : ajout de `https://cdn.jsdelivr.net` à `style-src` dans `public/_headers`.
+Vérifié : tous les hôtes de CSS externes du projet (jsdelivr = leaflet + 2 markercluster ;
+cdnjs = font-awesome + material symbols + maplibre) sont désormais dans `style-src`. Pas
+d'autre CSS bloquée.
+
+**Conséquence sur le plan MapLibre** : les 4 écrans géo demandés sont en réalité
+**déjà couverts par la couche Leaflet existante** (suivi coursier ✓ realtime, adresse
+checkout = `pickLocation` ✓, proximité = `nearby` ✓, admin fleet ✓). La fondation
+MapLibre (commit 64533f5, `window.nexusMap`) fait **doublon** avec cette couche — elle
+reste dormante (chargée seulement si `nexusMap.create()` est appelé, ce que rien ne fait).
+Décision à prendre par l'utilisateur : (a) garder Leaflet (mature, corrigé) et laisser
+nexusMap dormant/le retirer, ou (b) migrer NexusMap → MapLibre (gros chantier : track/
+nearby/fleet/pickLocation, risque de régression). Recommandation : (a) — ne pas dupliquer.
+
+**État** : CSP fix commité + poussé. À re-vérifier en prod : une carte Leaflet se charge
+sous la CSP (CSS jsdelivr OK).
+
+---
+
 ## 2026-08-02 (decies) — MapLibre : fondation (CSP + helper window.nexusMap)
 
 **Demande** : MapLibre sur les 4 écrans géo (proximité location/élevage/pros, suivi
