@@ -6,6 +6,26 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (duodecies) — Retrait de la fondation MapLibre (doublon de Leaflet)
+
+**Décision** (utilisateur : garder les cartes Leaflet existantes + m'a laissé choisir
+pour le doublon) : **retiré** la fondation MapLibre `window.nexusMap` (ajoutée en
+64533f5) — elle faisait doublon avec la couche Leaflet mature (cf. entrée undecies).
+Garder un helper carte dormant + une 2e techno = dette (risque qu'un futur dev le
+branche par erreur). On reste sur **une seule couche carte : Leaflet**.
+
+- `public/index.html` : bloc `window.nexusMap` + son commentaire supprimés.
+- `public/_headers` : retrait des ajouts CSP spécifiques MapLibre (`connect-src
+  tiles.openfreemap.org`, `worker-src 'self' blob:`) — vérifié : aucun autre code
+  n'utilise de Web Worker ni openfreemap. **Conservé** `cdn.jsdelivr.net` en
+  `style-src` (c'est le fix Leaflet de l'entrée undecies, indépendant).
+
+**Suite prévue** (choix utilisateur) : auditer/brancher les cartes Leaflet existantes
+sur les écrans qui en manquent (pickLocation au checkout ? nearby pour pros/location/
+élevage ? covoiturage ?), plutôt que d'ajouter une techno.
+
+---
+
 ## 2026-08-02 (undecies) — Régression CSP : CSS Leaflet bloqué (cartes cassées) — CORRIGÉ
 
 **Découverte en préparant le « suivi coursier »** : le suivi coursier — et TOUTE une
