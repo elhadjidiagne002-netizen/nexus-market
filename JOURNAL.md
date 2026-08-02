@@ -6,6 +6,56 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (quinquies) — CSP passée en mode bloquant (enforce)
+
+**Demande** : activer la Content-Security-Policy en enforce (elle était en
+Report-Only depuis le 2026-07-02).
+
+**Risque** : en enforce, toute ressource non listée est BLOQUÉE (scripts, styles,
+fetch, iframes). Le site charge de NOMBREUX tiers (Stripe, Mux, GA, AdSense,
+Cloudinary, EmailJS, Facebook, Google auth, Sentry) → risque réel de casser
+paiement/vidéo/login/upload, flux non testables ici (pas de comptes sandbox).
+
+**Méthode de dérisquage** :
+1. Relevé de TOUTES les ressources chargées par l'accueil (prod, via
+   `performance.getEntriesByType('resource')`) croisé avec chaque directive CSP.
+   → Une seule origine externe manquait : **www.google-analytics.com** (fetch GA,
+   absent de connect-src).
+2. `form-action 'self'` — vérifié que PayTech redirige via `window.location.href`
+   (navigation top-level, PAS un POST de formulaire) → non bloqué. Idem pas de
+   `<form action>` externe (SPA = fetch + preventDefault).
+3. Nouvelle policy = **surensemble strict** de l'ancienne (rien retiré, tout ce qui
+   passait passe encore) + ajout des endpoints runtime que le grep statique ne
+   voyait pas : GA (`www.google-analytics.com`, `*.google-analytics.com`,
+   `*.analytics.google.com`, `stats.g.doubleclick.net`), HLS Mux
+   (`stream.mux.com` en connect, pas que media-src) + `*.litix.io`, EmailJS
+   (`api.emailjs.com`), OAuth Google (`accounts.google.com`, `oauth2.googleapis.com`),
+   télémétrie Stripe (`m.stripe.com`, `m.stripe.network`), 3DS Stripe
+   (`hooks.stripe.com` en frame-src).
+
+**Vérif locale (wrangler pages dev :8788, qui applique `_headers`)** :
+- Header servi bien en `Content-Security-Policy:` (enforce), pas report-only.
+- Enforce prouvé actif : fetch vers un hôte non listé → violation `connect-src`
+  captée + fetch échoué.
+- Cœur du SPA sous enforce : `esm.sh` (importmap, vital), Supabase, Stripe se
+  chargent sans blocage.
+
+**⚠️ NON testable ici, à tester par l'utilisateur juste après déploiement** :
+checkout Stripe (carte), checkout PayTech/mobile money, login Google, lecture
+vidéo stories (Mux/HLS), upload photo (Cloudinary). Si l'un casse → regarder la
+console (« Refused to … » / violation CSP) pour l'origine bloquée, l'ajouter à la
+directive correspondante dans `public/_headers`.
+
+**Rollback immédiat** : renommer `Content-Security-Policy` →
+`Content-Security-Policy-Report-Only` dans `public/_headers` + redéploy → CSP
+redevient inoffensive (journalise sans bloquer).
+
+**État** : commité + poussé. `unsafe-inline`/`unsafe-eval` conservés (front
+monolithique) → protection XSS partielle mais restriction des sources externes
+effective. Piste future : nonces/hashes pour retirer unsafe-inline (gros chantier).
+
+---
+
 ## 2026-08-02 (quater) — Tailwind statique (remplace le CDN runtime) — perf
 
 **Demande** : sortir Tailwind du CDN runtime (`cdn.tailwindcss.com`, déconseillé en
