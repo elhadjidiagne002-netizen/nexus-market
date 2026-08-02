@@ -6,6 +6,53 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (septies) — PayDunya en fallback de PayTech (squelette, dormant)
+
+**Demande** : prototyper une intégration PayDunya (Wave/OM) en `fetch`/WebCrypto,
+en **fallback** de PayTech (PayTech reste principal), après avoir vérifié que le
+SDK `@tecafrik/africa-payment-sdk` **n'est PAS compatible Workers** (dépend de
+`apisauce`→axios sans adaptateur fetch, et instancie Stripe en mode Node). On
+réimplémente donc directement en fetch, le SDK servant de carte de référence.
+
+**Contrat PayDunya (extrait du SDK)** : base `app.sandbox.paydunya.com/api/`
+(test) / `app.paydunya.com/api/` (prod) ; 4 clés en en-tête (MASTER/PRIVATE/
+PUBLIC/TOKEN) ; `POST v1/checkout-invoice/create` → `{response_code:'00', token}` ;
+webhook vérifié par **SHA-512(master key)** comparé à `body.hash`.
+
+**Créé (3 fichiers, DORMANTS tant que PAYDUNYA_* absentes → zéro impact prod)** :
+- `functions/api/_lib/payment-fulfill.js` : logique de fulfillment PARTAGÉE (port
+  fidèle de l'IPN PayTech : 7 kinds pro/boost/story/flash/api/b2b_priority/transport
+  + commande, MAJ `orders` idempotente, notifs in-app + email/WA). ⚠️ PayTech
+  garde sa copie inline (non modifié) → toute évolution à répercuter aux 2 endroits
+  tant que PayTech n'est pas migré vers ce lib.
+- `functions/api/payments/paydunya/init.js` : réutilise les MÊMES validateurs de
+  montant que PayTech (`_lib/utils.js`), credential-gated (503 sans clés), crée la
+  facture PayDunya en fetch, renvoie `redirect_url`. custom_data porte les mêmes
+  identifiants que le custom_field PayTech.
+- `functions/api/payments/paydunya/ipn.js` : vérif SHA-512 WebCrypto (compare
+  temps constant), parsing défensif (form-encoded imbriqué `data[...]` OU JSON),
+  délègue à `fulfillPayment`. 401 si `PAYDUNYA_MASTER_KEY` absente.
+
+**Vérif** : `node --check` + ESLint OK sur les 3 fichiers. Non déployable-actif sans
+clés → sûr à committer.
+
+**RESTE À FAIRE côté utilisateur (non fait — hors de mon périmètre sûr)** :
+1. Créer un compte PayDunya + récupérer les 4 clés (sandbox d'abord), les mettre en
+   variables Cloudflare Pages.
+2. **Tester en sandbox** : le format exact de l'URL de checkout hébergée
+   (`sandbox-checkout/invoice/{token}` ?) et du corps du webhook sont marqués
+   « à confirmer » dans le code — à valider avec un vrai paiement test.
+3. Déclarer l'IPN `https://nexusmarket.sn/api/payments/paydunya/ipn` dans le
+   dashboard PayDunya.
+4. **Câbler le fallback front** : sur échec de `/api/payments/paytech/init`,
+   rappeler `/api/payments/paydunya/init` (même payload) puis rediriger. (Volontairement
+   PAS fait : touche le flux paiement live, à faire une fois la sandbox validée.)
+
+**Env** : `.env.example` documenté (PAYDUNYA_MASTER_KEY/PRIVATE_KEY/PUBLIC_KEY/
+TOKEN/STORE_NAME/ENV).
+
+---
+
 ## 2026-08-02 (sexies) — Fix régression : menu « Widgets » bas-gauche affiché en permanence
 
 **Symptôme signalé** : le menu de widgets flottants bas-gauche (Coursier, NEXUS Pro,
