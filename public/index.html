@@ -45,14 +45,14 @@
     <!-- [FIX] preload font supprimé — inutile avec media=print -->
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Montserrat:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"></noscript>
-    <!-- [PERF] Tailwind PRÉ-COMPILÉ statique (remplace cdn.tailwindcss.com qui compilait
-         le CSS au runtime dans le navigateur — déconseillé en prod par Tailwind).
-         Généré via `npm run build:css` (config tailwind.config.js, preflight DÉSACTIVÉ
-         pour ne PAS réinitialiser les autres pages). Régénérer + renommer le hash après
-         tout ajout de classes utilitaires dans index.html/app.js (cache immutable 1 an).
-         La config (couleurs MD3, spacing, plugins forms+container-queries) est baked dans
-         le CSS — plus besoin de l'objet tailwind.config inline (aucun code ne le lisait). -->
-    <link rel="stylesheet" href="/assets/tailwind.cd189cc7de.css">
+    <!-- [PERF] Tailwind pré-compilé statique : le <link> est placé À LA FIN DU <head>
+         (juste avant </head>), PAS ici. Raison : un bloc d'utilitaires inline plus bas
+         (~"utilitaires legacy" : .flex, .gap-1, .mb-1…) porte les MÊMES noms que des
+         utilitaires Tailwind. L'ancien CDN cdn.tailwindcss.com injectait son CSS au
+         runtime APRÈS ces styles inline (Tailwind gagnait la cascade). Pour répliquer ce
+         comportement à l'identique (sinon .flex inline écrase .hidden → widgets flottants
+         affichés en permanence, gaps/margins décalés), le CSS statique doit être chargé
+         en DERNIER. Voir le <link> avant </head>. -->
     <style>
       /* [REFONTE] Styles custom du prototype (utilisés par la home fidèle) */
       .scrolling-wrapper { -ms-overflow-style: none; scrollbar-width: none; }
@@ -2812,6 +2812,14 @@
 }catch(e){}})();
 </script>
 
+<!-- [PERF/CASCADE] Tailwind pré-compilé statique — CHARGÉ EN DERNIER volontairement.
+     Doit rester le tout dernier <link>/<style> du <head> pour gagner la cascade face au
+     bloc d'utilitaires inline legacy (.flex/.gap-*/.mb-* portant les mêmes noms), comme
+     le faisait l'ancien CDN cdn.tailwindcss.com (injection runtime tardive). Ne pas
+     remonter plus haut : sinon le menu « Widgets » bas-gauche (#nxp-widgetStack, caché
+     par .hidden) s'afficherait en permanence. Généré via `npm run build:css` ; renommer
+     le hash après tout ajout de classes utilitaires (cache immutable 1 an). -->
+<link rel="stylesheet" href="/assets/tailwind.cd189cc7de.css">
 </head>
 <body>
     <a href="#main-content" class="skip-link">Aller au contenu principal</a>

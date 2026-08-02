@@ -6,6 +6,47 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (sexies) — Fix régression : menu « Widgets » bas-gauche affiché en permanence
+
+**Symptôme signalé** : le menu de widgets flottants bas-gauche (Coursier, NEXUS Pro,
+Élevage, Location, Covoiturage, Troc, Chat, Assistant IA, Ventes Flash…) s'affichait
+en permanence au lieu de s'ouvrir à la demande via le bouton « Widgets ».
+
+**Cause racine** : régression du passage au Tailwind statique (commit bfd14be). Le
+`#nxp-widgetStack` est caché par défaut via la classe Tailwind `.hidden`
+(`display:none`) et affiché par le toggle JS (inchangé, correct). MAIS index.html
+contient un bloc d'**utilitaires legacy inline** (`<style>` ~ligne 1839 : `.flex`,
+`.gap-1`, `.mb-1`… mêmes NOMS que des utilitaires Tailwind, valeurs parfois
+différentes). L'ancien CDN `cdn.tailwindcss.com` injectait son CSS au runtime APRÈS
+ces styles inline → Tailwind gagnait la cascade → `.hidden` battait `.flex`. Mon
+`<link>` statique était placé TÔT (ligne 55, avant le bloc inline) → le `.flex` inline
+(`display:flex`, plus loin dans la cascade) écrasait `.hidden` → stack affiché en
+permanence (confirmé : `getComputedStyle` = `flex` malgré la classe `hidden` présente,
+2 règles `.flex` détectées dont une inline).
+
+**Fix** : déplacé le `<link rel="stylesheet" href="/assets/tailwind.<hash>.css">` de la
+ligne 55 vers **juste avant `</head>`** (tout dernier stylesheet du head) → réplique
+l'injection tardive du CDN → Tailwind regagne la cascade. Commentaires ajoutés aux
+deux emplacements pour que ça ne soit pas « optimisé » à la remontée par erreur.
+
+**Portée** : ce n'était pas que les widgets — TOUT écart entre valeurs Tailwind et
+utilitaires legacy homonymes (`.gap-1` 0.25 vs 0.5rem, `.mb-1`…) était inversé par
+rapport à l'état pré-changement ; le fix restaure l'ensemble à l'identique de l'ère CDN
+(les dashboards vivaient déjà avec Tailwind gagnant).
+
+**Vérif locale (static-py:5598, SW purgé)** : `#nxp-widgetStack` display=`none` par
+défaut ; témoin `flex hidden`→`none` (`.hidden` regagne) ; toggle testé : clic→`flex`
+(icône `close`), reclic→`none`. Comportement à la demande restauré. Tailwind confirmé
+dernier stylesheet du head.
+
+**Leçon (CLAUDE.md-worthy)** : sur ce repo, un CSS Tailwind statique DOIT être chargé
+en dernier dans le `<head>` à cause des utilitaires legacy inline homonymes. Ne jamais
+remonter le `<link>`.
+
+**État** : commité + poussé. Re-vérif prod après déploiement Cloudflare recommandée.
+
+---
+
 ## 2026-08-02 (quinquies) — CSP passée en mode bloquant (enforce)
 
 **Demande** : activer la Content-Security-Policy en enforce (elle était en
