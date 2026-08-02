@@ -75,6 +75,26 @@ Flux commande (`paytech/init.js`, `paytech/ipn.js`) : `PAYTECH_API_SECRET`.
 Flux mobile-money/payout : `PAYTECH_SECRET_KEY`. Le code accepte désormais les deux
 (fallback `env.PAYTECH_API_SECRET || env.PAYTECH_SECRET_KEY`). Canonique : `PAYTECH_API_SECRET`.
 
+### 6. Tailwind statique — le `<link>` DOIT être le dernier stylesheet du `<head>`
+Depuis 2026-08-02, Tailwind n'est plus servi par le CDN runtime `cdn.tailwindcss.com`
+mais pré-compilé statique : `public/assets/tailwind.<hash>.css`, généré par
+`npm run build:css` (config `tailwind.config.js` racine, preflight **désactivé**,
+plugins forms + container-queries). Comme `app.<hash>.js` : régénérer + **renommer le
+hash** + MAJ `index.html` (cache immutable 1 an sur `/assets/*`).
+- ⚠️ **Le `<link>` vers ce CSS doit rester le TOUT DERNIER stylesheet du `<head>`**
+  (placé juste avant `</head>`). `public/index.html` contient un bloc d'**utilitaires
+  legacy inline** (`<style>` ~L1839 : `.flex`, `.gap-1`, `.gap-2`, `.mb-1/2/3`,
+  `.mt-2/3`, `.flex-1`…) portant les **mêmes noms** que des utilitaires Tailwind mais
+  avec des valeurs différentes. L'ancien CDN injectait son CSS au runtime *après* ces
+  styles inline → Tailwind gagnait la cascade. Un `<link>` placé trop tôt perd la
+  cascade → l'inline écrase Tailwind. Symptôme déjà vu (corrigé) : le menu « Widgets »
+  bas-gauche (`#nxp-widgetStack`, caché par `.hidden`) s'affichait **en permanence**
+  car `.flex` inline écrasait `.hidden` de Tailwind.
+- **Ne jamais remonter ce `<link>` « pour la perf »** (commentaires posés aux 2 endroits).
+- Vérif après toute modif de l'ordre du `<head>` (local static-py:5598, SW purgé) :
+  `getComputedStyle(document.getElementById('nxp-widgetStack')).display` = `none` au
+  chargement, et `flex` après clic sur `#nxp-widgetToggle`.
+
 ## Endpoints de paiement (canoniques vs doublons)
 - **Stripe webhook** : `/api/webhooks/stripe` (`functions/api/webhooks/stripe.js`) — configuré.
   Doublon : `/api/payments/stripe/webhook` (corrigé, mais non principal).
