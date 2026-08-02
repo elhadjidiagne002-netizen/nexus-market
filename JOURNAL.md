@@ -6,6 +6,38 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (decies) — MapLibre : fondation (CSP + helper window.nexusMap)
+
+**Demande** : MapLibre sur les 4 écrans géo (proximité location/élevage/pros, suivi
+coursier temps réel, adresse checkout, covoiturage), tuiles OpenFreeMap. Livraison
+INCRÉMENTALE : fondation d'abord (dont tout dépend), puis chaque écran vérifié.
+
+**Paysage géo (investigué)** : `profiles` a `current_lat/current_lng/home_lat/home_lng` ;
+RPC `nearby_couriers`/`nearby_couriers_offline`/`nearby_pros` → coursier + pros ont de
+vraies coordonnées. Location/élevage/covoiturage = surtout niveau VILLE (géocodage à
+prévoir pour ces écrans).
+
+**Fait (fondation, index.html + _headers)** :
+- `public/_headers` CSP : ajout `https://tiles.openfreemap.org` en `connect-src` (tuiles/
+  style/glyphs récupérés en fetch) + `worker-src 'self' blob:` (MapLibre crée son worker
+  depuis un blob: ; sans ça, bloqué par `default-src 'self'` en enforce).
+- `index.html` : helper `window.nexusMap` — chargement PARESSEUX de MapLibre GL (CSS+JS
+  cdnjs 4.7.1, injectés au 1er usage → aucun coût sur les pages sans carte). API :
+  `create(el,{center,zoom})`, `addMarkers(map,[{lat,lng,title|html,onClick}],{color})`,
+  `fit(map,points)`. Style OpenFreeMap `liberty`, centre Dakar par défaut.
+
+**Vérif locale (static-py:5598, SW purgé)** : carte rendue (screenshot = fond
+OpenFreeMap de Dakar avec rues/quartiers + marqueurs verts + attribution). cdnjs 4.7.1
+JS/CSS = 200, style OpenFreeMap = 200. NB : les tuiles se chargent dans un Web Worker
+→ invisibles à `performance.getEntriesByType('resource')` (0 en apparence, normal).
+`check-inline-scripts` : seul le faux positif Fuse.
+
+**À vérifier en prod** : rendu carte sous la CSP enforce (worker blob: + connect
+openfreemap). **Écrans PAS encore construits** — à faire ensuite, 1 par 1, en
+commençant par le coursier (données prêtes). Ce commit = fondation seule.
+
+---
+
 ## 2026-08-02 (nonies) — Orama : recherche accueil (BM25 + tolérance fautes)
 
 **Demande** : intégrer Orama (recommandé « gain immédiat »), périmètre = recherche
