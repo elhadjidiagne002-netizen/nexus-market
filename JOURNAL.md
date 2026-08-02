@@ -6,6 +6,62 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (quater) — Tailwind statique (remplace le CDN runtime) — perf
+
+**Demande** : sortir Tailwind du CDN runtime (`cdn.tailwindcss.com`, déconseillé en
+prod, compilait le CSS en JS côté navigateur à chaque chargement) vers un CSS
+pré-compilé statique. Chantier signalé comme « à risque » dans l'audit.
+
+**Investigation (dérisquage préalable)** : vérifié qu'AUCUNE classe Tailwind n'est
+construite dynamiquement (`'bg-'+x` ou template `\`bg-${x}\``) dans index.html ni
+app.js → le scanner de contenu peut tout capter. Découverte : le bundle React
+`app.js` utilise son PROPRE design system (`btn`, `form-input`, `card`… définis
+dans un CSS séparé, non-Tailwind) — Tailwind ne servait en pratique que l'overlay
+d'accueil statique `#nx-proto-overlay` + quelques utilitaires. app.js ne lit nulle
+part `tailwind.config` (le moteur CDN en était le seul consommateur).
+
+**Fait** :
+- `tailwind.config.js` (racine) : reproduit EXACTEMENT l'ancien config inline
+  (preflight OFF, darkMode class, couleurs MD3, spacing/radius custom, plugins
+  forms + container-queries). content = `./public/index.html` + `./public/assets/app.*.js`.
+- `styles/tailwind.css` : entrée (@tailwind base/components/utilities).
+- `package.json` : script `build:css` + devDeps (tailwindcss@3, forms,
+  container-queries). package-lock.json **resynchronisé** (`npm install`) — sinon
+  `npm ci` de Cloudflare aurait échoué (piège lock désync).
+- `public/assets/tailwind.cd189cc7de.css` (34 Ko minifié) : CSS généré, committé
+  (même logique que app.<hash>.js, cache immutable). ⚠️ NON câblé dans le build
+  Cloudflare (`npm run build`=static, devDeps ignorées en prod) — on committe la
+  sortie.
+- `public/index.html` : `<script cdn.tailwindcss.com>` + objet `tailwind.config`
+  inline (mort, personne ne le lisait) → remplacés par `<link>` vers le CSS statique.
+
+**Vérification (locale, serveur static-py:5598, SW désenregistré + caches vidés)** :
+- Test de parité DOM→CSS : sur 486 tokens de classe du DOM rendu, **0 classe
+  Tailwind manquante** (2 faux positifs initiaux : `text-md` n'existe pas en
+  Tailwind = toujours inerte ; `shadow-[…rgba…]` était en fait présente, mon
+  `CSS.escape` ne matchait pas l'échappement Tailwind des valeurs arbitraires).
+- Styles calculés OK : bg-primary=#006d40, text-on-surface-variant=#3e4a41,
+  rounded-xl=16px, p-md=16px, ombre nav mobile arbitraire appliquée.
+- Screenshot accueil : rendu correct (pills, couleurs, ombres, typo), aucun FOUC.
+- Config reproductible validée : régénération depuis la racine = CSS **identique
+  octet pour octet** au fichier committé.
+
+**Piège vérif** : le test de parité DOM→CSS DOIT utiliser `CSS.escape()` MAIS même
+lui ne reproduit pas exactement l'échappement Tailwind des valeurs arbitraires
+complexes (`shadow-[0_-2px_10px_rgba(0,0,0,.06)]`) → confirmer les « manquantes »
+par style calculé (probe getComputedStyle) avant de conclure à une régression.
+
+**Réserve** : `npm install` a signalé 2 vulnérabilités « high » dans des deps
+transitives du build Tailwind — **devDependencies only** (build-time, jamais
+servies aux utilisateurs ; la sortie est un CSS statique). Non bloquant.
+
+**État** : commité + poussé (voir commit suivant). Non encore re-vérifié après
+redéploiement Cloudflare — prochaine étape : confirmer en prod que
+`/assets/tailwind.cd189cc7de.css` répond 200 et que l'accueil est bien stylé
+sans le CDN.
+
+---
+
 ## 2026-08-02 (ter) — Améliorations SEO post-audit (llms.txt, meta desc, lazy-loading)
 
 **Demande** : appliquer les changements pour faire monter la note d'audit globale.
