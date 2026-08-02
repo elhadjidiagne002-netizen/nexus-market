@@ -6,6 +6,47 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (ter) — Améliorations SEO post-audit (llms.txt, meta desc, lazy-loading)
+
+**Demande** : appliquer les changements pour faire monter la note d'audit globale.
+
+**Fait (changements de code sûrs, à fort ROI)** :
+- `public/llms.txt` : 3 slugs catégorie en 404 corrigés (`mode-vetements`→`mode`,
+  `maison-deco`→`maison`, `beaute-sante`→`beaute`). Slugs canoniques confirmés
+  dans `functions/_lib/categories.js` + vérif HTTP live (200/404). Les liens
+  `?view=catalog`/`?register=vendor` laissés (200, points d'entrée SPA réels).
+- `functions/annonce/[id].js` : fallback meta description quand la description
+  vendeur est trop courte (<50 car., ex. « fluide ») → enrichie du contexte
+  catégorie · ville · prix. (Le fallback existant de `seo.js:73` ne se
+  déclenchait que si la description était totalement vide.)
+- `public/index.html` : `loading="lazy"` ajouté sur 4 images de contenu dynamique
+  (modale quick-view cachée, cartes flash, cartes produit grille, vignette
+  recherche). Les 4 logos en en-tête laissés en eager (petits, above-the-fold).
+
+**Volontairement PAS fait (risque en prod, à traiter séparément)** :
+- **Défer React/ReactDOM** : des `<script>` inline entre les deux utilisent
+  `React` en synchrone → tout casserait. L'audit avait surestimé ce point ;
+  l'accueil a DÉJÀ `preconnect` vers les CDN (index.html:37-42), polices +
+  Font Awesome en non-bloquant (`media=print onload`), et la plupart des
+  scripts secondaires déjà `defer`. Gain restant faible vs risque élevé.
+- **Sortir Tailwind du CDN runtime** (`cdn.tailwindcss.com`) : vrai gain perf
+  mais gros chantier de build (scan des classes générées dans les template
+  strings JS) avec risque de FOUC/classes manquantes. À planifier à part.
+- **Activer la CSP** (report-only → enforce) : risque de casser des ressources
+  si la policy est incomplète ; nécessite d'analyser les rapports de violation
+  d'abord.
+
+**Piège vérif** : `scripts/check-inline-scripts.mjs` remonte une erreur
+pré-existante (ligne 224, « Unexpected identifier 'Fuse' ») = faux positif sur la
+syntaxe `import` du module Fuse via importmap, PAS causée par ces edits (confirmé
+en re-testant la version committée via git stash). Mes edits ne rajoutent aucune
+erreur.
+
+**État** : commité + poussé (voir commit suivant). `node --check`/eslint OK.
+Non encore re-vérifié en prod après redéploiement Cloudflare.
+
+---
+
 ## 2026-08-02 (bis) — Audit SEO complet nexusmarket.sn : catalogue produit invisible pour Google
 
 **Demande** : audit SEO complet du site via le skill `seo-audit`.
@@ -59,9 +100,16 @@ descriptions parfois quasi vides sur les fiches annonce à description courte
 rapport à juillet — nouveau problème détecté, pas une régression des acquis).
 SXO, backlinks et images **non réévalués** cette passe (recherche SERP live,
 Common Crawl, captures d'écran nécessiteraient de relancer les agents
-spécialisés, correctement cette fois, sans isolation worktree). **Rien
-d'appliqué au code** — c'est un audit, pas une intervention ; le fix du filtre
-`sitemap-listings.xml.js` est en tête de l'`ACTION-PLAN.md` mais reste à faire.
+spécialisés, correctement cette fois, sans isolation worktree).
+
+**Fix appliqué et déployé dans la foulée** (même session) : filtre
+`id=not.like.a0000001*` retiré de la requête PostgREST dans
+`functions/sitemap-listings.xml.js` (déplacé côté JS, `isDemoId`) ;
+`sbGet()` loggue désormais les échecs HTTP au lieu de les avaler en silence.
+`node --check`/ESLint/tests unitaires OK, commit `0ad3c43` poussé sur `main`.
+**Non encore re-vérifié en prod après redéploiement Cloudflare** (build
+asynchrone) — prochaine session : re-fetcher `https://nexusmarket.sn/sitemap-listings.xml`
+et confirmer que les URLs `/produit/` apparaissent.
 
 ---
 

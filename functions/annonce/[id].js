@@ -14,13 +14,26 @@ async function handle({ request, env, params }) {
   if (!a) return render404(origin, "Cette annonce n'est plus disponible.");
 
   // annonces_express n'a pas de titre dédié → on en compose un à partir des données.
-  const firstSentence = String(a.description || '').replace(/\s+/g, ' ').trim().split(/[.\n!?]/)[0].slice(0, 70);
+  const rawDesc = String(a.description || '').replace(/\s+/g, ' ').trim();
+  const firstSentence = rawDesc.split(/[.\n!?]/)[0].slice(0, 70);
   const title = firstSentence
     ? `${a.category ? a.category + ' — ' : ''}${firstSentence}`
     : `${a.category || 'Annonce'}${a.city ? ' à ' + a.city : ''}`;
 
+  // Meta description : la description vendeur peut être très courte (ex. « fluide »),
+  // ce qui donne une meta inutile. Si < 50 caractères, on l'enrichit du contexte
+  // (catégorie · ville · prix) pour une meta description exploitable par les moteurs.
+  const ctx = [
+    a.category,
+    a.city ? `à ${a.city}` : '',
+    a.price_fcfa ? `${Number(a.price_fcfa).toLocaleString('fr-FR')} FCFA` : '',
+  ].filter(Boolean).join(' · ');
+  const description = rawDesc.length >= 50
+    ? rawDesc
+    : `${rawDesc ? rawDesc + ' — ' : ''}${ctx}${ctx ? ' · ' : ''}Annonce à vendre sur NEXUS Market Sénégal`.trim();
+
   const html = renderListingPage({
-    origin, kind: 'annonce', id: a.id, title, description: a.description,
+    origin, kind: 'annonce', id: a.id, title, description,
     image: a.photo_url, priceFcfa: a.price_fcfa, category: a.category, city: a.city,
   });
   return new Response(html, {
