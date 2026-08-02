@@ -6,6 +6,38 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (nonies) — Orama : recherche accueil (BM25 + tolérance fautes)
+
+**Demande** : intégrer Orama (recommandé « gain immédiat »), périmètre = recherche
+de l'accueil côté client. (MapLibre = étape suivante, « toutes les fonctionnalités
+qui en ont besoin ».)
+
+**Constat** : la recherche overlay (`renderSearch`/`nxpFuzzy` dans index.html)
+utilisait déjà **Fuse.js** + repli substring. Orama ajoute BM25 (pertinence),
+meilleure tolérance aux fautes, recherche par préfixe.
+
+**Fait (index.html UNIQUEMENT → pas de app.js, pas de renommage de hash)** :
+- `<head>` : chargement d'Orama en module ESM via `import('https://esm.sh/@orama/orama@3')`
+  → `window.__ORAMA` (esm.sh déjà autorisé par la CSP script-src). Repli silencieux si KO.
+- `renderSearch` refactoré : rendu **instantané** via nxpFuzzy (Fuse/substring), PUIS
+  **affinage async** via Orama si dispo (garde « dernière requête gagne » via `_searchSeq`).
+  HTML de rendu **strictement identique** (extrait dans `_renderSearchPanel`, `prodsOverride`).
+  Helpers `oramaEnsureIndex` (index lazy depuis NXP_PRODS, reconstruit si le nb change) +
+  `oramaSearch` (term + tolerance:1 + properties:['name']). Si Orama échoue → nxpFuzzy →
+  substring : **la recherche ne casse jamais**.
+
+**Vérif locale (static-py:5598, SW purgé)** : Orama chargé depuis esm.sh
+(`window.__ORAMA`, exports create/insertMultiple/search OK) ; smoke test API v3 :
+exact « samsung » OK, faute « samsng » → Samsung OK (tolérance), préfixe « ordina »
+→ Ordinateur OK. `check-inline-scripts` : seul le faux positif pré-existant Fuse.
+NB : catalogue vide en local (pas de Supabase) → test bout-en-bout des vrais produits
+à faire en prod (NXP_PRODS peuplé).
+
+**État** : commité + poussé. À re-vérifier en prod : Orama charge bien sous la CSP
+enforce (script-src esm.sh). Prochaine étape : MapLibre.
+
+---
+
 ## 2026-08-02 (octies) — Câblage front du fallback PayTech → PayDunya
 
 **Demande** : câbler le fallback côté front (après le squelette backend PayDunya).

@@ -249,6 +249,15 @@
          En module, les `var` restent dans la portée du module ; window.Fuse est quand même
          exporté car la fin du bundle cible `globalThis`. Un module est déjà différé. -->
     <script type="module" src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+    <!-- [RECHERCHE] Orama — moteur BM25 + tolérance aux fautes + préfixe, pour la
+         recherche produits de l'accueil. Chargé en module ESM depuis esm.sh (déjà
+         autorisé par la CSP script-src). Repli Fuse/substring si indispo → la recherche
+         ne casse jamais (voir nxpFuzzy / renderSearch). Expose window.__ORAMA. -->
+    <script type="module">
+      import('https://esm.sh/@orama/orama@3')
+        .then(function (O) { window.__ORAMA = O; })
+        .catch(function (e) { console.warn('[Orama] chargement KO — repli Fuse/substring', e); });
+    </script>
     <!-- [I18N] Accès i18n robuste pour le HTML statique (overlay d'accueil, modules IIFE).
          `window.t` n'est qu'un ALIAS court posé par app.js : n'importe quelle lib tierce
          minifiée déclarant un `var t` global l'écrase (cf. Fuse ci-dessus). window.nexusI18n
@@ -12676,12 +12685,47 @@ function initProto(){
   }
   function recentSearches(){try{return JSON.parse(localStorage.getItem('nx_recent_search')||'[]');}catch(e){return[];}}
   function pushRecentSearch(q){var r=recentSearches().filter(function(x){return x!==q;});r.unshift(q);r=r.slice(0,5);localStorage.setItem('nx_recent_search',JSON.stringify(r));}
-  function renderSearch(q){
+  // [RECHERCHE] Index Orama (BM25 + tolérance aux fautes + préfixe), construit à la
+  // demande depuis NXP_PRODS. Repli Fuse/substring (nxpFuzzy) si Orama indispo →
+  // la recherche ne casse jamais. Orama chargé en module ESM (voir <head>).
+  var _oramaDb=null,_oramaCount=-1,_oramaBuilding=false,_searchSeq=0;
+  function _freshProds(){return Object.keys(NXP_PRODS).map(function(k){return NXP_PRODS[k];}).filter(function(p){return String(p.id).indexOf('nxp-')!==0;});}
+  async function oramaEnsureIndex(){
+    var O=window.__ORAMA; if(!O)return null;
+    var prods=_freshProds();
+    if(_oramaDb&&_oramaCount===prods.length)return _oramaDb;   // déjà à jour
+    if(_oramaBuilding)return _oramaDb;
+    _oramaBuilding=true;
+    try{
+      var db=await O.create({schema:{id:'string',name:'string'}});
+      await O.insertMultiple(db,prods.map(function(p){return {id:String(p.id),name:String(p.name||'')};}));
+      _oramaDb=db;_oramaCount=prods.length;
+    }catch(e){console.warn('[Orama] index KO',e);}
+    _oramaBuilding=false;
+    return _oramaDb;
+  }
+  async function oramaSearch(q){
+    var db=await oramaEnsureIndex(); if(!db)return null;
+    try{
+      var res=await window.__ORAMA.search(db,{term:q,properties:['name'],tolerance:1,limit:6});
+      return res.hits.map(function(h){return NXP_PRODS[h.document.id];}).filter(Boolean);
+    }catch(e){return null;}
+  }
+  // Corps de rendu — HTML IDENTIQUE à l'origine ; `prodsOverride` = résultats Orama.
+  function _renderSearchPanel(q,prodsOverride){
     q=(q||'').trim().toLowerCase();var html='';
     if(!q){var rs=recentSearches();if(rs.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Recherches récentes</p>'+rs.map(function(t){return'<button data-sq="'+t+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-on-surface-variant">history</span>'+t+'</button>';}).join('')+'</div>';}
     html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+CATS.slice(0,5).map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}
-    else{var cats=CATS.filter(function(c){return c.toLowerCase().indexOf(q)>=0;});var prods=nxpFuzzy(ALL_PRODS.filter(function(p){return String(p.id).indexOf('nxp-')!==0;}),q,['name']).slice(0,6);if(cats.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+cats.map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}if(prods.length){html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Produits</p>'+prods.map(function(p){return'<button data-sp-prod="'+p.id+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-3"><img src="'+p.img+'" alt="'+_esc(p.name)+'" loading="lazy" class="w-9 h-9 object-contain rounded bg-surface-container-low"/><span class="flex-1">'+p.name+'</span><span class="text-primary font-bold text-xs">'+p.price+' F</span></button>';}).join('')+'</div>';}if(!cats.length&&!prods.length){html='<div class="p-4 text-sm text-on-surface-variant text-center">Aucun résultat pour « '+q+' »</div>';}}
+    else{var cats=CATS.filter(function(c){return c.toLowerCase().indexOf(q)>=0;});var prods=prodsOverride||nxpFuzzy(ALL_PRODS.filter(function(p){return String(p.id).indexOf('nxp-')!==0;}),q,['name']).slice(0,6);if(cats.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+cats.map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}if(prods.length){html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Produits</p>'+prods.map(function(p){return'<button data-sp-prod="'+p.id+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-3"><img src="'+p.img+'" alt="'+_esc(p.name)+'" loading="lazy" class="w-9 h-9 object-contain rounded bg-surface-container-low"/><span class="flex-1">'+p.name+'</span><span class="text-primary font-bold text-xs">'+p.price+' F</span></button>';}).join('')+'</div>';}if(!cats.length&&!prods.length){html='<div class="p-4 text-sm text-on-surface-variant text-center">Aucun résultat pour « '+q+' »</div>';}}
     if(sp)sp.innerHTML=html;
+  }
+  function renderSearch(q){
+    var raw=(q||'').trim();var seq=++_searchSeq;
+    _renderSearchPanel(q);                        // rendu instantané (Fuse/substring)
+    if(!raw)return;
+    oramaSearch(raw).then(function(op){           // affine avec Orama si dispo ET requête toujours courante
+      if(op&&op.length&&seq===_searchSeq)_renderSearchPanel(q,op);
+    });
   }
   function doSearch(v){ v=(v||'').trim(); if(!v) return; pushRecentSearch(v); if(sp)sp.classList.add('hidden'); nxpShowAll({q:v}); }
   if(si){
