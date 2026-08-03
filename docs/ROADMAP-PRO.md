@@ -44,7 +44,8 @@ Légende statut : ⬜ à faire · 🟡 préparé (à appliquer) · 🟩 fait · 
 ### 4. Standardisation réponses API + OpenAPI complet
 - ⬜ Migrer progressivement vers `functions/api/_lib/response.js` (`ok`/`err`).
   ⚠️ PAR ENDPOINT (changer la forme casse les consommateurs front) — pas de bulk.
-- ⬜ Compléter `docs/openapi.yaml` (actuellement sous-ensemble) → API B2B documentée.
+- 🟩 `docs/openapi.yaml` étendu (v1.1.0, 16 routes) : ajout PayDunya init/ipn +
+  vendor/sales-export. ⬜ Reste : couvrir davantage de routes cœur commerce.
 - **Pourquoi pro** : intégrations tierces fiables, contrat d'API clair.
 
 ### 5. Espace vendeur pro : facturation + exports comptables

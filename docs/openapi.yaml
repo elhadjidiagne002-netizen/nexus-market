@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: NEXUS Market API
-  version: "1.0.0"
+  version: "1.1.0"
   description: >
     API serverless (Cloudflare Pages Functions) de NEXUS Market.
     Spec curée des endpoints cœur (paiements, messagerie, fidélité, crons).
@@ -111,6 +111,43 @@ paths:
         "200": { description: OK }
         "401": { description: Hash invalide }
         "400": { description: order_id manquant }
+
+  /api/payments/paydunya/init:
+    post:
+      summary: Initie un paiement PayDunya (fallback mobile money — Wave/OM)
+      description: >
+        Agrégateur de SECOURS de PayTech. Crée une facture PayDunya et renvoie
+        l'URL de checkout. Dormant (503) tant que les variables PAYDUNYA_* ne sont
+        pas configurées → aucun impact sur le flux PayTech.
+      security: [{ SupabaseJWT: [] }]
+      responses:
+        "200":
+          description: URL de redirection PayDunya
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  provider: { type: string, example: paydunya }
+                  redirect_url: { type: string }
+                  token: { type: string }
+                  ref_command: { type: string }
+        "400": { description: Requête invalide ou refus PayDunya }
+        "401": { description: Token manquant/invalide }
+        "503": { description: PayDunya non configuré (PAYDUNYA_MASTER_KEY/PRIVATE_KEY/TOKEN) }
+
+  /api/payments/paydunya/ipn:
+    post:
+      summary: IPN PayDunya (callback paiement)
+      description: >
+        Vérifie le hash SHA-512 de la master key (WebCrypto), puis applique le
+        fulfillment partagé (activation commande/boost/story/…). Corps accepté en
+        JSON ou form-encoded imbriqué (data[...][...]).
+      responses:
+        "200": { description: Traité (ou ignoré si statut intermédiaire) }
+        "401": { description: Hash invalide ou PAYDUNYA_MASTER_KEY absente }
+        "400": { description: Corps invalide }
 
   /api/payments/paytech/verify/{orderId}:
     get:
@@ -233,6 +270,36 @@ paths:
       summary: Notifie les utilisateurs d'un retour en stock
       responses:
         "200": { description: Nombre de notifiés }
+
+  /api/vendor/sales-export:
+    get:
+      summary: Export CSV des ventes du vendeur connecté
+      description: >
+        Retourne un CSV (text/csv) des commandes du vendeur (vendor_id = utilisateur
+        authentifié, filtré côté serveur). Colonnes : commande, date, statut, paiement,
+        méthode, total EUR + FCFA, sous-total, client. BOM UTF-8 (Excel).
+      security: [{ SupabaseJWT: [] }]
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+          description: Date de début (YYYY-MM-DD)
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+          description: Date de fin (YYYY-MM-DD)
+        - in: query
+          name: status
+          schema: { type: string }
+          description: Filtre payment_status (ex. paid)
+      responses:
+        "200":
+          description: Fichier CSV des ventes
+          content:
+            text/csv:
+              schema: { type: string }
+        "401": { description: Token manquant/invalide }
+        "503": { description: Backend non configuré }
 
   /cron/expire:
     get:
