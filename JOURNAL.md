@@ -6,6 +6,22 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (sexdecies) — Bouton « Exporter mes ventes (CSV) » dans le dashboard vendeur
+
+**Demande** : rendre `sales-export` utilisable → bouton dans le dashboard vendeur.
+
+**Fait (app.js compilé, `VendorDashboard`)** : bouton « Exporter (CSV) » ajouté à côté
+de « Voir tout » dans le header de la carte « Commandes Récentes ». Handler :
+`DataService.paymentFetch("/api/vendor/sales-export", {method:"GET"})` (JWT même
+origine, réutilise la logique auth existante) → `res.blob()` → download via
+`URL.createObjectURL` + `<a download>` → toast succès/erreur.
+Cache-busting : bundle `app.47935795d8.js` → **`app.5d267ad0fc.js`** + ref index.html.
+
+**Vérif locale** : `node --check` OK, app boote (0 erreur console), bouton présent
+dans le bundle servi. Clic réel = à tester avec un login vendeur (dashboard gated).
+
+---
+
 ## 2026-08-02 (quindecies) — Roadmap pro : attaque des 5 améliorations prioritaires
 
 **Demande** : trouver des améliorations « niveau professionnel » et attaquer le top 5.
