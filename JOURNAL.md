@@ -6,6 +6,29 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (terdecies) — Coursier : pin draggable retrait/livraison (pickLocation câblé)
+
+**Demande** : brancher le sélecteur d'adresse par pin (`pickLocation`, déjà codé mais
+JAMAIS appelé — cf. audit undecies) sur le module Coursier (1er des 3 écrans choisis).
+
+**Fait (index.html, module Coursier `CourierRequestModal`)** :
+- 2 états `showPMap`/`showDMap` + 2 toggles opt-in « 🗺️ Ajuster le retrait/la livraison
+  sur la carte » sous chaque sélecteur de quartier.
+- Au clic : `NexusMap.pickLocation(el, {lat,lng,color,onChange})` monte une carte Leaflet
+  avec pin **draggable** (vert retrait / rouge livraison), initialisé sur `coordsOf()`
+  (quartier ou GPS déjà choisi). `onChange` → `setPGeo`/`setDGeo` → `coordsOf` renvoie le
+  point ajusté → **le devis se recalcule** automatiquement (useEffect quote existant).
+- Opt-in (pas affiché par défaut) → zéro flicker/état obsolète, aucune régression du flux
+  existant (quartier + GPS inchangés).
+
+**Vérif locale (static-py:5598, SW purgé)** : modal ouvert, toggle « Masquer la carte »,
+carte Leaflet/OSM rendue (385×170, tuiles chargées) + **pin vert draggable** (screenshot),
+toggle livraison présent. `check-inline-scripts` : seul le faux positif Fuse.
+
+**Reste (2 autres cibles choisies)** : pin au checkout produit + à l'inscription vendeur.
+
+---
+
 ## 2026-08-02 (duodecies) — Retrait de la fondation MapLibre (doublon de Leaflet)
 
 **Décision** (utilisateur : garder les cartes Leaflet existantes + m'a laissé choisir

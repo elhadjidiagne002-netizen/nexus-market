@@ -6094,6 +6094,8 @@ window.addEventListener('unhandledrejection', function(event) {
     var _r = React.useState(null), result = _r[0], setResult = _r[1];
     var _pg = React.useState(null), pGeo = _pg[0], setPGeo = _pg[1];   // {lat,lng} retrait GPS
     var _dg = React.useState(null), dGeo = _dg[0], setDGeo = _dg[1];   // {lat,lng} livraison GPS
+    var _pmap = React.useState(false), showPMap = _pmap[0], setShowPMap = _pmap[1]; // pin retrait draggable
+    var _dmap = React.useState(false), showDMap = _dmap[0], setShowDMap = _dmap[1]; // pin livraison draggable
     var _loc = React.useState(''), locating = _loc[0], setLocating = _loc[1]; // 'pickup'|'dropoff'|''
     var _nb = React.useState(null), nearby = _nb[0], setNearby = _nb[1];      // coursiers proches du retrait
     var _oc = React.useState(null), onlineCount = _oc[0], setOnlineCount = _oc[1]; // livreurs en ligne (global)
@@ -6377,6 +6379,11 @@ window.addEventListener('unhandledrejection', function(event) {
                 E('select', { value: pickup, onChange: function (e) { setPickup(e.target.value); }, style: Object.assign({}, inp, { marginBottom: 0, flex: 1 }) },
                   E('option', { value: '' }, '— Choisir un quartier —'), zOpts),
                 E('button', { onClick: function () { detect('pickup'); }, disabled: locating === 'pickup', title: 'Utiliser ma position GPS', style: { padding: '0 .8rem', borderRadius: 10, border: '1.5px solid #006d40', background: '#fff', color: '#006d40', fontWeight: 700, fontSize: '.78rem', cursor: 'pointer', whiteSpace: 'nowrap' } }, locating === 'pickup' ? '…' : '📍 Moi')),
+          // [PIN] Ajustement précis du retrait sur carte (pickLocation Leaflet, opt-in).
+          E('div', { style: { marginTop: '-.35rem', marginBottom: '.7rem' } },
+            E('button', { onClick: function () { setShowPMap(function (v) { return !v; }); }, style: { background: 'none', border: 'none', color: '#006d40', fontWeight: 600, fontSize: '.75rem', cursor: 'pointer', padding: 0 } }, showPMap ? '▾ Masquer la carte' : '🗺️ Ajuster le retrait sur la carte'),
+            showPMap && E('div', { ref: function (el) { if (!el || el.__pick || !window.NexusMap) return; el.__pick = true; var pc = coordsOf('pickup') || { lat: 14.6928, lng: -17.4467 }; NexusMap.pickLocation(el, { lat: pc.lat, lng: pc.lng, color: '#006d40', onChange: function (la, ln) { setPGeo({ lat: la, lng: ln }); } }); }, className: 'nexus-map', style: { height: 170, marginTop: '.4rem' } }),
+            showPMap && E('div', { style: { fontSize: '.68rem', color: '#888', marginTop: '.3rem' } }, 'Glissez le repère vert sur le point de retrait exact.')),
           E('p', { style: lbl }, 'Livraison'),
           dGeo
             ? E('div', { style: { display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(230,57,70,.07)', border: '1.5px solid #E63946', borderRadius: 10, padding: '.55rem .7rem', marginBottom: '.7rem' } },
@@ -6386,6 +6393,11 @@ window.addEventListener('unhandledrejection', function(event) {
                 E('select', { value: dropoff, onChange: function (e) { setDropoff(e.target.value); }, style: Object.assign({}, inp, { marginBottom: 0, flex: 1 }) },
                   E('option', { value: '' }, '— Choisir un quartier —'), zOpts),
                 E('button', { onClick: function () { detect('dropoff'); }, disabled: locating === 'dropoff', title: 'Utiliser ma position GPS', style: { padding: '0 .8rem', borderRadius: 10, border: '1.5px solid #E63946', background: '#fff', color: '#E63946', fontWeight: 700, fontSize: '.78rem', cursor: 'pointer', whiteSpace: 'nowrap' } }, locating === 'dropoff' ? '…' : '📍 Ici')),
+          // [PIN] Ajustement précis de la livraison sur carte (pickLocation Leaflet, opt-in).
+          E('div', { style: { marginTop: '-.35rem', marginBottom: '.7rem' } },
+            E('button', { onClick: function () { setShowDMap(function (v) { return !v; }); }, style: { background: 'none', border: 'none', color: '#E63946', fontWeight: 600, fontSize: '.75rem', cursor: 'pointer', padding: 0 } }, showDMap ? '▾ Masquer la carte' : '🗺️ Ajuster la livraison sur la carte'),
+            showDMap && E('div', { ref: function (el) { if (!el || el.__pick || !window.NexusMap) return; el.__pick = true; var dc = coordsOf('dropoff') || { lat: 14.6928, lng: -17.4467 }; NexusMap.pickLocation(el, { lat: dc.lat, lng: dc.lng, color: '#E63946', onChange: function (la, ln) { setDGeo({ lat: la, lng: ln }); } }); }, className: 'nexus-map', style: { height: 170, marginTop: '.4rem' } }),
+            showDMap && E('div', { style: { fontSize: '.68rem', color: '#888', marginTop: '.3rem' } }, 'Glissez le repère rouge sur le point de livraison exact.')),
           // Preuve sociale : coursiers disponibles autour du retrait (+ carte de zone)
           (nearby != null) && E('div', { style: { marginBottom: '.7rem' } },
             nearby.length > 0
