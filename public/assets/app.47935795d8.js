@@ -35237,7 +35237,7 @@ const ProfileEditor = ({ currentUser: currentUser2, addToast }) => {
       if (NEXUS_CONFIG.apiUrl) {
         const res = await DataService.apiFetch("/api/profiles/me", {
           method: "PATCH",
-          body: JSON.stringify({
+          body: JSON.stringify(Object.assign({
             name:       form.name.trim(),
             phone:      form.phone,
             bio:        form.bio,
@@ -35245,7 +35245,7 @@ const ProfileEditor = ({ currentUser: currentUser2, addToast }) => {
             address:    form.address,
             city:       form.city,
             country:    form.country,
-          }),
+          }, form.home_lat != null ? { home_lat: form.home_lat, home_lng: form.home_lng } : {})),
         });
         if (res && res.ok) {
           const updated = await res.json();
@@ -35260,11 +35260,11 @@ const ProfileEditor = ({ currentUser: currentUser2, addToast }) => {
       }
       // Supabase — mise à jour directe du profil acheteur
       if (DataService._sb) {
-        const { error } = await DataService._sb.from('profiles').update({
+        const { error } = await DataService._sb.from('profiles').update(Object.assign({
           name: form.name.trim(), email: form.email, phone: form.phone,
           bio: form.bio, avatar_url: form.avatar_url,
           address: form.address, city: form.city, country: form.country,
-        }).eq('id', currentUser2.id);
+        }, form.home_lat != null ? { home_lat: form.home_lat, home_lng: form.home_lng } : {})).eq('id', currentUser2.id);
         if (!error && DataService._currentUser) Object.assign(DataService._currentUser, form);
         addToast(error ? "Erreur Supabase : " + error.message : "Profil mis \xE0 jour !", error ? "danger" : "success");
         setSaving(false); return;
@@ -35349,6 +35349,11 @@ const ProfileEditor = ({ currentUser: currentUser2, addToast }) => {
   /* @__PURE__ */ React.createElement("div", { className: "form-group" },
     /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Pays"),
     /* @__PURE__ */ React.createElement("input", { type: "text", className: "form-input", value: form.country, onChange: (e) => setForm(__spreadProps(__spreadValues({}, form), { country: e.target.value })), placeholder: "Sénégal" }))),
+/* [MAP] Position boutique/retrait → profiles.home_lat/home_lng (alimente les cartes « à proximité »/pros). */
+/* @__PURE__ */ React.createElement("div", { className: "form-group" },
+  /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "📍 Position sur la carte (optionnel)"),
+  /* @__PURE__ */ React.createElement("p", { style: { fontSize: "0.75rem", color: "var(--text-secondary)", margin: "0 0 .5rem" } }, "Cliquez ou glissez le repère sur votre emplacement (boutique / point de retrait). Vos clients pourront vous trouver sur la carte « à proximité »."),
+  /* @__PURE__ */ React.createElement("div", { ref: (el) => { if (!el || el.__pick || !window.NexusMap) return; el.__pick = true; var _la = Number(form.home_lat != null ? form.home_lat : (currentUser2 && currentUser2.home_lat)); var _ln = Number(form.home_lng != null ? form.home_lng : (currentUser2 && currentUser2.home_lng)); window.NexusMap.pickLocation(el, { lat: isFinite(_la) ? _la : 14.6928, lng: isFinite(_ln) ? _ln : -17.4467, color: "#006d40", onChange: (la, ln) => setForm((prev) => Object.assign({}, prev, { home_lat: la, home_lng: ln })) }); }, className: "nexus-map", style: { height: "220px", borderRadius: "10px" } })),
 /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary ${saving ? "btn-loading" : ""}`, onClick: handleSaveProfile, disabled: saving }, saving ? "Enregistrement..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-save" }), " Enregistrer les modifications"))), /* @__PURE__ */ React.createElement("div", { className: "card" }, /* @__PURE__ */ React.createElement("h3", { style: { fontWeight: 700, marginBottom: "1rem", fontSize: "1rem" } }, "Changer le mot de passe"), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Mot de passe actuel ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-lock" }), /* @__PURE__ */ React.createElement("input", { type: showPw ? "text" : "password", className: `form-input ${pwErrors.current ? "error" : ""}`, value: pwForm.current, onChange: (e) => setPwForm(__spreadProps(__spreadValues({}, pwForm), { current: e.target.value })) }), /* @__PURE__ */ React.createElement("button", { type: "button", className: "input-action", onClick: () => setShowPw(!showPw) }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-eye${showPw ? "-slash" : ""}` }))), pwErrors.current && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), pwErrors.current)), /* @__PURE__ */ React.createElement("div", { className: "form-row" }, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Nouveau mot de passe ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("input", { type: "password", className: `form-input ${pwErrors.newPw ? "error" : ""}`, value: pwForm.newPw, onChange: (e) => setPwForm(__spreadProps(__spreadValues({}, pwForm), { newPw: e.target.value })) }), /* @__PURE__ */ React.createElement(PasswordStrengthBar, { password: pwForm.newPw }), pwErrors.newPw && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), pwErrors.newPw)), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label" }, "Confirmer ", /* @__PURE__ */ React.createElement("span", { className: "required" }, "*")), /* @__PURE__ */ React.createElement("input", { type: "password", className: `form-input ${pwErrors.confirm ? "error" : ""}`, value: pwForm.confirm, onChange: (e) => setPwForm(__spreadProps(__spreadValues({}, pwForm), { confirm: e.target.value })) }), pwErrors.confirm && /* @__PURE__ */ React.createElement("p", { className: "form-error" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), pwErrors.confirm))), /* @__PURE__ */ React.createElement("button", { className: `btn btn-secondary ${savingPw ? "btn-loading" : ""}`, onClick: handleChangePw, disabled: savingPw }, savingPw ? "Modification..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-key" }), " Modifier le mot de passe"))));
 };
 // [NEXUS-F3] PromoCodeWidget sécurisé

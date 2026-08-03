@@ -6,6 +6,36 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (quaterdecies) — Vendeur : position boutique sur carte (home_lat/home_lng)
+
+**Demande** : target #3 — pin position boutique (les colonnes `profiles.home_lat/home_lng`
+existaient mais n'étaient JAMAIS écrites). #2 (checkout) écarté : `orders` sans colonnes
+lat/lng (migration requise) + redondant avec le pin coursier post-commande.
+
+**Fait (app.js compilé, composant profil `handleSaveProfile`)** :
+- Section carte « 📍 Position sur la carte (optionnel) » ajoutée au formulaire profil,
+  après Ville/Pays : `NexusMap.pickLocation` (pin draggable + clic pour déplacer),
+  initialisé sur `home_lat/home_lng` existants sinon Dakar. `onChange` → `setForm(prev =>
+  {...prev, home_lat, home_lng})` (updater fonctionnel = pas de state obsolète).
+- Sauvegarde : `home_lat/home_lng` ajoutés (conditionnellement, via Object.assign) aux
+  DEUX corps de `handleSaveProfile` — update Supabase direct (chemin prod, apiUrl vide)
+  ET PATCH /api/profiles/me (complétude). N'écrase pas avec null si non renseigné.
+- Cache-busting : bundle `app.2051ad115d.js` → **`app.47935795d8.js`** + ref index.html.
+
+**Vérif locale (static-py:5598, SW purgé)** : `node --check` OK, app boote (overlay 1519
+él.), 0 erreur console, nouveau bundle référencé. pickLocation déjà prouvé (pin coursier).
+
+**⚠️ À VÉRIFIER (non testable sans login vendeur en local)** :
+1. Test UI réel : ouvrir le profil connecté → la carte s'affiche, glisser le pin,
+   Enregistrer → `home_lat/home_lng` persistés en base.
+2. **RLS/GRANT** : le rôle `authenticated` doit avoir UPDATE sur `profiles.home_lat/
+   home_lng` (cf. piège mémoire orders-update-grant-403 : un GRANT colonne manquant →
+   403 silencieux). Si la sauvegarde échoue en 403, ajouter le GRANT.
+3. Ensuite : brancher une carte `NexusMap.nearby` qui lit ces positions pour les
+   pros/boutiques (la valeur de #3 se concrétise là).
+
+---
+
 ## 2026-08-02 (terdecies) — Coursier : pin draggable retrait/livraison (pickLocation câblé)
 
 **Demande** : brancher le sélecteur d'adresse par pin (`pickLocation`, déjà codé mais
