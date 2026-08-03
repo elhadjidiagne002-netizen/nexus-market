@@ -21,6 +21,7 @@
 
 import { requireAuth, validatePaymentAmount, validateBoostAmount, validateProSubscription, validateStoryFee, validateFlashSale, validateB2bPriority, validateTransportBooking } from '../../_lib/utils.js';
 import { rateLimit, clientIp, tooManyRequests } from '../../_lib/ratelimit.js';
+import { logPaymentEvent } from '../../_lib/payment-log.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -162,6 +163,12 @@ export async function onRequest({ request, env }) {
       status:         'pending',
       created_at:     new Date().toISOString(),
     }).catch(() => {});
+
+    await logPaymentEvent(env, {
+      provider: 'paydunya', event_type: 'init',
+      order_id: isUuid ? order_id : null, ref: ref_command,
+      amount: Math.round(Number(amount)), status: 'pending', note: kind || 'order',
+    });
 
     return jsonR({ ok: true, provider: 'paydunya', redirect_url, token: data.token, ref_command });
 

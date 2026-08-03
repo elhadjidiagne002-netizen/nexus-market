@@ -6,6 +6,29 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (septdecies) — Journal payment_events branché dans les flux paiement (#1)
+
+**Suite du #1 roadmap** : la migration `payment_events` était prête ; ici on BRANCHE
+la journalisation (sans pouvoir appliquer la table — pas de token DB).
+
+**Fait** :
+- `functions/api/_lib/payment-log.js` : `logPaymentEvent(env, ev)` — insert
+  best-effort dans `payment_events`. Toute erreur (table absente, réseau) avalée →
+  **inerte tant que la migration n'est pas appliquée**, se remplit dès qu'elle l'est.
+- Branché : `paydunya/init.js` (event `init`), `paydunya/ipn.js` (`ipn_paid`/
+  `ipn_failed` + payload brut), `cron/reconcile-payments.js` (`reconciled_paid`/
+  `_failed` = un webhook Stripe manqué, rattrapé = écart tracé).
+- **NON touché** : handlers PayTech/Stripe live (pour zéro risque prod) → à étendre
+  plus tard.
+
+**Vérif** : `node --check` (4 fichiers) OK, eslint 0 erreur (warning `request`
+pré-existant), 28/28 tests. Best-effort → aucun risque sur les paiements existants.
+
+**Reste #1** : appliquer la migration, étendre aux handlers PayTech/Stripe, alerte
+sur écart, réconciliation mobile money.
+
+---
+
 ## 2026-08-02 (sexdecies) — Bouton « Exporter mes ventes (CSV) » dans le dashboard vendeur
 
 **Demande** : rendre `sales-export` utilisable → bouton dans le dashboard vendeur.

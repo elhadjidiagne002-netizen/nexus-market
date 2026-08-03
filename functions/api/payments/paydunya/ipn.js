@@ -16,6 +16,7 @@
 
 import { fulfillPayment } from '../../_lib/payment-fulfill.js';
 import { sha512hex, timingSafeEqual, parseNested } from '../../_lib/webhook-utils.js';
+import { logPaymentEvent } from '../../_lib/payment-log.js';
 
 const jsonR = (d, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -80,6 +81,16 @@ export async function onRequest({ request, env }) {
       paymentMethod: 'mobile',
       ids,
       sessionFilter: ref ? `session_id=eq.${encodeURIComponent(ref)}` : null,
+    });
+    // Journal d'audit (best-effort — n'interrompt jamais l'IPN).
+    await logPaymentEvent(env, {
+      provider: 'paydunya',
+      event_type: isPaid ? 'ipn_paid' : 'ipn_failed',
+      order_id: ids.order_id || null,
+      ref,
+      amount: b.invoice && b.invoice.total_amount != null ? Number(b.invoice.total_amount) : null,
+      status: result.kind || null,
+      payload: b,
     });
     return jsonR(result, result.ok ? 200 : 400);
   } catch (err) {

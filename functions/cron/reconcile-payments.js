@@ -18,6 +18,8 @@
  * ──────────────────────────────────────────────────────────────────────────
  */
 
+import { logPaymentEvent } from '../api/_lib/payment-log.js';
+
 const jsonR = (d, s = 200) => new Response(JSON.stringify(d, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } });
 
 export async function onRequestGet({ request, env }) {
@@ -68,7 +70,18 @@ async function reconcile(env, request) {
       const up = await fetch(`${SB}/rest/v1/orders?id=eq.${encodeURIComponent(o.id)}`, {
         method: 'PATCH', headers: { ...H, Prefer: 'return=minimal' }, body: JSON.stringify(patch),
       });
-      if (up.ok) { patch.payment_status === 'paid' ? out.paid++ : out.failed++; }
+      if (up.ok) {
+        const paid = patch.payment_status === 'paid';
+        paid ? out.paid++ : out.failed++;
+        // Écart détecté : le webhook Stripe avait manqué cette transition → audit.
+        await logPaymentEvent(env, {
+          provider: 'reconcile',
+          event_type: paid ? 'reconciled_paid' : 'reconciled_failed',
+          order_id: o.id, ref: pi, amount: o.total != null ? Number(o.total) : null, currency: 'EUR',
+          status: patch.payment_status,
+          note: 'Rattrapé par le cron de réconciliation (webhook Stripe manqué)',
+        });
+      }
       else out.errors.push(`order ${o.id}: HTTP ${up.status}`);
     } catch (e) { out.errors.push(`order ${o.id}: ${e.message}`); }
   }

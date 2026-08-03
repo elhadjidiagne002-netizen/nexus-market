@@ -13,8 +13,12 @@ Légende statut : ⬜ à faire · 🟡 préparé (à appliquer) · 🟩 fait · 
 - 🟡 **Migration `sql/2026_08_02_payment_events.sql`** créée (journal immuable des
   événements paiement : provider/type/order/ref/montant/payload). À APPLIQUER en base
   (`node scripts/db-query.mjs --file sql/2026_08_02_payment_events.sql`).
-- ⬜ Une fois la table en place : journaliser depuis les webhooks (Stripe/PayTech/
-  PayDunya) + `cron/reconcile-payments.js` ; ajouter la détection d'écarts + alerte.
+- 🟩 **Journalisation BRANCHÉE** (best-effort, inerte tant que la table n'existe pas) :
+  helper `functions/api/_lib/payment-log.js` (`logPaymentEvent`) appelé depuis
+  paydunya/init (`init`), paydunya/ipn (`ipn_paid`/`ipn_failed`), et
+  `cron/reconcile-payments.js` (`reconciled_paid`/`_failed` = écart webhook détecté).
+- ⬜ Étendre la journalisation aux handlers PayTech/Stripe live (non touchés ici pour
+  éviter tout risque sur le flux en prod) + alerte sur écart.
 - ⬜ Étendre `reconcile-payments.js` au mobile money (aujourd'hui Stripe seul).
 - **Pourquoi pro** : traçabilité comptable, zéro paiement perdu, audit financier.
 
