@@ -6,6 +6,42 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (quindecies) — Roadmap pro : attaque des 5 améliorations prioritaires
+
+**Demande** : trouver des améliorations « niveau professionnel » et attaquer le top 5.
+Analyse ancrée sur l'état réel (141 routes, 4 fichiers de test, réponses API 39
+`{error}` vs 14 `{ok:false}`, incidents passés égress/IO Supabase).
+
+**Feuille de route** : `docs/ROADMAP-PRO.md` (top 5 priorisé + reste, avec statut/effort).
+
+**Livré cette session** :
+- **#1 (préparé)** — `sql/2026_08_02_payment_events.sql` : journal IMMUABLE des
+  événements paiement (audit financier, RLS service_role only). À APPLIQUER en base
+  (bloqué : pas de token DB dispo ici). Ensuite : y journaliser Stripe/PayTech/PayDunya
+  + `reconcile-payments.js` (aujourd'hui Stripe seul).
+- **#2 (préparé)** — `scripts/audit-rls-grants.sql` : introspection RLS/GRANT
+  (tables sans policy, RLS off, GRANTs table+COLONNE). À RUN avec le token. Cible en
+  priorité `profiles.home_lat/home_lng` (ajouté 08-02 — risque de 403 GRANT colonne).
+- **#3 (FAIT)** — helpers webhook purs extraits dans `functions/api/_lib/webhook-utils.js`
+  (sha512hex/sha256hex/timingSafeEqual/parseNested) + **tests de contrat**
+  `tests/unit/webhook-utils.test.js` (vecteurs NIST, comparaison constante, parsing
+  form-encoded imbriqué PayDunya). paydunya/ipn.js refactoré pour les importer.
+  **28/28 tests passent** (dans le gate precommit + CI).
+- **#5 (1er livrable)** — `functions/api/vendor/sales-export.js` (GET /api/vendor/
+  sales-export) : export CSV des ventes du vendeur connecté (auth, filtres from/to/
+  status, EUR+FCFA, BOM UTF-8 Excel). Reste : factures PDF, analytics, alertes stock.
+- **#4** — documenté dans la roadmap (migration réponses `response.js` PAR endpoint =
+  risque de casse front → pas de bulk ; OpenAPI à compléter). Non exécuté ce tour.
+
+**Bloqueurs** : #1 (créer la table) et #2 (audit) nécessitent le token Supabase
+management (`SUPABASE_ACCESS_TOKEN`/`%TEMP%/sb-token.txt`), absent ici → livrés
+« prêts à appliquer ». À exécuter par l'utilisateur.
+
+**Reste des 5 (non fini, gros)** : #1 wiring journal + reconcile mobile money, #4
+migration réponses, #5 facturation PDF. Suivi dans `docs/ROADMAP-PRO.md`.
+
+---
+
 ## 2026-08-02 (quaterdecies) — Vendeur : position boutique sur carte (home_lat/home_lng)
 
 **Demande** : target #3 — pin position boutique (les colonnes `profiles.home_lat/home_lng`
