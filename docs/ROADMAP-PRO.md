@@ -17,8 +17,11 @@ Légende statut : ⬜ à faire · 🟡 préparé (à appliquer) · 🟩 fait · 
   helper `functions/api/_lib/payment-log.js` (`logPaymentEvent`) appelé depuis
   paydunya/init (`init`), paydunya/ipn (`ipn_paid`/`ipn_failed`), et
   `cron/reconcile-payments.js` (`reconciled_paid`/`_failed` = écart webhook détecté).
+- 🟩 **Alerte OPS sur écart** : `cron/reconcile-payments.js` alerte l'admin par email
+  (`sendEmail`, best-effort, gate ADMIN_EMAIL) dès qu'un paiement est rattrapé (=
+  webhook Stripe manqué) ou en cas d'erreur. Frontend Sentry déjà branché (vérifié).
 - ⬜ Étendre la journalisation aux handlers PayTech/Stripe live (non touchés ici pour
-  éviter tout risque sur le flux en prod) + alerte sur écart.
+  éviter tout risque sur le flux en prod).
 - ⬜ Étendre `reconcile-payments.js` au mobile money (aujourd'hui Stripe seul).
 - **Pourquoi pro** : traçabilité comptable, zéro paiement perdu, audit financier.
 

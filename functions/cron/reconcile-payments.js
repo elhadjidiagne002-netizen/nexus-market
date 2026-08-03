@@ -19,6 +19,7 @@
  */
 
 import { logPaymentEvent } from '../api/_lib/payment-log.js';
+import { sendEmail } from '../api/_lib/utils.js';
 
 const jsonR = (d, s = 200) => new Response(JSON.stringify(d, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } });
 
@@ -87,5 +88,28 @@ async function reconcile(env, request) {
   }
 
   console.log('[reconcile-payments]', JSON.stringify(out));
+
+  // [ALERTE OPS] Écart détecté (paiement rattrapé = webhook Stripe manqué) ou erreurs
+  // → alerter l'admin par email. Best-effort : gate = ADMIN_EMAIL + clé email présents ;
+  // n'interrompt jamais la réconciliation.
+  if ((out.paid > 0 || out.failed > 0 || out.errors.length > 0) && env.ADMIN_EMAIL) {
+    try {
+      const esc = (s) => String(s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+      await sendEmail(env, {
+        to: env.ADMIN_EMAIL,
+        subject: `⚠️ NEXUS — réconciliation paiement : ${out.paid} rattrapé(s), ${out.errors.length} erreur(s)`,
+        html: `<h2>Réconciliation paiement Stripe</h2>`
+          + `<p>Le cron a détecté des écarts — un webhook Stripe a probablement échoué (paiement encaissé mais commande non marquée payée).</p>`
+          + `<ul><li>Commandes vérifiées : ${out.checked}</li>`
+          + `<li><b>Rattrapées « payées » : ${out.paid}</b></li>`
+          + `<li>Marquées « échouées » : ${out.failed}</li>`
+          + `<li>Erreurs : ${out.errors.length}</li></ul>`
+          + (out.errors.length ? `<pre>${esc(out.errors.slice(0, 10).join('\n'))}</pre>` : '')
+          + `<p>Action recommandée : vérifier la config du webhook Stripe (/api/webhooks/stripe) et l'IPN.</p>`
+          + `<p style="color:#888;font-size:12px">${esc(out.run_at)}</p>`,
+      });
+    } catch (e) { console.warn('[reconcile-payments] alerte admin KO:', e.message); }
+  }
+
   return out;
 }

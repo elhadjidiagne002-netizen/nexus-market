@@ -6,6 +6,22 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-02 (octodecies) — Observabilité : alerte admin sur écart de réconciliation
+
+**Constat** : frontend Sentry OK (charge le vrai SDK si DSN configuré) ; backend
+sans alerte. Ajout de l'alerte OPS (« alerte sur écart » du #1).
+
+**Fait** : `cron/reconcile-payments.js` — si le cron rattrape ≥1 paiement (un webhook
+Stripe a été manqué : encaissé mais commande non marquée payée) OU rencontre des
+erreurs, il envoie un **email d'alerte à l'admin** (`sendEmail` de `_lib/utils.js`,
+Resend+Brevo, best-effort). Gate = `ADMIN_EMAIL` présent + clé email → aucun envoi
+parasite si non configuré, aucune interruption de la réconciliation.
+
+**Vérif** : `node --check` OK, eslint 0 erreur (warning `request` pré-existant),
+28/28 tests. Sûr (best-effort, gated).
+
+---
+
 ## 2026-08-02 (septdecies) — Journal payment_events branché dans les flux paiement (#1)
 
 **Suite du #1 roadmap** : la migration `payment_events` était prête ; ici on BRANCHE
