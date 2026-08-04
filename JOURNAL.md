@@ -46,6 +46,17 @@ n'était pas le plus proche en temps réel. Même biais sur le devis de livraiso
 `POST /api/courier/optimize` répond `{"error":"Token manquant"}` 401, la route existe).
 `npm run test:unit` vert (35/35), lint 0 erreur. Documenté dans `docs/openapi.yaml` (v1.2.0).
 
+**Suite (même jour)** : le premier consommateur est branché. Le bouton « Dispatch auto »
+du panneau admin livraisons prenait `list[0]` de `nearbyCouriers`, soit le plus proche
+**à vol d'oiseau** — exactement le biais que l'endpoint corrige. Il appelle maintenant
+`/api/courier/optimize` et assigne le premier du classement **routier**, avec repli
+intégral sur `nearbyCouriers` si l'appel échoue (non admin, réseau, service absent) :
+ce bouton ne peut pas cesser de marcher. Le toast distingue la source (🛣️ OSRM vs 📐 vol
+d'oiseau) et le classement complet (`crow_km` vs `road_km`) part en `console.info` —
+c'est ce chiffre qui dira si automatiser la cascade vaut le coup. Commit `f9e3967`,
+bundle renommé `app.5d267ad0fc` → `app.364f085be5`, vérifié live sur nexusmarket.sn
+(`DataService.optimizeDelivery` = function).
+
 **Reste à faire (hors périmètre code, décision/infra utilisateur)** : provisionner la VM
 OSRM+VROOM (2 vCPU / 4 Go, procédure complète dans `docs/OSRM_VROOM.md`) puis renseigner
 `OSRM_BASE_URL` / `VROOM_BASE_URL` (+ jetons du reverse proxy) dans les variables
