@@ -145,6 +145,24 @@ réel des deux via `GET /api/whatsapp` — les champs Instance ID/Token du même
 pour le bouton diagnostic « Vérifier la connexion ». Détails/pièges de déploiement WAHA :
 mémoire `whatsapp-green-api-quota-466`.
 
+## OSRM + VROOM — routage routier réel (optionnel, auto-hébergé)
+`functions/api/_lib/routing.js` centralise les appels à **OSRM** (distance/durée
+routières, matrice) et **VROOM** (optimisation de tournées), par `fetch()` pur.
+Consommé par `/api/courier/optimize` (classement des coursiers par ETA réel +
+mode groupé multi-courses) et `/api/shipping-quote` (devis au km routier).
+Déploiement + API détaillée : **`docs/OSRM_VROOM.md`**.
+- ⚠️ **`[lng, lat]`, jamais `[lat, lng]`** : OSRM/VROOM attendent la longitude en
+  premier. Conversion centralisée dans `routing.js` (`toLonLat`) — à ne refaire
+  nulle part ailleurs, l'erreur est silencieuse (route plausible mais fausse).
+- ⚠️ `Number(null) === 0` : sans le filtre de `isPoint()`, un coursier de position
+  NULL serait placé au point (0, 0), au large du golfe de Guinée, et gagnerait
+  tous les classements. Ne jamais passer par un simple `Number.isFinite`.
+- Sans `OSRM_BASE_URL` → repli Haversine × 1,35 (comportement historique du projet),
+  sans `VROOM_BASE_URL` → seul le mode groupé répond 503. **Rien ne casse.**
+- `/api/courier/optimize` **ne modifie rien en base** : il calcule et renvoie.
+  L'attribution effective reste la cascade SQL (`_activate_next_offer`) ou
+  `admin_assign_delivery` — sinon deux sources de vérité de dispatch divergeraient.
+
 ## Vérifications avant commit
 - `node --check <fichier.js>` sur les functions modifiées (runtime Workers, pas de test runner backend).
 - Tests E2E : `tests/checkout.spec.js` (Playwright, nécessite un serveur lancé).
@@ -172,9 +190,10 @@ Purge des compteurs >24h dans le cron cleanup.
 `npm run format`.
 
 ## Manquements connus non résolus (nécessitent décision/accès)
-- **Devis de livraison transporteur** : `functions/api/shipping-quote.js` est un stub
-  (`[TODO] Brancher un vrai transporteur`) — intégration DHL/GIG/SENPOST réelle à faire
-  (clés présentes dans `.env`, mais specs API requises).
+- **Devis de livraison transporteur** : `functions/api/shipping-quote.js` sait désormais
+  facturer au **km routier réel** (source `osrm`, si `from`/`to` fournis + OSRM configuré,
+  cf. § OSRM/VROOM), mais l'intégration d'un **vrai transporteur** DHL/GIG/SENPOST reste
+  à faire (`carrierQuote()`, clés présentes dans `.env`, specs API requises).
 - **Paiement monétisation via Wave/OM** : les liens Wave/Orange Money n'ont pas de callback
   → boosts/abonnements/flash/priorité B2B payés ainsi restent `pending` (activation manuelle
   admin). Canal automatisé = **PayTech** (IPN). Stories payantes : flux PayTech **câblé**

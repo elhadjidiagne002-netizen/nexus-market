@@ -6,6 +6,49 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-04 — Routage routier réel : OSRM + VROOM (squelette + doc)
+
+**Constat** : tout le projet raisonnait à vol d'oiseau. Haversine côté frontend
+(`DataService._haversineKm`, ETA figé à 22 km/h) et distance géodésique PostGIS
+côté matching (`nearby_couriers`). À Dakar un coursier « à 800 m » peut être de
+l'autre côté de la corniche = 15 min de route : le premier de la cascade d'offres
+n'était pas le plus proche en temps réel. Même biais sur le devis de livraison
+(`shipping-quote.js`, grille de zones statique).
+
+**Fait** :
+- `functions/api/_lib/routing.js` — client OSRM (`/route`, `/table`) + VROOM, en
+  `fetch()` pur (compatible runtime Workers). Conversion `[lng, lat]` centralisée ici.
+- `functions/api/courier/optimize.js` — `POST /api/courier/optimize`, admin ou appel
+  interne, rate-limité 20/min/IP. Mode **classement** (`delivery_id`) : PostGIS
+  pré-filtre, OSRM re-classe la liste courte par ETA routier jusqu'au retrait, et
+  renvoie `crow_km` à côté de `road_km` pour rendre l'écart visible. Mode **groupé**
+  (`delivery_ids`) : VROOM affecte N courses à M coursiers (shipments retrait→dépôt,
+  capacité `max_per_courier`).
+- `shipping-quote.js` — nouvelle source de prix `osrm` (base + prix/km sur distance
+  routière) quand `from`/`to` sont fournis, intercalée entre l'API transporteur et
+  la grille de zones.
+- `docs/OSRM_VROOM.md` — déploiement Docker complet (extrait Geofabrik Sénégal,
+  pipeline MLD, compose OSRM+VROOM, reverse proxy Caddy car aucun des deux services
+  n'a d'authentification native), API, pièges.
+- `.env.example` + `tests/unit/routing.test.js` (8 tests, repli sans service).
+
+**Décisions structurantes** :
+- **Rien n'est écrit en base par l'optimiseur** : il calcule et renvoie. L'attribution
+  effective reste la cascade SQL / `admin_assign_delivery`, pour ne pas créer une
+  seconde source de vérité de dispatch.
+- **Dégradation totale** : sans `OSRM_BASE_URL` tout retombe sur Haversine × 1,35
+  (facteur de détour urbain) ; sans `VROOM_BASE_URL` seul le mode groupé répond 503.
+  Déployer le code sans déployer les services ne change donc rien au comportement actuel.
+- Piège attrapé au passage : `Number(null) === 0` ferait passer un coursier de position
+  NULL pour le point (0, 0) — filtré explicitement dans `isPoint()`, avec test dédié.
+
+**État** : code en place, `npm run test:unit` vert (35/35), `node --check` OK sur les
+fichiers modifiés. **Non déployé** — en attente du provisionnement des services OSRM et
+VROOM (VM 2 vCPU / 4 Go) et des variables Cloudflare. Tant qu'elles sont vides, la mise
+en production est inerte.
+
+---
+
 ## 2026-08-02 (octodecies) — Observabilité : alerte admin sur écart de réconciliation
 
 **Constat** : frontend Sentry OK (charge le vrai SDK si DSN configuré) ; backend
