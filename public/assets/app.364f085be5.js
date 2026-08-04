@@ -23797,11 +23797,36 @@ const AdminLivraisonPanel = ({ addToast }) => {
     load();
   };
 
-  // Attribution AUTOMATIQUE : assigne le coursier disponible le plus proche du retrait.
+  // Attribution AUTOMATIQUE : assigne le coursier le plus proche du retrait en
+  // TEMPS DE ROUTE RÉEL (OSRM via /api/courier/optimize), et non plus à vol
+  // d'oiseau — à Dakar un coursier « à 800 m » peut être de l'autre côté de la
+  // corniche. Repli intégral sur nearbyCouriers() si l'endpoint est indisponible
+  // (non admin, réseau, service non provisionné) : le comportement historique
+  // reste donc toujours atteignable, ce bouton ne peut pas cesser de marcher.
   const autoAssign = async (deliveryId) => {
     const d = deliveries.find(x=>x.id===deliveryId) || {};
     const lat = d.pickup_lat, lng = d.pickup_lng;
     if (lat==null || lng==null) { addToast('Pas de position de retrait pour ce dispatch auto.','warning'); return; }
+
+    // 1) Classement routier réel (n'écrit rien : l'attribution reste ci-dessous).
+    let opt = null;
+    try { opt = DataService.optimizeDelivery ? await DataService.optimizeDelivery(deliveryId) : null; } catch(_){}
+    const best = opt && opt.couriers && opt.couriers.length ? opt.couriers[0] : null;
+    if (best && best.user_id) {
+      await assignCourier(deliveryId, best.user_id);
+      const eta = best.eta_pickup_min!=null ? best.eta_pickup_min+' min' : '';
+      const km  = best.road_km!=null ? best.road_km+' km route' : (best.crow_km!=null ? best.crow_km+' km' : '');
+      const via = opt.routing==='osrm' ? '🛣️' : '📐';
+      addToast(via+' Dispatch auto : '+(best.name||'coursier')+(km||eta ? ' ('+[km,eta].filter(Boolean).join(' · ')+')' : ''),'success');
+      // Écart vol d'oiseau / route : c'est CE chiffre qui dit si le tri PostGIS
+      // seul suffisait. Laissé en console pour l'observer sans polluer l'UI.
+      if (opt.routing==='osrm') {
+        try { console.info('[dispatch] classement routier', opt.couriers.map(c=>({ nom:c.name, vol_oiseau_km:c.crow_km, route_km:c.road_km, eta_min:c.eta_pickup_min }))); } catch(_){}
+      }
+      return;
+    }
+
+    // 2) Repli historique : plus proche à vol d'oiseau (PostGIS).
     let list = [];
     try { list = await DataService.nearbyCouriers(lat, lng, 15000, 10); } catch(_){}
     if (!list || !list.length) { addToast('Aucun coursier en ligne à proximité.','warning'); return; }

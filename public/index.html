@@ -3073,7 +3073,7 @@
     })();
     </script>
 
-    <script src="/assets/app.5d267ad0fc.js"></script>
+    <script src="/assets/app.364f085be5.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -5635,6 +5635,28 @@ window.addEventListener('unhandledrejection', function(event) {
         var r = await this._sb.rpc('admin_assign_delivery', { p_delivery_id: deliveryId, p_courier_id: courierId });
         return (!r.error && r.data) ? r.data : { ok: false, reason: r.error && r.error.message };
       } catch (e) { return { ok: false, reason: e.message }; }
+    },
+
+    // [ADMIN] Classement des coursiers par TEMPS DE ROUTE RÉEL jusqu'au retrait
+    // (POST /api/courier/optimize, admin uniquement). nearbyCouriers() trie à vol
+    // d'oiseau : à Dakar un coursier « à 800 m » peut être de l'autre côté de la
+    // corniche. Cet appel ne fait que CALCULER — aucune attribution.
+    // Retourne { couriers:[{user_id,name,crow_km,road_km,eta_pickup_min}], routing }
+    // ou null si indisponible (l'appelant DOIT alors replier sur nearbyCouriers).
+    // Sans OSRM_BASE_URL côté serveur, répond quand même avec routing:'haversine'.
+    async optimizeDelivery(deliveryId) {
+      try {
+        var tok = this._token || sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+        if (!tok) return null;
+        var r = await fetch((NEXUS_CONFIG.apiUrl || '') + '/api/courier/optimize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+          body: JSON.stringify({ delivery_id: deliveryId })
+        });
+        if (!r.ok) return null;
+        var j = await r.json();
+        return (j && Array.isArray(j.couriers)) ? j : null;
+      } catch (e) { console.warn('[Coursier] optimizeDelivery:', e.message); return null; }
     },
 
     // [ADMIN] PROPOSER une course à un coursier — même hors ligne — sans la lui
