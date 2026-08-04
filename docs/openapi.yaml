@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: NEXUS Market API
-  version: "1.1.0"
+  version: "1.2.0"
   description: >
     API serverless (Cloudflare Pages Functions) de NEXUS Market.
     Spec curée des endpoints cœur (paiements, messagerie, fidélité, crons).
@@ -300,6 +300,91 @@ paths:
               schema: { type: string }
         "401": { description: Token manquant/invalide }
         "503": { description: Backend non configuré }
+
+  /api/courier/optimize:
+    post:
+      summary: Attribution coursier optimisée (OSRM / VROOM)
+      description: >
+        Calcule l'attribution optimale de course(s) à partir de trajets ROUTIERS
+        réels. Mode classement (`delivery_id`) : le pré-filtre PostGIS
+        (nearby_couriers) borne la liste, OSRM la re-classe par temps de route
+        réel jusqu'au retrait. Mode groupé (`delivery_ids`) : VROOM affecte N
+        courses à M coursiers. N'ÉCRIT RIEN en base — l'attribution effective
+        reste la cascade d'offres SQL. Sans OSRM_BASE_URL, repli Haversine
+        (`routing: "haversine"`) ; sans VROOM_BASE_URL, le mode groupé répond 503.
+        Déploiement des services : docs/OSRM_VROOM.md
+      security: [{ SupabaseJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delivery_id: { type: string, format: uuid, description: Mode classement }
+                delivery_ids:
+                  type: array
+                  maxItems: 25
+                  items: { type: string, format: uuid }
+                  description: Mode groupé (VROOM)
+                radius_m: { type: integer, default: 30000, maximum: 100000 }
+                limit: { type: integer, default: 20, maximum: 50 }
+                max_per_courier: { type: integer, default: 3, maximum: 10 }
+      responses:
+        "200":
+          description: Classement ou affectation calculée
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode: { type: string, enum: [rank, batch] }
+                  routing: { type: string, enum: [osrm, haversine, none] }
+                  leg:
+                    type: object
+                    properties:
+                      distance_km: { type: number }
+                      duration_min: { type: integer }
+                      source: { type: string, enum: [osrm, haversine] }
+                  couriers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        courier_id: { type: string, format: uuid }
+                        user_id: { type: string, format: uuid }
+                        name: { type: string }
+                        crow_km: { type: number, description: Vol d'oiseau (PostGIS) }
+                        road_km: { type: number, nullable: true, description: Distance routière }
+                        eta_pickup_min: { type: integer, nullable: true }
+                  routes:
+                    type: array
+                    description: Mode groupé — une tournée par coursier retenu
+                    items:
+                      type: object
+                      properties:
+                        courier_id: { type: string, format: uuid }
+                        duration_min: { type: integer }
+                        distance_km: { type: number }
+                        steps:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              type: { type: string, enum: [pickup, delivery] }
+                              delivery_id: { type: string, format: uuid }
+                              arrival_min: { type: integer }
+                  unassigned:
+                    type: array
+                    items: { type: string, format: uuid }
+        "400": { description: delivery_id ou delivery_ids requis }
+        "401": { description: Token manquant/invalide }
+        "403": { description: Accès réservé aux admins }
+        "404": { description: Course introuvable }
+        "422": { description: Course sans coordonnées exploitables }
+        "429": { description: Trop de requêtes (20/min/IP) }
+        "502": { description: Optimiseur indisponible }
+        "503": { description: VROOM_BASE_URL non configurée (mode groupé) }
 
   /cron/expire:
     get:

@@ -42,10 +42,15 @@ n'était pas le plus proche en temps réel. Même biais sur le devis de livraiso
 - Piège attrapé au passage : `Number(null) === 0` ferait passer un coursier de position
   NULL pour le point (0, 0) — filtré explicitement dans `isPoint()`, avec test dédié.
 
-**État** : code en place, `npm run test:unit` vert (35/35), `node --check` OK sur les
-fichiers modifiés. **Non déployé** — en attente du provisionnement des services OSRM et
-VROOM (VM 2 vCPU / 4 Go) et des variables Cloudflare. Tant qu'elles sont vides, la mise
-en production est inerte.
+**État** : **déployé en prod** (commit `e30919c`, build Cloudflare vérifié —
+`POST /api/courier/optimize` répond `{"error":"Token manquant"}` 401, la route existe).
+`npm run test:unit` vert (35/35), lint 0 erreur. Documenté dans `docs/openapi.yaml` (v1.2.0).
+
+**Reste à faire (hors périmètre code, décision/infra utilisateur)** : provisionner la VM
+OSRM+VROOM (2 vCPU / 4 Go, procédure complète dans `docs/OSRM_VROOM.md`) puis renseigner
+`OSRM_BASE_URL` / `VROOM_BASE_URL` (+ jetons du reverse proxy) dans les variables
+Cloudflare Pages. **Tant qu'elles sont vides, le déploiement est inerte** : le
+comportement du site est strictement identique à avant (Haversine partout).
 
 ---
 
