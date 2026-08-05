@@ -12,6 +12,9 @@ import { options, json, err, requireAdmin, supabase, sendEmail, CORS } from '../
 import { rateLimit, clientIp, tooManyRequests } from '../_lib/ratelimit.js';
 
 const ROLES = ['buyer', 'buyer_pro', 'vendor', 'pro', 'breeder', 'courier'];
+// 'newsletter' = table newsletter_subscribers (inscrits footer, pas forcément
+// des comptes profiles) — traité séparément de ROLES (source différente).
+const AUDIENCES = [...ROLES, 'newsletter'];
 
 const escapeHtml = (s) => String(s || '').replace(/[&<>"]/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
@@ -71,7 +74,7 @@ export async function onRequest({ request, env }) {
   if (typeof message !== 'string' || message.trim().length < 2 || message.length > 20000)
     return err('Message invalide (2 à 20000 caractères)', 400);
   if (link && !/^https?:\/\//.test(link)) return err('Lien invalide (doit commencer par http/https)', 400);
-  if (audience !== 'all' && !ROLES.includes(audience)) return err('Audience invalide', 400);
+  if (audience !== 'all' && !AUDIENCES.includes(audience)) return err('Audience invalide', 400);
 
   const html = buildHtml({ title: subject, message, link, linkLabel });
   const from = env.EMAIL_FROM || 'NEXUS Market <nx@nexusmarket.sn>';
@@ -82,14 +85,18 @@ export async function onRequest({ request, env }) {
     return json({ ok: !!(r && r.ok), test: true, to: admin.email });
   }
 
-  // ── Récupérer les destinataires depuis profiles ───────────────────────────
+  // ── Récupérer les destinataires : profiles (par rôle) ou newsletter_subscribers ──
   const sb = supabase(env);
   const max = Math.max(1, Math.min(5000, parseInt(env.BROADCAST_MAX || '2000', 10)));
-  let filter = 'email=not.is.null';
-  if (audience !== 'all') filter += `&role=eq.${audience}`;
   let rows;
   try {
-    rows = await sb.from('profiles').select('email', `${filter}&order=created_at.asc&limit=${max}`);
+    if (audience === 'newsletter') {
+      rows = await sb.from('newsletter_subscribers').select('email', `order=created_at.asc&limit=${max}`);
+    } else {
+      let filter = 'email=not.is.null';
+      if (audience !== 'all') filter += `&role=eq.${audience}`;
+      rows = await sb.from('profiles').select('email', `${filter}&order=created_at.asc&limit=${max}`);
+    }
   } catch (e) {
     return err('Lecture des inscrits impossible : ' + e.message, 502);
   }

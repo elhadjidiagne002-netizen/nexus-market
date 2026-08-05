@@ -24431,18 +24431,19 @@ const _hpPreviewBlock = (node) => React.createElement('div', { style: { marginBo
 // ── AdminBroadcastPanel — Campagne email de masse vers les inscrits ──────────
 // Rendu dans AdminDashboard quand view === "broadcast".
 // POST /api/admin/broadcast (admin only, batch Resend, pied de page désinscription).
-const AdminBroadcastPanel = ({ addToast }) => {
+const AdminBroadcastPanel = ({ addToast, initialAudience }) => {
   const E = React.createElement;
   const [subject, setSubject]     = React.useState('');
   const [message, setMessage]     = React.useState('');
   const [link, setLink]           = React.useState('');
   const [linkLabel, setLinkLabel] = React.useState('');
-  const [audience, setAudience]   = React.useState('all');
+  const [audience, setAudience]   = React.useState(initialAudience || 'all');
   const [sending, setSending]     = React.useState(false);
   const [result, setResult]       = React.useState(null);
 
   const AUDIENCES = [
-    { v: 'all',       l: 'Tous les inscrits' },
+    { v: 'all',       l: 'Tous les inscrits (comptes)' },
+    { v: 'newsletter', l: '📰 Inscrits newsletter' },
     { v: 'buyer',     l: 'Acheteurs / particuliers' },
     { v: 'buyer_pro', l: 'Acheteurs Pro (B2B)' },
     { v: 'vendor',    l: 'Vendeurs' },
@@ -24515,6 +24516,76 @@ const AdminBroadcastPanel = ({ addToast }) => {
         result.note ? E('div', { style: { color: 'var(--text-secondary)', marginTop: '0.3rem' } }, result.note) : null
       )
     )
+  );
+};
+
+// ── AdminNewsletterPanel — liste des inscrits newsletter (footer public) ────
+// GET /api/admin/newsletter-subscribers (admin only). Table newsletter_subscribers,
+// alimentée par le formulaire "S'abonner" du footer (email uniquement — pas de
+// téléphone collecté à l'inscription, donc pas de campagne WhatsApp possible
+// depuis CETTE liste précise ; utiliser le panneau "📣 Campagne email" avec
+// l'audience "📰 Inscrits newsletter" pour l'email).
+const AdminNewsletterPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const [rows, setRows] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await DataService.paymentFetch('/api/admin/newsletter-subscribers', { method: 'GET' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) setRows(data.rows || []);
+      else addToast('Chargement impossible : ' + (data.error || res.status), 'danger');
+    } catch (e) { addToast('Erreur : ' + (e && e.message || e), 'danger'); }
+    finally { setLoading(false); }
+  }, [addToast]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const exportCsv = async () => {
+    try {
+      const res = await DataService.paymentFetch('/api/admin/newsletter-subscribers?format=csv', { method: 'GET' });
+      if (!res || !res.ok) { addToast('Export indisponible pour le moment.', 'danger'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'newsletter-inscrits-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      addToast('Export CSV téléchargé.', 'success');
+    } catch (e) { addToast('Erreur export : ' + (e && e.message || e), 'danger'); }
+  };
+
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header' },
+      E('h2', { className: 'card-title' }, `📰 Inscrits newsletter (${rows.length})`),
+      E('button', { className: 'btn btn-secondary btn-sm', onClick: exportCsv, disabled: loading || !rows.length },
+        E('i', { className: 'fas fa-file-csv' }), ' Export CSV')
+    ),
+    E('p', { style: { color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '-0.5rem' } },
+      'Inscrits via le formulaire du footer public (email uniquement — pas de téléphone collecté ici). ',
+      'Pour une campagne email : panneau « 📣 Campagne email », audience « 📰 Inscrits newsletter ». ',
+      'Pour WhatsApp, ciblez plutôt les comptes avec téléphone (acheteurs/vendeurs) depuis le même panneau.'),
+    loading
+      ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-spinner fa-spin' }), E('p', null, 'Chargement…'))
+      : rows.length === 0
+        ? E('div', { className: 'empty-state' },
+            E('i', { className: 'fas fa-newspaper' }),
+            E('h3', null, 'Aucun inscrit pour le moment'),
+            E('p', null, 'Les inscriptions apparaîtront ici dès qu\'un visiteur s\'abonnera depuis le footer.'))
+        : E('div', { className: 'table-wrapper' },
+            E('table', { className: 'data-table' },
+              E('thead', null, E('tr', null, E('th', null, 'Email'), E('th', null, 'Source'), E('th', null, 'Inscrit le'))),
+              E('tbody', null, rows.map((r, i) =>
+                E('tr', { key: i },
+                  E('td', null, r.email),
+                  E('td', null, r.source || '—'),
+                  E('td', null, r.created_at ? new Date(r.created_at).toLocaleDateString('fr-FR') : '—')
+                )
+              ))
+            )
+          )
   );
 };
 
@@ -25320,6 +25391,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "email_templates", icon: "file-alt", label: "Templates email" },
     { id: "sms",    icon: "sms",      label: "SMS" },
     { id: "emails", icon: "envelope", label: "Emails envoy\xE9s" },
+    { id: "newsletter", icon: "newspaper", label: "📰 Newsletter" },
     { id: "broadcast", icon: "bullhorn", label: "📣 Campagne email" },
     { id: "revenue", icon: "crown", label: "💰 Revenus & Commissions" },
     { id: "payouts", icon: "money-bill-wave", label: "Paiements vendeurs" },
@@ -26748,6 +26820,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
   })(),
 
   view === "validations" && React.createElement(AdminValidationPanel, { addToast }),
+  view === "newsletter" && React.createElement(AdminNewsletterPanel, { addToast }),
   view === "broadcast" && React.createElement(AdminBroadcastPanel, { addToast }),
   view === "livraison_admin" && React.createElement(AdminLivraisonPanel, { addToast }),
   view === "depannage_admin" && React.createElement(AdminRescuePanel, { addToast }),
