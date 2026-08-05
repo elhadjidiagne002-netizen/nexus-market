@@ -11017,6 +11017,52 @@ window.addEventListener('unhandledrejection', function(event) {
   function issueLabel(id) { for (var i = 0; i < ISSUES.length; i++) if (ISSUES[i].id === id) return ISSUES[i].e + ' ' + ISSUES[i].label; return id || ''; }
   function curUser() { try { return (window.NexusUX && window.NexusUX.user && window.NexusUX.user()) || null; } catch (e) { return null; } }
 
+  // [FIX] Ping GPS du dépanneur en ligne (position live → rescuer_ping RPC).
+  // Même piège déjà rencontré et corrigé pour le coursier (cf. module carte,
+  // "__NEXUS_COURIER_ONLINE__") : nearby_rescuers exige location_updated_at
+  // < 15 min. Sans ping périodique, un dépanneur IMMOBILE resté « en ligne »
+  // à l'écran devient invisible au dispatch après 15 min → cascade sans offre,
+  // SOS jamais attribués malgré un dépanneur bien en ligne. watchPosition ne
+  // se déclenche que si la position change ; heartbeat = re-ping même sans
+  // mouvement.
+  var _rescWatchId = null, _rescLastPing = 0, _rescLastPos = null;
+  function _rescuerPing(lat, lng) {
+    if (lat == null || lng == null) return;
+    _rescLastPing = Date.now(); _rescLastPos = { lat: lat, lng: lng };
+    var c = sb(); if (!c) return;
+    try { Promise.resolve(c.rpc('rescuer_ping', { p_lat: lat, p_lng: lng })).catch(function () {}); } catch (e) {}
+  }
+  function _rescuerHeartbeat() {
+    if (!window.__NEXUS_RESCUER_ONLINE__) return;
+    if (Date.now() - _rescLastPing < 230000) return; // déjà pingé il y a < ~4 min
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        function (p) { _rescuerPing(p.coords.latitude, p.coords.longitude); },
+        function () { if (_rescLastPos) _rescuerPing(_rescLastPos.lat, _rescLastPos.lng); },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 180000 }
+      );
+    } else if (_rescLastPos) { _rescuerPing(_rescLastPos.lat, _rescLastPos.lng); }
+  }
+  function startRescuerPing() {
+    if (_rescWatchId != null || !navigator.geolocation) return;
+    _rescWatchId = navigator.geolocation.watchPosition(function (p) {
+      if (!window.__NEXUS_RESCUER_ONLINE__) return;
+      var now = Date.now();
+      _rescLastPos = { lat: p.coords.latitude, lng: p.coords.longitude };
+      if (now - _rescLastPing < 20000) return; // au plus 1 ping / 20 s
+      _rescuerPing(p.coords.latitude, p.coords.longitude);
+    }, function () {}, { enableHighAccuracy: false, maximumAge: 30000, timeout: 20000 });
+  }
+  function stopRescuerPing() {
+    if (_rescWatchId != null && navigator.geolocation) { try { navigator.geolocation.clearWatch(_rescWatchId); } catch (e) {} }
+    _rescWatchId = null;
+  }
+  setInterval(function () { if (window.__NEXUS_RESCUER_ONLINE__) startRescuerPing(); else stopRescuerPing(); }, 2000);
+  setInterval(_rescuerHeartbeat, 60000);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && window.__NEXUS_RESCUER_ONLINE__) { _rescLastPing = 0; _rescuerHeartbeat(); }
+  });
+
   var STORAGE_KEY = 'nx_active_rescue_id';
 
   // ── Onglet SOS : création + suivi (polling 8 s, pas de temps réel) ──────────
@@ -11218,6 +11264,10 @@ window.addEventListener('unhandledrejection', function(event) {
   function renderRescuerDashboard(host, meRow) {
     var c = sb();
     var online = meRow.is_available;
+    // Resynchronise le flag global à chaque rendu (chaque poll, 8 s) — la
+    // boucle de ping (startRescuerPing/_rescuerHeartbeat) s'active/s'arrête
+    // en fonction de ce flag, quel que soit l'endroit d'où le statut a changé.
+    window.__NEXUS_RESCUER_ONLINE__ = !!online;
 
     function shell(offerHtml, jobHtml) {
       host.innerHTML =
@@ -11231,6 +11281,8 @@ window.addEventListener('unhandledrejection', function(event) {
         var next = online ? 'offline' : 'available';
         Promise.resolve(c.rpc('rescuer_set_status', { p_status: next })).then(function () {
           meRow.is_available = (next === 'available');
+          window.__NEXUS_RESCUER_ONLINE__ = meRow.is_available;
+          if (meRow.is_available) { _rescLastPing = 0; _rescuerHeartbeat(); } // ping immédiat, pas d'attente du heartbeat
           pollRescuer(host);
         }).catch(function () { UX.toast('Échec du changement de statut.', { bg: '#b45309' }); });
       });
@@ -11292,7 +11344,7 @@ window.addEventListener('unhandledrejection', function(event) {
 
   function pollRescuer(host) {
     var c = sb(); var u = curUser();
-    if (!u || !u.id) { clearRescPoll(); host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem 1rem">Connectez-vous pour vous inscrire comme dépanneur ou suivre vos interventions.</div>'; return; }
+    if (!u || !u.id) { clearRescPoll(); window.__NEXUS_RESCUER_ONLINE__ = false; host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem 1rem">Connectez-vous pour vous inscrire comme dépanneur ou suivre vos interventions.</div>'; return; }
     if (!c) { host.innerHTML = '<div style="color:#999;padding:1rem">Service indisponible.</div>'; return; }
     Promise.resolve(c.from('rescuers').select('*').eq('user_id', u.id).maybeSingle()).then(function (r) {
       if (r && r.data) { renderRescuerDashboard(host, r.data); return; }
