@@ -6,6 +6,53 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-05 (quinquies) — Fix : formulaire d'inscription dépanneur s'effaçait
+
+**Bug signalé** : impossible de s'inscrire comme dépanneur, les champs se
+vidaient au fur et à mesure de la saisie.
+
+**Cause** : `renderRescuerPane()` (module Dépannage Auto) lance un polling
+toutes les 8 s (`pollRescuer`) pour rafraîchir l'onglet « Je suis dépanneur ».
+Tant que l'utilisateur n'est pas encore inscrit, chaque tick appelait
+`renderRegisterForm(host)` → `host.innerHTML = '...'`, **reconstruisant tout
+le formulaire** — donc en effaçant les champs — dès que la saisie dépassait
+8 secondes.
+
+**Fix** (`public/index.html`, `pollRescuer`) : ne reconstruit plus le
+formulaire s'il est déjà affiché (détecté via la présence de
+`#nx-resc-reg-phone` dans le host). Seuls le tout premier rendu et le
+passage au tableau de bord après inscription réussie déclenchent encore un
+re-render.
+
+**Vérifié en preview locale** (mock `NexusUX.user`/`sb`) : champs remplis,
+attente 9 s (2 cycles de polling) → valeurs intactes, 0 erreur console.
+Commit `9afdb7b`, poussé sur `main`.
+
+---
+
+## 2026-08-05 (quater bis) — Ajustements design du bandeau live (retours utilisateur)
+
+Trois retours successifs sur `2026-08-05 (quater)` (bandeau live), tous
+appliqués et déployés :
+1. **Couleurs par vertical** trop inventées (`#ea580c`, `#dc2626`, `#16a34a`…)
+   → réalignées sur celles déjà établies ailleurs sur le site : `#006d40`/
+   `#e9c176` (primary/secondary Tailwind) pour Coursier/Pro et Troc,
+   `#b91c1c`/`#1d4ed8`/`#7c3f00`/`#0d9488` pour Dépannage/Location/Élevage/
+   Immobilier (commit `e9d4897`).
+2. **Fond noir/navy** générique → dégradé vert foncé dérivé du primary
+   (commit `be8fc3d`), puis → **motif hexagonal du site** (`#f9f9fc` + SVG
+   vert 3% d'opacité, identique à `#nx-proto-overlay`) avec texte/bordures
+   en `#006d40` (commit `71aab00`). Vérifié via `getComputedStyle` — le
+   screenshot de l'outil de preview affichait un rendu périmé dans cette
+   session (déjà observé), l'inspection directe du CSSOM a fait foi.
+3. **Bordures vertes** haut/bas jugées de trop → retirées, le bandeau garde
+   son fond au motif + texte vert (commit `b0597ca`).
+
+**Piège retenu** : le screenshot du navigateur de preview peut afficher un
+état visuellement périmé (élément voisin confondu avec l'élément modifié)
+alors que le DOM/CSS est correct — toujours vérifier via `getComputedStyle`
+en cas de doute avant de conclure à un bug.
+
 ## 2026-08-05 (quater) — Bandeau live 🔴 agrégeant les 7 verticaux
 
 **Demande** : afficher courses/dépannages, recherche de pro, élevage &
