@@ -11295,7 +11295,12 @@ window.addEventListener('unhandledrejection', function(event) {
     if (!u || !u.id) { clearRescPoll(); host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem 1rem">Connectez-vous pour vous inscrire comme dépanneur ou suivre vos interventions.</div>'; return; }
     if (!c) { host.innerHTML = '<div style="color:#999;padding:1rem">Service indisponible.</div>'; return; }
     Promise.resolve(c.from('rescuers').select('*').eq('user_id', u.id).maybeSingle()).then(function (r) {
-      if (r && r.data) renderRescuerDashboard(host, r.data); else renderRegisterForm(host);
+      if (r && r.data) { renderRescuerDashboard(host, r.data); return; }
+      // [FIX] Le polling (8 s) appelait renderRegisterForm() -> host.innerHTML = '...'
+      // à chaque tick, effaçant les champs en cours de saisie si l'utilisateur mettait
+      // plus de 8 s à remplir le formulaire. Tant qu'il n'est pas encore inscrit ET que
+      // le formulaire est déjà affiché, on ne le reconstruit pas.
+      if (!host.querySelector('#nx-resc-reg-phone')) renderRegisterForm(host);
     }).catch(function () { host.innerHTML = '<div style="color:#999;padding:1rem">Service indisponible.</div>'; });
   }
 
