@@ -6,6 +6,34 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-05 (sexies) — Fix : SOS jamais attribués malgré dépanneur en ligne
+
+**Bug signalé** : les demandes SOS ne sont pas attribuées automatiquement
+alors qu'un dépanneur est en ligne.
+
+**Cause** : `nearby_rescuers()` (RPC SQL, cascade de dispatch) exige
+`profiles.location_updated_at < 15 min` pour considérer un dépanneur
+joignable. Le RPC `rescuer_ping` existait déjà côté SQL (migration
+2026_08_04) mais n'était **jamais appelé côté frontend** — un dépanneur qui
+passe en ligne puis reste immobile voit sa position devenir « périmée » au
+bout de 15 min, l'excluant silencieusement de la cascade malgré le badge
+« En ligne » toujours affiché. **Piège identique déjà rencontré et corrigé
+pour le coursier** (module carte, `__NEXUS_COURIER_ONLINE__`) — non reproduit
+lors de la construction du vertical Dépannage Auto. Vérifié en complément :
+le cron `nexus-rescue-dispatch-tick` (1/min) est bien actif en prod — la
+cascade elle-même n'était pas en cause.
+
+**Fix** (`public/index.html`, module Dépannage Auto) : même mécanisme que
+le coursier — `watchPosition` (ping au mouvement, throttle 20 s) + heartbeat
+toutes les 4 min (ping même immobile) + re-ping immédiat au retour au
+premier plan et à l'activation du statut en ligne. Piloté par
+`window.__NEXUS_RESCUER_ONLINE__`, resynchronisé à chaque rendu du tableau
+de bord (poll 8 s) et sur le bouton En ligne/Hors ligne.
+
+**Vérifié en preview locale** (mock géolocation) : passage en ligne → flag
+`true` + `rescuer_ping` appelé automatiquement ; passage hors ligne → flag
+`false` (ping stoppé). 0 erreur console. Commit `7b29502`, poussé sur `main`.
+
 ## 2026-08-05 (quinquies) — Fix : formulaire d'inscription dépanneur s'effaçait
 
 **Bug signalé** : impossible de s'inscrire comme dépanneur, les champs se
