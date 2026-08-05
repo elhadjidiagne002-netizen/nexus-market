@@ -6,6 +6,42 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-05 — NEXUS Dépannage Auto : vertical complet + widgets + panneau admin
+
+**Besoin** : nouveau vertical de mobilité — dépannage/remorquage à la demande (mécanicien
+ou dépanneuse géolocalisé, cascade d'offres 3 min, similar au coursier).
+
+**Fait** :
+- **Backend SQL** (`sql/2026_08_04_nexus_depannage_auto.sql`, appliqué en prod via
+  `supabase db query --linked`) : 4 tables (`rescuers`, `rescue_requests`, `rescue_offers`,
+  `rescuer_earnings`), 15 fonctions (`rescuer_register`, `nearby_rescuers`,
+  `create_rescue_request`, `accept/decline_rescue_offer`, `set_rescue_progress`,
+  `complete_rescue_request`, `rate_rescuer`, `admin_assign_rescue`,
+  `rescue_dispatch_tick_all`), cron `nexus-rescue-dispatch-tick` (1/min). RLS
+  propriétaire+admin, convention `courier_id=user_id` reprise dès le départ (évite
+  le correctif a posteriori du coursier).
+- **Front** (`public/index.html`) : module IIFE `__NEXUS_DEPANNAGE__`, FAB 🚨, 2 onglets
+  — « SOS Panne » (GPS, type de panne, cascade, suivi polling 8 s, WhatsApp, annulation,
+  notation) et « Je suis dépanneur » (inscription, en-ligne/hors-ligne, offre reçue +
+  compte à rebours, course active, clôture). Fix appliqué : onglet dépanneur restait
+  vide sans connexion (polling sortait en silence → message explicite).
+- **Widgets** : raccourci « Dépannage Auto » (🚨, rouge SOS) ajouté à `#nxp-widgetStack`
+  juste après Coursier. La pile (12 items) était trop haute sur mobile → `max-height:
+  calc(100dvh - 168px)` + `overflow-y:auto` + items compactés sur ≤640px.
+  « Ventes Flash » et « Accessibilité » retirés sur demande → 10 raccourcis.
+- **Panneau admin** (`AdminRescuePanel`, `app.0c17f617a0.js`, menu admin « 🚨 Dépannage
+  Auto ») : liste des demandes SOS (badge nb en recherche), assignation manuelle
+  (`admin_assign_rescue`), marquer terminé, annuler ; liste des dépanneurs (spécialités,
+  note, gains, Suspendre/Réactiver).
+
+**Différé (hors MVP)** : classement OSRM/VROOM comme `/api/courier/optimize`, notifications
+WhatsApp Dépannage, tarification dynamique.
+
+**État** : 4 commits livrés en prod (`3281fe1` → `f7e84f0`), bundle actuel
+`app.0c17f617a0.js`. `node --check` OK, 0 erreur console en preview locale.
+
+---
+
 ## 2026-08-04 — Routage routier réel : OSRM + VROOM (squelette + doc)
 
 **Constat** : tout le projet raisonnait à vol d'oiseau. Haversine côté frontend

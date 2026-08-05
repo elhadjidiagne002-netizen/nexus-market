@@ -109,6 +109,11 @@ const DEFAULTS = {
     html: wrap('De nouveau disponible', '<p>Bonjour {{buyer_name}},</p><p>Bonne nouvelle ! <strong>{{product_name}}</strong> est de nouveau en stock. Commandez vite avant rupture.{{#if product_url}}<br><br><a href="{{product_url}}" style="color:#00853E;font-weight:700">Voir le produit →</a>{{/if}}</p>') },
   price_drop: { subject: '📉 Baisse de prix : {{product_name}}',
     html: wrap('Le prix a baissé', '<p>Bonjour {{buyer_name}},</p><p>Le prix de <strong>{{product_name}}</strong> a baissé{{#if discount_pct}} de {{discount_pct}}%{{/if}} — désormais <strong>{{new_price}}</strong>.{{#if product_url}}<br><br><a href="{{product_url}}" style="color:#00853E;font-weight:700">En profiter →</a>{{/if}}</p>') },
+
+  // ── NEXUS Dépannage Auto (SOS panne) — admin uniquement en email, le reste
+  //    est WhatsApp-only (cf. WA_DEFAULTS, souvent des demandeurs invités) ────
+  admin_new_rescuer: { subject: '🚨 Nouveau dépanneur : {{rescuer_name}}',
+    html: wrap('Nouveau dépanneur inscrit', '<p>Un nouveau dépanneur vient de s\'inscrire.</p><p style="margin:14px 0 4px"><strong>Nom :</strong> {{rescuer_name}}</p>{{#if rescuer_phone}}<p style="margin:4px 0"><strong>Téléphone :</strong> {{rescuer_phone}}</p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Consultez-le depuis l\'admin → Dépannage Auto.</p>') },
 };
 
 // Gabarits texte WhatsApp (courts, sans HTML) par clé d'événement — même
@@ -154,6 +159,17 @@ const WA_DEFAULTS = {
 
   stock_back: '🔔 NEXUS Market — {{product_name}} est de nouveau en stock ! Commandez vite avant rupture.',
   price_drop: '📉 NEXUS Market — Le prix de {{product_name}} a baissé{{#if discount_pct}} de {{discount_pct}}%{{/if}} : désormais {{new_price}}.',
+
+  // ── NEXUS Dépannage Auto (SOS panne) ─────────────────────────────────────
+  rescue_offer_new: '🚨 NEXUS Dépannage — Nouvelle demande SOS près de vous : {{location_label}}.{{#if rescuer_payout}} Gain : {{rescuer_payout}}.{{/if}} Vous avez 3 min pour accepter dans l\'app.',
+  rescue_accepted: '✅ NEXUS Dépannage — {{rescuer_name}} a accepté votre demande et arrive.{{#if rescuer_phone}} Contact : {{rescuer_phone}}.{{/if}}',
+  rescue_no_rescuer: '⏳ NEXUS Dépannage — Aucun dépanneur disponible pour l\'instant près de vous. Nous continuons la recherche automatiquement.',
+  rescue_en_route: '🚗 NEXUS Dépannage — {{rescuer_name}} est en route vers vous.',
+  rescue_arrived: '📍 NEXUS Dépannage — {{rescuer_name}} est arrivé sur place.',
+  rescue_completed: '✅ NEXUS Dépannage — Intervention terminée. Merci de votre confiance ! N\'hésitez pas à noter votre dépanneur.',
+  rescue_completed_rescuer: '🎉 NEXUS Dépannage — Intervention clôturée.{{#if payout_fcfa}} Gain : {{payout_fcfa}}.{{/if}} Merci !',
+  rescue_cancelled_rescuer: '❌ NEXUS Dépannage — La demande SOS a été annulée par le client.',
+  admin_new_rescuer: '🚨 NEXUS Admin — Nouveau dépanneur inscrit : {{rescuer_name}}{{#if rescuer_phone}} ({{rescuer_phone}}){{/if}}.',
 };
 
 // Mapping clé d'événement serveur → identifiant de template de l'éditeur admin
