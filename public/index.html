@@ -335,14 +335,16 @@
         'nexus:open-loyalty':'mod_loyalty_enabled',
         'nexus:open-tutorials':'mod_tutorials_enabled',
         'nexus:open-covoiturage':'mod_transport_enabled',
-        'nexus:open-depannage':'mod_rescue_enabled'
+        'nexus:open-depannage':'mod_rescue_enabled',
+        'nexus:open-realestate':'mod_realestate_enabled'
       };
       var LABELS = {
         'nexus:open-courier':'La livraison coursier','nexus:open-pros':'NEXUS Pro','nexus:open-local-elevage':'NEXUS Élevage',
         'nexus:open-louma':'Louma','nexus:open-troc':'NEXUS Troc','nexus:open-stories':'NEXUS Stories',
         'nexus:open-on-demand':'OnDemand','nexus:open-assistant':'L’assistant IA','nexus:open-public-chat':'Le chat communauté',
         'nexus:open-loyalty':'Le programme fidélité','nexus:open-tutorials':'Les tutoriels',
-        'nexus:open-covoiturage':'Le covoiturage & transport','nexus:open-depannage':'NEXUS Dépannage Auto'
+        'nexus:open-covoiturage':'Le covoiturage & transport','nexus:open-depannage':'NEXUS Dépannage Auto',
+        'nexus:open-realestate':'NEXUS Immobilier'
       };
       function disabled(flagKey){ try{ return window.NEXUS_MONET && window.NEXUS_MONET[flagKey] === false; }catch(e){ return false; } }
       function toast(msg){ try{ if(window.NexusUX && NexusUX.toast) return NexusUX.toast(msg,{bg:'#b45309'}); }catch(e){} try{ alert(msg); }catch(_){} }
@@ -3074,7 +3076,7 @@
     })();
     </script>
 
-    <script src="/assets/app.0c17f617a0.js"></script>
+    <script src="/assets/app.7bdd2db720.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -10290,6 +10292,312 @@ window.addEventListener('unhandledrejection', function(event) {
 <!-- ============== FIN MODULE LOCAL & ÉLEVAGE ============== -->
 
 <!-- ════════════════════════════════════════════════════════════════════════
+     NEXUS IMMOBILIER 🏠 — Vertical d'annonces immobilières (location/vente :
+     appartement, maison, villa, studio, terrain, bureau/commercial, chambre)
+     entre particuliers/agences. MVP : annonce + mise en relation WhatsApp,
+     calqué fidèlement sur NEXUS Location (module précédent). Réutilise les
+     classes CSS partagées .nx-le-*. Dégrade gracieusement si la migration
+     is_realestate n'est pas encore exécutée.
+     ════════════════════════════════════════════════════════════════════════ -->
+<style>
+  #nx-realty-ov{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10040;display:none;align-items:flex-start;justify-content:center;padding:1rem;overflow:auto;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #nx-realty-ov.open{display:flex}
+  #nx-realty-ov .nx-le-head{background:#0d9488}
+  #nx-realty-ov .nx-le-tab.on{color:#0d9488;box-shadow:inset 0 -3px 0 #0d9488}
+  #nx-realty-ov .nx-le-chip.on{background:#0d9488;border-color:#0d9488}
+  #nx-realty-ov .nx-realty-field{margin-bottom:.7rem}
+  #nx-realty-ov .nx-realty-field label{display:block;font-size:.78rem;font-weight:700;color:#444;margin-bottom:3px}
+  #nx-realty-ov .nx-realty-field input,#nx-realty-ov .nx-realty-field select,#nx-realty-ov .nx-realty-field textarea{width:100%;padding:.55rem .65rem;border:1px solid #ddd;border-radius:9px;font-size:.85rem;box-sizing:border-box}
+</style>
+<script>
+(function () {
+  'use strict';
+  if (window.__NEXUS_REALESTATE__) return; window.__NEXUS_REALESTATE__ = true;
+  var UX = window.NexusUX || { sb: function () { try { return (window.DataService && DataService._sb) || null; } catch (e) { return null; } }, user: function () { return null; }, toast: function (m) { try { alert(m); } catch (e) {} } };
+  function sb() { return UX.sb ? UX.sb() : ((window.DataService && DataService._sb) || null); }
+  function toast(m, o) { try { UX.toast(m, o); } catch (e) { try { alert(m); } catch (_) {} } }
+  function fcfa(n) { return (Number(n) || 0).toLocaleString('fr-FR') + ' FCFA'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function imgOf(p) { var u = p.image_url || (Array.isArray(p.images) && p.images[0]) || p.imageUrl || ''; return (typeof u === 'string') ? u.replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\/nexus-images\//, '/img/') : u; }
+  function curUser() { try { return (window.NexusUX && NexusUX.user && NexusUX.user()) || window.__nexusCurrentUser || null; } catch (e) { return null; } }
+
+  var EUR_TO_XOF = 655.957;
+  var PTYPES = ['Appartement', 'Maison', 'Villa', 'Studio', 'Chambre', 'Terrain', 'Bureau & Commercial'];
+  var TXNS = [{ v: 'location', l: 'À louer' }, { v: 'vente', l: 'À vendre' }];
+  var REGIONS = ['Dakar', 'Thiès', 'Saint-Louis', 'Kaolack', 'Ziguinchor', 'Tambacounda', 'Louga', 'Kolda', 'Fatick', 'Diourbel', 'Matam', 'Kaffrine', 'Kédougou', 'Sédhiou'];
+
+  // ── Pilotage admin (app_config.nexus_monetization_cfg, lecture publique) ──────
+  var CFG = { mod_realestate_enabled: true };
+  function isEnabled() { return CFG.mod_realestate_enabled !== false; }
+  function applyCfg(m) {
+    if (!m || typeof m !== 'object') return;
+    if (m.mod_realestate_enabled !== undefined) CFG.mod_realestate_enabled = m.mod_realestate_enabled !== false;
+    syncNavVisibility();
+  }
+  function syncNavVisibility() {
+    try {
+      var on = isEnabled();
+      Array.prototype.forEach.call(document.querySelectorAll('[data-nx-realty-link]'), function (el) {
+        el.style.display = on ? '' : 'none';
+      });
+    } catch (e) {}
+  }
+  function loadCfg() {
+    try { if (window.NEXUS_MONET) applyCfg(window.NEXUS_MONET); } catch (e) {}
+    try {
+      if (window.NexusAdminConfig && NexusAdminConfig.get) {
+        NexusAdminConfig.get('nexus_monetization_cfg').then(applyCfg).catch(function () {});
+      }
+    } catch (e) {}
+  }
+
+  // ── Data ────────────────────────────────────────────────────────────────────
+  function loadListings(ptype, txn) {
+    var c = sb(); if (!c) return Promise.resolve([]);
+    try {
+      var q = c.from('products').select('*').eq('is_realestate', true).eq('active', true).order('created_at', { ascending: false }).limit(60);
+      return q.then(function (r) {
+        var list = (r && r.data) || [];
+        if (ptype) list = list.filter(function (p) { return (p.realestate_specs && p.realestate_specs.property_type) === ptype; });
+        if (txn) list = list.filter(function (p) { return (p.realestate_specs && p.realestate_specs.transaction) === txn; });
+        return list;
+      }).catch(function () { return []; });
+    } catch (e) { return Promise.resolve([]); }
+  }
+  function loadPhones(ids) {
+    var c = sb(); if (!c || !ids.length) return Promise.resolve({});
+    try {
+      return c.from('profiles').select('id,phone,shop_name').in('id', ids).then(function (r) {
+        var m = {}; ((r && r.data) || []).forEach(function (p) { m[p.id] = p; }); return m;
+      }).catch(function () { return {}; });
+    } catch (e) { return Promise.resolve({}); }
+  }
+
+  function specHtml(p) {
+    var s = p.realestate_specs || {};
+    var price = [];
+    if (s.price_fcfa) price.push(fcfa(s.price_fcfa) + (s.transaction === 'location' ? '/mois' : ''));
+    var l1 = price.length ? '<div style="color:#0d9488;font-weight:800;margin-top:2px">' + esc(price.join(' · ')) + '</div>' : '';
+    var meta = [];
+    if (s.transaction) meta.push(s.transaction === 'location' ? 'À louer' : 'À vendre');
+    if (s.surface_m2) meta.push(s.surface_m2 + ' m²');
+    if (s.bedrooms) meta.push(s.bedrooms + ' ch.');
+    if (s.furnished) meta.push('Meublé');
+    if (s.region) meta.push('📍 ' + s.region);
+    var l2 = meta.length ? '<div style="color:#666;font-size:.68rem;margin-top:2px">' + esc(meta.join(' · ')) + '</div>' : '';
+    return l1 + l2;
+  }
+
+  // ── Grille annonces + contact WhatsApp ────────────────────────────────────────
+  function renderGrid(host, products) {
+    if (!products.length) { host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem .5rem">Aucun bien pour le moment. Soyez le premier à publier une annonce !</div>'; return; }
+    var ids = products.map(function (p) { return p.vendor_id; }).filter(Boolean);
+    loadPhones(ids).then(function (phones) {
+      var grid = document.createElement('div'); grid.className = 'nx-le-grid';
+      products.forEach(function (p) {
+        var ph = phones[p.vendor_id] || {};
+        var s = p.realestate_specs || {};
+        var tile = document.createElement('div'); tile.className = 'nx-le-tile';
+        tile.innerHTML =
+          (imgOf(p) ? '<img src="' + esc(imgOf(p)) + '" alt="" loading="lazy" onerror="this.style.display=\'none\'">' : '<div style="height:110px;background:#f0fdfa;display:flex;align-items:center;justify-content:center;font-size:1.8rem">🏠</div>')
+          + '<div class="p"><div style="font-weight:700;line-height:1.2">' + esc(p.name || '') + '</div>'
+          + specHtml(p)
+          + '<div style="font-size:.68rem;color:#888;margin-top:3px">🏘️ ' + esc(p.vendor_name || ph.shop_name || 'Annonceur') + '</div></div>';
+        var btnWrap = document.createElement('div'); btnWrap.style.cssText = 'padding:0 .6rem .6rem';
+        var b = document.createElement('button');
+        b.textContent = '💬 Contacter';
+        b.style.cssText = 'width:100%;padding:.45rem;border:none;border-radius:8px;background:#25D366;color:#fff;font-weight:700;font-size:.72rem;cursor:pointer';
+        b.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          var phone = (ph.phone || '').replace(/\D/g, '');
+          var tarif = s.price_fcfa ? (' (' + fcfa(s.price_fcfa) + (s.transaction === 'location' ? '/mois' : '') + ')') : '';
+          var verbe = s.transaction === 'vente' ? 'ACHETER' : 'LOUER';
+          var msg = 'Bonjour, je suis intéressé(e) pour ' + verbe + ' « ' + (p.name || '') + ' »' + tarif + ' vu sur NEXUS Immobilier. Est-ce toujours disponible ?';
+          if (phone) { if (phone.length === 9 && phone[0] === '7') phone = '221' + phone; window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(msg), '_blank'); }
+          else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
+        });
+        btnWrap.appendChild(b); tile.appendChild(btnWrap);
+        grid.appendChild(tile);
+      });
+      host.innerHTML = ''; host.appendChild(grid);
+    });
+  }
+
+  // ── Publier une annonce immobilière ───────────────────────────────────────────
+  function buildPublishForm(host) {
+    var f = { imageUrl: '' };
+    host.innerHTML = '';
+    var wrap = document.createElement('div');
+    function field(label, html) { var d = document.createElement('div'); d.className = 'nx-realty-field'; d.innerHTML = '<label>' + label + '</label>' + html; return d; }
+    var nameEl = field('Titre de l\'annonce *', '<input maxlength="90" placeholder="Ex. Appartement 3 pièces à Sacré-Cœur">'); var nameI = nameEl.querySelector('input');
+    var txnEl = field('Transaction *', '<select><option value="">— Choisir —</option>' + TXNS.map(function (t) { return '<option value="' + esc(t.v) + '">' + esc(t.l) + '</option>'; }).join('') + '</select>'); var txnI = txnEl.querySelector('select');
+    var ptypeEl = field('Type de bien *', '<select><option value="">— Choisir —</option>' + PTYPES.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('') + '</select>'); var ptypeI = ptypeEl.querySelector('select');
+    var photoEl = field('Photo', '<input type="file" accept="image/*">'); var photoI = photoEl.querySelector('input');
+    var photoPrev = document.createElement('div'); photoPrev.style.cssText = 'font-size:.72rem;color:#666;margin-top:2px';
+    var priceLabel = document.createElement('label');
+    var priceEl = field('Prix (FCFA) *', '<input type="number" min="0" placeholder="Ex. 150000">'); var priceI = priceEl.querySelector('input');
+    var priceHint = document.createElement('div'); priceHint.style.cssText = 'font-size:.68rem;color:#888;margin-top:2px';
+    function refreshPriceHint() { priceHint.textContent = txnI.value === 'location' ? 'Loyer mensuel' : (txnI.value === 'vente' ? 'Prix de vente total' : ''); }
+    txnI.addEventListener('change', refreshPriceHint);
+    var surfEl = field('Surface (m²)', '<input type="number" min="0" placeholder="Ex. 85">'); var surfI = surfEl.querySelector('input');
+    var roomsEl = field('Pièces', '<input type="number" min="0" placeholder="Ex. 4">'); var roomsI = roomsEl.querySelector('input');
+    var bedEl = field('Chambres', '<input type="number" min="0" placeholder="Ex. 3">'); var bedI = bedEl.querySelector('input');
+    var bathEl = field('Salles de bain', '<input type="number" min="0" placeholder="Ex. 2">'); var bathI = bathEl.querySelector('input');
+    var furnEl = field('Meublé', '<select><option value="">Non précisé</option><option value="1">Oui</option><option value="0">Non</option></select>'); var furnI = furnEl.querySelector('select');
+    var regEl = field('Région', '<select><option value="">— Choisir —</option>' + REGIONS.map(function (r) { return '<option>' + esc(r) + '</option>'; }).join('') + '</select>'); var regI = regEl.querySelector('select');
+    var quartEl = field('Quartier / adresse', '<input maxlength="90" placeholder="Ex. Sacré-Cœur 3, Dakar">'); var quartI = quartEl.querySelector('input');
+    var descEl = field('Description', '<textarea rows="3" maxlength="500" placeholder="Précisions : étage, gardien, garage, climatisation…"></textarea>'); var descI = descEl.querySelector('textarea');
+
+    // Upload photo (bucket nexus-stories, même pattern que Location/Vendre un article)
+    photoI.addEventListener('change', function () {
+      var file = photoI.files && photoI.files[0]; if (!file) return;
+      var c = sb(); var u = curUser();
+      if (!c || !u || !u.id) { toast('Connectez-vous pour ajouter une photo.'); return; }
+      if (!/^image\//.test(file.type || '')) { toast('Choisissez une image.'); return; }
+      if (file.size > 5 * 1024 * 1024) { toast('Image trop lourde (max 5 Mo).'); return; }
+      photoPrev.textContent = '⏳ Envoi de la photo…';
+      var ext = ((file.name || '').split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      var path = 'immobilier/' + u.id + '/' + Date.now() + '.' + ext;
+      c.storage.from('nexus-stories').upload(path, file, { contentType: file.type, upsert: true }).then(function (res) {
+        if (res.error) throw res.error;
+        f.imageUrl = c.storage.from('nexus-stories').getPublicUrl(path).data.publicUrl;
+        photoPrev.textContent = '📷 Photo ajoutée ✓';
+      }).catch(function (e) { photoPrev.textContent = '❌ Échec photo : ' + (e.message || e); });
+    });
+
+    var submit = document.createElement('button');
+    submit.textContent = '🏠 Publier mon annonce';
+    submit.style.cssText = 'width:100%;padding:.7rem;border:none;border-radius:10px;background:#0d9488;color:#fff;font-weight:800;font-size:.9rem;cursor:pointer;margin-top:.4rem';
+    submit.addEventListener('click', function () {
+      var u = curUser();
+      if (!u || !u.id) { toast('Connectez-vous pour publier une annonce immobilière.'); try { window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'login' } })); } catch (_) {} return; }
+      var name = nameI.value.trim(), txn = txnI.value, ptype = ptypeI.value, price = parseInt(priceI.value, 10);
+      if (!name || !txn || !ptype) { toast('Titre, transaction et type de bien requis.'); return; }
+      if (!price || price <= 0) { toast('Indiquez un prix valide.'); return; }
+      if (!window.DataService || !DataService.saveProduct) { toast('Service indisponible, réessayez.'); return; }
+      var specs = {
+        transaction: txn,
+        property_type: ptype,
+        price_fcfa: price,
+        surface_m2: parseInt(surfI.value, 10) || null,
+        rooms: parseInt(roomsI.value, 10) || null,
+        bedrooms: parseInt(bedI.value, 10) || null,
+        bathrooms: parseInt(bathI.value, 10) || null,
+        furnished: furnI.value === '1' ? true : (furnI.value === '0' ? false : null),
+        region: regI.value || null,
+        location_label: quartI.value.trim() || null
+      };
+      submit.disabled = true; submit.textContent = '⏳ Publication…';
+      // price (colonne canonique) = prix converti en EUR (convention EUR de la pile).
+      DataService.saveProduct({
+        name: name, category: 'Immobilier', price: price / EUR_TO_XOF, stock: 1,
+        description: descI.value.trim() || null, imageUrl: f.imageUrl || null,
+        vendor: u.id, vendorName: u.name || u.shop_name || 'Annonceur',
+        active: true, rating: 0, reviewsCount: 0,
+        isRealestate: true, realestateSpecs: specs
+      }).then(function () {
+        toast('✅ Annonce immobilière publiée !', { bg: '#0d9488', duration: 5000 });
+        open(); switchTab('browse');
+      }).catch(function (e) {
+        submit.disabled = false; submit.textContent = '🏠 Publier mon annonce';
+        toast('Erreur : ' + (e.message || e));
+      });
+    });
+
+    [nameEl, txnEl, ptypeEl, photoEl].forEach(function (el) { wrap.appendChild(el); });
+    wrap.appendChild(photoPrev);
+    priceEl.appendChild(priceHint);
+    var row = document.createElement('div'); row.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px';
+    [priceEl, surfEl, roomsEl, bedEl, bathEl, furnEl].forEach(function (el) { row.appendChild(el); });
+    wrap.appendChild(row);
+    [regEl, quartEl, descEl].forEach(function (el) { wrap.appendChild(el); });
+    wrap.appendChild(submit);
+    host.appendChild(wrap);
+  }
+
+  // ── Overlay ──────────────────────────────────────────────────────────────────
+  var ov = null, curPtype = '', curTxn = '';
+  function switchTab(t) {
+    if (!ov) return;
+    Array.prototype.forEach.call(ov.querySelectorAll('.nx-le-tab'), function (x) { x.classList.toggle('on', x.dataset.t === t); });
+    ov.querySelector('#nx-realty-pane-browse').classList.toggle('on', t === 'browse');
+    ov.querySelector('#nx-realty-pane-publish').classList.toggle('on', t === 'publish');
+    if (t === 'publish') buildPublishForm(ov.querySelector('#nx-realty-publish-host'));
+  }
+  function paint() {
+    var host = ov.querySelector('#nx-realty-grid');
+    host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem">Chargement…</div>';
+    loadListings(curPtype, curTxn).then(function (list) { renderGrid(host, list); });
+  }
+  function buildOverlay() {
+    if (ov) return ov;
+    ov = document.createElement('div'); ov.id = 'nx-realty-ov';
+    ov.innerHTML =
+      '<div class="nx-le-card">'
+      + '<div class="nx-le-head"><span style="font-size:1.4rem">🏠</span><b style="flex:1">NEXUS Immobilier</b><button id="nx-realty-x" aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div>'
+      + '<div class="nx-le-tabs"><button class="nx-le-tab on" data-t="browse">🔎 Trouver un bien</button><button class="nx-le-tab" data-t="publish">➕ Publier une annonce</button></div>'
+      + '<div class="nx-le-body">'
+      + '<div class="nx-le-tab-pane on" id="nx-realty-pane-browse">'
+      + '<div style="background:linear-gradient(135deg,#0d9488,#14b8a6);color:#fff;border-radius:12px;padding:.8rem 1rem;margin-bottom:.9rem"><b>Trouvez votre bien 🏠</b><div style="font-size:.8rem;opacity:.92">Appartements, maisons, terrains… à louer ou à vendre partout au Sénégal.</div></div>'
+      + '<div id="nx-realty-txn-chips" style="margin-bottom:.4rem"></div>'
+      + '<div id="nx-realty-ptype-chips" style="margin-bottom:.7rem"></div>'
+      + '<div id="nx-realty-grid"></div></div>'
+      + '<div class="nx-le-tab-pane" id="nx-realty-pane-publish">'
+      + '<div style="background:#f0fdfa;color:#0f4c46;border-radius:12px;padding:.7rem 1rem;margin-bottom:.9rem;font-size:.82rem">Publiez votre bien et touchez des milliers d\'acheteurs/locataires. Mise en relation directe par WhatsApp.</div>'
+      + '<div id="nx-realty-publish-host"></div></div>'
+      + '</div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    ov.querySelector('#nx-realty-x').addEventListener('click', close);
+    Array.prototype.forEach.call(ov.querySelectorAll('.nx-le-tab'), function (b) {
+      b.addEventListener('click', function () { switchTab(b.dataset.t); });
+    });
+    // chips transaction
+    var txnHost = ov.querySelector('#nx-realty-txn-chips');
+    var allTxn = document.createElement('span'); allTxn.className = 'nx-le-chip on'; allTxn.textContent = 'Tous';
+    var txnEls = [allTxn]; txnHost.appendChild(allTxn);
+    allTxn.addEventListener('click', function () { curTxn = ''; txnEls.forEach(function (x) { x.classList.remove('on'); }); allTxn.classList.add('on'); paint(); });
+    TXNS.forEach(function (t) {
+      var ch = document.createElement('span'); ch.className = 'nx-le-chip'; ch.textContent = t.l; txnHost.appendChild(ch); txnEls.push(ch);
+      ch.addEventListener('click', function () { curTxn = t.v; txnEls.forEach(function (x) { x.classList.remove('on'); }); ch.classList.add('on'); paint(); });
+    });
+    // chips type de bien
+    var ptypeHost = ov.querySelector('#nx-realty-ptype-chips');
+    var allPtype = document.createElement('span'); allPtype.className = 'nx-le-chip on'; allPtype.textContent = 'Tous types';
+    var ptypeEls = [allPtype]; ptypeHost.appendChild(allPtype);
+    allPtype.addEventListener('click', function () { curPtype = ''; ptypeEls.forEach(function (x) { x.classList.remove('on'); }); allPtype.classList.add('on'); paint(); });
+    PTYPES.forEach(function (label) {
+      var ch = document.createElement('span'); ch.className = 'nx-le-chip'; ch.textContent = label; ptypeHost.appendChild(ch); ptypeEls.push(ch);
+      ch.addEventListener('click', function () { curPtype = label; ptypeEls.forEach(function (x) { x.classList.remove('on'); }); ch.classList.add('on'); paint(); });
+    });
+    return ov;
+  }
+  function open() {
+    buildOverlay(); ov.classList.add('open');
+    if (!isEnabled()) {
+      ov.querySelector('.nx-le-tabs').style.display = 'none';
+      ov.querySelector('.nx-le-body').innerHTML = '<div style="text-align:center;color:#555;padding:2.5rem 1rem"><div style="font-size:2.4rem">🏠</div><b style="display:block;margin:.6rem 0 .3rem;font-size:1.05rem">NEXUS Immobilier — bientôt disponible</b><div style="font-size:.85rem;color:#888">Cette fonctionnalité est momentanément désactivée. Revenez très vite !</div></div>';
+      return;
+    }
+    if (!ov.querySelector('#nx-realty-pane-browse')) { try { ov.remove(); } catch (e) {} ov = null; buildOverlay(); ov.classList.add('open'); }
+    var tabsEl = ov.querySelector('.nx-le-tabs'); if (tabsEl) tabsEl.style.display = '';
+    switchTab('browse'); paint();
+  }
+  function close() { if (ov) ov.classList.remove('open'); }
+
+  // ── Ouverture par événement (entrées : menu hamburger + barre de services + widgets) ──
+  window.addEventListener('nexus:open-realestate', function (e) {
+    open();
+    if (isEnabled() && e && e.detail && e.detail.publish) setTimeout(function () { switchTab('publish'); }, 300);
+  });
+  loadCfg();
+  window.addEventListener('nexus:set-user', function () { setTimeout(loadCfg, 600); });
+  console.info('[NEXUS] Module Immobilier 🏠 chargé ✅');
+})();
+</script>
+<!-- ============== FIN MODULE IMMOBILIER ============== -->
+
+<!-- ════════════════════════════════════════════════════════════════════════
      NEXUS PRO 🔧 — Ouvriers / artisans professionnels géolocalisés
      Module autonome (vanilla) : FAB + overlay 2 onglets.
        · Trouver : recherche des pros LES PLUS PROCHES (RPC nearby_pros + carte),
@@ -12251,6 +12559,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <a data-route="nexus pro — artisans proches" data-nx-mod="mod_pros_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">handyman</span> <span data-i18n="service.pro_desc">NEXUS Pro — artisans proches</span></a>
       <a data-route="élevage & produits locaux" data-nx-mod="mod_elevage_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">agriculture</span> <span data-i18n="service.elevage_desc">Élevage &amp; produits locaux</span></a>
       <a data-nx-rental-link class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px] text-primary w-5">vpn_key</span> <span data-i18n="service.rental_desc">NEXUS Location — louer du matériel</span></a>
+      <a data-nx-mod="mod_realestate_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-realestate'))}catch(e){}"><span class="material-symbols-outlined text-[18px] text-primary w-5">home_work</span> NEXUS Immobilier — location &amp; vente</a>
       <a data-nx-mod="mod_transport_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#" onclick="event.preventDefault();try{window.dispatchEvent(new CustomEvent('nexus:open-covoiturage'))}catch(e){}"><span class="material-symbols-outlined text-[18px] text-primary w-5">directions_car</span> Covoiturage — trajets, transporteurs &amp; colis</a>
       <a data-route="louma — le marché en ligne" data-nx-mod="mod_louma_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">storefront</span> <span data-i18n="service.louma_desc">Louma — le marché en ligne</span></a>
       <a data-route="nexus troc — échanger sans argent" data-nx-mod="mod_troc_enabled" class="flex items-center gap-2.5 px-3.5 py-2.5 text-sm hover:bg-primary-container hover:text-primary transition-colors" href="#"><span class="material-symbols-outlined text-[18px] text-primary w-5">published_with_changes</span> <span data-i18n="service.troc_desc">NEXUS Troc — échanger sans argent</span></a>
@@ -12597,6 +12906,7 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
     <button data-nx-mod="mod_pros_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-pros'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">workspace_premium</span> <span data-i18n="service.pro">NEXUS Pro</span></button>
     <button data-nx-mod="mod_elevage_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-local-elevage'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">agriculture</span> <span data-i18n="service.elevage">Élevage &amp; Terroir</span></button>
     <button data-nx-rental-link class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-rental'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">vpn_key</span> <span data-i18n="service.rental">Location</span></button>
+    <button data-nx-mod="mod_realestate_enabled" class="widget-item bg-white px-4 py-2.5 rounded-full shadow-lg transition-all flex items-center gap-2 font-bold text-sm" style="color:#0d9488;border:1px solid #0d9488" onmouseenter="this.style.background='#0d9488';this.style.color='#fff'" onmouseleave="this.style.background='';this.style.color='#0d9488'" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-realestate'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">home_work</span> Immobilier</button>
     <button data-nx-mod="mod_transport_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-covoiturage'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">directions_car</span> Covoiturage</button>
     <button data-nx-mod="mod_troc_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-troc'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">published_with_changes</span> <span data-i18n="service.troc">Troc</span></button>
     <button data-nx-mod="mod_chat_enabled" class="widget-item bg-white text-primary border border-primary px-4 py-2.5 rounded-full shadow-lg hover:bg-primary hover:text-white transition-all flex items-center gap-2 font-bold text-sm" onclick="try{window.dispatchEvent(new CustomEvent('nexus:open-public-chat'))}catch(e){}"><span class="material-symbols-outlined text-[18px]">forum</span> <span data-i18n="service.chat">Chat en direct</span></button>
@@ -13310,6 +13620,7 @@ function initProto(){
     'nexus pro':EVT('nexus:open-pros'),'nexus pro — artisans proches':EVT('nexus:open-pros'),'devenir artisan (nexus pro)':REG('pro'),
     'élevage & terroir':EVT('nexus:open-local-elevage'),'élevage & produits locaux':EVT('nexus:open-local-elevage'),'devenir éleveur / producteur':REG('breeder'),
     'troc':EVT('nexus:open-troc'),'nexus troc — échanger sans argent':EVT('nexus:open-troc'),
+    'nexus immobilier':EVT('nexus:open-realestate'),'immobilier':EVT('nexus:open-realestate'),'nexus immobilier — location & vente':EVT('nexus:open-realestate'),
     'chat en direct':EVT('nexus:open-public-chat'),
     'assistant ia':EVT('nexus:open-assistant'),
     'déposer une annonce':EVT('nexus:open-annonce'),'deposer une annonce':EVT('nexus:open-annonce'),
@@ -13691,7 +14002,8 @@ else{setTimeout(checkInit,400);}
   var IDEMPOTENT = {
     courier:'nexus:open-courier', elevage:'nexus:open-local-elevage',
     louma:'nexus:open-louma', rental:'nexus:open-rental', ondemand:'nexus:open-on-demand',
-    covoiturage:'nexus:open-covoiturage', chat:'nexus:open-public-chat', tutorials:'nexus:open-tutorials'
+    covoiturage:'nexus:open-covoiturage', chat:'nexus:open-public-chat', tutorials:'nexus:open-tutorials',
+    realestate:'nexus:open-realestate'
   };
   Object.keys(IDEMPOTENT).forEach(function(k){
     if (!sp.get(k)) return;
