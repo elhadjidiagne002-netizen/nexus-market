@@ -6,6 +6,42 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-05 (quater) — Bandeau live 🔴 agrégeant les 7 verticaux
+
+**Demande** : afficher courses/dépannages, recherche de pro, élevage &
+terroir, location, immobilier et troc dans une bande défilante façon
+ticker TV, avec un design qui démarque chaque type d'annonce. Précision
+donnée en cours de route : « uniformise code couleur avec celui du site ».
+
+**Fait** :
+- `functions/api/live-activity.js` (GET public, sans auth) — agrège 7
+  sources en un appel : `deliveries` (courses en cours), `rescue_requests`
+  (dépannages en cours), `pros` (nouveaux inscrits), `products` is_animal/
+  is_rental/is_realestate, `troc_listings`. **[SEC]** `deliveries` et
+  `rescue_requests` sont protégés par RLS (adresses/téléphones — pas de
+  policy publique) : l'endpoint tourne en service_role côté serveur mais
+  ne renvoie **jamais** les lignes brutes, uniquement un texte déjà
+  composé à la granularité quartier/zone (même niveau que les annonces
+  Location/Immobilier déjà publiques), sans id/nom/téléphone/coordonnées.
+  Chaque sous-requête est indépendante et best-effort. Cache 30s.
+- Bandeau CSS pur (marquee `translateX`, dupliqué ×2 pour un bouclage sans
+  à-coup, pause au survol) inséré juste sous le header, rafraîchi toutes
+  les 90s, masqué automatiquement si aucune donnée. Clic sur un item →
+  ouvre l'overlay du service concerné.
+- **Couleurs alignées sur l'existant** (pas de teinte inventée, corrigé
+  après une première passe trop créative) : `#006d40`/`#e9c176`
+  (primary/secondary Tailwind) pour Coursier/Pro et Troc respectivement,
+  `#b91c1c`/`#1d4ed8`/`#7c3f00`/`#0d9488` = couleurs déjà établies pour
+  Dépannage/Location/Élevage/Immobilier ailleurs sur le site.
+
+**Vérifié en preview locale** (SW purgé, fetch mocké faute de backend sur
+le serveur statique) : rendu desktop + mobile, délégation de clic
+confirmée, état vide masque proprement le bandeau, 0 erreur console.
+`node --check` OK, lint 0 erreur, 35/35 tests. Commit `e9d4897`, poussé
+sur `main`.
+
+---
+
 ## 2026-08-05 (ter) — NEXUS Immobilier : nouveau vertical d'annonces
 
 **Demande** : ajouter un nouveau service. Choix retenu parmi les propositions
