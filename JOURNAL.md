@@ -6,6 +6,41 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-05 (bis) — NEXUS Dépannage Auto : notifications WhatsApp
+
+**Suite** : le vertical (session précédente, ci-dessous) était livré sans aucune
+notification WhatsApp (différé explicitement). Branché sur le pattern déjà en
+place pour commandes/offres/stock (`functions/api/_lib/notify.js`,
+`sendEventNotification`, secret vault `nexus_internal_push_secret`).
+
+**Fait** :
+- `functions/api/rescue-notify.js` — nouvel endpoint interne (X-Internal-Secret),
+  9 événements : `offer_new` (dépanneur, nouvelle offre 3 min), `accepted`
+  (demandeur, dépanneur trouvé + contact), `no_rescuer` (demandeur, cascade
+  épuisée), `en_route`/`arrived` (demandeur), `completed` (demandeur + dépanneur),
+  `cancelled` (dépanneur si assigné), `admin_new_rescuer` (admin, email+WhatsApp).
+- `notify.js` — gabarits `WA_DEFAULTS`/`DEFAULTS` correspondants ajoutés.
+- `sql/2026_08_05_depannage_whatsapp_notifications.sql` (**appliqué en prod**
+  via `supabase db query --linked`, vérifié 7/7 fonctions câblées par requête
+  `pg_proc`) : `CREATE OR REPLACE` de `rescuer_register` (admin notifié à la
+  VRAIE inscription, pas aux mises à jour, via `EXISTS` avant l'UPSERT),
+  `_activate_next_rescue_offer` (dépanneur notifié à chaque offre + demandeur
+  si cascade épuisée, dédupliqué par le `WHERE status='searching'` déjà
+  existant), `accept_rescue_request`/`admin_assign_rescue` (demandeur notifié),
+  `set_rescue_progress`, `complete_rescue_request`, `cancel_rescue_request`.
+
+**Bug attrapé en écrivant** `complete_rescue_request` : un `RECORD` jamais
+assigné (si `rescuer_id IS NULL`, aucun `SELECT INTO` ne s'exécute) référencé
+dans une condition `OR` aurait levé `record "v_r" is not assigned yet` —
+remplacé par une variable `text` simple, toujours NULL-safe.
+
+**Vérifié** : `node --check` OK, eslint 0 erreur, 35/35 tests unitaires,
+fonctions confirmées câblées en base, endpoint live en prod (401 « not_internal »
+sans header, comportement attendu — mirroir order-email/offer-email/
+low-stock-email). Commit `7930e95`, poussé sur `main`.
+
+---
+
 ## 2026-08-05 — NEXUS Dépannage Auto : vertical complet + widgets + panneau admin
 
 **Besoin** : nouveau vertical de mobilité — dépannage/remorquage à la demande (mécanicien
