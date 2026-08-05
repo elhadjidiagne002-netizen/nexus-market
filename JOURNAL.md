@@ -6,6 +6,44 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-05 (septies) — Liste inscrits newsletter (admin) + carrousel : bannières manquantes
+
+**Demande** : voir la liste des inscrits newsletter dans le tableau de bord
+admin (campagnes email/WhatsApp) + le carrousel d'accueil ne mettait pas en
+avant tous les services disponibles.
+
+**Liste newsletter** :
+- `newsletter_subscribers` existait déjà en prod (appliqué 2026-06-29,
+  formulaire footer) mais **aucune vue admin** ne l'exposait — d'où
+  l'impression qu'il n'y avait pas de liste. `functions/api/admin/
+  newsletter-subscribers.js` (GET, admin, `?format=csv`) + `AdminNewsletterPanel`
+  (nouvelle entrée sidebar « 📰 Newsletter ») corrigent ça.
+- `functions/api/admin/broadcast.js` — nouvelle audience `newsletter` (le
+  panneau « Campagne email » existant n'interrogeait que `profiles` par
+  rôle, jamais cette table) : on peut désormais cibler ces inscrits en
+  email directement depuis l'admin.
+- **Limite signalée à l'utilisateur** : `newsletter_subscribers` ne
+  collecte QUE l'email (pas de téléphone) → pas de campagne **WhatsApp**
+  possible depuis cette liste précise. Pour WhatsApp, cibler les comptes
+  avec téléphone (acheteurs/vendeurs…) via la même audience du panneau
+  Campagne email côté email ; pas de bulk WhatsApp admin à ce jour (hors
+  scope de cette session).
+
+**Carrousel accueil** : 7 services sans bannière ajoutés à `SLIDES`
+(`public/index.html`) — NEXUS Location, Dépannage Auto, NEXUS Immobilier,
+NEXUS Troc, Louma, Covoiturage, On Demand. Même structure que l'existant
+(badge/titre/sous-titre/CTA), réutilise les 4 dégradés déjà définis
+(`slide-0..3`), action `nexus:open-*` déjà supportée génériquement. 6 → 13
+slides. Exclus volontairement : Chat/Assistant IA/Tutoriels/Fidélité
+(fonctionnalités transverses, pas des verticaux marchands comme les autres).
+
+**Vérifié en preview locale** (SW purgé) : 13 slides rendues, clic sur la
+bannière Immobilier → ouvre bien l'overlay realestate, 0 erreur console.
+`node --check` OK sur les 2 endpoints. Commit `0b86a46`, bundle
+`app.7bdd2db720.js` → `app.1f822d60fe.js`, poussé sur `main`.
+
+---
+
 ## 2026-08-05 (sexies) — Fix : SOS jamais attribués malgré dépanneur en ligne
 
 **Bug signalé** : les demandes SOS ne sont pas attribuées automatiquement
