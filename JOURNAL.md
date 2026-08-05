@@ -6,6 +6,47 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-05 (ter) — NEXUS Immobilier : nouveau vertical d'annonces
+
+**Demande** : ajouter un nouveau service. Choix retenu parmi les propositions
+(Immobilier / Déménagement / Beauté à domicile) : **NEXUS Immobilier**, annonces
+location/vente de biens (appartement, maison, villa, studio, chambre, terrain,
+bureau/commercial).
+
+**Fait** :
+- `database/migrations/2026_08_05_products_realestate.sql` (**appliqué en
+  prod**, colonnes vérifiées) : `products.is_realestate`/`realestate_specs`
+  — même pattern que `is_rental`/`rental_specs`, pas de table dédiée.
+- `DataService.saveProduct` (app.js) : mapping `isRealestate`/`realestateSpecs`
+  ajouté aux deux chemins (API + fallback Supabase, ce dernier étant le
+  chemin réellement actif en prod).
+- Module IIFE `__NEXUS_REALESTATE__` (public/index.html), calqué sur NEXUS
+  Location : overlay 2 onglets (Trouver un bien / Publier une annonce),
+  filtres transaction (location/vente) + type de bien, contact WhatsApp
+  direct, formulaire complet (prix, surface, pièces, chambres, sdb, meublé,
+  région, quartier).
+- Gating admin via le registre central `__NEXUS_MODULE_GATE__`
+  (`mod_realestate_enabled`) — le même mécanisme que Dépannage Auto, plus
+  récent et plus simple que le pattern bespoke de Location. Toggle ajouté
+  à la liste admin « Modules & services du site ».
+- Entrées : menu hamburger, pile de widgets, recherche (« immobilier »),
+  deep-link `?realestate=1`, badge produit 🏠 sur les tuiles catalogue.
+- **Bonus trouvé en route** : `mod_rescue_enabled` (Dépannage Auto, session
+  précédente) manquait dans cette même liste de toggles admin — ajouté au
+  passage.
+
+**Vérifié en preview locale (SW purgé)** : module chargé sans erreur console,
+overlay + formulaire (13 champs) fonctionnels, le gate admin bloque bien
+l'ouverture quand `mod_realestate_enabled=false`. `node --check` OK, lint 0
+erreur, 35/35 tests unitaires. Commit `3bbd5a6`, bundle
+`app.0c17f617a0.js` → `app.7bdd2db720.js`, poussé sur `main`.
+
+**Différé (hors MVP, cohérent avec Location)** : pas de flux transactionnel
+(mise en relation WhatsApp uniquement), pas de carte géolocalisée, pas de
+panneau admin dédié (modération via la gestion produits existante).
+
+---
+
 ## 2026-08-05 (bis) — NEXUS Dépannage Auto : notifications WhatsApp
 
 **Suite** : le vertical (session précédente, ci-dessous) était livré sans aucune
