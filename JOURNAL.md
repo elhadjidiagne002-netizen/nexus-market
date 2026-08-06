@@ -6,6 +6,56 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-06 — Vérification par code à 6 chiffres : inscription + mot de passe oublié
+
+**Demande** : que les nouveaux inscrits valident leur compte par un code reçu
+par email (comme les grands sites), puis même principe demandé pour le mot
+de passe oublié.
+
+**Découverte utile** : le template email `email_confirmation` (app.js)
+supportait déjà `{{confirm_code}}` (bloc conditionnel avec le code affiché en
+gros) mais **personne ne le renseignait** — la fonctionnalité était à moitié
+construite, jamais branchée à un vrai code généré/vérifié.
+
+**Inscription** (commit `3a6d0bc`) :
+- `sql/2026_08_06_email_verification_codes.sql` (appliqué) : table dédiée,
+  code jamais stocké en clair (hash SHA-256 seul), RLS sans policy anon/
+  authenticated → accès exclusivement service_role.
+- `functions/api/auth/send-verification-code.js` (génère + hash + envoie,
+  rate-limité) et `verify-code.js` (vérifie, confirme l'email côté Supabase
+  Auth via l'API admin — indispensable, sinon `signInWithPassword` continue
+  d'échouer avec « email not confirmed »).
+- Front : nouveau composant `EmailVerifyStep` (remplace l'écran « cliquez sur
+  le lien ») pour les 7 parcours d'inscription (buyer/buyer_pro/vendor/pro/
+  breeder/courier/transporteur), connexion automatique après validation
+  (mot de passe déjà en main, évite une double étape).
+
+**Mot de passe oublié** (commit `6528570`) : même principe, `ForgotPasswordModal`
+réécrit — remplace `resetPasswordForEmail`/`updateUser` (qui exige une
+SESSION obtenue via un lien de recovery, pénible sur mobile) par
+`send-verification-code` + nouvel endpoint `reset-password-with-code.js` qui
+pose le mot de passe directement via l'API admin Supabase (`PUT .../admin/
+users/{uid}`, ne demande pas l'ancien mot de passe — même mécanisme que les
+dashboards admin). **Aucune session nécessaire.** Logique de vérification du
+code extraite en helper partagé (`_lib/email-code.js`) entre les deux
+endpoints. Étapes code + nouveau mot de passe fusionnées en un seul écran
+(le code ne pouvant être consommé qu'une fois).
+
+**Piège de test noté** : les composants React de ce fichier (`app.js`) mixent
+échappement UTF-8 brut et séquences `\xE9` selon la passe de minification —
+un `old_string` recopié à la main sur un gros bloc peut ne pas matcher malgré
+un contenu visuellement identique ; toujours copier le texte exact d'un
+`Read` frais plutôt que de le retaper. Testé en montant les composants
+isolément (`ToastContext.Provider` mocké pour `ForgotPasswordModal`, qui
+dépend de `useToast()`) avec `fetch`/`DataService._sb` mockés — **muter
+l'objet réel en place** (`DataService._sb = {...}`), jamais réassigner
+`window.DataService` (top-level `const`, pas une propriété de `window`).
+
+**État** : déployé en prod, `node --check` OK, 35/35 tests, lint propre.
+Commits `3a6d0bc` (inscription) et `6528570` (mot de passe oublié).
+
+---
+
 ## 2026-08-06 — Fix : SOS non attribué (péremption GPS) + bannières carrousel invisibles (RLS)
 
 Deux problèmes signalés, diagnostiqués sur la base prod (lecture SQL).
