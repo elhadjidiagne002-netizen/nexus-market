@@ -97,6 +97,8 @@ const DEFAULTS = {
   // ── Compte & relation client ────────────────────────────────────────────────
   welcome: { subject: '👋 Bienvenue sur NEXUS Market !',
     html: wrap('Bienvenue !', '<p>Bonjour {{name}},</p><p>Votre compte NEXUS Market est créé. Découvrez des milliers de produits, payez avec Orange Money / Wave, et faites-vous livrer partout au Sénégal.</p>') },
+  email_verify_code: { subject: '🔐 Votre code de vérification : {{code}} — NEXUS Market',
+    html: wrap('Vérifiez votre adresse email', '<p>Bonjour {{name}},</p><p>Saisissez ce code dans l\'application pour activer votre compte NEXUS Market :</p><div style="text-align:center;margin:20px 0"><span style="display:inline-block;background:#F9F7F0;border:3px dashed #e9c176;border-radius:16px;padding:16px 32px;font-size:2rem;font-weight:900;letter-spacing:10px;font-family:\'Courier New\',monospace;color:#111827">{{code}}</span></div><p style="color:#6b7280;font-size:13px">Ce code expire dans 10 minutes. Si vous n\'avez pas créé de compte NEXUS Market, ignorez cet email.</p>') },
   new_message: { subject: '💬 Nouveau message sur NEXUS Market',
     html: wrap('Nouveau message', '<p>Bonjour {{name}},</p><p>Vous avez reçu un nouveau message{{#if from_name}} de <strong>{{from_name}}</strong>{{/if}}. Connectez-vous pour y répondre.</p>') },
   return_requested: { subject: '↩️ Demande de retour — Commande {{order_id}}',
@@ -153,6 +155,7 @@ const WA_DEFAULTS = {
   admin_new_order: '🛒 NEXUS Admin — Nouvelle commande #{{order_id}}{{#if amount_fcfa}} — {{amount_fcfa}} FCFA{{/if}}{{#if buyer_name}} de {{buyer_name}}{{/if}}.',
 
   welcome: '👋 Bienvenue sur NEXUS Market, {{name}} ! Découvrez des milliers de produits, payez en toute sécurité et faites-vous livrer partout au Sénégal.',
+  email_verify_code: '🔐 NEXUS Market — Votre code de vérification : {{code}} (expire dans 10 min).',
   new_message: '💬 NEXUS Market — Nouveau message{{#if from_name}} de {{from_name}}{{/if}}. Connectez-vous pour y répondre.',
   return_requested: '↩️ NEXUS Market — Votre demande de retour pour la commande #{{order_id}} est bien enregistrée.',
   dispute_opened: '⚖️ NEXUS Market — Un litige a été ouvert pour la commande #{{order_id}}. Notre équipe l\'examine.',

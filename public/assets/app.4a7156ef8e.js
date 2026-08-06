@@ -4117,7 +4117,7 @@ const DataService = {
             .upsert(fallbackProfile, { onConflict: 'id', ignoreDuplicates: true })
             .then(() => {}, () => {});
         }
-        return { __emailConfirmPending: true, email: sanitizedEmail };
+        return { __emailConfirmPending: true, email: sanitizedEmail, uid: uid || null };
       }
 
       // Session active — INSERT profiles autorisé par RLS (auth.uid() = uid)
@@ -14124,6 +14124,119 @@ const ResendConfirmButton = ({ email, name }) => {
     )
   );
 };
+// Déclenche l'envoi du code de vérification à 6 chiffres (POST
+// /api/auth/send-verification-code). Best-effort — un échec réseau ne doit
+// jamais bloquer l'affichage de l'écran de saisie (l'utilisateur pourra
+// toujours cliquer "Renvoyer le code").
+function triggerVerificationCode(email, name, phone, uid) {
+  const base = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
+  return fetch(base + "/api/auth/send-verification-code", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, name, phone, userId: uid }),
+  }).catch(() => {});
+}
+
+// ─── Écran de saisie du code de vérification (6 chiffres) ─────────────────
+// Affiché après signUp() quand la confirmation email est requise. Vérifie le
+// code via POST /api/auth/verify-code puis tente une connexion immédiate
+// (le mot de passe est déjà connu du formulaire) pour éviter une double étape.
+const EmailVerifyStep = ({ email, name, phone, uid, password, onLogin, onSwitchToLogin }) => {
+  const [code, setCode]   = React.useState("");
+  const [busy, setBusy]   = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [resendState, setResendState] = React.useState("idle"); // idle | sending | sent
+  const [cd, setCd] = React.useState(0);
+  const cdRef = React.useRef(null);
+
+  const resend = async () => {
+    if (resendState === "sending" || cd > 0) return;
+    setResendState("sending");
+    await triggerVerificationCode(email, name, phone, uid);
+    setResendState("sent"); setCd(60);
+    cdRef.current = setInterval(() => {
+      setCd(c => { if (c <= 1) { clearInterval(cdRef.current); setResendState("idle"); return 0; } return c - 1; });
+    }, 1000);
+  };
+
+  const verify = async () => {
+    const clean = code.trim();
+    if (!/^\d{6}$/.test(clean)) { setError("Entrez les 6 chiffres du code reçu par email."); return; }
+    setBusy(true); setError("");
+    try {
+      const base = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
+      const res = await fetch(base + "/api/auth/verify-code", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code: clean }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) { setError(data.error || "Code incorrect."); setBusy(false); return; }
+
+      // Connexion immédiate — le mot de passe est déjà connu, on évite une double étape.
+      if (DataService._sb && password) {
+        try {
+          const { data: signInData, error: signInErr } = await DataService._sb.auth.signInWithPassword({ email, password });
+          if (!signInErr && signInData?.session) {
+            const profRow = await DataService._sb.from("profiles").select("*").eq("id", signInData.user.id).maybeSingle().catch(() => null);
+            onLogin(profRow?.data || { id: signInData.user.id, email, name });
+            return;
+          }
+        } catch (_) {}
+      }
+      // Repli : compte vérifié mais connexion auto impossible — vers l'écran de login.
+      setBusy(false);
+      onSwitchToLogin();
+    } catch (_) {
+      setError("Erreur réseau, réessayez."); setBusy(false);
+    }
+  };
+
+  return React.createElement("div", { style: { textAlign: "center", padding: "1rem 0" } },
+    React.createElement("div", { style: { fontSize: "3.5rem", marginBottom: "1rem" } }, "🔐"),
+    React.createElement("h3", { style: { fontWeight: 700, marginBottom: "0.5rem" } }, "Vérifiez votre email"),
+    React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.25rem", lineHeight: "1.6" } },
+      "Un code à 6 chiffres a été envoyé à ", React.createElement("strong", null, email), ".", React.createElement("br", null),
+      "Saisissez-le ci-dessous pour activer votre compte."
+    ),
+    React.createElement("input", {
+      type: "text", inputMode: "numeric", maxLength: 6, autoFocus: true,
+      value: code,
+      onChange: (e) => { setCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setError(""); },
+      onKeyDown: (e) => { if (e.key === "Enter") verify(); },
+      placeholder: "000000",
+      style: {
+        width: "100%", maxWidth: "220px", margin: "0 auto 0.75rem", display: "block",
+        fontSize: "1.8rem", fontWeight: 800, letterSpacing: "0.5rem", textAlign: "center",
+        padding: "0.75rem", border: "2px solid " + (error ? "var(--danger)" : "var(--border)"),
+        borderRadius: "10px", fontFamily: "'Courier New', monospace",
+      },
+    }),
+    error && React.createElement("p", { style: { color: "var(--danger)", fontSize: "0.85rem", marginBottom: "1rem" } }, error),
+    React.createElement("button", {
+      className: "btn btn-primary btn-block", disabled: busy || code.length !== 6, onClick: verify,
+      style: { marginTop: error ? 0 : "0.5rem" },
+    },
+      busy
+        ? React.createElement(React.Fragment, null, React.createElement("i", { className: "fas fa-spinner fa-spin" }), " Vérification…")
+        : React.createElement(React.Fragment, null, React.createElement("i", { className: "fas fa-check" }), " Vérifier mon compte")
+    ),
+    React.createElement("div", { style: { marginTop: "1rem", textAlign: "center" } },
+      resendState === "sent"
+        ? React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--success)" } }, "✓ Code renvoyé — ", cd > 0 ? cd + "s" : "")
+        : React.createElement("button", {
+            onClick: resend, disabled: resendState === "sending",
+            style: { background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--primary)", fontWeight: 600, fontSize: "0.85rem", textDecoration: "underline" },
+          }, resendState === "sending" ? "Envoi…" : "Renvoyer le code")
+    ),
+    React.createElement("div", { style: { marginTop: "1.25rem" } },
+      React.createElement("button", {
+        onClick: onSwitchToLogin,
+        style: { background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--text-secondary)", fontSize: "0.82rem" },
+      }, "J'ai déjà un compte vérifié — Se connecter")
+    )
+  );
+};
+
 const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, preselectedRole = null }) => {
   const { addToast } = useToast();
   const [role, setRole] = React.useState(preselectedRole || ""); // "buyer" | "buyer_pro" | "vendor" | "courier"
@@ -14132,6 +14245,7 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
   const [errors, setErrors] = React.useState({});
   const [showPw, setShowPw] = React.useState(false);
   const [done, setDone] = React.useState(false);
+  const [pendingUid, setPendingUid] = React.useState(null); // uid Supabase Auth en attente de vérification email par code
   const [form, setForm] = React.useState({
     name:"", email:"", password:"", confirmPassword:"", phone:"", referralCode: (sessionStorage.getItem("nexus_ref_code") || ""),
     jobTitle:"", company:"", ninea_buyer:"", rc_buyer:"", address_buyer:"",
@@ -14253,7 +14367,8 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
         const newVendor = await DataService.signUp(form.email, form.password, profile);
         try { EmailService.notifyAdmin('admin_new_vendor', { vendor_name: form.shopName || form.name || 'Vendeur', vendor_email: form.email }); } catch(_){}
         if (newVendor.__emailConfirmPending) {
-          // Email de bienvenue pour le vendeur (via Cloudflare Function /api/email)
+          // Email de bienvenue "candidature reçue" (business) + code de vérification
+          // d'email à 6 chiffres (activation du compte) — deux emails, deux objets.
           fetch('/api/email', { method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({
               to: form.email,
@@ -14266,6 +14381,8 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
                 '<p style="color:#888;font-size:13px">NEXUS Market · ' + NEXUS_CONFIG.siteHost + '</p></div>'
             })
           }).catch(() => {});
+          setPendingUid(newVendor.uid || null);
+          triggerVerificationCode(form.email, form.name || form.email, form.phone, newVendor.uid);
           setDone(true); setLoading(false); return;
         }
         // Programme parrainage vendeur — enregistrer si un code parrain est saisi
@@ -14293,6 +14410,8 @@ const RegisterForm = ({ onLogin, onSwitchToLogin, onShowCGU, onShowPrivacy, pres
           // [FIX courier] Email de confirmation en attente : la ligne couriers ne peut
           // pas encore être créée (pas de session). Elle sera créée à la 1ère connexion
           // par ensureCourierRow() (cf. handleLogin). On marque l'intention en metadata.
+          setPendingUid(cUser.uid || null);
+          triggerVerificationCode(form.email, form.name || form.email, form.phone, cUser.uid);
           setDone(true); setLoading(false); return;
         }
         if (cUser?.id && DataService._sb) {
@@ -14343,9 +14462,8 @@ if (json.token || json.accessToken) {
           };
           newUser = await DataService.signUp(form.email, form.password, profile);
           if (newUser.__emailConfirmPending) {
-          // Email de confirmation maison — template "email_confirmation" (en complement
-          // du lien natif Supabase). Centralise le design dans NEXUS_EMAIL_DEFAULTS.
-          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
+          setPendingUid(newUser.uid || null);
+          triggerVerificationCode(form.email, form.name || form.email, form.phone, newUser.uid);
           setDone(true); setLoading(false); return;
         }
         }
@@ -14362,7 +14480,8 @@ if (json.token || json.accessToken) {
         try { localStorage.setItem("nexus_pending_pro_register", "1"); } catch(_) {}
         const newPro = await DataService.signUp(form.email, form.password, profile);
         if (newPro.__emailConfirmPending) {
-          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
+          setPendingUid(newPro.uid || null);
+          triggerVerificationCode(form.email, form.name || form.email, form.phone, newPro.uid);
           setDone(true); setLoading(false); return;
         }
         addToast(`Bienvenue, ${form.name} ! Complétez votre fiche professionnelle.`, "success");
@@ -14378,7 +14497,8 @@ if (json.token || json.accessToken) {
         try { localStorage.setItem("nexus_pending_breeder", "1"); } catch(_) {}
         const newBreeder = await DataService.signUp(form.email, form.password, profile);
         if (newBreeder.__emailConfirmPending) {
-          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
+          setPendingUid(newBreeder.uid || null);
+          triggerVerificationCode(form.email, form.name || form.email, form.phone, newBreeder.uid);
           setDone(true); setLoading(false); return;
         }
         addToast(`Bienvenue, ${form.name} ! Activez votre profil éleveur.`, "success");
@@ -14395,7 +14515,8 @@ if (json.token || json.accessToken) {
         try { localStorage.setItem("nexus_pending_transporter", "1"); } catch(_) {}
         const newTransporter = await DataService.signUp(form.email, form.password, profile);
         if (newTransporter.__emailConfirmPending) {
-          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
+          setPendingUid(newTransporter.uid || null);
+          triggerVerificationCode(form.email, form.name || form.email, form.phone, newTransporter.uid);
           setDone(true); setLoading(false); return;
         }
         addToast(`Bienvenue, ${form.name} ! Complétez votre fiche transporteur.`, "success");
@@ -14408,9 +14529,8 @@ if (json.token || json.accessToken) {
         const profile = { role:"buyer", name:form.name, avatar };
         const newUser = await DataService.signUp(form.email, form.password, profile);
         if (newUser.__emailConfirmPending) {
-          // Email de confirmation maison — template "email_confirmation" (en complement
-          // du lien natif Supabase). Centralise le design dans NEXUS_EMAIL_DEFAULTS.
-          EmailService.sendEmailConfirmation(form.email, form.name || form.email).catch(() => {});
+          setPendingUid(newUser.uid || null);
+          triggerVerificationCode(form.email, form.name || form.email, form.phone, newUser.uid);
           setDone(true); setLoading(false); return;
         }
         // Parrainage via Supabase
@@ -14539,24 +14659,12 @@ if (json.token || json.accessToken) {
 
   // ─── Render: vendor done screen ───────────────────────────
   if (done) {
-    // ── Email confirmation pending (acheteurs ET vendeurs) ───────────────────
+    // ── Email confirmation pending (acheteurs ET vendeurs) — code à 6 chiffres ──
     if (form.email) {
-      return React.createElement("div",{style:{textAlign:"center",padding:"1rem 0"}},
-        React.createElement("div",{style:{fontSize:"3.5rem",marginBottom:"1rem"}},"📧"),
-        React.createElement("h3",{style:{fontWeight:700,marginBottom:"0.75rem"}},"Vérifiez votre email"),
-        React.createElement("p",{style:{color:"var(--text-secondary)",marginBottom:"1.5rem",lineHeight:"1.7"}},
-          "Un email de confirmation a été envoyé à ",React.createElement("strong",null,form.email),".",React.createElement("br",null),
-          "Cliquez sur le lien dans cet email pour activer votre compte."
-        ),
-        React.createElement("div",{style:{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:"10px",padding:"0.9rem 1rem",marginBottom:"1.5rem",fontSize:"0.83rem",color:"#1E40AF",textAlign:"left"}},
-          React.createElement("i",{className:"fas fa-info-circle",style:{marginRight:"0.4rem"}}),
-          "Si vous ne recevez pas l’email dans 5 minutes, vérifiez votre dossier spam."
-        ),
-        React.createElement("button",{className:"btn btn-primary btn-block",onClick:onSwitchToLogin},
-          React.createElement("i",{className:"fas fa-sign-in-alt"})," J’ai confirmé mon email — Se connecter"
-        ),
-        React.createElement(ResendConfirmButton,{email:form.email,name:form.name||""})
-      );
+      return React.createElement(EmailVerifyStep, {
+        email: form.email, name: form.name || form.email, phone: form.phone || null,
+        uid: pendingUid, password: form.password, onLogin, onSwitchToLogin,
+      });
     }
     // ── Vendor pending review ─────────────────────────────────────────────
     return React.createElement("div",{style:{textAlign:"center",padding:"1rem 0"}},
