@@ -6,6 +6,46 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-06 — Fix : SOS non attribué (péremption GPS) + bannières carrousel invisibles (RLS)
+
+Deux problèmes signalés, diagnostiqués sur la base prod (lecture SQL).
+
+**1. SOS jamais attribué malgré un dépanneur en ligne.**
+Un SOS réel (`fecba5de`, statut `no_rescuer`) alors que le seul dépanneur
+(`shams garage`) était `available`/`active`. Cause : `nearby_rescuers`
+exigeait `location_updated_at > now() - 15 min` ; sa position était figée
+depuis 32 min → exclu → cascade sans offre. Décision utilisateur : **plus
+aucune péremption GPS** — `sql/2026_08_05_rescue_no_gps_expiry.sql` (appliqué)
+retire la condition. La dispo est désormais pilotée UNIQUEMENT par le signal
+explicite (bouton En ligne/Hors ligne → `is_available`/`rescuer_status`, +
+`busy` en course) ; un dépanneur parti sans se déconnecter est rattrapé par
+l'expiration d'offre (3 min → suivant). Vérifié : `nearby_rescuers` retrouve
+le dépanneur, une offre lui est créée (puis expirée faute de réponse — app
+fermée, correct). Rappel noté : « invisible sur le site » = normal, un SOS
+n'est pas une annonce publique.
+
+**2. Bannières du carrousel pas toujours visibles (site + admin).**
+`app_config` n'autorisait la lecture `anon` que pour `nexus_monetization_cfg` ;
+`nexus_admin_banners` n'était lisible que **connecté** → visiteur non connecté
+= bannières par défaut, connecté = bannières admin ⇒ « pas toujours visible ».
+`sql/2026_08_06_app_config_public_banners.sql` (appliqué) : policy SELECT
+publique sur cette clé (contenu d'affichage, aucune donnée sensible ; écriture
+toujours admin/service_role). De plus `nexus_admin_banners` ne contenait que
+4 bannières historiques (Coursier/Pro/Élevage/Stories) qui **écrasent** le
+repli de 13 slides du bundle (`applyAdminBanners` remplace tout) → mis à jour
+à **13 bannières** en base (les 7 services ajoutés au tour précédent inclus) :
+source admin officielle, gérable depuis le panneau, visible par tous.
+
+**Piège retenu (à ajouter au réflexe)** : quand un contenu de la home publié
+par l'admin (`app_config.*`) « n'apparaît pas », vérifier d'ABORD la policy
+SELECT `anon` de `app_config` — la home est majoritairement consultée
+déconnectée. Seules 2 clés y sont lues : `nexus_monetization_cfg` et
+`nexus_admin_banners` (les deux désormais publiques).
+
+Commit `ec3d983`, poussé sur `main`.
+
+---
+
 ## 2026-08-05 (septies) — Liste inscrits newsletter (admin) + carrousel : bannières manquantes
 
 **Demande** : voir la liste des inscrits newsletter dans le tableau de bord
