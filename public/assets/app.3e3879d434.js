@@ -15138,148 +15138,94 @@ const ForgotPasswordModal = ({ onBack, onCancel }) => {
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
-  const [generatedCode] = useState(() => Math.floor(1e5 + Math.random() * 9e5).toString());
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resendState, setResendState] = useState("idle");
+  const [cd, setCd] = useState(0);
+  const cdRef = React.useRef(null);
   const submittingRef = React.useRef(false); // anti-double-submit guard
   const [showPw, setShowPw] = useState(false);
-  const handleSendCode = async () => {
-    if (!validateEmail(email)) {
-      setError("Email invalide");
-      return;
-    }
-    setLoading(true);
-    setError("");
-    try {
-      // BUG FIX: la logique précédente vérifiait uniquement localStorage et ignorait
-      // complètement les comptes Supabase. Si Supabase est actif, on utilise
-      // resetPasswordForEmail() qui envoie un vrai email de reset sécurisé.
-      // [FIX] Appel CF function /api/auth/reset-password → Resend + lien Supabase admin
-      // Remplace resetPasswordForEmail() limité à 3 emails/heure sur le plan gratuit Supabase
-      try {
-        // [TOUT-SUPABASE] Reset via Supabase Auth directement (plus de CF function).
-        if (DataService._sb) {
-          const { error: sbErr } = await DataService._sb.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-            redirectTo: NEXUS_CONFIG.confirmUrl
-          });
-          if (sbErr) {
-            if (sbErr.message.toLowerCase().includes("rate limit") || sbErr.message.toLowerCase().includes("too many")) {
-              setError("Trop de tentatives. Veuillez patienter quelques minutes.");
-            } else {
-              setError(sbErr.message || "Erreur lors de l'envoi");
-            }
-            return;
-          }
-        }
-        submittingRef.current = false; setLoading(false);
-        setStep(2);
-        addToast(`\u{1F4E7} Email de r\xE9initialisation envoy\xE9 \xE0 ${email}. V\xE9rifiez votre bo\xEEte mail.`, "info", 8000);
-        try { var _pu=(storage.getArray('users')||[]).find(function(u){return u.email===email.trim().toLowerCase();}); if(_pu&&_pu.phone) NexusSmsService.sendOtp(_pu.phone,String(Math.floor(100000+Math.random()*900000)),10).catch(function(){}); } catch(_){}
-        return;
-      } catch (fetchErr) {
-        // Réseau ko → fallback Supabase direct
-        if (DataService._sb) {
-          const { error: sbErr } = await DataService._sb.auth.resetPasswordForEmail(email, {
-            redirectTo: NEXUS_CONFIG.confirmUrl
-          });
-          if (!sbErr) { setLoading(false); setStep(2); return; }
-        }
-        throw fetchErr;
-      }
-      // Sans Supabase — afficher le même message neutre (anti-énumération)
-      submittingRef.current = false; setLoading(false);
-      setStep(2);
-      addToast(`\u{1F4E7} Si ce compte existe, un lien a \xE9t\xE9 envoy\xE9 \xE0 ${email}.`, "info", 8000);
-    } catch(e) {
-      submittingRef.current = false; setLoading(false);
-      setError(e && e.message ? e.message : "Erreur lors de l'envoi");
-    }
-  };
-  const handleVerifyCode = () => {
-    // [FIX] Avec Supabase, l'utilisateur reçoit un LIEN email (pas un code OTP).
-    // L'étape 3 ne doit s'ouvrir QUE quand le lien a été cliqué (PASSWORD_RECOVERY event).
-    // On ne saute PLUS directement à l'étape 3 ici — le listener nexus:show-reset-password
-    // (dans onAuthStateChange) s'en charge via setStep(3).
-    if (DataService._sb) {
-      // Rien à faire ici — l'UI de l'étape 2 affiche un message d'attente
-      return;
-    }
-    if (code.trim() !== generatedCode) {
-      setError("Code incorrect");
-      return;
-    }
-    setError("");
-    setStep(3);
+
+  // [FIX] Mot de passe oublié par CODE à 6 chiffres (comme l'inscription) au
+  // lieu du lien natif Supabase (resetPasswordForEmail + updateUser, qui
+  // exige une SESSION obtenue via le lien — pénible sur mobile/mail app).
+  // Le mot de passe est posé directement via l'API admin Supabase (le code
+  // prouve la possession de la boîte mail, aucune session nécessaire).
+  const sendCode = async () => {
+    const base = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
+    return fetch(base + "/api/auth/send-verification-code", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), name: email }),
+    }).catch(() => {});
   };
 
-  // [FIX] Écouter l'événement PASSWORD_RECOVERY pour passer automatiquement à l'étape 3
-  React.useEffect(() => {
-    const _handler = () => { setStep(3); setError(""); };
-    window.addEventListener("nexus:show-reset-password", _handler);
-    return () => window.removeEventListener("nexus:show-reset-password", _handler);
-  }, []);
+  const handleSendCode = async () => {
+    if (!validateEmail(email)) { setError("Email invalide"); return; }
+    setLoading(true); setError("");
+    await sendCode();
+    submittingRef.current = false; setLoading(false);
+    setStep(2);
+    addToast(`\u{1F510} Si ce compte existe, un code a \xE9t\xE9 envoy\xE9 \xE0 ${email}.`, "info", 8000);
+  };
+
+  const resendCode = async () => {
+    if (resendState === "sending" || cd > 0) return;
+    setResendState("sending");
+    await sendCode();
+    setResendState("sent"); setCd(60);
+    cdRef.current = setInterval(() => {
+      setCd(c => { if (c <= 1) { clearInterval(cdRef.current); setResendState("idle"); return 0; } return c - 1; });
+    }, 1000);
+  };
 
   const handleResetPw = async () => {
-    if (!validatePassword(newPw)) {
-      setError("Mot de passe trop court (min 6 caract\xE8res)");
-      return;
-    }
-    if (newPw !== confirmPw) {
-      setError("Les mots de passe ne correspondent pas");
-      return;
-    }
-    setLoading(true);
+    if (code.trim().length !== 6) { setError("Entrez les 6 chiffres du code re\xE7u par email."); return; }
+    if (!validatePassword(newPw)) { setError("Mot de passe trop court (min 6 caract\xE8res)"); return; }
+    if (newPw !== confirmPw) { setError("Les mots de passe ne correspondent pas"); return; }
+    setLoading(true); setError("");
     try {
-      if (DataService._sb) {
-        const { error: sbErr } = await DataService._sb.auth.updateUser({ password: newPw });
-        if (sbErr) throw new Error(sbErr.message);
-        submittingRef.current = false; setLoading(false);
-        addToast("Mot de passe r\xE9initialis\xE9 avec succ\xE8s !", "success");
-        onBack();
-        return;
-      }
-      throw new Error("Service de réinitialisation indisponible. Configurez Supabase.");
+      const base = (NEXUS_CONFIG.apiUrl || "").replace(/\/$/, "");
+      const res = await fetch(base + "/api/auth/reset-password-with-code", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.trim(), newPassword: newPw }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || "Code incorrect ou expir\xE9.");
+      submittingRef.current = false; setLoading(false);
+      addToast("Mot de passe r\xE9initialis\xE9 avec succ\xE8s !", "success");
+      onBack();
     } catch(e) {
       submittingRef.current = false; setLoading(false);
       setError(e && e.message ? e.message : "Erreur lors de la r\xE9initialisation");
     }
   };
-  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onCancel }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem" } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onBack, style: { background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: "1rem" }, "aria-label": "Retour" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left", "aria-hidden": "true" })), /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, "Mot de passe oubli\xE9")), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onCancel, "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginBottom: "2rem" } }, ["Email", "Lien envoyé", "Nouveau mot de passe"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { flex: 1, textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "4px", borderRadius: "2px", background: step > i ? "var(--primary)" : "var(--border)", marginBottom: "0.4rem", transition: "background 0.3s" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: step > i ? "var(--primary)" : "var(--text-secondary)" } }, label)))), error && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger", role: "alert" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), error), step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.5rem", fontSize: "0.92rem" } }, "Entrez votre adresse email pour recevoir un lien de r\xE9initialisation."), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "forgot-email" }, "Email"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-envelope", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { id: "forgot-email", type: "email", className: "form-input", value: email, onChange: (e) => {
+  return /* @__PURE__ */ React.createElement("div", { className: "modal-overlay", onClick: onCancel }, /* @__PURE__ */ React.createElement("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true" }, /* @__PURE__ */ React.createElement("div", { className: "modal-header" }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.75rem" } }, /* @__PURE__ */ React.createElement("button", { type: "button", onClick: onBack, style: { background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: "1rem" }, "aria-label": "Retour" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-arrow-left", "aria-hidden": "true" })), /* @__PURE__ */ React.createElement("h2", { className: "modal-title" }, "Mot de passe oubli\xE9")), /* @__PURE__ */ React.createElement("button", { className: "close-btn", onClick: onCancel, "aria-label": "Fermer" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times", "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "0.5rem", marginBottom: "2rem" } }, ["Email", "Code + nouveau mot de passe"].map((label, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { flex: 1, textAlign: "center" } }, /* @__PURE__ */ React.createElement("div", { style: { height: "4px", borderRadius: "2px", background: step > i ? "var(--primary)" : "var(--border)", marginBottom: "0.4rem", transition: "background 0.3s" } }), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "0.72rem", color: step > i ? "var(--primary)" : "var(--text-secondary)" } }, label)))), error && /* @__PURE__ */ React.createElement("div", { className: "alert alert-danger", role: "alert" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-exclamation-circle" }), error), step === 1 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { style: { color: "var(--text-secondary)", marginBottom: "1.5rem", fontSize: "0.92rem" } }, "Entrez votre adresse email pour recevoir un code de v\xE9rification \xE0 6 chiffres."), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "forgot-email" }, "Email"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-envelope", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { id: "forgot-email", type: "email", className: "form-input", value: email, onChange: (e) => {
     setEmail(e.target.value);
     setError("");
-  }, placeholder: "votre@email.sn", onKeyDown: (e) => e.key === "Enter" && handleSendCode(), autoFocus: true, autoComplete: "email" }))), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${loading ? "btn-loading" : ""}`, onClick: handleSendCode, disabled: loading }, loading ? "Envoi..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-paper-plane", "aria-hidden": "true" }), " Envoyer le lien"))),
+  }, placeholder: "votre@email.sn", onKeyDown: (e) => e.key === "Enter" && handleSendCode(), autoFocus: true, autoComplete: "email" }))), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${loading ? "btn-loading" : ""}`, onClick: handleSendCode, disabled: loading }, loading ? "Envoi..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-paper-plane", "aria-hidden": "true" }), " Envoyer le code"))),
   step === 2 && /* @__PURE__ */ React.createElement(React.Fragment, null,
-    DataService._sb
-      ? /* @__PURE__ */ React.createElement(React.Fragment, null,
-          /* @__PURE__ */ React.createElement("div", { className: "alert alert-info" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope-open", "aria-hidden": "true" }), " Un lien de r\xE9initialisation a \xE9t\xE9 envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, email), "."),
-          /* @__PURE__ */ React.createElement("div", { style: { background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: "10px", padding: "0.9rem 1rem", marginBottom: "1rem", fontSize: "0.85rem", color: "#1E40AF", lineHeight: "1.6" } },
-            /* @__PURE__ */ React.createElement("i", { className: "fas fa-info-circle", style: { marginRight: "0.4rem" } }),
-            "Cliquez sur le lien dans l\u2019email pour continuer. Cette page se mettra \xE0 jour automatiquement.",
-            /* @__PURE__ */ React.createElement("br", null),
-            "V\xE9rifiez aussi votre dossier ", /* @__PURE__ */ React.createElement("strong", null, "spam"), " si vous ne le trouvez pas."
-          ),
-          /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem", marginBottom: "1rem" } },
-            /* @__PURE__ */ React.createElement("i", { className: "fas fa-spinner fa-spin" }),
-            "En attente de confirmation\u2026"
-          ),
-          React.createElement(ResendConfirmButton, { email, name: "" })
-        )
-      : /* @__PURE__ */ React.createElement(React.Fragment, null,
-          /* @__PURE__ */ React.createElement("div", { className: "alert alert-info" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope-open", "aria-hidden": "true" }), "Code de v\xE9rification envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, email)),
-          /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "reset-code" }, "Code \xE0 6 chiffres"), /* @__PURE__ */ React.createElement("input", { id: "reset-code", type: "text", className: "form-input", value: code, onChange: (e) => {
+    /* @__PURE__ */ React.createElement("div", { className: "alert alert-info" }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-envelope-open", "aria-hidden": "true" }), " Code de v\xE9rification envoy\xE9 \xE0 ", /* @__PURE__ */ React.createElement("strong", null, email)),
+    /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "reset-code" }, "Code \xE0 6 chiffres"), /* @__PURE__ */ React.createElement("input", { id: "reset-code", type: "text", className: "form-input", value: code, onChange: (e) => {
     setCode(e.target.value.replace(/\D/g, "").slice(0, 6));
     setError("");
-  }, placeholder: "123456", maxLength: "6", inputMode: "numeric", autoFocus: true, style: { fontSize: "1.5rem", letterSpacing: "0.5rem", textAlign: "center" } })), /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-block", onClick: handleVerifyCode, disabled: code.length !== 6 }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check", "aria-hidden": "true" }), " V\xE9rifier le code")
-        )
-  ), step === 3 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "new-pw" }, "Nouveau mot de passe"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-lock", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { id: "new-pw", type: showPw ? "text" : "password", className: "form-input", value: newPw, onChange: (e) => {
+  }, placeholder: "123456", maxLength: "6", inputMode: "numeric", autoFocus: true, style: { fontSize: "1.5rem", letterSpacing: "0.5rem", textAlign: "center" } })),
+    /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "new-pw" }, "Nouveau mot de passe"), /* @__PURE__ */ React.createElement("div", { className: "input-wrapper" }, /* @__PURE__ */ React.createElement("i", { className: "input-icon fas fa-lock", "aria-hidden": "true" }), /* @__PURE__ */ React.createElement("input", { id: "new-pw", type: showPw ? "text" : "password", className: "form-input", value: newPw, onChange: (e) => {
     setNewPw(e.target.value);
     setError("");
-  }, placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022", autoComplete: "new-password", autoFocus: true }), /* @__PURE__ */ React.createElement("button", { type: "button", className: "input-action", onClick: () => setShowPw(!showPw), "aria-label": showPw ? "Masquer" : "Afficher" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-eye${showPw ? "-slash" : ""}`, "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement(PasswordStrengthBar, { password: newPw })), /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "confirm-pw" }, "Confirmer"), /* @__PURE__ */ React.createElement("input", { id: "confirm-pw", type: "password", className: "form-input", value: confirmPw, onChange: (e) => {
+  }, placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022", autoComplete: "new-password" }), /* @__PURE__ */ React.createElement("button", { type: "button", className: "input-action", onClick: () => setShowPw(!showPw), "aria-label": showPw ? "Masquer" : "Afficher" }, /* @__PURE__ */ React.createElement("i", { className: `fas fa-eye${showPw ? "-slash" : ""}`, "aria-hidden": "true" }))), /* @__PURE__ */ React.createElement(PasswordStrengthBar, { password: newPw })),
+    /* @__PURE__ */ React.createElement("div", { className: "form-group" }, /* @__PURE__ */ React.createElement("label", { className: "form-label", htmlFor: "confirm-pw" }, "Confirmer"), /* @__PURE__ */ React.createElement("input", { id: "confirm-pw", type: "password", className: "form-input", value: confirmPw, onChange: (e) => {
     setConfirmPw(e.target.value);
     setError("");
-  }, placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022", autoComplete: "new-password" })), /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${loading ? "btn-loading" : ""}`, onClick: handleResetPw, disabled: loading }, loading ? "R\xE9initialisation..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-key", "aria-hidden": "true" }), " R\xE9initialiser mon mot de passe")))));
+  }, placeholder: "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022", autoComplete: "new-password" })),
+    /* @__PURE__ */ React.createElement("button", { className: `btn btn-primary btn-block ${loading ? "btn-loading" : ""}`, onClick: handleResetPw, disabled: loading }, loading ? "R\xE9initialisation..." : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("i", { className: "fas fa-key", "aria-hidden": "true" }), " R\xE9initialiser mon mot de passe")),
+    /* @__PURE__ */ React.createElement("div", { style: { marginTop: "1rem", textAlign: "center" } },
+      resendState === "sent"
+        ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: "0.82rem", color: "var(--success)" } }, "\u2713 Code renvoy\xE9 ", cd > 0 ? "(" + cd + "s)" : "")
+        : /* @__PURE__ */ React.createElement("button", { type: "button", onClick: resendCode, disabled: resendState === "sending", style: { background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--primary)", fontWeight: 600, fontSize: "0.85rem", textDecoration: "underline" } }, resendState === "sending" ? "Envoi\u2026" : "Renvoyer le code")
+    )
+  )));
 };
 
 
