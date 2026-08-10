@@ -10480,9 +10480,97 @@ window.addEventListener('unhandledrejection', function(event) {
     return l1 + l2;
   }
 
+  // ── Repli : agences immobilières proches (quand aucune annonce à afficher) ────
+  // Annuaire curé embarqué (works offline, sans import base) : chaque agence a un
+  // téléphone réel et des coordonnées GPS → on classe par distance au demandeur.
+  var AGENCIES = [
+    { n: 'IMMO Business', c: 'Dakar', q: 'Cité Keur Gorgui', t: '+221 77 136 22 79', lat: 14.716, lng: -17.464 },
+    { n: 'Locadakar', c: 'Dakar', q: 'Dakar / Saly / Somone', t: '+221 77 555 55 70', lat: 14.7137, lng: -17.4578 },
+    { n: 'Keur-immo Sénégal', c: 'Dakar', q: 'Dakar', t: '+221 77 151 79 47', lat: 14.7137, lng: -17.4578 },
+    { n: '3M Immobilier', c: 'Dakar', q: 'Sacré-Cœur 3', t: '+221 33 867 00 56', lat: 14.7137, lng: -17.4578 },
+    { n: 'Agence Djinguil Immobilier', c: 'Dakar', q: 'Liberté 6 extension', t: '+221 33 867 61 11', lat: 14.725, lng: -17.459 },
+    { n: 'Group MBS Immo', c: 'Dakar', q: 'SICAP Baobab', t: '+221 77 513 52 01', lat: 14.706, lng: -17.460 },
+    { n: 'Habiter.biz', c: 'Dakar', q: 'Keur Gorgui', t: '+221 77 284 78 78', lat: 14.716, lng: -17.464 },
+    { n: 'Immo Access', c: 'Dakar', q: 'Grand-Yoff', t: '+221 77 532 59 94', lat: 14.7367, lng: -17.4528 },
+    { n: 'Kings Plaza', c: 'Dakar', q: 'VDN Extension', t: '+221 33 860 40 19', lat: 14.728, lng: -17.462 },
+    { n: 'NIDMIKS', c: 'Dakar', q: 'Point E', t: '+221 77 512 34 00', lat: 14.687, lng: -17.456 },
+    { n: 'Dakar Hermitage Immobilier', c: 'Dakar', q: 'Fann Résidence', t: '+221 76 683 36 62', lat: 14.687, lng: -17.472 },
+    { n: 'Saphir Immobilier', c: 'Dakar', q: 'Mermoz Sotrac', t: '+221 33 860 04 74', lat: 14.700, lng: -17.472 },
+    { n: 'DAIDY Immobilier', c: 'Dakar', q: 'Point E', t: '+221 77 640 44 68', lat: 14.687, lng: -17.456 },
+    { n: 'Flèche Immo', c: 'Dakar', q: 'Liberté 6 Extension', t: '+221 33 867 17 91', lat: 14.725, lng: -17.459 },
+    { n: 'Résidences KALIA', c: 'Dakar', q: 'Point E (promoteur)', t: '+221 33 821 14 15', lat: 14.687, lng: -17.456 },
+    { n: 'TOUBA IMMO', c: 'Dakar', q: 'Ouakam Extension', t: '+221 77 108 88 89', lat: 14.740, lng: -17.490 },
+    { n: 'Cabinet Immobilier du Monde', c: 'Dakar', q: 'Sacré-Cœur 3 VDN', t: '+221 77 537 18 19', lat: 14.7137, lng: -17.4578 },
+    { n: 'Services Immobiliers SARL', c: 'Dakar', q: 'Cité CPI / VDN', t: '+221 76 682 26 26', lat: 14.728, lng: -17.462 },
+    { n: 'Immobilière Dado', c: 'Dakar', q: 'Ouest Foire', t: '+221 77 374 74 89', lat: 14.749, lng: -17.472 },
+    { n: 'Immolux', c: 'Dakar', q: 'HLM 5', t: '+221 77 232 42 03', lat: 14.710, lng: -17.4442 },
+    { n: 'Agence immobilière Mbour Sénégal', c: 'Mbour', q: 'Mbour', t: '+221 78 590 70 70', lat: 14.420, lng: -16.970 },
+    { n: 'Immobilier La Lagune', c: 'Mbour', q: 'Mbour / Saly', t: '+221 33 957 27 27', lat: 14.420, lng: -16.970 },
+    { n: 'Saly Immo', c: 'Saly', q: 'Saly Portudal', t: '+221 78 475 57 56', lat: 14.450, lng: -17.010 },
+    { n: 'Agipco Immobilier', c: 'Saly', q: 'Place du Carrousel Saly', t: '+221 77 644 07 37', lat: 14.450, lng: -17.010 },
+    { n: 'Saly Immobilier', c: 'Saly', q: 'Saly', t: '+221 33 954 97 46', lat: 14.450, lng: -17.010 },
+    { n: 'Afriquimmo', c: 'Saly', q: 'Saly', t: '+221 77 569 35 61', lat: 14.450, lng: -17.010 },
+    { n: 'Immothiès-Dakar', c: 'Thiès', q: 'Randoulène Nord', t: '+221 77 143 71 25', lat: 14.7833, lng: -16.9333 },
+    { n: 'SALL MULTI-SERVICES', c: 'Kaolack', q: 'Kaolack', t: '+221 77 556 64 97', lat: 14.152, lng: -16.073 },
+    { n: 'SIM Immobilier', c: 'Saint-Louis', q: 'Saint-Louis', t: '+221 77 678 24 45', lat: 16.018, lng: -16.490 },
+    { n: 'ETS AL AMINE SERVICES', c: 'Saint-Louis', q: 'Saint-Louis', t: '+221 77 567 91 34', lat: 16.018, lng: -16.490 },
+    { n: 'Agence Immobilier SN', c: 'Ziguinchor', q: 'Ziguinchor', t: '+221 77 334 66 83', lat: 12.568, lng: -16.272 },
+    { n: 'A.S.A.I. Ziguinchor', c: 'Ziguinchor', q: 'Casamance', t: '+221 77 655 89 99', lat: 12.568, lng: -16.272 }
+  ];
+  var DAKAR = { lat: 14.6928, lng: -17.4467 };
+  function haversineKm(a, b) {
+    if (!a || !b) return Infinity;
+    var R = 6371, dLat = (b.lat - a.lat) * Math.PI / 180, dLng = (b.lng - a.lng) * Math.PI / 180;
+    var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  }
+  function waLink(phone, msg) {
+    var p = String(phone || '').replace(/\D/g, '');
+    if (p.length === 9 && p[0] === '7') p = '221' + p;
+    return 'https://wa.me/' + p + '?text=' + encodeURIComponent(msg);
+  }
+  // Rend le bloc d'agences classées par distance à `ref` (position réelle si `hasPos`).
+  function renderAgencies(host, ref, hasPos) {
+    var sorted = AGENCIES.map(function (a) { return { a: a, d: haversineKm(ref, a) }; })
+      .sort(function (x, y) { return x.d - y.d; }).slice(0, 8);
+    var head =
+      '<div style="text-align:center;padding:1.4rem .5rem .3rem"><div style="font-size:2rem">🏠</div>'
+      + '<b style="display:block;margin:.4rem 0 .2rem;font-size:1rem">Aucune annonce pour ce filtre</b>'
+      + '<div style="font-size:.82rem;color:#777">En attendant, voici des agences immobilières '
+      + (hasPos ? 'proches de vous' : 'au Sénégal') + ' à contacter directement.</div>';
+    if (!hasPos) head += '<button id="nx-realty-geo" style="margin-top:.6rem;padding:.45rem .9rem;border:1px solid #0d9488;background:#f0fdfa;color:#0d9488;border-radius:20px;font-weight:700;font-size:.78rem;cursor:pointer">📍 Trier par les plus proches de moi</button>';
+    head += '</div>';
+    var grid = '<div class="nx-le-grid" style="margin-top:.6rem">';
+    sorted.forEach(function (o) {
+      var a = o.a;
+      var dist = (hasPos && isFinite(o.d)) ? '<span style="color:#0d9488;font-weight:700">≈ ' + (o.d < 1 ? Math.round(o.d * 1000) + ' m' : o.d.toFixed(o.d < 10 ? 1 : 0) + ' km') + '</span> · ' : '';
+      var msg = 'Bonjour, je cherche un bien immobilier à ' + a.c + ' (via NEXUS Immobilier). Avez-vous des biens à me proposer ?';
+      grid += '<div class="nx-le-tile" style="display:flex;flex-direction:column">'
+        + '<div style="height:70px;background:#f0fdfa;display:flex;align-items:center;justify-content:center;font-size:1.5rem">🏢</div>'
+        + '<div class="p" style="flex:1"><div style="font-weight:700;line-height:1.2">' + esc(a.n) + '</div>'
+        + '<div style="color:#666;font-size:.7rem;margin-top:2px">' + dist + '📍 ' + esc(a.q) + ', ' + esc(a.c) + '</div></div>'
+        + '<div style="display:flex;gap:6px;padding:0 .6rem .6rem">'
+        + '<a href="' + esc(waLink(a.t, msg)) + '" target="_blank" rel="noopener" style="flex:1;text-align:center;padding:.45rem;border-radius:8px;background:#25D366;color:#fff;font-weight:700;font-size:.72rem;text-decoration:none">💬 WhatsApp</a>'
+        + '<a href="tel:' + esc(String(a.t).replace(/\s/g, '')) + '" style="flex:0 0 auto;padding:.45rem .6rem;border-radius:8px;background:#0d9488;color:#fff;font-weight:700;font-size:.72rem;text-decoration:none">📞</a>'
+        + '</div></div>';
+    });
+    grid += '</div>';
+    host.innerHTML = head + grid;
+    var geoBtn = host.querySelector('#nx-realty-geo');
+    if (geoBtn) geoBtn.addEventListener('click', function () {
+      geoBtn.disabled = true; geoBtn.textContent = '⏳ Localisation…';
+      if (!navigator.geolocation) { renderAgencies(host, DAKAR, false); return; }
+      navigator.geolocation.getCurrentPosition(
+        function (p) { renderAgencies(host, { lat: p.coords.latitude, lng: p.coords.longitude }, true); },
+        function () { geoBtn.disabled = false; geoBtn.textContent = '📍 Position indisponible — réessayer'; },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    });
+  }
+
   // ── Grille annonces + contact WhatsApp ────────────────────────────────────────
   function renderGrid(host, products) {
-    if (!products.length) { host.innerHTML = '<div style="text-align:center;color:#999;padding:2rem .5rem">Aucun bien pour le moment. Soyez le premier à publier une annonce !</div>'; return; }
+    if (!products.length) { renderAgencies(host, DAKAR, false); return; }
     var ids = products.map(function (p) { return p.vendor_id; }).filter(Boolean);
     loadPhones(ids).then(function (phones) {
       var grid = document.createElement('div'); grid.className = 'nx-le-grid';

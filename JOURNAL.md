@@ -70,44 +70,112 @@ Location/Immobilier dans leurs verticales.
 
 ---
 
+## 2026-08-10 (suite 3) — Importateur onglet ④ : produits « normaux » avec marge éditable
+
+**Demande** : que `nexus_importer.html` puisse aussi **exporter vers Supabase des produits issus de
+prospection** (produits normaux, pas seulement Location/Immobilier/Transport), attribués à un
+**compte utilisateur**, avec **tout ce que le site demande** (photo, description, prix, prix barré,
+stock, catégorie), et surtout la possibilité de **changer les prix de vente pour se faire une marge
+AVANT l'export**, puis push final.
+
+**Travail effectué** (`nexus_importer.html`, nouvel onglet ④ « Produits (marge & export) ») :
+- **Import CSV produits** → tableau **éditable en direct**. Colonnes lues : `Nom, Categorie,
+  Prix_achat_fcfa, Prix_vente_fcfa, Prix_original_fcfa, Stock, Description, Image_url, Images
+  (pipe|séparées), Marque, Etat, Region, Vendeur, Telephone` (seuls Nom + un prix requis).
+- **Marge** : champ « Marge % » + « Arrondir à » (50/100/500/1000 F) + bouton « Appliquer »
+  → prix de vente = prix d'achat × (1 + marge), arrondi. Chaque ligne reste **éditable à la main**
+  (Vente F, Barré F, Stock, Catégorie via select, Actif) ; la **marge %** et l'**équivalent EUR**
+  se recalculent en direct par ligne.
+- **Compte cible** : 2 modes — (a) *un seul compte vendeur* (email existant réutilisé, sinon créé ;
+  nom boutique + téléphone), ou (b) *colonnes Vendeur/Telephone de chaque ligne*. Nouveau helper
+  `ensureVendorEmail(email,name,phone)` (créer/retrouver par email précis) + `upsertPlainProduct`
+  (idempotent par `vendor_id`+`name`).
+- **Export** vers `products` avec le schéma exact de `DataService.saveProduct` (snake_case) :
+  `name, category, price` (EUR = FCFA÷655,957), `original_price` (EUR), `stock, description,
+  image_url, images[] , vendor_id, vendor_name, active, is_rental:false, is_realestate:false`.
+  Dry-run par défaut + barre de progression + log détaillé (marge par produit).
+- Gabarit d'exemple créé : `prospection/catalogue_produits_exemple.csv` (5 produits).
+
+**Vérifs** : `node --check` du script module OK. Testé en vrai dans le navigateur (static-root:5599) :
+onglet ④ visible, CSV déposé → 5 lignes parsées ; marge 40 %/arrondi 100 → 18000 F → 25200 F
+(+40 %, 38,42 €) sur toutes les lignes avec prix d'achat ; édition manuelle 30000 F → marge +67 %,
+45,73 € recalculés en direct ; bouton Export activé, résumé « 5/5 produit(s) à exporter ».
+
+**État** : code prêt (non committé/poussé). Le push effectif des produits se fait dans l'app importateur
+(URL Supabase + Service Role Key + dry-run d'abord), pas via le repo.
+
+---
+
+## 2026-08-10 (suite 2) — Repli « agences proches » Immobilier + prospection intérieur
+
+**Demande** : « à défaut d'afficher des propositions de location en immobilier, proposer des
+agences immobilières proches de la localisation du demandeur » ; puis « continuer les
+prospections en profondeur ».
+
+**Feature — repli agences immobilières géolocalisées** (`public/index.html`, module Immobilier) :
+- Quand la grille de recherche Immobilier est **vide** (aucune annonce pour le filtre), au lieu du
+  simple message « Aucun bien », on affiche désormais un **annuaire d'agences immobilières classées
+  par distance** au demandeur, avec bouton **💬 WhatsApp** (message pré-rempli) + **📞 tel** direct.
+- Annuaire **curé embarqué** dans le module (`AGENCIES`, 33 agences réelles avec GPS + téléphone :
+  Dakar, Saly, Thiès, Mbour, Kaolack, Saint-Louis, Ziguinchor) → **fonctionne sans import base**,
+  self-contained. Classement par **Haversine** ; affichage instantané centré Dakar par défaut, puis
+  bouton **« 📍 Trier par les plus proches de moi »** (navigator.geolocation, dégrade proprement si
+  refus/indispo). Distances affichées seulement si vraie position obtenue.
+- `node --check` du module OK après ajout.
+
+**Prospection approfondie (intérieur du pays)** :
+- `prospection/agences_immobilieres_senegal.csv` : 91 → **~106 entrées**. Nouvelles avec téléphones
+  vérifiés : Kaolack (SALL MULTI-SERVICES +221 77 556 64 97, Saloum Immobilier, Senafri IMMO) ·
+  Saint-Louis (SIM Immobilier +221 77 678 24 45, Pro Immobilier SL, ETS AL AMINE +221 77 567 91 34,
+  L'Immobilière de Saint-Louis) · Ziguinchor/Casamance (Agence Immobilier SN +221 77 334 66 83,
+  A.S.A.I. +221 77 655 89 99, CASAMANCE IMMO COUP DE KEUR, La Casamance, Cap Skirring) ·
+  Dakar (Cabinet Kany, Mamelles Ouakam).
+
+**État** : code repli en place (non déployé, à pusher — édition dans `index.html`, pas de hash à
+renommer). Fichiers prospection à jour (gitignored, local). Import base toujours via onglet ③.
+
+---
+
 ## 2026-08-10 (suite) — Catalogues Location & Immobilier + prospection élargie Facebook
 
 **Demande** : « ne rien laisse » — compléter tout ce qui était en attente ; « les locations
 concernent tout — étendre le champ des possibles notamment des recherches plus poussées
-sur Facebook ».
+sur Facebook » ; + « continu prospection location avec plus de divertissite » ;
++ « continu prospection immobilier avec facebook ».
 
 **Travail effectué** :
 
-**CSV catalogue complet (onglet ③ Catalogue de l'importateur)** :
-- `prospection/catalogue_location_senegal.csv` (49 annonces, 11 catégories) :
-  Voiture · Événementiel · BTP/Énergie · Hébergement · **Nautique** (jet ski/pirogue/paddle
-  Saly + Dakar Ngor) · **Moto/Scooter** (scooter 10k/j, moto trail 25k, VTT 5k — Saly/
-  Ngaparou) · **Mode/Mariage** (robes mariée/soirée, costume homme, ensemble wax) ·
-  **Audiovisuel/IT** (vidéoprojecteur, lot PC portables séminaire, micro-conférence, borne
-  selfie) · **Espace/Bureau** (salle réunion 20p, bureau privé coworking, espace 100p) ·
-  **Bâche/Structure** (bâche PVC 6×4m, structure gonflable) · **Food truck** (cuisine mobile).
-  Format colonnes : `Nom,Categorie,Prix_jour_fcfa,...,Annonceur,Telephone,...` → passe dans
-  l'onglet ③, crée comptes vendeurs + produits `is_rental`.
-- `prospection/catalogue_immobilier_senegal.csv` (30 annonces, 2 transactions) :
-  13 locations mensuelles (studios, appartements, villas, bureau — Dakar + Saly + Thiès) +
-  17 ventes (appartements, villas, terrains, locaux commerciaux, immeuble de rapport).
-  Format : `Titre,Transaction,Type_bien,Prix_fcfa,...` → produits `is_realestate`.
+**CSV catalogue Location** (`prospection/catalogue_location_senegal.csv`) — **66 annonces, 17 catégories** :
+Voiture(8) · Événementiel(8) · BTP/Énergie(6) · Nautique(5) · Hébergement(4) · Audiovisuel/IT(4) ·
+Moto/Scooter(4) · Mode/Mariage(4) · Animation enfants(4) · Quad/Aventure(4) · Sport nautique(3) ·
+Espace/Bureau(3) · Karting(2) · Pêche/Bateau(2) · Bien-être(2) · Bâche/Structure(2) · Food truck(1).
+Annonceurs réels avec téléphones/FB vérifiés (AFRICA Raids, KART'ing Saly, Fun Spa, King Mascotte…).
 
-**Prospection élargie — Facebook** :
-- `prospection/loueurs_materiel_senegal.csv` : 31 → **50 entrées** (+19 sources FB)
-  Nouvelles catégories avec pages Facebook vérifiées : X'Trem Jet Sénégal (jet ski Saly,
-  FB:xtremjetsenegal), Casa Loisirs (jet ski Saly, +221 77 910 10 45), Monaco Beach/Boby
-  Jet Ski (Ngor), Moto Découverte Sénégal (FB), Location motos et scooters Sénégal
-  (FB:locationmotodkr), Just married (robes mariage, FB), La promise Bridal Dakar (FB),
-  The Day of Today (robes, FB), Mondial Business Mobus (+221 77 627 09 09, vidéoprojecteur
-  Colobane), Dakar Vidéo projecteur service (FB), Africa Bâches (FB:bachesAFRICA), TOUBA
-  BACHE du Sénégal (FB), DAKAR Coworking (+221 77 332 81 87, Dieuppeul II), Dakar CoWorking
-  (dakarcoworking.com), Freepenseur (Sud Foire, 24/7), Waypoint (24/7), Nomad Foodtruck
-  Sénégal (FB:foodtrucknomadsn).
-- `prospection/agences_immobilieres_senegal.csv` : inchangé (64 agences).
+**CSV catalogue Immobilier** (`prospection/catalogue_immobilier_senegal.csv`) — **41 annonces** :
+13 locations mensuelles + 17 ventes initiales (Dakar/Saly/Thiès) + **10 nouvelles** (session suite) :
+Saint-Louis île (F3 location + villa F4 vente) · Ziguinchor (F2 location + terrain vente) ·
+Kaolack Médina (F3 location + villa F4 vente) · Touba Ndamatou/Darou Khoudoss (terrain + villa F5 vente) ·
+Almadies KALIA (F2 neuf programme VEFA, dès 317 000 FCFA/mois).
 
-**État** : tous les CSV valides (`node --check` + comptage colonnes/lignes). Non importés
-en base (attente SQL migration transport). Prêts à l'import via onglet ③ (dry-run d'abord).
+**Prospection loueurs élargie** (`prospection/loueurs_materiel_senegal.csv`) : 29 → **65 entrées** (+36 FB)
+Catégories Facebook vérifiées : Nautique (X'Trem Jet, Casa Loisirs, Monaco Beach, Saly Aventure) ·
+Moto (Moto Découverte Sénégal, Location motos DKR, Location Moto Senegal) · Mode/Mariage (Just married,
+La promise Bridal, The Day of Today) · AV/IT (Mondial Business Mobus +221 77 627 09 09, Dakar Vidéo
+projecteur) · Bâches (Africa Bâches, TOUBA BACHE) · Coworking (DAKAR Coworking +221 77 332 81 87,
+Freepenseur, Waypoint) · Food truck (Nomad Foodtruck) · Quad (Easy Quad Saly, AFRICA Raids, Saly Loisirs,
+Pape Loisirs) · Karting (KART'ing Saly +221 33 958 50 02) · Kitesurf (DaKite Sénégal) ·
+Pêche/Bateau (Terrou-Bi Marina) · Animation enfants (Kid'Air, FUN CITY, King Mascotte) · Spa (Fun Spa, VIP Spa).
+
+**Prospection immobilier élargie** (`prospection/agences_immobilieres_senegal.csv`) : 65 → **91 entrées** (+26)
+Nouvelles villes : Saint-Louis (2), Ziguinchor (1) · Mbour (2 FB) · TOUBA IMMO (Ouakam, +221 77 108 88 89).
+Nouvelles pages Facebook Dakar : CGBI Ngor/Almadies · Baraka IMMO · Centrale Immobilière Africaine ·
+AFD Immobilier · Régie Mugnier · ATLAS IMMO · SenAnnonceImmo · Ges IMMO · OFIM Sénégal (Almadies) ·
+A2D Immobilier (route Ngor) · 4 pages location meublée (Liberté 6, Dakar…).
+Promoteurs neufs : Résidences KALIA (+221 33 821 14 15, residenceskalia.com) · SenHub Immo ·
+Réalités Sénégal · Senegindia · Ilios Groupe.
+
+**État** : tous les CSV valides, colonnes conformes à l'onglet ③ de l'importateur. Non importés
+en base (attente SQL migration transport par l'utilisateur). Prêts à l'import via onglet ③ (dry-run d'abord).
 
 ---
 

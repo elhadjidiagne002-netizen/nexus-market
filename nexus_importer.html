@@ -98,6 +98,7 @@ reste dans ton navigateur (aucun envoi ailleurs que vers ton propre projet Supab
   <div class="tab active" data-tab="import">① Importer les CSV → prospects</div>
   <div class="tab" data-tab="promote">② Promouvoir prospects → comptes</div>
   <div class="tab" data-tab="catalogue">③ Catalogue (Transport · Location · Immobilier)</div>
+  <div class="tab" data-tab="produits">④ Produits (marge & export)</div>
 </div>
 
 <!-- ─── IMPORT ─── -->
@@ -218,6 +219,71 @@ reste dans ton navigateur (aucun envoi ailleurs que vers ton propre projet Supab
     <span class="pill" id="catSummary"></span>
   </div>
   <progress id="progCat" value="0" max="100" class="hidden"></progress>
+</div>
+
+<!-- ─── PRODUITS (marge & export) ─── -->
+<div class="card hidden" id="tab-produits">
+  <h2><span class="num">D</span> Produits catalogue → boutique d'un vendeur (avec marge)</h2>
+  <p class="muted">Importe une liste de produits « normaux » (mode, électronique, maison, beauté…) issue de la
+    prospection, <b>ajuste les prix de vente pour te faire une marge</b> dans le tableau, puis exporte-les vers
+    la table <code>products</code> attribués à un <b>compte vendeur</b>. Tout ce que le site affiche est inclus :
+    nom, catégorie, <b>photo(s)</b>, description, prix, prix barré, stock.</p>
+  <div class="warnbox">💶 Prix des CSV en <b>FCFA</b> → stockés en <b>EUR</b> (÷ 655,957) dans <code>price</code> /
+    <code>original_price</code>. Colonnes lues :
+    <code>Nom, Categorie, Prix_achat_fcfa, Prix_vente_fcfa, Prix_original_fcfa, Stock, Description, Image_url,
+    Images, Marque, Etat, Region, Vendeur, Telephone</code> — seuls <b>Nom</b> + un prix (achat ou vente) sont requis.
+    Le prix d'achat sert de base au calcul de marge ; le prix de vente est ce qui est publié.</div>
+
+  <!-- Compte cible -->
+  <div style="background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:14px 0;">
+    <label style="margin-bottom:10px;">À quel compte attribuer ces produits ?</label>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;">
+      <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:normal;color:var(--ink);">
+        <input type="radio" name="prodVendMode" value="single" checked> Un seul compte vendeur (tous les produits)</label>
+      <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:normal;color:var(--ink);">
+        <input type="radio" name="prodVendMode" value="row"> Colonnes <code>Vendeur</code>/<code>Telephone</code> de chaque ligne</label>
+    </div>
+    <div class="row" id="prodSingleBox">
+      <div><label>Email du compte (existant, sinon créé)</label><input type="text" id="prodVendorEmail" placeholder="boutique@nexusmarket.sn"></div>
+      <div><label>Nom boutique (si création)</label><input type="text" id="prodVendorName" placeholder="Ma Boutique"></div>
+      <div><label>Téléphone (si création)</label><input type="text" id="prodVendorPhone" placeholder="+221 77 ..."></div>
+    </div>
+    <p class="muted" style="margin:2px 0 0;">Le compte est créé en <b>role vendor</b> (statut <i>pending</i> → à valider dans
+      « Vendeurs en attente »). Mot de passe = celui de l'onglet ② (<code id="prodPassEcho">Nexus@2024</code>). Les produits
+      sont publiés <code>active=true</code> immédiatement.</p>
+  </div>
+
+  <!-- Fichiers -->
+  <div class="filebox" id="dropProd">📂 Dépose ici ton/tes CSV de produits (multi-sélection)
+    <input type="file" id="filesProd" accept=".csv" multiple class="hidden"></div>
+
+  <!-- Marge globale -->
+  <div style="margin-top:16px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+    <label style="margin:0;">Marge %</label>
+    <input type="text" id="prodMargin" value="30" style="width:80px;">
+    <label style="margin:0;">Arrondir à</label>
+    <select id="prodRound" style="width:auto;">
+      <option value="0">— (au franc)</option><option value="50">50 F</option>
+      <option value="100" selected>100 F</option><option value="500">500 F</option><option value="1000">1000 F</option></select>
+    <button class="btn ghost sm" id="btnApplyMargin">Appliquer la marge (achat → vente)</button>
+    <span class="muted">Recalcule le prix de vente = prix d'achat × (1 + marge). Tu peux ensuite éditer chaque ligne.</span>
+  </div>
+
+  <div class="scroll" style="margin-top:12px;"><table id="prodTbl"><thead><tr>
+    <th style="width:30px;"><input type="checkbox" id="prodChkAll" checked></th>
+    <th>Nom</th><th>Catégorie</th><th style="text-align:right;">Achat&nbsp;F</th>
+    <th style="text-align:right;">Vente&nbsp;F</th><th style="text-align:right;">Barré&nbsp;F</th>
+    <th style="text-align:right;">Marge</th><th style="width:66px;">Stock</th><th>Photo</th><th style="width:44px;">Actif</th>
+  </tr></thead><tbody id="prodBody"></tbody></table></div>
+
+  <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <button class="btn" id="btnExportProd" disabled>Exporter vers Supabase</button>
+    <button class="btn ghost" id="btnClearProd">Vider la liste</button>
+    <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:normal;">
+      <input type="checkbox" id="prodDryRun" checked> <span class="muted">Simulation (dry-run, n'écrit rien)</span></label>
+    <span class="pill" id="prodSummary"></span>
+  </div>
+  <progress id="progProd" value="0" max="100" class="hidden"></progress>
 </div>
 
 <div id="log">Prêt.</div>
@@ -395,7 +461,9 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   $('#tab-import').classList.toggle('hidden', t.dataset.tab!=='import');
   $('#tab-promote').classList.toggle('hidden', t.dataset.tab!=='promote');
   $('#tab-catalogue').classList.toggle('hidden', t.dataset.tab!=='catalogue');
+  $('#tab-produits').classList.toggle('hidden', t.dataset.tab!=='produits');
   if(t.dataset.tab==='catalogue') $('#catPassEcho').textContent = genPass();
+  if(t.dataset.tab==='produits'){ const e=$('#prodPassEcho'); if(e) e.textContent = genPass(); }
 });
 
 // ── Import : sélection fichiers ─────────────────────────────────────────
@@ -847,6 +915,39 @@ async function ensureVendor(name, phone, region, lat, lng, dry){
   _vendorCache[em]=uid;
   return {uid,email:em,created};
 }
+// Variante : compte vendeur ciblé par un email PRÉCIS (existant ou à créer).
+// Utilisé par l'onglet ④ quand on veut attribuer des produits à un compte donné.
+async function ensureVendorEmail(email, name, phone, dry){
+  email=String(email||'').trim().toLowerCase();
+  if(!email) throw new Error('email cible vide');
+  if(dry) return {uid:'(dry)',email,shopName:name||null,created:false};
+  if(_vendorCache[email]) return {uid:_vendorCache[email],email,shopName:name||null,created:false};
+  let uid=await findUserIdByEmail(email), created=false;
+  if(!uid){
+    const { data:au, error:ae } = await sb.auth.admin.createUser({
+      email, password:genPass(), email_confirm:true,
+      user_metadata:{ name:name||'', phone:phone||'', role:'vendor', imported:true, account_type:'vendor' }
+    });
+    if(ae){ if(/registered|already exists|duplicate/i.test(ae.message)) uid=await findUserIdByEmail(email);
+      if(!uid) throw ae; }
+    else { uid=au.user.id; created=true; }
+  }
+  const upd={}; if(name) upd.shop_name=name; if(phone) upd.phone=phone;
+  if(Object.keys(upd).length){ const { error:pe }=await sb.from('profiles').update(upd).eq('id',uid);
+    if(pe) log(`  ⚠️ profil ${email} non mis à jour: ${pe.message}`,'warn'); }
+  _vendorCache[email]=uid;
+  return {uid,email,shopName:name||null,created};
+}
+// Insert-or-update un produit « normal » (idempotent par vendor_id + name).
+async function upsertPlainProduct(row){
+  const { data:ex } = await sb.from('products').select('id')
+    .eq('vendor_id',row.vendor_id).eq('name',row.name).limit(1).maybeSingle();
+  if(ex && ex.id){ const { error }=await sb.from('products').update(row).eq('id',ex.id);
+    if(error) throw new Error(error.message); return 'mis à jour'; }
+  const { error }=await sb.from('products').insert(row);
+  if(error) throw new Error(error.message); return 'inséré';
+}
+
 // Insert-or-update un produit annonce (idempotent par vendor_id+name+flag).
 async function upsertAnnonce(row, flagCol){
   const { data:ex } = await sb.from('products').select('id')
@@ -969,6 +1070,199 @@ $('#btnImportCat').onclick = async () => {
   }
   log(`Terminé : ${ok} ${dry?'simulés':'importés'}, ${recTot?recTot+' récurrence(s), ':''}${vendors} compte(s) annonceur créé(s), ${err} erreur(s).`, err?'warn':'ok');
   $('#btnImportCat').disabled=false;
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ONGLET ④ — PRODUITS : marge éditable + export vers products (compte vendeur)
+// ══════════════════════════════════════════════════════════════════════════
+const PROD_CATS = ['Mode Femme','Mode Homme','Mode Enfant','Chaussures','Sacs & Maroquinerie',
+  'Téléphones & Accessoires','Ordinateurs & Tablettes','Électronique & Hi-Fi','Meubles & Décoration',
+  'Électroménager','Cuisine & Art de la table','Beauté & Cosmétiques','Jouets & Jeux','Sport & Fitness',
+  'Livres papier','Voitures','Motos & Scooters','Vélos & Trottinettes','Animaux de compagnie',
+  'Produits locaux','Autre'];
+
+let prodRows=[]; // {_include,name,category,cost,sale,original,stock,description,image_url,images[],brand,condition,region,vendorName,vendorPhone,active}
+
+// mode compte cible : afficher/masquer le bloc « un seul compte »
+document.querySelectorAll('input[name=prodVendMode]').forEach(r=>r.onchange=()=>{
+  $('#prodSingleBox').style.display = (document.querySelector('input[name=prodVendMode]:checked').value==='single') ? '' : 'none';
+});
+
+// Sélection fichiers
+const dropProd=$('#dropProd'), filesProdInput=$('#filesProd');
+dropProd.onclick=()=>filesProdInput.click();
+dropProd.ondragover=e=>{e.preventDefault();dropProd.style.borderColor='var(--green)';};
+dropProd.ondragleave=()=>dropProd.style.borderColor='';
+dropProd.ondrop=e=>{e.preventDefault();dropProd.style.borderColor='';handleProdFiles(e.dataTransfer.files);};
+filesProdInput.onchange=()=>handleProdFiles(filesProdInput.files);
+
+function handleProdFiles(fl){
+  [...fl].filter(f=>/\.csv$/i.test(f.name)).forEach(f=>{
+    Papa.parse(f,{header:true,skipEmptyLines:true,complete:res=>{
+      let n=0;
+      (res.data||[]).forEach(r=>{
+        const name=pick(r,'Nom','nom','Name','Titre','titre'); if(!name) return;
+        const cost=intFcfa(pick(r,'Prix_achat_fcfa','Prix_achat','Cout_fcfa','Cout','Cost'));
+        let sale=intFcfa(pick(r,'Prix_vente_fcfa','Prix_vente','Prix_fcfa','Prix','Price'));
+        const original=intFcfa(pick(r,'Prix_original_fcfa','Prix_original','Prix_barre_fcfa','Prix_barre'));
+        if(sale==null && cost!=null) sale=cost; // défaut : achat (ajustable via marge)
+        const imgs=pipeArr(pick(r,'Images','images')).filter(Boolean);
+        const image_url=s(pick(r,'Image_url','image_url','Image','Photo','photo'))||imgs[0]||null;
+        if(image_url && imgs.indexOf(image_url)<0) imgs.unshift(image_url);
+        prodRows.push({ _include:true, name,
+          category:s(pick(r,'Categorie','Catégorie','category','Categorie_produit'))||'Autre',
+          cost:cost, sale:sale||0, original:original||0,
+          stock:parseInt(pick(r,'Stock','stock','Quantite','Qte'),10)||1,
+          description:s(pick(r,'Description','description','Desc')),
+          image_url, images:imgs,
+          brand:s(pick(r,'Marque','marque','Brand')), condition:s(pick(r,'Etat','etat','Condition')),
+          region:s(pick(r,'Region','région','Région')),
+          vendorName:s(pick(r,'Vendeur','vendeur','Annonceur','Boutique','vendor')),
+          vendorPhone:s(pick(r,'Telephone','telephone','Téléphone','tel','Phone')),
+          active:true });
+        n++;
+      });
+      renderProd(); log(`Chargé ${f.name} — ${n} produit(s) valides.`,'info');
+    }, error:err=>log(`✗ ${f.name}: ${err.message}`,'err')});
+  });
+}
+$('#btnClearProd').onclick=()=>{prodRows=[];renderProd();filesProdInput.value='';};
+
+function marginPct(r){ return (r.cost>0) ? Math.round((r.sale-r.cost)/r.cost*100) : null; }
+function fEur(fcfa){ return (Number(fcfa)/EUR_TO_XOF).toFixed(2)+' €'; }
+
+$('#btnApplyMargin').onclick=()=>{
+  const m=parseFloat(String($('#prodMargin').value).replace(',','.'))||0;
+  const rnd=parseInt($('#prodRound').value,10)||0;
+  let n=0;
+  prodRows.forEach(r=>{ if(r.cost>0){ let v=r.cost*(1+m/100); v=rnd>0?Math.round(v/rnd)*rnd:Math.round(v); r.sale=v; n++; } });
+  renderProd();
+  log(`Marge ${m}% appliquée à ${n} produit(s) avec prix d'achat.${n<prodRows.length?` ${prodRows.length-n} sans prix d'achat — éditez le prix de vente à la main.`:''}`,'ok');
+};
+
+function renderProd(){
+  const b=$('#prodBody'); b.innerHTML='';
+  prodRows.forEach((r,i)=>{
+    const opts=PROD_CATS.slice();
+    if(r.category && opts.indexOf(r.category)<0) opts.unshift(r.category);
+    const catSel=opts.map(c=>`<option ${c===r.category?'selected':''}>${esc(c)}</option>`).join('');
+    const mg=marginPct(r);
+    const thumb = r.image_url
+      ? `<img src="${esc(r.image_url)}" style="width:34px;height:34px;object-fit:cover;border-radius:5px;" onerror="this.style.display='none';this.insertAdjacentText('afterend','—')">`
+      : '<span class="muted">—</span>';
+    const descLen=(r.description||'').length;
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td><input type="checkbox" class="pInc" data-i="${i}" ${r._include!==false?'checked':''}></td>
+      <td style="max-width:220px;"><div style="font-weight:600;">${esc(r.name)}</div>
+        <div class="muted" style="font-size:11px;">${esc(r.vendorName||'')}${r.brand?' · '+esc(r.brand):''}</div></td>
+      <td><select class="pCat" data-i="${i}" style="min-width:150px;">${catSel}</select></td>
+      <td style="text-align:right;color:var(--ink-soft);">${r.cost!=null?r.cost.toLocaleString('fr-FR'):'—'}</td>
+      <td style="text-align:right;"><input type="text" class="pSale" data-i="${i}" value="${r.sale||''}" style="width:92px;text-align:right;">
+        <div class="muted" style="font-size:10px;">${r.sale?fEur(r.sale):''}</div></td>
+      <td style="text-align:right;"><input type="text" class="pOrig" data-i="${i}" value="${r.original||''}" style="width:80px;text-align:right;" placeholder="—"></td>
+      <td style="text-align:right;" id="pMg-${i}">${mg==null?'—':(mg>=0?'+':'')+mg+'%'}</td>
+      <td><input type="text" class="pStk" data-i="${i}" value="${r.stock||1}" style="width:52px;text-align:center;"></td>
+      <td id="pThumb-${i}">${thumb}</td>
+      <td style="text-align:center;"><input type="checkbox" class="pAct" data-i="${i}" ${r.active!==false?'checked':''}></td>`;
+    b.appendChild(tr);
+    // Ligne de détail éditable : description + URL de la photo (span sur toute la largeur)
+    const trD=document.createElement('tr'); trD.className='pDetailRow';
+    trD.innerHTML=`<td></td><td colspan="9" style="padding-top:0;">
+      <label style="margin:0 0 3px;font-size:11px;">📝 Description
+        <span class="muted" id="pDescLen-${i}" style="font-weight:normal;">(${descLen} car.)</span></label>
+      <textarea class="pDesc" data-i="${i}" rows="2" placeholder="Description affichée sur la fiche produit…"
+        style="width:100%;font-family:inherit;font-size:12px;">${esc(r.description||'')}</textarea>
+      <label style="margin:6px 0 3px;font-size:11px;">🖼️ URL de la photo</label>
+      <input type="text" class="pImg" data-i="${i}" value="${esc(r.image_url||'')}"
+        placeholder="https://…/photo.jpg" style="font-size:12px;">
+    </td>`;
+    b.appendChild(trD);
+  });
+  // bindings
+  b.querySelectorAll('.pInc').forEach(c=>c.onchange=e=>{prodRows[e.target.dataset.i]._include=e.target.checked;updProdSummary();});
+  b.querySelectorAll('.pCat').forEach(sl=>sl.onchange=e=>prodRows[e.target.dataset.i].category=e.target.value);
+  b.querySelectorAll('.pSale').forEach(inp=>inp.oninput=e=>{const i=e.target.dataset.i;
+    prodRows[i].sale=intFcfa(e.target.value)||0;
+    const mg=marginPct(prodRows[i]); const cell=$(`#pMg-${i}`); if(cell) cell.textContent = mg==null?'—':(mg>=0?'+':'')+mg+'%';
+    const hint=e.target.nextElementSibling; if(hint) hint.textContent=prodRows[i].sale?fEur(prodRows[i].sale):'';
+    updProdSummary();});
+  b.querySelectorAll('.pOrig').forEach(inp=>inp.oninput=e=>prodRows[e.target.dataset.i].original=intFcfa(e.target.value)||0);
+  b.querySelectorAll('.pStk').forEach(inp=>inp.oninput=e=>prodRows[e.target.dataset.i].stock=parseInt(e.target.value,10)||1);
+  b.querySelectorAll('.pAct').forEach(c=>c.onchange=e=>prodRows[e.target.dataset.i].active=e.target.checked);
+  b.querySelectorAll('.pDesc').forEach(t=>t.oninput=e=>{const i=e.target.dataset.i;
+    prodRows[i].description=e.target.value;
+    const len=$(`#pDescLen-${i}`); if(len) len.textContent=`(${e.target.value.length} car.)`;});
+  b.querySelectorAll('.pImg').forEach(inp=>inp.oninput=e=>{const i=e.target.dataset.i;
+    const url=e.target.value.trim(); prodRows[i].image_url=url||null;
+    prodRows[i].images=url?[url]:[];
+    const cell=$(`#pThumb-${i}`); if(cell) cell.innerHTML = url
+      ? `<img src="${esc(url)}" style="width:34px;height:34px;object-fit:cover;border-radius:5px;" onerror="this.style.display='none';this.insertAdjacentText('afterend','—')">`
+      : '<span class="muted">—</span>';});
+  updProdSummary();
+}
+$('#prodChkAll').onchange=e=>{prodRows.forEach(r=>r._include=e.target.checked);renderProd();};
+function updProdSummary(){
+  const inc=prodRows.filter(r=>r._include!==false && r.name && r.sale>0);
+  $('#btnExportProd').disabled = inc.length===0;
+  $('#prodSummary').textContent = prodRows.length ? `${inc.length}/${prodRows.length} produit(s) à exporter` : '';
+}
+
+$('#btnExportProd').onclick = async () => {
+  if(!connect()) return;
+  const dry=$('#prodDryRun').checked;
+  const mode=document.querySelector('input[name=prodVendMode]:checked').value;
+  clearLog(); log(`=== EXPORT PRODUITS ${dry?'(DRY-RUN — aucune écriture)':''} ===`, dry?'info':'');
+
+  // Résolution du compte cible (mode single)
+  let target=null, singleName='';
+  if(mode==='single'){
+    const email=$('#prodVendorEmail').value.trim(), name=$('#prodVendorName').value.trim(), phone=$('#prodVendorPhone').value.trim();
+    singleName=name;
+    if(!email && !name && !phone){ alert('Indique un email OU un nom + téléphone pour le compte cible.'); return; }
+    try{ target = email ? await ensureVendorEmail(email,name,phone,dry)
+                        : await ensureVendor(name,phone,null,null,null,dry); }
+    catch(e){ log('✗ compte cible : '+(e.message||e),'err'); return; }
+    log(`Compte cible : ${target.email}${target.created?' (créé)':''}`,'info');
+  }
+
+  const rows=prodRows.filter(r=>r._include!==false && r.name && r.sale>0);
+  if(!rows.length){ log('Aucun produit sélectionné avec un prix de vente > 0.','warn'); return; }
+  const prog=$('#progProd'); prog.classList.remove('hidden'); prog.max=rows.length; prog.value=0;
+  $('#btnExportProd').disabled=true;
+  let ok=0, err=0, done=0, vend=0;
+
+  for(const r of rows){
+    try{
+      let v=target, vName=singleName;
+      if(mode==='row'){
+        if(!r.vendorName && !r.vendorPhone){ log(`  ⊘ ${r.name}: ligne sans Vendeur/Telephone`,'warn'); done++; prog.value=done; continue; }
+        v=await ensureVendor(r.vendorName||r.name, r.vendorPhone, null, null, null, dry);
+        vName=r.vendorName||r.name;
+      }
+      if(v && v.created) vend++;
+      const images = r.images && r.images.length ? r.images : (r.image_url?[r.image_url]:[]);
+      const priceEur = r.sale/EUR_TO_XOF;
+      const origEur = r.original>0 ? r.original/EUR_TO_XOF : null;
+      const mg=marginPct(r);
+      if(dry){
+        log(`  • [dry] ${r.name} — ${r.sale.toLocaleString('fr-FR')} F (${fEur(r.sale)}${r.cost?`, achat ${r.cost} F, marge ${mg}%`:''})`
+          +` · ${r.category} · stock ${r.stock} · ${images.length} photo(s) → ${v?v.email:'?'}`,'info');
+        ok++; done++; prog.value=done; continue;
+      }
+      const st=await upsertPlainProduct({
+        name:r.name, category:r.category||'Autre',
+        price:priceEur, original_price:origEur, stock:r.stock||1,
+        description:r.description||null, image_url:r.image_url||images[0]||null, images,
+        vendor_id:v.uid, vendor_name:(v.shopName||vName||null),
+        active:r.active!==false, is_rental:false, is_realestate:false
+      });
+      log(`  ✓ ${r.name} ${st} → ${v.email}${mg!=null?` (marge ${mg}%)`:''}`,'ok'); ok++;
+    }catch(e){ err++; log(`  ✗ ${r.name}: ${e.message||e}`,'err'); }
+    finally{ done++; prog.value=done; }
+  }
+  log(`Terminé : ${ok} ${dry?'simulés':'exportés'}, ${vend} compte(s) vendeur créé(s), ${err} erreur(s).`, err?'warn':'ok');
+  $('#btnExportProd').disabled=false;
 };
 </script>
 </body>
