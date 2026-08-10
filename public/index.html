@@ -5753,6 +5753,25 @@ window.addEventListener('unhandledrejection', function(event) {
       } catch (e) { console.warn('[Transport] searchTrips:', e.message); return []; }
     },
 
+    // Rechercher des LIGNES régulières + leurs récurrences (catalogue transport
+    // inter-villes : DDD, Salam, ferry, 7-places…). Lecture publique, RLS
+    // transport_lines_public_read. Dégrade gracieusement si la migration
+    // sql/2026_08_10_transport_lines.sql n'a pas encore été exécutée.
+    async searchLines({ originCity, destination } = {}) {
+      if (!this._sb) return [];
+      try {
+        var q = this._sb.from('transport_lines')
+          .select('*, transport_recurrences(*)')
+          .eq('active', true)
+          .order('operator', { ascending: true }).limit(120);
+        if (originCity) q = q.ilike('origin_city', '%' + originCity + '%');
+        if (destination) q = q.ilike('destinations', '%' + destination + '%');
+        var r = await q;
+        if (r.error) { console.warn('[Transport] searchLines:', r.error.message); return []; }
+        return r.data || [];
+      } catch (e) { console.warn('[Transport] searchLines:', e.message); return []; }
+    },
+
     async getTrip(tripId) {
       if (!this._sb) return null;
       try {
@@ -5916,8 +5935,44 @@ window.addEventListener('unhandledrejection', function(event) {
       var _pkgTrip = React.useState(null), pkgTrip = _pkgTrip[0], setPkgTrip = _pkgTrip[1];
       var _pkgForm = React.useState({ recipientName: '', recipientPhone: '', description: '' }), pkgForm = _pkgForm[0], setPkgForm = _pkgForm[1];
       var _pub = React.useState({ origin_city: 'Dakar', destination_city: 'Thiès', departure_at: '', vehicle_type: 'voiture', seats_total: 3, price_per_seat_fcfa: 2000, allows_packages: true }), pub = _pub[0], setPub = _pub[1];
+      var _lines = React.useState([]), lines = _lines[0], setLines = _lines[1];
+      var _linesSearched = React.useState(false), linesSearched = _linesSearched[0], setLinesSearched = _linesSearched[1];
+      var _lineFilter = React.useState({ originCity: '', destination: '' }), lineFilter = _lineFilter[0], setLineFilter = _lineFilter[1];
 
       var FCFA = function (n) { return Math.round(n || 0).toLocaleString('fr-FR') + ' F'; };
+
+      // Récurrence lisible par un humain à partir d'une ligne transport_recurrences.
+      var DAY_FULL = { Lun: 'lundi', Mar: 'mardi', Mer: 'mercredi', Jeu: 'jeudi', Ven: 'vendredi', Sam: 'samedi', Dim: 'dimanche' };
+      var recurLabel = function (rec) {
+        if (!rec) return '';
+        var days = (rec.days_of_week || []).map(function (d) { return DAY_FULL[d] || d; });
+        var times = (rec.departure_times || []).filter(Boolean);
+        var base = '';
+        if (rec.kind === 'special_event') base = '🎪 ' + (rec.special_label || 'Jours d\'événement');
+        else if (rec.kind === 'on_demand') base = '📞 Sur demande / réservation';
+        else if (rec.kind === 'multiple_daily') base = '🔁 Plusieurs départs / jour';
+        else if (rec.kind === 'weekly') base = '📅 ' + (days.length ? days.join(', ') : 'Certains jours');
+        else { // daily
+          base = '🗓️ Tous les jours';
+          if ((rec.excluded_days || []).length) base += ' sauf ' + rec.excluded_days.map(function (d) { return DAY_FULL[d] || d; }).join(', ');
+        }
+        if (times.length) base += ' · départ ' + times.join(' / ');
+        return base;
+      };
+      var contactLine = function (line) {
+        var phone = String(line.whatsapp || line.phone || '').replace(/\D/g, '');
+        var dest = line.destination_main || line.destinations || '';
+        var msg = 'Bonjour, je souhaite des informations sur la ligne ' + (line.origin_city || 'Dakar') + ' → ' + dest + ' (' + (line.operator || '') + ') vue sur NEXUS Transport. Est-elle disponible ?';
+        if (phone) { if (phone.length === 9 && phone[0] === '7') phone = '221' + phone; window.open('https://wa.me/' + phone + '?text=' + encodeURIComponent(msg), '_blank'); }
+        else if (line.phone) { window.open('tel:' + line.phone, '_self'); }
+        else if (line.url_facebook) { window.open(line.url_facebook, '_blank'); }
+        else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
+      };
+      var doSearchLines = function () {
+        setBusy(true); setLinesSearched(true);
+        DataService.searchLines({ originCity: lineFilter.originCity || undefined, destination: lineFilter.destination || undefined })
+          .then(function (data) { setLines(data || []); setBusy(false); });
+      };
 
       var doSearch = function () {
         setBusy(true); setSearched(true);
@@ -5996,9 +6051,9 @@ window.addEventListener('unhandledrejection', function(event) {
             E('span', { style: { fontSize: '.78rem', fontWeight: 700, color: '#1D4ED8' } }, 'Inscrivez-vous →')
           ),
           E('div', { style: { display: 'flex', gap: 6, marginBottom: '1rem' } },
-            [['search', '🔎 Trouver un trajet'], ['publish', '➕ Publier un trajet']].map(function (tb) {
+            [['search', '🔎 Covoiturage'], ['lines', '🚌 Lignes régulières'], ['publish', '➕ Publier']].map(function (tb) {
               var on = tab === tb[0];
-              return E('button', { key: tb[0], onClick: function () { setTab(tb[0]); }, style: { flex: 1, padding: '.5rem', fontSize: '.78rem', border: on ? '2px solid #006d40' : '1.5px solid #e5e7eb', background: on ? 'rgba(0,109,64,.08)' : '#fff', color: on ? '#006d40' : '#666', borderRadius: 8, cursor: 'pointer', fontWeight: 700 } }, tb[1]);
+              return E('button', { key: tb[0], onClick: function () { setTab(tb[0]); if (tb[0] === 'lines' && !linesSearched) doSearchLines(); }, style: { flex: 1, padding: '.5rem', fontSize: '.74rem', border: on ? '2px solid #006d40' : '1.5px solid #e5e7eb', background: on ? 'rgba(0,109,64,.08)' : '#fff', color: on ? '#006d40' : '#666', borderRadius: 8, cursor: 'pointer', fontWeight: 700 } }, tb[1]);
             })
           ),
 
@@ -6050,6 +6105,43 @@ window.addEventListener('unhandledrejection', function(event) {
                     E('p', { style: { fontSize: '.75rem', color: '#888', marginBottom: '.6rem' } }, 'Le transporteur fixera le prix et acceptera avant paiement.'),
                     E('button', { onClick: sendPackageRequest, disabled: busy, style: { width: '100%', padding: '.6rem', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' } }, busy ? 'Envoi…' : '📦 Envoyer la demande')
                   )
+                );
+              })
+            )
+          ),
+
+          // ── Lignes régulières (bus/ferry/7-places inter-villes) ───────────
+          tab === 'lines' && E('div', null,
+            E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
+              E('input', { style: Object.assign({}, inp, { marginBottom: 0 }), placeholder: 'Départ (ex. Dakar)', value: lineFilter.originCity, onChange: function (e) { setLineFilter(function (f) { return Object.assign({}, f, { originCity: e.target.value }); }); } }),
+              E('input', { style: Object.assign({}, inp, { marginBottom: 0 }), placeholder: 'Destination (ex. Ziguinchor)', value: lineFilter.destination, onChange: function (e) { setLineFilter(function (f) { return Object.assign({}, f, { destination: e.target.value }); }); } })
+            ),
+            E('button', { onClick: doSearchLines, disabled: busy, style: { width: '100%', padding: '.65rem', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: 'pointer', marginBottom: '1rem' } }, busy ? 'Recherche…' : '🔎 Rechercher une ligne'),
+
+            !linesSearched ? null : lines.length === 0 ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucune ligne trouvée. Ajustez la recherche.') :
+            E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
+              lines.map(function (line) {
+                var recs = line.transport_recurrences || [];
+                var vIcon = { bus: '🚌', minibus: '🚐', voiture: '🚗', '7_places': '🚙', ferry: '⛴️', van: '🚐' }[line.vehicle_type] || '🚌';
+                return E('div', { key: line.id, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
+                  E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 } },
+                    E('div', null,
+                      E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, vIcon, ' ', line.origin_city, ' → ', line.destination_main || line.destinations),
+                      E('div', { style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700, marginTop: 2 } }, line.operator),
+                      line.origin_gare && E('div', { style: { fontSize: '.72rem', color: '#888', marginTop: 2 } }, '📍 ', line.origin_gare)
+                    ),
+                    E('div', { style: { textAlign: 'right', flexShrink: 0 } },
+                      line.price_fcfa != null ? E('div', { style: { fontWeight: 800, color: '#006d40' } }, FCFA(line.price_fcfa)) : E('div', { style: { fontWeight: 700, color: '#888', fontSize: '.8rem' } }, 'Tarif variable'),
+                      line.duration && E('div', { style: { fontSize: '.7rem', color: '#888' } }, '⏱️ ', line.duration)
+                    )
+                  ),
+                  recs.length > 0 && E('div', { style: { margin: '.55rem 0', display: 'flex', flexDirection: 'column', gap: 3 } },
+                    recs.map(function (rec) { return E('div', { key: rec.id, style: { fontSize: '.73rem', color: '#374151', background: '#F3F4F6', borderRadius: 6, padding: '3px 7px' } }, recurLabel(rec)); })
+                  ),
+                  (line.climatise || line.services) && E('div', { style: { fontSize: '.7rem', color: '#666', marginBottom: '.5rem' } },
+                    line.climatise ? '❄️ Climatisé' : '', line.climatise && line.services ? ' · ' : '', line.services ? line.services.replace(/\|/g, ' · ') : ''
+                  ),
+                  E('button', { onClick: function () { contactLine(line); }, style: { width: '100%', padding: '.5rem', background: '#25D366', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '.78rem', cursor: 'pointer' } }, '💬 Contacter / Réserver')
                 );
               })
             )

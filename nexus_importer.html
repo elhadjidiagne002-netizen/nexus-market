@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS - Importateur Prospects → Comptes</title>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --bg:#12121e; --card:#1e1e2f; --card2:#252538; --line:#2a2a40;
+    --ink:#e0e0e0; --ink-soft:#9a9ab5; --green:#4CAF50; --green-d:#45a049;
+    --blue:#2196F3; --blue-d:#1976D2; --amber:#e0a94f; --red:#e05a5a;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--ink);
+    max-width:1080px;margin:32px auto;padding:20px;}
+  h1{color:var(--green);border-bottom:2px solid var(--line);padding-bottom:12px;margin-top:0;}
+  h2{font-size:16px;color:#fff;margin:0 0 14px;display:flex;align-items:center;gap:10px;}
+  h2 .num{background:var(--green);color:#fff;width:26px;height:26px;border-radius:50%;
+    display:inline-flex;align-items:center;justify-content:center;font-size:14px;flex:none;}
+  .card{background:var(--card);padding:24px;border-radius:12px;border:1px solid var(--line);
+    box-shadow:0 10px 30px rgba(0,0,0,.4);margin-bottom:22px;}
+  label{display:block;font-weight:600;margin-bottom:6px;color:var(--ink-soft);font-size:13px;}
+  input[type=text],input[type=password],select,textarea{width:100%;padding:11px;background:var(--bg);
+    border:1px solid #333;color:#fff;border-radius:6px;font-family:monospace;font-size:13px;}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--green);}
+  .row{display:flex;gap:14px;flex-wrap:wrap;}
+  .row>div{flex:1;min-width:240px;margin-bottom:14px;}
+  .btn{background:var(--green);color:#fff;border:none;padding:11px 20px;border-radius:6px;
+    cursor:pointer;font-size:14px;font-weight:bold;transition:.15s;}
+  .btn:hover{background:var(--green-d);transform:translateY(-1px);}
+  .btn:disabled{background:#555;cursor:not-allowed;transform:none;}
+  .btn.blue{background:var(--blue);} .btn.blue:hover{background:var(--blue-d);}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);}
+  .btn.ghost:hover{border-color:var(--green);color:#fff;background:transparent;}
+  .btn.sm{padding:7px 12px;font-size:12px;}
+  .muted{color:var(--ink-soft);font-size:12.5px;line-height:1.55;}
+  .warnbox{background:#2a2416;border:1px solid #5a4a1e;color:#f0d68a;padding:12px 14px;border-radius:8px;
+    font-size:12.5px;line-height:1.55;margin:6px 0 0;}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:999px;background:var(--card2);
+    color:var(--ink-soft);border:1px solid var(--line);}
+  .tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;}
+  .tab{padding:10px 18px;border-radius:8px;background:var(--card);border:1px solid var(--line);
+    cursor:pointer;font-weight:600;color:var(--ink-soft);}
+  .tab.active{background:var(--green);color:#fff;border-color:var(--green);}
+  .hidden{display:none;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line);}
+  th{color:var(--ink-soft);font-weight:600;position:sticky;top:0;background:var(--card);}
+  .scroll{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px;}
+  code{background:#000;padding:2px 6px;border-radius:4px;color:#8fe08f;font-size:12px;}
+  pre{background:#000;color:#8fe08f;padding:14px;border-radius:8px;overflow:auto;font-size:12px;
+    max-height:300px;}
+  #log{margin-top:14px;background:#000;color:#00e676;padding:14px;border-radius:8px;height:260px;
+    overflow-y:auto;font-family:'Courier New',monospace;white-space:pre-wrap;font-size:12.5px;line-height:1.5;}
+  .log-err{color:#ff6b6b;} .log-warn{color:#ffc96b;} .log-ok{color:#00e676;} .log-info{color:#7fb3ff;}
+  .filebox{border:2px dashed var(--line);border-radius:10px;padding:22px;text-align:center;color:var(--ink-soft);
+    cursor:pointer;transition:.15s;}
+  .filebox:hover{border-color:var(--green);color:#fff;}
+  .fileitem{display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--card2);
+    border-radius:8px;margin-top:10px;flex-wrap:wrap;}
+  .fileitem .nm{font-weight:600;font-size:13px;}
+  .fileitem select{width:auto;min-width:180px;}
+  .stat{display:inline-flex;flex-direction:column;gap:2px;margin-right:26px;}
+  .stat b{font-size:22px;color:#fff;font-family:monospace;} .stat span{font-size:11px;color:var(--ink-soft);text-transform:uppercase;}
+  progress{width:100%;height:10px;margin-top:10px;}
+</style>
+</head>
+<body>
+
+<h1>📥 NEXUS — Importateur Prospects → Comptes</h1>
+<p class="muted">Importe les CSV de <code>prospection/</code> vers ta table Supabase <code>prospects</code> (CRM),
+puis promeus une sélection en <b>vrais comptes</b> (Auth + profil + fiche métier). La <b>Service Role Key</b>
+reste dans ton navigateur (aucun envoi ailleurs que vers ton propre projet Supabase).</p>
+
+<!-- ─── CONNEXION ─── -->
+<div class="card">
+  <h2><span class="num">0</span> Connexion Supabase</h2>
+  <div class="row">
+    <div><label>URL du projet</label><input type="text" id="sbUrl" placeholder="https://xxxx.supabase.co"></div>
+    <div><label>Service Role Key (admin — contourne le RLS, permet la création de comptes)</label>
+      <input type="password" id="sbKey" placeholder="eyJhbGciOi..."></div>
+  </div>
+  <button class="btn ghost sm" id="btnTest">Tester la connexion</button>
+  <span id="connState" class="pill" style="margin-left:10px;">non connecté</span>
+</div>
+
+<!-- ─── DDL ─── -->
+<div class="card">
+  <h2><span class="num">1</span> Créer la table <code>prospects</code> (une seule fois)</h2>
+  <p class="muted">supabase-js ne peut pas exécuter de DDL. Copie ce SQL et lance-le dans
+    <b>Supabase → SQL Editor</b>. Idempotent (rejouable sans risque).</p>
+  <pre id="ddl"></pre>
+  <button class="btn ghost sm" id="btnCopyDdl">Copier le SQL</button>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="import">① Importer les CSV → prospects</div>
+  <div class="tab" data-tab="promote">② Promouvoir prospects → comptes</div>
+  <div class="tab" data-tab="catalogue">③ Catalogue (Transport · Location · Immobilier)</div>
+</div>
+
+<!-- ─── IMPORT ─── -->
+<div class="card" id="tab-import">
+  <h2><span class="num">A</span> Importer les fichiers CSV</h2>
+  <p class="muted">Colonnes attendues : <code>Nom,Ville,Region,Adresse,Telephone,Source,Latitude,Longitude</code>.
+    Le <b>type de compte</b> et le <b>métier</b> sont devinés depuis le nom du fichier — corrige si besoin.</p>
+  <div class="filebox" id="drop">📂 Clique ou dépose ici tes fichiers .csv (multi-sélection possible)
+    <input type="file" id="files" accept=".csv" multiple class="hidden"></div>
+  <div id="fileList"></div>
+  <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+    <button class="btn" id="btnImport" disabled>Importer vers « prospects »</button>
+    <button class="btn ghost" id="btnClearFiles">Vider la liste</button>
+    <span class="pill" id="importSummary"></span>
+  </div>
+</div>
+
+<!-- ─── PROMOTE ─── -->
+<div class="card hidden" id="tab-promote">
+  <h2><span class="num">B</span> Promouvoir des prospects en comptes</h2>
+  <div class="warnbox">✅ <b>Aucun email n'est envoyé</b> à la création (compte pré-confirmé, pas de validation à 2 étapes).
+    La <b>validation à 100% se fait uniquement par l'admin</b>, dans le tableau de bord, après rafraîchissement :
+    <b>Pro</b> → panneau « Modération NEXUS Pro » (bouton <i>Activer</i>) ·
+    <b>Coursier</b> → panneau « Livraison » (bouton <i>Approuver</i>) ·
+    <b>Vendeur</b> → « Vendeurs en attente » ·
+    <b>Éleveur</b> → panneau « Éleveurs ».
+    Un <b>email est tout de même enregistré</b> (<code>prospect_&lt;tel&gt;@nexusmarket.sn</code>, ou celui du CSV) sur le
+    prospect, le profil et le compte Auth. Fais toujours un <b>dry-run</b> d'abord.</div>
+  <div class="row" style="margin-top:14px;">
+    <div><label>Type de compte</label>
+      <select id="fType"><option value="">— tous —</option></select></div>
+    <div><label>Statut</label>
+      <select id="fStatus"><option value="new">new (non promus)</option>
+        <option value="">tous</option><option value="promoted">promoted</option>
+        <option value="contacted">contacted</option></select></div>
+    <div><label>Limite</label><input type="text" id="fLimit" value="200"></div>
+    <div style="display:flex;align-items:flex-end;"><button class="btn blue" id="btnLoad">Charger</button></div>
+  </div>
+
+  <details style="margin:6px 0 16px;">
+    <summary class="muted" style="cursor:pointer;">⚙️ Réglages de promotion (mapping par type — modifiable)</summary>
+    <p class="muted" style="margin-top:10px;">Pour chaque type : <code>authRole</code> (doit être <code>buyer</code>, <code>vendor</code> ou
+      <code>admin</code> — contrainte CHECK de <code>profiles.role</code>), <code>profileUpdate</code> (flags posés après création :
+      <code>is_pro</code>/<code>is_courier</code>/<code>is_breeder</code>), <code>withGeo</code>, la table de fiche et ses colonnes.
+      Le profil lui-même est créé par le trigger <code>handle_new_user</code> depuis les metadata (nom, téléphone, rôle).</p>
+    <textarea id="promoCfg" rows="20" spellcheck="false"></textarea>
+    <button class="btn ghost sm" id="btnResetCfg" style="margin-top:8px;">Réinitialiser le mapping par défaut</button>
+  </details>
+
+  <div style="margin-bottom:12px;">
+    <span class="stat"><b id="stSel">0</b><span>sélectionnés</span></span>
+    <span class="stat"><b id="stTot">0</b><span>chargés</span></span>
+    <button class="btn ghost sm" id="btnAll">Tout cocher</button>
+    <button class="btn ghost sm" id="btnNone">Tout décocher</button>
+  </div>
+  <div class="scroll"><table id="tbl"><thead><tr>
+    <th style="width:34px;"><input type="checkbox" id="chkAll"></th>
+    <th>Nom</th><th>Type</th><th>Métier</th><th>Téléphone</th><th>Email</th><th>Ville</th><th>Statut</th>
+  </tr></thead><tbody id="tblBody"></tbody></table></div>
+
+  <div class="warnbox" style="margin-top:14px;background:#1a2416;border-color:#3a5a1e;color:#b0e090;">
+    🔑 <b>Mot de passe par défaut</b> — appliqué à <i>tous</i> les comptes créés lors de cette session.
+    Communique-le aux pros après import. Change-le ici avant de lancer.
+    <input type="text" id="defaultPass" value="Nexus@2024" style="width:180px;margin-left:10px;font-family:monospace;">
+    <button class="btn ghost sm" id="btnShowPass" style="margin-left:6px;">👁</button>
+  </div>
+  <div style="margin-top:16px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+    <button class="btn" id="btnPromote" disabled>Promouvoir la sélection en comptes</button>
+    <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:normal;">
+      <input type="checkbox" id="dryRun" checked> <span class="muted">Simulation (dry-run, n'écrit rien)</span></label>
+    <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:normal;">
+      <span class="muted">Débit (ms/compte)</span>
+      <input type="text" id="throttle" value="150" style="width:70px;"></label>
+  </div>
+  <progress id="prog" value="0" max="100" class="hidden"></progress>
+</div>
+
+<!-- ─── CATALOGUE (Transport / Location / Immobilier) ─── -->
+<div class="card hidden" id="tab-catalogue">
+  <h2><span class="num">C</span> Importer le catalogue vers nexusmarket.sn</h2>
+  <p class="muted">Trois familles, détectées automatiquement d'après les colonnes du CSV :</p>
+  <ul class="muted" style="line-height:1.7;margin-top:4px;">
+    <li>🚌 <b>Transport</b> (colonnes <code>Compagnie</code> + <code>Type_vehicule</code>) → tables
+      <code>transport_lines</code> + <code>transport_recurrences</code>. Une <b>ligne</b> par trajet, une ou
+      plusieurs <b>récurrences</b> (quotidien, plusieurs/jour, hebdo à jours fixes, sur demande, jours d'événement).</li>
+    <li>🔑 <b>Location</b> (colonnes <code>Categorie</code> + <code>Prix_jour_fcfa</code>) → un <b>compte annonceur</b>
+      (vendeur) par téléphone + un <b>produit</b> <code>is_rental</code> (specs <code>rental_specs</code>).</li>
+    <li>🏠 <b>Immobilier</b> (colonnes <code>Transaction</code> + <code>Type_bien</code>) → un <b>compte annonceur</b>
+      + un <b>produit</b> <code>is_realestate</code> (specs <code>realestate_specs</code>). Catégorie = « Immobilier ».</li>
+  </ul>
+  <div class="warnbox">💶 <b>Convention monétaire</b> : les prix des CSV sont en <b>FCFA</b>. Location/Immobilier sont des
+    <code>products</code> → <code>price</code> est stocké en <b>EUR</b> (÷ 655,957, convention de la pile) ; les
+    montants FCFA d'origine restent dans les <code>*_specs</code>. Transport reste en FCFA (comme le covoiturage).</div>
+
+  <details style="margin:12px 0;">
+    <summary class="muted" style="cursor:pointer;">📜 SQL à lancer une fois (tables transport) — Supabase → SQL Editor</summary>
+    <pre id="ddlTransport"></pre>
+    <button class="btn ghost sm" id="btnCopyDdlT">Copier le SQL transport</button>
+    <p class="muted" style="margin-top:8px;">Location & Immobilier n'ont <b>pas</b> de DDL : ils écrivent dans
+      <code>products</code> (colonnes <code>is_rental</code>/<code>rental_specs</code>,
+      <code>is_realestate</code>/<code>realestate_specs</code> déjà présentes en prod).</p>
+  </details>
+
+  <div class="filebox" id="dropCat">📂 Dépose ici tes CSV transport / location / immobilier
+    <input type="file" id="filesCat" accept=".csv" multiple class="hidden"></div>
+  <div id="fileListCat"></div>
+
+  <div class="warnbox" style="margin-top:14px;background:#1a2416;border-color:#3a5a1e;color:#b0e090;">
+    🔑 <b>Mot de passe des comptes annonceurs</b> (Location/Immobilier) = celui de l'onglet ② (<code id="catPassEcho">Nexus@2024</code>).
+    Les comptes sont créés <b>role vendor</b> (statut <i>pending</i> → à valider dans « Vendeurs en attente »),
+    téléphone renseigné pour le bouton WhatsApp des annonces.
+  </div>
+  <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+    <button class="btn" id="btnImportCat" disabled>Importer le catalogue</button>
+    <button class="btn ghost" id="btnClearCat">Vider la liste</button>
+    <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:normal;">
+      <input type="checkbox" id="catDryRun" checked> <span class="muted">Simulation (dry-run, n'écrit rien)</span></label>
+    <span class="pill" id="catSummary"></span>
+  </div>
+  <progress id="progCat" value="0" max="100" class="hidden"></progress>
+</div>
+
+<div id="log">Prêt.</div>
+
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+const $ = s => document.querySelector(s);
+const logEl = $('#log');
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function log(msg, cls=''){ const t=new Date().toLocaleTimeString('fr-FR');
+  logEl.innerHTML += `\n<span class="${cls?'log-'+cls:''}">[${t}] ${esc(msg)}</span>`; logEl.scrollTop=logEl.scrollHeight; }
+function clearLog(){ logEl.innerHTML='Prêt.'; }
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+
+let sb = null;
+
+// ── DDL ────────────────────────────────────────────────────────────────
+const DDL = `-- Table de staging (CRM) des prospects importés depuis les CSV.
+-- Idempotente : rejouable sans risque. À lancer dans Supabase → SQL Editor.
+create extension if not exists pgcrypto;
+
+create table if not exists public.prospects (
+  id            uuid primary key default gen_random_uuid(),
+  account_type  text not null,               -- pro | courier | vendor | breeder | <custom>
+  profession    text,                         -- métier précis (Soudeur, Plombier, Coursier...)
+  name          text not null default '',
+  phone         text not null default '',
+  email         text,
+  city          text,
+  region        text,
+  address       text,
+  lat           double precision,
+  lng           double precision,
+  source        text,
+  status        text not null default 'new',  -- new | contacted | promoted | rejected
+  promoted_user_id uuid,
+  notes         text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- Clé de dédup COMPLÈTE (non partielle) => l'upsert onConflict fonctionne pour toutes
+-- les lignes, y compris celles sans téléphone. Ré-import 100% idempotent.
+create unique index if not exists uq_prospects_key
+  on public.prospects (account_type, phone, name);
+
+alter table public.prospects enable row level security;
+-- La service_role bypasse la RLS. Politique admin optionnelle (dashboard interne) :
+drop policy if exists prospects_admin_all on public.prospects;
+create policy prospects_admin_all on public.prospects for all
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
+  with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));`;
+$('#ddl').textContent = DDL;
+$('#btnCopyDdl').onclick = () => { navigator.clipboard.writeText(DDL); log('SQL copié dans le presse-papier.','ok'); };
+
+// ── Mapping type → compte (aligné au schéma réel) ───────────────────────
+//  authRole  : valeur mise dans user_metadata.role, lue par le trigger handle_new_user.
+//              DOIT respecter la contrainte CHECK profiles.role IN (buyer,vendor,admin).
+//              pro/courier/breeder restent 'buyer' + un flag booléen.
+//  profileUpdate : colonnes mises à jour sur profiles APRÈS création (flags).
+//  ficheTable/fiche : ligne métier créée en upsert (onConflict user_id).
+const DEFAULT_CFG = {
+  pro: {
+    label:"Pro / Artisan (NEXUS Pro)",
+    authRole:"buyer",
+    profileUpdate:{ is_pro:true },
+    withGeo:true,
+    ficheTable:"pros",
+    requireProfession:true,
+    // status 'hidden' = créé mais NON public (nearby_pros ne renvoie que 'active').
+    // L'admin le rend visible via le bouton « Activer » du panneau Modération Pro.
+    fiche:{ profession:"{profession}", name:"{name}", phone:"{phone}", city:"{city}",
+            status:"hidden", disponible:true, lat:"{lat}", lng:"{lng}" }
+  },
+  courier: {
+    label:"Coursier (Tiak Tiak)",
+    authRole:"buyer",
+    profileUpdate:{ is_courier:true },
+    withGeo:true,
+    ficheTable:"couriers",
+    fiche:{ name:"{name}", phone:"{phone}", status:"pending",
+            zones:["Dakar"], vehicle_type:"moto" }
+  },
+  vendor: {
+    label:"Vendeur",
+    authRole:"vendor",                 // trigger met alors profiles.status='pending'
+    profileUpdate:{},
+    withGeo:false,
+    ficheTable:null, fiche:{}
+  },
+  breeder: {
+    label:"Éleveur",
+    authRole:"buyer",
+    profileUpdate:{ is_breeder:true },
+    withGeo:true,
+    ficheTable:null, fiche:{}
+  },
+  custom: {
+    label:"Personnalisé (édite ce bloc)",
+    authRole:"buyer",
+    profileUpdate:{},
+    withGeo:false,
+    ficheTable:null, fiche:{}
+  }
+};
+$('#promoCfg').value = JSON.stringify(DEFAULT_CFG, null, 2);
+$('#btnResetCfg').onclick = () => { $('#promoCfg').value = JSON.stringify(DEFAULT_CFG,null,2); log('Mapping réinitialisé.','info'); };
+
+// Afficher / masquer le mot de passe par défaut
+$('#btnShowPass').onclick = () => {
+  const inp = $('#defaultPass');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+};
+$('#defaultPass').type = 'text'; // visible par défaut
+
+// ── Détection type/métier depuis le nom de fichier ──────────────────────
+const FILE_MAP = [
+  [/soudeur|metall/i,       "pro","Soudeur / Métallique"],
+  [/macon|btp/i,            "pro","Maçon"],
+  [/electric/i,             "pro","Électricien"],
+  [/plombier/i,             "pro","Plombier"],
+  [/menuisier|bois/i,       "pro","Menuisier (bois)"],
+  [/carreleur|carrelage/i,  "pro","Carreleur"],
+  [/peintre/i,              "pro","Peintre"],
+  [/platrier|staff/i,       "pro","Plâtrier / Staff"],
+  [/jardinier/i,            "pro","Jardinier"],
+  [/vitrier/i,              "pro","Vitrier"],
+  [/climat|froid/i,         "pro","Froid & Climatisation"],
+  [/demenageur|demenagement|déménag/i,"pro","Déménageur"],
+  [/coursier|tiak|livreur/i,"courier","Coursier"],
+  [/eleveur|berger/i,       "breeder","Éleveur"],
+  [/garage|mecan/i,         "vendor","Garage / Mécanicien"],
+  [/immobili|agence.*immo/i,"vendor","Agence immobilière"],
+  [/loueur|location.*materiel|materiel.*location/i,"vendor","Loueur / Location"],
+];
+function guessType(fn){ for(const [re,t,m] of FILE_MAP) if(re.test(fn)) return {type:t,metier:m};
+  return {type:"custom",metier:""}; }
+
+const TYPE_OPTIONS = [["pro","Pro / Artisan"],["courier","Coursier"],["vendor","Vendeur"],
+  ["breeder","Éleveur"],["custom","Personnalisé"]];
+
+// ── Connexion ───────────────────────────────────────────────────────────
+function connect(){
+  const url=$('#sbUrl').value.trim(), key=$('#sbKey').value.trim();
+  if(!url||!key){ alert("URL et Service Role Key requis."); return false; }
+  if(!/^https:\/\/.+\.supabase\.co/.test(url)){ if(!confirm("L'URL ne ressemble pas à https://xxxx.supabase.co — continuer ?")) return false; }
+  try{ sb = createClient(url, key, { auth:{autoRefreshToken:false, persistSession:false} }); }
+  catch(e){ alert('Init Supabase : '+e.message); return false; }
+  return true;
+}
+$('#btnTest').onclick = async () => {
+  if(!connect()) return;
+  $('#connState').textContent='test...';
+  // 1) table prospects
+  const { error } = await sb.from('prospects').select('id',{count:'exact',head:true});
+  if(error && !/does not exist|schema cache|relation/i.test(error.message)){
+    $('#connState').textContent='erreur'; log('Connexion KO : '+error.message,'err'); return;
+  }
+  const tableOk = !error;
+  // 2) droits admin (auth) — un listUsers minimal confirme la Service Role Key
+  const { error: ae } = await sb.auth.admin.listUsers({ page:1, perPage:1 });
+  if(ae){ $('#connState').textContent='clé non-admin';
+    log('⚠️ La clé fournie n\'a pas les droits admin (auth). Utilise la SERVICE ROLE KEY, pas l\'anon key. Détail : '+ae.message,'err'); return; }
+  if(tableOk){ $('#connState').textContent='connecté ✓ (admin + table OK)'; log('Connexion OK : clé admin valide, table prospects accessible.','ok'); }
+  else { $('#connState').textContent='connecté ✓ (table absente)';
+    log('Clé admin OK. ⚠️ table `prospects` introuvable — lance d\'abord le SQL de l\'étape 1.','warn'); }
+  loadTypes().catch(()=>{});
+};
+
+// ── Tabs ────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  $('#tab-import').classList.toggle('hidden', t.dataset.tab!=='import');
+  $('#tab-promote').classList.toggle('hidden', t.dataset.tab!=='promote');
+  $('#tab-catalogue').classList.toggle('hidden', t.dataset.tab!=='catalogue');
+  if(t.dataset.tab==='catalogue') $('#catPassEcho').textContent = genPass();
+});
+
+// ── Import : sélection fichiers ─────────────────────────────────────────
+let parsed = []; // {name, type, metier, rows:[...]}
+const drop=$('#drop'), filesInput=$('#files');
+drop.onclick=()=>filesInput.click();
+drop.ondragover=e=>{e.preventDefault();drop.style.borderColor='var(--green)';};
+drop.ondragleave=()=>drop.style.borderColor='';
+drop.ondrop=e=>{e.preventDefault();drop.style.borderColor='';handleFiles(e.dataTransfer.files);};
+filesInput.onchange=()=>handleFiles(filesInput.files);
+
+function handleFiles(fl){
+  [...fl].filter(f=>/\.csv$/i.test(f.name)).forEach(f=>{
+    Papa.parse(f,{header:true,skipEmptyLines:true,complete:res=>{
+      if(res.errors && res.errors.length) log(`⚠️ ${f.name}: ${res.errors.length} avertissement(s) de parsing (lignes ignorées si vides).`,'warn');
+      const g=guessType(f.name);
+      parsed.push({name:f.name,type:g.type,metier:g.metier,rows:res.data});
+      renderFiles(); log(`Chargé ${f.name} — ${res.data.length} lignes (type deviné : ${g.type}${g.metier?' / '+g.metier:''}).`,'info');
+    }, error:err=>log(`✗ ${f.name}: ${err.message}`,'err')});
+  });
+}
+function renderFiles(){
+  const el=$('#fileList'); el.innerHTML='';
+  parsed.forEach((p,i)=>{
+    const opts=TYPE_OPTIONS.map(([v,l])=>`<option value="${v}" ${v===p.type?'selected':''}>${l}</option>`).join('');
+    const d=document.createElement('div'); d.className='fileitem';
+    d.innerHTML=`<span class="nm">📄 ${esc(p.name)}</span><span class="pill">${p.rows.length} lignes</span>
+      <label style="margin:0;">Type :</label><select data-i="${i}" class="selType">${opts}</select>
+      <label style="margin:0;">Métier :</label><input type="text" data-i="${i}" class="selMetier" value="${esc(p.metier||'')}" style="width:190px;">
+      <button class="btn ghost sm" data-i="${i}" data-rm="1">✕</button>`;
+    el.appendChild(d);
+  });
+  el.querySelectorAll('.selType').forEach(s=>s.onchange=e=>parsed[e.target.dataset.i].type=e.target.value);
+  el.querySelectorAll('.selMetier').forEach(s=>s.oninput=e=>parsed[e.target.dataset.i].metier=e.target.value);
+  el.querySelectorAll('[data-rm]').forEach(b=>b.onclick=e=>{parsed.splice(+e.target.dataset.i,1);renderFiles();});
+  $('#btnImport').disabled = parsed.length===0;
+  const tot=parsed.reduce((a,p)=>a+p.rows.length,0);
+  $('#importSummary').textContent = parsed.length? `${parsed.length} fichier(s), ${tot} lignes` : '';
+}
+$('#btnClearFiles').onclick=()=>{parsed=[];renderFiles();filesInput.value='';};
+
+// helpers de nettoyage
+function num(v){ const n=parseFloat(String(v??'').replace(',','.')); return isFinite(n)?n:null; }
+function s(v){ v=String(v??'').trim(); return v===''?null:v; }
+function pick(r, ...keys){ for(const k of keys){ if(r[k]!=null && String(r[k]).trim()!=='') return String(r[k]).trim(); } return ''; }
+
+// ── Import : écriture ───────────────────────────────────────────────────
+$('#btnImport').onclick = async () => {
+  if(!connect()) return;
+  clearLog(); log('=== IMPORT vers prospects ===');
+  let ok=0, dup=0, err=0, empty=0;
+  for(const p of parsed){
+    const recs = p.rows.map(r=>{
+      const _phone = pick(r,'Telephone','telephone','Téléphone','tel','Phone');
+      const _csvEmail = s(pick(r,'Email','email','Mail'));
+      // Email TOUJOURS enregistré : celui du CSV sinon un email déterministe basé
+      // sur le téléphone (réutilisé tel quel à la promotion → pas de doublon Auth).
+      const _email = _csvEmail || (_phone ? 'prospect_'+_phone.replace(/\D/g,'')+'@nexusmarket.sn' : null);
+      return {
+      account_type:p.type,
+      profession: p.metier||null,
+      name:  pick(r,'Nom','nom','NOM','Name'),
+      phone: _phone,
+      email: _email,
+      city:  s(pick(r,'Ville','ville','City')),
+      region:s(pick(r,'Region','région','Région','region')),
+      address:s(pick(r,'Adresse','adresse','Address')),
+      lat: num(pick(r,'Latitude','latitude','lat','Lat')),
+      lng: num(pick(r,'Longitude','longitude','lng','Lng')),
+      source:s(pick(r,'Source','source')),
+      status:'new'
+      };
+    });
+    const before=recs.length;
+    const valid=recs.filter(x=>x.name||x.phone);
+    empty += before-valid.length;
+    log(`→ ${p.name} : ${valid.length} lignes valides (type ${p.type})...`);
+    for(let i=0;i<valid.length;i+=200){
+      const batch=valid.slice(i,i+200);
+      const { error, count } = await sb.from('prospects')
+        .upsert(batch,{onConflict:'account_type,phone,name',ignoreDuplicates:true,count:'exact'});
+      if(error){ err+=batch.length; log('  ✗ '+error.message,'err');
+        if(/uq_prospects_key|prospects.*does not exist/i.test(error.message))
+          log('  → As-tu bien lancé le SQL de l\'étape 1 (table + index uq_prospects_key) ?','warn'); }
+      else { const ins=(count??batch.length); ok+=ins; dup+=batch.length-ins; }
+    }
+  }
+  log(`Terminé : ${ok} insérés, ${dup} doublons ignorés, ${empty} lignes vides écartées, ${err} erreurs.`, err?'warn':'ok');
+  loadTypes().catch(()=>{});
+};
+
+// ── Promote : filtres & chargement ──────────────────────────────────────
+async function loadTypes(){
+  if(!sb) return;
+  const { data, error } = await sb.from('prospects').select('account_type');
+  if(error) return;
+  const set=[...new Set((data||[]).map(d=>d.account_type))].sort();
+  const cur=$('#fType').value;
+  $('#fType').innerHTML='<option value="">— tous —</option>'+set.map(t=>`<option>${esc(t)}</option>`).join('');
+  if(set.includes(cur)) $('#fType').value=cur;
+}
+let loaded=[];
+$('#btnLoad').onclick = async () => {
+  if(!connect()) return;
+  clearLog();
+  let q=sb.from('prospects').select('*').order('name');
+  const t=$('#fType').value, st=$('#fStatus').value, lim=Math.max(1,parseInt($('#fLimit').value)||200);
+  if(t) q=q.eq('account_type',t);
+  if(st) q=q.eq('status',st);
+  q=q.limit(lim);
+  const { data, error }=await q;
+  if(error){ log('Erreur chargement : '+error.message,'err'); return; }
+  loaded=data||[]; renderTbl(); log(`${loaded.length} prospects chargés.`,'ok');
+};
+function renderTbl(){
+  const b=$('#tblBody'); b.innerHTML='';
+  loaded.forEach((r,i)=>{
+    const tr=document.createElement('tr');
+    const shownEmail = r.email || genEmail(r);
+    tr.innerHTML=`<td><input type="checkbox" class="rc" data-i="${i}" ${r.status==='new'?'checked':''}></td>
+      <td>${esc(r.name||'—')}</td><td><span class="pill">${esc(r.account_type)}</span></td>
+      <td>${esc(r.profession||'')}</td><td>${esc(r.phone||'')}</td><td style="font-size:11px;color:var(--ink-soft)">${esc(shownEmail)}</td><td>${esc(r.city||'')}</td>
+      <td><span class="pill">${esc(r.status)}</span></td>`;
+    b.appendChild(tr);
+  });
+  b.querySelectorAll('.rc').forEach(c=>c.onchange=updSel);
+  $('#stTot').textContent=loaded.length; $('#chkAll').checked=false; updSel();
+}
+function updSel(){ const n=document.querySelectorAll('.rc:checked').length;
+  $('#stSel').textContent=n; $('#btnPromote').disabled=n===0; }
+$('#chkAll').onchange=e=>{document.querySelectorAll('.rc').forEach(c=>c.checked=e.target.checked);updSel();};
+$('#btnAll').onclick=()=>{document.querySelectorAll('.rc').forEach(c=>c.checked=true);updSel();};
+$('#btnNone').onclick=()=>{document.querySelectorAll('.rc').forEach(c=>c.checked=false);updSel();};
+
+// ── Promote : helpers ───────────────────────────────────────────────────
+// Si le gabarit est un pure `{key}`, retourne la valeur brute (préserve number/null).
+// Sinon, substitution textuelle classique.
+function tmpl(v,ctx){
+  if(typeof v!=='string') return v;
+  const m=v.match(/^\{(\w+)\}$/);
+  if(m) return ctx[m[1]]??null;
+  return v.replace(/\{(\w+)\}/g,(_,k)=>ctx[k]??'');
+}
+function digits(p){ return String(p||'').replace(/\D/g,''); }
+
+// Construit un email lisible depuis le nom : "Mamadou Diallo" + tel "221785971415"
+// → "mamadou.diallo.7415@nexusmarket.sn"
+function slugify(name){
+  return String(name||'').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'') // supprime accents
+    .replace(/[^a-z0-9]+/g,'.')                      // espaces/spéciaux → point
+    .replace(/^\.+|\.+$/g,'');                       // trim points
+}
+function genEmail(r){
+  const slug = slugify(r.name||'');
+  const d4   = digits(r.phone).slice(-4);            // 4 derniers chiffres du tél (dédup)
+  if(slug)   return `${slug}${d4?'.'+d4:''}@nexusmarket.sn`;
+  if(d4)     return `prospect.${d4}@nexusmarket.sn`;
+  return `prospect.${Math.random().toString(36).slice(2,8)}@nexusmarket.sn`;
+}
+
+// Mot de passe unique configuré dans l'interface (champ #defaultPass)
+function genPass(){ return ($('#defaultPass')?.value||'').trim() || 'Nexus@2024'; }
+
+// Retrouve un user id existant par email (profiles.email est UNIQUE — fiable, pas de plafond)
+async function findUserIdByEmail(email){
+  const { data } = await sb.from('profiles').select('id').eq('email',email).maybeSingle();
+  return data?.id || null;
+}
+
+// ── Promote : création ──────────────────────────────────────────────────
+$('#btnPromote').onclick = async () => {
+  if(!connect()) return;
+  let cfg; try{ cfg=JSON.parse($('#promoCfg').value); }catch(e){ alert('Mapping JSON invalide : '+e.message); return; }
+  const dry=$('#dryRun').checked;
+  const throttle=Math.max(0,parseInt($('#throttle').value)||0);
+  const idxs=[...document.querySelectorAll('.rc:checked')].map(c=>+c.dataset.i);
+  if(!idxs.length) return;
+  clearLog(); log(`=== PROMOTION ${dry?'(DRY-RUN — aucune écriture)':''} : ${idxs.length} prospect(s) ===`, dry?'info':'');
+  const prog=$('#prog'); prog.classList.remove('hidden'); prog.max=idxs.length; prog.value=0;
+  $('#btnPromote').disabled=true;
+  let ok=0, err=0, skip=0, done=0;
+
+  for(const i of idxs){
+    const r=loaded[i];
+    const c=cfg[r.account_type];
+    try{
+      if(!c){ log(`⊘ ${r.name}: aucun mapping pour le type "${r.account_type}" — ajoute-le dans les réglages.`,'warn'); skip++; continue; }
+      if(!['buyer','vendor','admin'].includes(c.authRole)){
+        log(`⊘ ${r.name}: authRole "${c.authRole}" invalide (doit être buyer/vendor/admin).`,'err'); err++; continue; }
+      if(r.status==='promoted' && r.promoted_user_id){ log(`⊘ ${r.name}: déjà promu.`,'warn'); skip++; continue; }
+      if(c.requireProfession && !(r.profession && r.profession.trim())){
+        log(`⊘ ${r.name}: profession vide alors que ${c.ficheTable} l'exige — corrige le prospect.`,'warn'); skip++; continue; }
+
+      const email=r.email||genEmail(r), pass=genPass();
+      const ctx={name:r.name||'',phone:r.phone||'',city:r.city||'',profession:r.profession||'',lat:r.lat,lng:r.lng};
+
+      if(dry){
+        const flags=Object.keys(c.profileUpdate||{}).join(',')||'—';
+        const geoNote = c.withGeo ? (r.lat!=null ? ` · geo(${r.lat},${r.lng})` : ' · geo(absente)') : '';
+        log(`• [dry] ${r.name||'(sans nom)'}`,'info');
+        log(`        email    : ${email}`,'info');
+        log(`        mdp      : ${pass}`,'info');
+        log(`        role=${c.authRole} · flags:${flags}${c.ficheTable?` · fiche ${c.ficheTable}`:''}${geoNote}`,'info');
+        ok++; continue;
+      }
+
+      // 1) Auth user (email uniquement — pas de phone en Auth pour éviter la validation E.164)
+      let uid=null;
+      const { data:au, error:ae } = await sb.auth.admin.createUser({
+        email, password:pass, email_confirm:true,
+        user_metadata:{ name:r.name||'', phone:r.phone||'', role:c.authRole,
+                        imported:true, account_type:r.account_type, profession:r.profession||'' }
+      });
+      if(ae){
+        if(/registered|already exists|duplicate/i.test(ae.message)){
+          uid=await findUserIdByEmail(email);
+          if(uid) log(`  ↻ ${r.name}: compte existant réutilisé (${email})`,'warn');
+        }
+        if(!uid) throw ae;
+      } else { uid=au.user.id; }
+
+      // Laisse le trigger handle_new_user créer la ligne profiles (ON CONFLICT DO NOTHING).
+      // 2) Profil : UPDATE des flags + géo (jamais d'INSERT ici → pas de NOT NULL violé)
+      const upd={ ...(c.profileUpdate||{}) };
+      if(c.withGeo && r.lat!=null && r.lng!=null){
+        upd.current_lat=r.lat; upd.current_lng=r.lng; upd.location_updated_at=new Date().toISOString();
+      }
+      if(Object.keys(upd).length){
+        const { error:pe, count } = await sb.from('profiles').update(upd,{count:'exact'}).eq('id',uid);
+        if(pe) throw new Error('profiles.update: '+pe.message);
+        if(count===0) log(`  ⚠️ ${r.name}: profil introuvable pour l'update (trigger handle_new_user absent ?).`,'warn');
+      }
+
+      // 3) Fiche métier (upsert onConflict user_id)
+      if(c.ficheTable){
+        const fiche={ user_id:uid };
+        for(const [k,v] of Object.entries(c.fiche||{})){
+          const val=tmpl(v,ctx);
+          if(val!=null && val!=='') fiche[k]=val; // ignore lat/lng null si absent du CSV
+        }
+        const { error:fe }=await sb.from(c.ficheTable).upsert(fiche,{onConflict:'user_id'});
+        if(fe) throw new Error(c.ficheTable+': '+fe.message);
+      }
+
+      // 4) Marquer promu
+      const { error:me }=await sb.from('prospects')
+        .update({status:'promoted',promoted_user_id:uid,email,updated_at:new Date().toISOString()}).eq('id',r.id);
+      if(me) log(`  ⚠️ ${r.name}: compte créé mais statut non mis à jour (${me.message})`,'warn');
+
+      log(`  ✓ ${r.name||email} → compte OK (${email})`,'ok'); ok++;
+    }catch(e){ log(`  ✗ ${r.name||'(sans nom)'}: ${e.message||e}`,'err'); err++; }
+    finally{ done++; prog.value=done; if(throttle) await sleep(throttle); }
+  }
+
+  log(`Terminé : ${ok} ${dry?'simulés':'créés'}, ${skip} ignorés, ${err} erreurs.`, err?'warn':'ok');
+  $('#btnPromote').disabled=false;
+  if(!dry) $('#btnLoad').click();
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ONGLET ③ — CATALOGUE : Transport (lignes+récurrences) / Location / Immobilier
+// ══════════════════════════════════════════════════════════════════════════
+const EUR_TO_XOF = 655.957; // convention monétaire de la pile (CLAUDE.md §1)
+
+// DDL transport affiché dans le panneau (= sql/2026_08_10_transport_lines.sql)
+const DDL_TRANSPORT = `-- Lignes de transport régulières + récurrences (idempotent).
+-- Source complète : sql/2026_08_10_transport_lines.sql
+create extension if not exists pgcrypto;
+
+create table if not exists public.transport_lines (
+  id uuid primary key default gen_random_uuid(),
+  operator text not null, page_name text, page_type text,
+  vehicle_type text not null default 'bus'
+    check (vehicle_type in ('bus','minibus','voiture','7_places','ferry','van')),
+  origin_city text not null, origin_gare text, origin_address text,
+  origin_quartier text, origin_region text,
+  destinations text not null, destination_main text,
+  arrival_gare text, arrival_address text,
+  phone text, phones_all text, whatsapp text, email text,
+  url_facebook text, url_site text, url_group_facebook text,
+  price_fcfa integer, price_vip_fcfa integer, price_child_fcfa integer, price_luggage text,
+  duration text, seats integer, climatise boolean, escales text, services text,
+  reservation boolean, luggage_included text, reservation_mode text, reservation_delay text,
+  horaire_depart_raw text, horaire_arrivee_raw text, notes text,
+  lat double precision, lng double precision, source text, collected_at date,
+  active boolean not null default true,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+create unique index if not exists uq_transport_lines_key
+  on public.transport_lines (operator, origin_city, destinations, vehicle_type);
+create index if not exists idx_transport_lines_search
+  on public.transport_lines (origin_city, destination_main) where active = true;
+
+create table if not exists public.transport_recurrences (
+  id uuid primary key default gen_random_uuid(),
+  line_id uuid not null references public.transport_lines(id) on delete cascade,
+  kind text not null default 'daily'
+    check (kind in ('daily','multiple_daily','weekly','on_demand','special_event')),
+  frequence_raw text, jours_raw text,
+  days_of_week text[] not null default '{}', excluded_days text[] not null default '{}',
+  departure_times text[] not null default '{}', arrival_times text[] not null default '{}',
+  special_label text, notes text, created_at timestamptz not null default now()
+);
+create index if not exists idx_transport_recur_line on public.transport_recurrences (line_id);
+
+alter table public.transport_lines enable row level security;
+alter table public.transport_recurrences enable row level security;
+drop policy if exists transport_lines_public_read on public.transport_lines;
+create policy transport_lines_public_read on public.transport_lines for select using (active = true);
+drop policy if exists transport_lines_admin_all on public.transport_lines;
+create policy transport_lines_admin_all on public.transport_lines for all using (is_admin()) with check (is_admin());
+drop policy if exists transport_recur_public_read on public.transport_recurrences;
+create policy transport_recur_public_read on public.transport_recurrences for select
+  using (line_id in (select id from public.transport_lines where active = true));
+drop policy if exists transport_recur_admin_all on public.transport_recurrences;
+create policy transport_recur_admin_all on public.transport_recurrences for all using (is_admin()) with check (is_admin());
+grant select on public.transport_lines to anon, authenticated;
+grant select on public.transport_recurrences to anon, authenticated;`;
+$('#ddlTransport').textContent = DDL_TRANSPORT;
+$('#btnCopyDdlT').onclick = () => { navigator.clipboard.writeText(DDL_TRANSPORT); log('SQL transport copié.','ok'); };
+
+// ── Helpers de parsing catalogue ────────────────────────────────────────────
+const DAY_TOKENS = { lun:'Lun', mar:'Mar', mer:'Mer', jeu:'Jeu', ven:'Ven', sam:'Sam', dim:'Dim' };
+function intFcfa(v){ // '4 500' / '4500 FCFA' → 4500 ; 'variable'/'' → null
+  const t = String(v??'').trim();
+  if(!t || /variable|non\s*pr[eé]cis|sur\s*demande|—|gratuit/i.test(t)) return null;
+  const m = t.replace(/[\s.]/g,'').match(/\d+/); return m ? parseInt(m[0],10) : null;
+}
+function pipeArr(v){ return String(v??'').split('|').map(x=>x.trim()).filter(Boolean); }
+function firstOf(v){ const a=pipeArr(v); return a.length?a[0]:null; }
+function boolOui(v){ const t=String(v??'').trim().toLowerCase();
+  if(!t||/variable|non\s*pr[eé]cis/i.test(t)) return null; return /^(oui|o|yes|true|1)/.test(t); }
+function timeArr(v){ return pipeArr(v).filter(t=>/\d{1,2}\s*h/i.test(t)); } // garde les tokens horaires
+function vehType(v){ const t=String(v??'').trim().toLowerCase();
+  return ['bus','minibus','voiture','7_places','ferry','van'].includes(t) ? t : 'bus'; }
+function isoDate(v){ const t=String(v??'').trim(); return /^\d{4}-\d{2}-\d{2}/.test(t)? t.slice(0,10) : null; }
+
+function parseDays(str){
+  const s=String(str||''); const days=[], excluded=[];
+  const sauf=/sauf\s+([A-Za-zÀ-ÿ|,\s]+)/i.exec(s);
+  const mainPart = sauf ? s.slice(0,sauf.index) : s;
+  const saufPart = sauf ? sauf[1] : '';
+  const grab=(part,arr)=>String(part).split(/[|,/\s]+/).forEach(tok=>{
+    const key=tok.trim().toLowerCase().slice(0,3);
+    if(DAY_TOKENS[key] && arr.indexOf(DAY_TOKENS[key])<0) arr.push(DAY_TOKENS[key]);
+  });
+  grab(mainPart,days); grab(saufPart,excluded);
+  return {days,excluded};
+}
+// Construit une récurrence normalisée à partir de Frequence + Jours_operation.
+function buildRecurrence(freqRaw, joursRaw, depTimes, arrTimes){
+  const freq=String(freqRaw??'').trim(), jours=String(joursRaw??'').trim();
+  const rec={ frequence_raw:freq||null, jours_raw:jours||null, days_of_week:[], excluded_days:[],
+    departure_times:depTimes||[], arrival_times:arrTimes||[], special_label:null, kind:'daily' };
+  const dl=parseDays(jours);
+  const special = /magal|uniquement/i.test(jours) ||
+    /\b\d{1,2}\s*(ao[uû]t|janv|f[eé]vr|mars|avril|mai|juin|juil|sept|oct|nov|d[eé]c)/i.test(jours);
+  if(/sur[_\s]demande/i.test(freq) || /sur[_\s]demande/i.test(jours)){
+    rec.kind='on_demand'; if(dl.days.length) rec.days_of_week=dl.days;
+  } else if(special){
+    rec.kind='special_event'; rec.special_label=jours||freq;
+  } else if(/quotidien\s*sauf/i.test(freq) || /quotidien\s*sauf/i.test(jours)){
+    rec.kind='daily'; rec.excluded_days=dl.excluded;
+  } else if(dl.days.length){
+    // Une liste de jours explicite dans Jours_operation prime : c'est un service
+    // à jours fixes, même si Frequence dit « quotidien » (ex. Engines : Lun→Sam,
+    // pas dimanche). Plusieurs départs/jour reste possible sur ces jours-là.
+    rec.kind=/plusieurs/i.test(freq) ? 'multiple_daily' : 'weekly'; rec.days_of_week=dl.days;
+  } else if(/hebdomadaire/i.test(freq)){
+    rec.kind='weekly';
+  } else if(/plusieurs/i.test(freq)){
+    rec.kind='multiple_daily';
+  } else if(/quotidien/i.test(freq) || /quotidien/i.test(jours)){
+    rec.kind='daily';
+  }
+  return rec;
+}
+
+function detectCatType(headers){
+  const H=(headers||[]).map(h=>String(h).trim());
+  const has=k=>H.includes(k);
+  if(has('Compagnie') && has('Type_vehicule')) return 'transport';
+  if(has('Transaction') && has('Type_bien')) return 'immobilier';
+  if(has('Categorie') && (has('Prix_jour_fcfa')||has('Prix_jour'))) return 'location';
+  return null;
+}
+const CAT_LABEL = { transport:'🚌 Transport', location:'🔑 Location', immobilier:'🏠 Immobilier' };
+
+// ── Sélection de fichiers (onglet catalogue) ────────────────────────────────
+let parsedCat=[]; // {name, catType, rows, headers}
+const dropCat=$('#dropCat'), filesCatInput=$('#filesCat');
+dropCat.onclick=()=>filesCatInput.click();
+dropCat.ondragover=e=>{e.preventDefault();dropCat.style.borderColor='var(--green)';};
+dropCat.ondragleave=()=>dropCat.style.borderColor='';
+dropCat.ondrop=e=>{e.preventDefault();dropCat.style.borderColor='';handleCatFiles(e.dataTransfer.files);};
+filesCatInput.onchange=()=>handleCatFiles(filesCatInput.files);
+
+function handleCatFiles(fl){
+  [...fl].filter(f=>/\.csv$/i.test(f.name)).forEach(f=>{
+    Papa.parse(f,{header:true,skipEmptyLines:true,complete:res=>{
+      const headers=(res.meta && res.meta.fields)||[];
+      const ct=detectCatType(headers);
+      parsedCat.push({name:f.name,catType:ct,rows:res.data,headers});
+      renderCatFiles();
+      log(`Chargé ${f.name} — ${res.data.length} lignes (${ct?CAT_LABEL[ct]:'type inconnu ✗'}).`, ct?'info':'warn');
+      if(!ct) log(`  → colonnes non reconnues. Transport=Compagnie+Type_vehicule · Location=Categorie+Prix_jour_fcfa · Immobilier=Transaction+Type_bien.`,'warn');
+    }, error:err=>log(`✗ ${f.name}: ${err.message}`,'err')});
+  });
+}
+function renderCatFiles(){
+  const el=$('#fileListCat'); el.innerHTML='';
+  parsedCat.forEach((p,i)=>{
+    const d=document.createElement('div'); d.className='fileitem';
+    d.innerHTML=`<span class="nm">📄 ${esc(p.name)}</span>
+      <span class="pill">${p.rows.length} lignes</span>
+      <span class="pill">${p.catType?esc(CAT_LABEL[p.catType]):'✗ inconnu'}</span>
+      <button class="btn ghost sm" data-i="${i}" data-rmcat="1">✕</button>`;
+    el.appendChild(d);
+  });
+  el.querySelectorAll('[data-rmcat]').forEach(b=>b.onclick=e=>{parsedCat.splice(+e.target.dataset.i,1);renderCatFiles();});
+  const valid=parsedCat.filter(p=>p.catType);
+  $('#btnImportCat').disabled = valid.length===0;
+  const tot=valid.reduce((a,p)=>a+p.rows.length,0);
+  $('#catSummary').textContent = valid.length? `${valid.length} fichier(s) reconnu(s), ${tot} lignes` : '';
+}
+$('#btnClearCat').onclick=()=>{parsedCat=[];renderCatFiles();filesCatInput.value='';};
+
+// ── Compte annonceur (vendeur) mutualisé pour Location/Immobilier ────────────
+const _vendorCache={}; // email → uid (évite les doublons Auth dans la même session)
+async function ensureVendor(name, phone, region, lat, lng, dry){
+  const em=genEmail({name:name||'', phone:phone||''});
+  if(dry) return {uid:'(dry)',email:em,created:false};
+  if(_vendorCache[em]) return {uid:_vendorCache[em],email:em,created:false};
+  let uid=await findUserIdByEmail(em), created=false;
+  if(!uid){
+    const { data:au, error:ae } = await sb.auth.admin.createUser({
+      email:em, password:genPass(), email_confirm:true,
+      user_metadata:{ name:name||'', phone:phone||'', role:'vendor', imported:true, account_type:'annonceur' }
+    });
+    if(ae){ if(/registered|already exists|duplicate/i.test(ae.message)) uid=await findUserIdByEmail(em);
+      if(!uid) throw ae; }
+    else { uid=au.user.id; created=true; }
+  }
+  const upd={ phone:phone||null, shop_name:name||null };
+  if(lat!=null && lng!=null){ upd.current_lat=lat; upd.current_lng=lng; upd.location_updated_at=new Date().toISOString(); }
+  const { error:pe } = await sb.from('profiles').update(upd).eq('id',uid);
+  if(pe) log(`  ⚠️ profil ${em} non mis à jour: ${pe.message}`,'warn');
+  _vendorCache[em]=uid;
+  return {uid,email:em,created};
+}
+// Insert-or-update un produit annonce (idempotent par vendor_id+name+flag).
+async function upsertAnnonce(row, flagCol){
+  const { data:ex } = await sb.from('products').select('id')
+    .eq('vendor_id',row.vendor_id).eq('name',row.name).eq(flagCol,true).limit(1).maybeSingle();
+  if(ex && ex.id){ const { error }=await sb.from('products').update(row).eq('id',ex.id);
+    if(error) throw new Error(error.message); return 'updated'; }
+  const { error }=await sb.from('products').insert(row);
+  if(error) throw new Error(error.message); return 'inserted';
+}
+
+// ── Import catalogue ────────────────────────────────────────────────────────
+$('#btnImportCat').onclick = async () => {
+  if(!connect()) return;
+  const dry=$('#catDryRun').checked;
+  clearLog(); log(`=== IMPORT CATALOGUE ${dry?'(DRY-RUN — aucune écriture)':''} ===`, dry?'info':'');
+  const files=parsedCat.filter(p=>p.catType);
+  const prog=$('#progCat'); prog.classList.remove('hidden');
+  prog.max=files.reduce((a,p)=>a+p.rows.length,0)||1; prog.value=0;
+  $('#btnImportCat').disabled=true;
+  let done=0, ok=0, err=0, recTot=0, vendors=0;
+
+  for(const p of files){
+    log(`→ ${p.name} (${CAT_LABEL[p.catType]}) : ${p.rows.length} lignes…`);
+    for(const r of p.rows){
+      try{
+        if(p.catType==='transport'){
+          const dest=pick(r,'Destinations');
+          const line={
+            operator:pick(r,'Compagnie'), page_name:s(pick(r,'Nom_page')), page_type:s(pick(r,'Type_page')),
+            vehicle_type:vehType(pick(r,'Type_vehicule')),
+            origin_city:pick(r,'Destination_depuis')||'Dakar',
+            origin_gare:s(pick(r,'Gare_depart')), origin_address:s(pick(r,'Adresse_gare')),
+            origin_quartier:s(pick(r,'Quartier')), origin_region:s(pick(r,'Region')),
+            destinations:dest, destination_main:firstOf(dest),
+            arrival_gare:s(pick(r,'Gare_arrivee')), arrival_address:s(pick(r,'Adresse_gare_arrivee')),
+            phone:firstOf(pick(r,'Telephone')), phones_all:s(pick(r,'Telephone')),
+            whatsapp:firstOf(pick(r,'WhatsApp')), email:s(pick(r,'Email')),
+            url_facebook:s(pick(r,'URL_facebook')), url_site:s(pick(r,'URL_site')),
+            url_group_facebook:s(pick(r,'URL_groupe_facebook')),
+            price_fcfa:intFcfa(pick(r,'Prix_fcfa')), price_vip_fcfa:intFcfa(pick(r,'Tarif_vip_fcfa')),
+            price_child_fcfa:intFcfa(pick(r,'Tarif_enfant_fcfa')), price_luggage:s(pick(r,'Tarif_bagage_fcfa')),
+            duration:s(pick(r,'Duree_trajet')), seats:intFcfa(pick(r,'Nb_places')),
+            climatise:boolOui(pick(r,'Climatise')), escales:s(pick(r,'Escales')), services:s(pick(r,'Services_bord')),
+            reservation:boolOui(pick(r,'Reservation')), luggage_included:s(pick(r,'Bagages_inclus')),
+            reservation_mode:s(pick(r,'Mode_reservation')), reservation_delay:s(pick(r,'Delai_reservation')),
+            horaire_depart_raw:s(pick(r,'Horaire_depart')), horaire_arrivee_raw:s(pick(r,'Horaire_arrivee')),
+            notes:s(pick(r,'Notes')), lat:num(pick(r,'Latitude')), lng:num(pick(r,'Longitude')),
+            source:s(pick(r,'Source')), collected_at:isoDate(pick(r,'Date_collecte')), active:true,
+            updated_at:new Date().toISOString()
+          };
+          if(!line.operator || !line.destinations){ log(`  ⊘ ligne sans compagnie/destination ignorée`,'warn'); done++; prog.value=done; continue; }
+          const rec=buildRecurrence(pick(r,'Frequence'), pick(r,'Jours_operation'),
+            timeArr(pick(r,'Horaire_depart')), timeArr(pick(r,'Horaire_arrivee')));
+          if(dry){
+            log(`  • [dry] ${line.operator}: ${line.origin_city} → ${line.destination_main||line.destinations} `
+              +`(${line.vehicle_type}${line.price_fcfa!=null?', '+line.price_fcfa+' F':''}) · récurrence=${rec.kind}`
+              +`${rec.days_of_week.length?' ['+rec.days_of_week.join(',')+']':''}`
+              +`${rec.excluded_days.length?' sauf '+rec.excluded_days.join(','):''}`
+              +`${rec.special_label?' « '+rec.special_label+' »':''}`
+              +`${rec.departure_times.length?' @'+rec.departure_times.join('/'):''}`,'info');
+            ok++; recTot++; done++; prog.value=done; continue;
+          }
+          const { data:up, error:le } = await sb.from('transport_lines')
+            .upsert(line,{onConflict:'operator,origin_city,destinations,vehicle_type'}).select('id').single();
+          if(le) throw new Error('transport_lines: '+le.message);
+          const lineId=up.id;
+          await sb.from('transport_recurrences').delete().eq('line_id',lineId); // idempotent
+          const { error:re } = await sb.from('transport_recurrences').insert(Object.assign({line_id:lineId}, rec));
+          if(re) throw new Error('transport_recurrences: '+re.message);
+          ok++; recTot++;
+        }
+        else if(p.catType==='location'){
+          const name=pick(r,'Nom'), phone=pick(r,'Telephone');
+          const annonceur=pick(r,'Annonceur')||name;
+          const pd=intFcfa(pick(r,'Prix_jour_fcfa','Prix_jour'));
+          if(!name || !pd){ log(`  ⊘ location « ${name||'?'} » sans nom/prix-jour ignorée`,'warn'); done++; prog.value=done; continue; }
+          const lat=num(pick(r,'Latitude')), lng=num(pick(r,'Longitude'));
+          const specs={ category:s(pick(r,'Categorie')), price_per_day:pd,
+            price_per_week:intFcfa(pick(r,'Prix_semaine_fcfa','Prix_semaine')),
+            deposit_fcfa:intFcfa(pick(r,'Caution_fcfa','Caution')),
+            min_days:parseInt(pick(r,'Min_jours'),10)||1,
+            condition:s(pick(r,'Etat','Condition')), region:s(pick(r,'Region')) };
+          if(dry){ log(`  • [dry] Location « ${name} » — ${pd} F/j · annonceur ${annonceur} (${phone||'sans tel'}) · cat ${specs.category||'—'}`,'info'); ok++; done++; prog.value=done; continue; }
+          const v=await ensureVendor(annonceur, phone, s(pick(r,'Region')), lat, lng, dry); if(v.created) vendors++;
+          const st=await upsertAnnonce({ name, category:specs.category||'Location',
+            price:pd/EUR_TO_XOF, stock:1, description:s(pick(r,'Description'))||specs.condition||null,
+            image_url:s(pick(r,'Image_url')), vendor_id:v.uid, vendor_name:annonceur, active:true,
+            is_rental:true, rental_specs:specs }, 'is_rental');
+          log(`  ✓ Location « ${name} » ${st} (annonceur ${v.email})`,'ok'); ok++;
+        }
+        else if(p.catType==='immobilier'){
+          const name=pick(r,'Titre','Nom'), phone=pick(r,'Telephone');
+          const annonceur=pick(r,'Annonceur')||name;
+          const price=intFcfa(pick(r,'Prix_fcfa','Prix'));
+          const txn=(s(pick(r,'Transaction'))||'').toLowerCase();
+          if(!name || !price || !txn){ log(`  ⊘ immobilier « ${name||'?'} » sans titre/prix/transaction ignoré`,'warn'); done++; prog.value=done; continue; }
+          const lat=num(pick(r,'Latitude')), lng=num(pick(r,'Longitude'));
+          const meuble=s(pick(r,'Meuble','Meublé'));
+          const specs={ transaction:/vente|vendre|achat/.test(txn)?'vente':'location',
+            property_type:s(pick(r,'Type_bien')), price_fcfa:price,
+            surface_m2:parseInt(pick(r,'Surface_m2','Surface'),10)||null,
+            rooms:parseInt(pick(r,'Pieces','Pièces'),10)||null,
+            bedrooms:parseInt(pick(r,'Chambres'),10)||null,
+            bathrooms:parseInt(pick(r,'Salles_bain','Salles_de_bain'),10)||null,
+            furnished: meuble==null?null:/^(oui|1|meubl|yes|true)/i.test(meuble),
+            region:s(pick(r,'Region')), location_label:s(pick(r,'Quartier','Adresse')) };
+          if(dry){ log(`  • [dry] Immobilier « ${name} » — ${price} F (${specs.transaction}) · ${specs.property_type||'?'} · annonceur ${annonceur} (${phone||'sans tel'})`,'info'); ok++; done++; prog.value=done; continue; }
+          const v=await ensureVendor(annonceur, phone, s(pick(r,'Region')), lat, lng, dry); if(v.created) vendors++;
+          const st=await upsertAnnonce({ name, category:'Immobilier',
+            price:price/EUR_TO_XOF, stock:1, description:s(pick(r,'Description')),
+            image_url:s(pick(r,'Image_url')), vendor_id:v.uid, vendor_name:annonceur, active:true,
+            is_realestate:true, realestate_specs:specs }, 'is_realestate');
+          log(`  ✓ Immobilier « ${name} » ${st} (annonceur ${v.email})`,'ok'); ok++;
+        }
+      }catch(e){ err++; log(`  ✗ ${e.message||e}`,'err');
+        if(/transport_lines|transport_recurrences.*does not exist|schema cache/i.test(String(e.message)))
+          log('  → Lance d\'abord le SQL transport (bloc dépliable ci-dessus).','warn'); }
+      finally{ done++; prog.value=done; }
+    }
+  }
+  log(`Terminé : ${ok} ${dry?'simulés':'importés'}, ${recTot?recTot+' récurrence(s), ':''}${vendors} compte(s) annonceur créé(s), ${err} erreur(s).`, err?'warn':'ok');
+  $('#btnImportCat').disabled=false;
+};
+</script>
+</body>
+</html>

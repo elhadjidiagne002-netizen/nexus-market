@@ -6,6 +6,138 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-10 — Importateur catalogue : Transport (lignes+récurrences), Location, Immobilier
+
+**Demande** : que `nexus_importer.html` puisse exporter vers nexusmarket.sn les données de
+`prospection/transport_dakar_regions_senegal.csv` en créant **trajets + récurrences** pour
+tous les types de récurrence des lignes, + **faire de même pour la Location et l'Immobilier**,
+en veillant à ce que **tout marche normalement après l'export** sur le site.
+
+**Travail effectué** :
+- **Nouvelles tables** `sql/2026_08_10_transport_lines.sql` : `transport_lines` (la ligne
+  commerciale régulière = le « trajet » : compagnie, véhicule, gare, prix FCFA, horaires bruts,
+  services…) + `transport_recurrences` (le calendrier). Distinct de `transport_trips`
+  (covoiturage à départ unique daté, qui reste inchangé). RLS = lecture publique des lignes
+  actives + admin ; GRANT SELECT anon/authenticated (rappel mémoire orders-update-grant-403).
+- **Normalisation des récurrences** : `Frequence` + `Jours_operation` → `kind` ∈
+  {`daily`, `multiple_daily`, `weekly`, `on_demand`, `special_event`} + `days_of_week`,
+  `excluded_days`, `departure_times`. Cas couverts et testés (14 combinaisons réelles) :
+  quotidien, plusieurs_par_jour, hebdomadaire (Mar|Ven…), sur_demande (avec jours),
+  « quotidien sauf Sam » → daily+excluded, Magal/15 Août → special_event. **Piège corrigé** :
+  Engines Senegal a `Frequence=quotidien` mais `Jours_operation=Lun|Mar|Mer|Jeu|Ven|Sam`
+  (6 j, pas dimanche) → une liste de jours explicite **prime** sur « quotidien » (sinon
+  faussement daily). Idempotence : upsert ligne sur (operator,origin_city,destinations,
+  vehicle_type) puis delete+insert des récurrences.
+- **Front** (`public/index.html`) : `DataService.searchLines()` (lit lignes + récurrences,
+  dégrade en [] si migration pas encore jouée) + **nouvel onglet « 🚌 Lignes régulières »**
+  dans la modale Covoiturage (à côté de Covoiturage / Publier), avec récurrence lisible
+  (« 🗓️ Tous les jours sauf samedi · départ 07h00/15h00 »), prix, durée, services, et bouton
+  **WhatsApp/tel** vers la compagnie. C'est ce qui rend les données visibles après export.
+- **Importateur** (`nexus_importer.html`) : 3ᵉ onglet **« Catalogue »**, détection auto par
+  colonnes : Transport (Compagnie+Type_vehicule) → lines+récurrences ; **Location**
+  (Categorie+Prix_jour_fcfa) et **Immobilier** (Transaction+Type_bien) → un **compte annonceur
+  (vendor)** par téléphone + un **produit** `is_rental`/`rental_specs` ou
+  `is_realestate`/`realestate_specs`, **exactement** les champs que lisent les modules Location
+  (~L10087) et Immobilier (~L10376) du site. Prix converti **FCFA→EUR** (÷655,957, convention
+  de la pile) ; montants FCFA d'origine conservés dans les `*_specs`. Dry-run + idempotence
+  (produit dédupliqué par vendor_id+name+flag ; cache annonceur anti-doublon Auth).
+- Formats CSV attendus (à préparer côté data) :
+  - Location : `Nom,Categorie,Prix_jour_fcfa,Prix_semaine_fcfa,Caution_fcfa,Min_jours,Etat,Region,Ville,Annonceur,Telephone,Description,Image_url,Latitude,Longitude`
+  - Immobilier : `Titre,Transaction,Type_bien,Prix_fcfa,Surface_m2,Pieces,Chambres,Salles_bain,Meuble,Region,Quartier,Annonceur,Telephone,Description,Image_url,Latitude,Longitude`
+- **Prospection Location/Immobilier** (format prospect standard 8 col. → onglet ①, comptes
+  vendeurs) : `prospection/agences_immobilieres_senegal.csv` (64 agences : Dakar SICAP/
+  Sacré-Cœur/Point E/Mermoz + Saly/Thiès/Mbour, sources senegal-online + FB) et
+  `prospection/loueurs_materiel_senegal.csv` (31 loueurs : événementiel, voiture, BTP/engins,
+  + pages FB). FILE_MAP de l'importateur étendu (`/immobili/`, `/loueur|location.*materiel/`
+  → vendor). Ces entreprises s'onboardent comme vendeurs, puis publient leurs annonces
+  (ou un CSV riche alimentera l'onglet ③ Catalogue).
+
+**Vérifs** : `node --check` du module importateur OK ; parsing récurrences testé sur les 14
+combinaisons réelles du CSV ; site chargé en local (static-py:5598), modale Covoiturage → les
+3 onglets s'affichent, « Lignes régulières » dégrade proprement en « Aucune ligne trouvée »
+(pas de crash, aucune erreur JS console) ; onglet Catalogue de l'importateur initialisé (DDL
+transport affiché, écho mot de passe).
+
+**Extension session suivante** : fichiers catalogue remplis (annonces réelles à prix) et
+prospection Location/Immobilier élargie à toutes les catégories + sources Facebook.
+
+**État** : code prêt, **non déployé**. À faire par l'utilisateur : (1) lancer
+`sql/2026_08_10_transport_lines.sql` dans Supabase ; (2) l'édition du front est dans
+`public/index.html` directement (pas dans `app.<hash>.js`) → se déploie à chaque push
+sans renommer de hash ; (3) importer les CSV via l'onglet Catalogue (dry-run d'abord).
+Les lignes transport apparaîtront dans Covoiturage → « Lignes régulières » ; les annonces
+Location/Immobilier dans leurs verticales.
+
+---
+
+## 2026-08-10 (suite) — Catalogues Location & Immobilier + prospection élargie Facebook
+
+**Demande** : « ne rien laisse » — compléter tout ce qui était en attente ; « les locations
+concernent tout — étendre le champ des possibles notamment des recherches plus poussées
+sur Facebook ».
+
+**Travail effectué** :
+
+**CSV catalogue complet (onglet ③ Catalogue de l'importateur)** :
+- `prospection/catalogue_location_senegal.csv` (49 annonces, 11 catégories) :
+  Voiture · Événementiel · BTP/Énergie · Hébergement · **Nautique** (jet ski/pirogue/paddle
+  Saly + Dakar Ngor) · **Moto/Scooter** (scooter 10k/j, moto trail 25k, VTT 5k — Saly/
+  Ngaparou) · **Mode/Mariage** (robes mariée/soirée, costume homme, ensemble wax) ·
+  **Audiovisuel/IT** (vidéoprojecteur, lot PC portables séminaire, micro-conférence, borne
+  selfie) · **Espace/Bureau** (salle réunion 20p, bureau privé coworking, espace 100p) ·
+  **Bâche/Structure** (bâche PVC 6×4m, structure gonflable) · **Food truck** (cuisine mobile).
+  Format colonnes : `Nom,Categorie,Prix_jour_fcfa,...,Annonceur,Telephone,...` → passe dans
+  l'onglet ③, crée comptes vendeurs + produits `is_rental`.
+- `prospection/catalogue_immobilier_senegal.csv` (30 annonces, 2 transactions) :
+  13 locations mensuelles (studios, appartements, villas, bureau — Dakar + Saly + Thiès) +
+  17 ventes (appartements, villas, terrains, locaux commerciaux, immeuble de rapport).
+  Format : `Titre,Transaction,Type_bien,Prix_fcfa,...` → produits `is_realestate`.
+
+**Prospection élargie — Facebook** :
+- `prospection/loueurs_materiel_senegal.csv` : 31 → **50 entrées** (+19 sources FB)
+  Nouvelles catégories avec pages Facebook vérifiées : X'Trem Jet Sénégal (jet ski Saly,
+  FB:xtremjetsenegal), Casa Loisirs (jet ski Saly, +221 77 910 10 45), Monaco Beach/Boby
+  Jet Ski (Ngor), Moto Découverte Sénégal (FB), Location motos et scooters Sénégal
+  (FB:locationmotodkr), Just married (robes mariage, FB), La promise Bridal Dakar (FB),
+  The Day of Today (robes, FB), Mondial Business Mobus (+221 77 627 09 09, vidéoprojecteur
+  Colobane), Dakar Vidéo projecteur service (FB), Africa Bâches (FB:bachesAFRICA), TOUBA
+  BACHE du Sénégal (FB), DAKAR Coworking (+221 77 332 81 87, Dieuppeul II), Dakar CoWorking
+  (dakarcoworking.com), Freepenseur (Sud Foire, 24/7), Waypoint (24/7), Nomad Foodtruck
+  Sénégal (FB:foodtrucknomadsn).
+- `prospection/agences_immobilieres_senegal.csv` : inchangé (64 agences).
+
+**État** : tous les CSV valides (`node --check` + comptage colonnes/lignes). Non importés
+en base (attente SQL migration transport). Prêts à l'import via onglet ③ (dry-run d'abord).
+
+---
+
+## 2026-08-09 — Base de prospection coursiers moto Sénégal (NEXUS Tiak Tiak)
+
+**Demande** : constituer une base de prospection de conducteurs de moto
+coursiers / livreurs moto au Sénégal pour la plateforme NEXUS Tiak Tiak.
+
+**Travail effectué** :
+- Recherche multi-sources (GoAfrica Online, annuaire-senegal.com, senpages.com,
+  expat-dakar.com, loozap, coinafrique, senegalndiaye.com, kolonell.com,
+  livreurbi.com, senjob.com, opportunitesausenegal.sn, courierslist.com,
+  dakarstartup.com, mbour.express, ebn-express.com, tiaktiak.sn, dakar.express
+  et plus de 30 autres sources web)
+- Compilation dans `prospection/coursiers_moto_senegal_enrichi.csv`
+  (88 entrées, 24 colonnes enrichies vs 8 dans l'ancien fichier)
+- Colonnes nouvelles : Quartier, WhatsApp, Email, Type_vehicule, Zones_couvertes,
+  Disponibilite, Plateforme_actuelle, Tarif_min_fcfa, Permis, Assurance, Langues
+- Coordonnées GPS recalculées par quartier précis (table de référence quartiers
+  Dakar) au lieu du centroïde générique 14.6928/-17.4467
+
+**Répartition** : 22 conducteurs moto/structures légères + 53 entreprises (dont
+les 54 de l'ancien fichier intégrés) + 13 autres (institutions, apps, plateformes).
+Villes couvertes : Dakar (90%), Pikine, Guédiawaye, Keur Massar, Mbour, Thiès,
+Kaolack. Tarifs collectés : 300 FCFA (Leuk Express) à 6000 FCFA/j (Agence Hybride).
+
+**État** : fichier livré, non déployé en base (prospection manuelle).
+
+---
+
 ## 2026-08-06 — Vérification par code à 6 chiffres : inscription + mot de passe oublié
 
 **Demande** : que les nouveaux inscrits valident leur compte par un code reçu
