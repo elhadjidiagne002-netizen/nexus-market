@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS — Prospection (Google Maps + Annuaires)</title>
+<style>
+  :root{--bg:#12121e;--card:#1e1e2f;--card2:#252538;--line:#2a2a40;--ink:#e0e0e0;--ink-soft:#9a9ab5;
+    --green:#4CAF50;--green-d:#45a049;--blue:#2196F3;--blue-d:#1976D2;--red:#e05a5a;--amber:#e0a94f;}
+  *{box-sizing:border-box;}
+  body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--ink);max-width:1000px;margin:28px auto;padding:20px;}
+  h1{color:var(--green);border-bottom:2px solid var(--line);padding-bottom:12px;margin-top:0;}
+  h2{font-size:16px;color:#fff;margin:0 0 14px;display:flex;align-items:center;gap:10px;}
+  h2 .num{background:var(--green);color:#fff;width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:14px;flex:none;}
+  .card{background:var(--card);padding:22px;border-radius:12px;border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.4);margin-bottom:20px;}
+  label{display:block;font-weight:600;margin-bottom:6px;color:var(--ink-soft);font-size:13px;}
+  input[type=text],input[type=password],input[type=number],select,textarea{width:100%;padding:10px;background:var(--bg);border:1px solid #333;color:#fff;border-radius:6px;font-size:13px;font-family:inherit;}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--green);}
+  textarea{resize:vertical;min-height:70px;font-family:monospace;}
+  .row{display:flex;gap:14px;flex-wrap:wrap;}
+  .row>div{flex:1;min-width:180px;margin-bottom:12px;}
+  .btn{background:var(--green);color:#fff;border:none;padding:11px 20px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:bold;transition:.15s;}
+  .btn:hover{background:var(--green-d);} .btn:disabled{background:#555;cursor:not-allowed;}
+  .btn.blue{background:var(--blue);} .btn.blue:hover{background:var(--blue-d);}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);} .btn.ghost:hover{border-color:var(--green);color:#fff;}
+  .btn.sm{padding:7px 12px;font-size:12px;}
+  .muted{color:var(--ink-soft);font-size:12.5px;line-height:1.55;}
+  .pill{display:inline-block;font-size:11px;padding:3px 9px;border-radius:999px;background:var(--card2);color:var(--ink-soft);border:1px solid var(--line);}
+  .tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;}
+  .tab{padding:10px 18px;border-radius:8px;background:var(--card);border:1px solid var(--line);cursor:pointer;font-weight:600;color:var(--ink-soft);}
+  .tab.active{background:var(--green);color:#fff;border-color:var(--green);}
+  .hidden{display:none;}
+  .warnbox{background:#2a2416;border:1px solid #5a4a1e;color:#f0d68a;padding:11px 13px;border-radius:8px;font-size:12.5px;line-height:1.55;margin:6px 0;}
+  .okbox{background:#1a2416;border:1px solid #3a5a1e;color:#b0e090;padding:11px 13px;border-radius:8px;font-size:12.5px;margin:6px 0;}
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;}
+  th{color:var(--ink-soft);position:sticky;top:0;background:var(--card);}
+  .scroll{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:12px;}
+  #log{margin-top:12px;background:#000;color:#00e676;padding:12px;border-radius:8px;min-height:44px;font-family:'Courier New',monospace;white-space:pre-wrap;font-size:12.5px;line-height:1.5;}
+  code{background:#000;padding:2px 6px;border-radius:4px;color:#8fe08f;font-size:12px;}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:middle;}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<h1>🔎 NEXUS — Prospection assistée</h1>
+<p class="muted">Génère des CSV au format de l'importateur (<code>Nom,Ville,Region,Adresse,Telephone,Source,Latitude,Longitude</code>)
+depuis <b>Google Maps</b> (via Apify) ou un <b>annuaire</b>. Tout se passe dans ton navigateur — le token reste local.</p>
+
+<!-- Connexion Apify -->
+<div class="card">
+  <h2><span class="num">0</span> Connexion Apify</h2>
+  <div class="row" style="align-items:flex-end">
+    <div style="flex:2"><label>Token API Apify (Settings → API tokens sur apify.com)</label>
+      <input type="password" id="token" placeholder="apify_api_..."></div>
+    <div style="flex:0 0 auto;margin-bottom:12px">
+      <button class="btn ghost sm" id="btnShow">👁</button>
+      <button class="btn ghost sm" id="btnTest">Tester</button>
+      <span id="connState" class="pill" style="margin-left:6px">non testé</span>
+    </div>
+  </div>
+  <label style="display:flex;align-items:center;gap:8px;font-weight:normal;color:var(--ink)">
+    <input type="checkbox" id="remember" checked style="width:auto"> Mémoriser le token sur cet ordinateur (localStorage)</label>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="maps">🗺️ Google Maps</div>
+  <div class="tab" data-tab="dir">📇 Annuaire (config)</div>
+</div>
+
+<!-- Google Maps -->
+<div class="card" id="tab-maps">
+  <h2><span class="num">A</span> Prospection Google Maps</h2>
+  <div class="row">
+    <div style="flex:2"><label>Recherches (une par ligne)</label>
+      <textarea id="queries" placeholder="carreleur Dakar&#10;carreleur Thiès&#10;plombier Mbour"></textarea></div>
+    <div style="flex:1;min-width:150px">
+      <label>Résultats max / recherche</label><input type="number" id="max" value="40" min="1" max="300">
+      <label style="margin-top:10px">Colonne « Source »</label><input type="text" id="source" value="google-maps">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;color:var(--ink);margin-top:12px">
+        <input type="checkbox" id="mobileOnly" style="width:auto"> Mobiles uniquement (7X)</label>
+    </div>
+  </div>
+  <div class="warnbox">💳 Consomme le crédit Apify (~2–5 $ / 1000 lieux ; 5 $/mois gratuits). Une recherche de 40 lieux peut prendre <b>1 à 3 min</b> (l'Actor démarre puis crawle).</div>
+  <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn" id="btnRun">🚀 Lancer la prospection</button>
+    <button class="btn blue" id="btnDl" disabled>⬇️ Télécharger le CSV</button>
+    <input type="text" id="fname" value="maps_senegal.csv" style="width:auto;flex:1;min-width:180px">
+    <span class="pill" id="stats"></span>
+  </div>
+  <div id="log">Prêt.</div>
+  <div class="scroll hidden" id="previewWrap"><table id="preview"><thead></thead><tbody></tbody></table></div>
+</div>
+
+<!-- Annuaire (générateur de config) -->
+<div class="card hidden" id="tab-dir">
+  <h2><span class="num">B</span> Annuaire — générateur de config</h2>
+  <p class="muted">Le crawler d'annuaire tourne en ligne de commande (Crawlee). Remplis les sélecteurs CSS de la page cible
+    (inspecte-la avec les DevTools : clic droit → Inspecter), copie le JSON, et lance la commande.</p>
+  <div class="row">
+    <div style="flex:2"><label>URL de départ</label><input type="text" id="d_start" placeholder="https://annuaire.sn/plombier/dakar"></div>
+    <div><label>Source</label><input type="text" id="d_source" placeholder="mon-annuaire"></div>
+    <div><label>Pages max</label><input type="number" id="d_max" value="20"></div>
+  </div>
+  <div class="row">
+    <div><label>Sélecteur d'une fiche</label><input type="text" id="d_item" placeholder=".company-card"></div>
+    <div><label>Nom</label><input type="text" id="d_name" placeholder=".title"></div>
+    <div><label>Téléphone</label><input type="text" id="d_phone" placeholder=".tel"></div>
+  </div>
+  <div class="row">
+    <div><label>Adresse</label><input type="text" id="d_addr" placeholder=".addr"></div>
+    <div><label>Ville</label><input type="text" id="d_city" placeholder=".city"></div>
+    <div><label>Lien « page suivante »</label><input type="text" id="d_next" placeholder="a.next"></div>
+  </div>
+  <button class="btn ghost sm" id="btnGen">Générer</button>
+  <div id="genOut" class="hidden" style="margin-top:12px">
+    <label>configs/mon-annuaire.json</label>
+    <textarea id="cfgJson" rows="10" readonly></textarea>
+    <button class="btn ghost sm" id="btnCopyCfg" style="margin-top:6px">Copier le JSON</button>
+    <div class="okbox" style="margin-top:10px">Sauve ce JSON dans <code>tools/scraper/configs/mon-annuaire.json</code>, puis lance :<br>
+      <code id="cmd">node crawlee-directory.mjs --config configs/mon-annuaire.json --out ../../prospection/mon_annuaire.csv</code></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+// ── Token (localStorage) ────────────────────────────────────────────────
+const LS = 'nexus_apify_token';
+if (localStorage.getItem(LS)) $('#token').value = localStorage.getItem(LS);
+$('#btnShow').onclick = () => { const i = $('#token'); i.type = i.type === 'password' ? 'text' : 'password'; };
+function saveToken(){ if ($('#remember').checked) localStorage.setItem(LS, $('#token').value.trim()); else localStorage.removeItem(LS); }
+$('#token').addEventListener('change', saveToken);
+$('#remember').addEventListener('change', saveToken);
+
+$('#btnTest').onclick = async () => {
+  const t = $('#token').value.trim(); if (!t) { alert('Colle ton token Apify.'); return; }
+  $('#connState').textContent = 'test…';
+  try {
+    const r = await fetch('https://api.apify.com/v2/users/me?token=' + encodeURIComponent(t));
+    const j = await r.json();
+    if (r.ok) { $('#connState').textContent = '✓ ' + (j.data?.username || 'connecté'); $('#connState').style.color = '#b0e090'; saveToken(); }
+    else { $('#connState').textContent = 'token invalide'; $('#connState').style.color = '#e05a5a'; }
+  } catch (e) { $('#connState').textContent = 'erreur réseau'; }
+};
+
+// ── Onglets ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  $('#tab-maps').classList.toggle('hidden', t.dataset.tab !== 'maps');
+  $('#tab-dir').classList.toggle('hidden', t.dataset.tab !== 'dir');
+});
+
+// ── Transform (repris de lib/prospects-csv.mjs) ─────────────────────────
+const VILLE_REGION = {dakar:'Dakar',pikine:'Dakar',guédiawaye:'Dakar',guediawaye:'Dakar',rufisque:'Dakar','keur massar':'Dakar',bargny:'Dakar',diamniadio:'Dakar',thiès:'Thiès',thies:'Thiès',mbour:'Thiès',saly:'Thiès',tivaouane:'Thiès','saint-louis':'Saint-Louis','saint louis':'Saint-Louis',kaolack:'Kaolack',ziguinchor:'Ziguinchor',touba:'Diourbel',mbacké:'Diourbel',diourbel:'Diourbel',louga:'Louga',tambacounda:'Tambacounda',kolda:'Kolda',fatick:'Fatick',matam:'Matam',kaffrine:'Kaffrine',kédougou:'Kédougou',sédhiou:'Sédhiou'};
+const regionOf = v => { v = String(v||'').trim().toLowerCase(); if (VILLE_REGION[v]) return VILLE_REGION[v]; for (const k in VILLE_REGION) if (v.includes(k)) return VILLE_REGION[k]; return ''; };
+const cityFromAddress = a => { const s = String(a||''); for (const k in VILLE_REGION){ if (new RegExp('\\b'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','i').test(s)) return k.split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' '); } return ''; };
+function normalizePhone(raw){ let d = String(raw||'').replace(/\D/g,'').replace(/^00/,''); if(!d) return ''; if(d.length===9&&/^[73]/.test(d)) d='221'+d; if(!d.startsWith('221')) return ''; const n=d.slice(3); if(n.length!==9) return ''; return `+221 ${n.slice(0,2)} ${n.slice(2,5)} ${n.slice(5,7)} ${n.slice(7,9)}`; }
+const isMobile = p => { const d=String(p||'').replace(/\D/g,''); return d.startsWith('221')&&d[3]==='7'; };
+function toRow(o){ const tel=normalizePhone(o.phone); const ville=o.city||cityFromAddress(o.address); return {Nom:String(o.name||'').trim(),Ville:ville,Region:o.region||regionOf(ville),Adresse:String(o.address||'').replace(/\s+/g,' ').trim(),Telephone:tel,Source:o.source||'',Latitude:(o.lat!=null&&isFinite(o.lat))?Number(o.lat).toFixed(6):'',Longitude:(o.lng!=null&&isFinite(o.lng))?Number(o.lng).toFixed(6):''}; }
+function dedupe(rows,mobileOnly){ const seen=new Set(),out=[]; for(const r of rows){ if(!r.Nom) continue; if(mobileOnly&&!isMobile(r.Telephone)) continue; const k=r.Nom.toLowerCase().replace(/\s+/g,' ')+'|'+r.Telephone; if(seen.has(k)) continue; seen.add(k); out.push(r);} out.sort((a,b)=>isMobile(b.Telephone)-isMobile(a.Telephone)); return out; }
+const HEADER=['Nom','Ville','Region','Adresse','Telephone','Source','Latitude','Longitude'];
+const csvCell=v=>{const s=String(v==null?'':v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+function buildCsv(rows){ return [HEADER.join(',')].concat(rows.map(r=>HEADER.map(h=>csvCell(r[h])).join(','))).join('\n')+'\n'; }
+
+// ── Lancer Google Maps ──────────────────────────────────────────────────
+let lastRows = [];
+function log(m){ $('#log').textContent = m; }
+$('#btnRun').onclick = async () => {
+  const t = $('#token').value.trim(); if (!t) { alert('Colle et teste ton token Apify (encadré 0).'); return; }
+  const queries = $('#queries').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if (!queries.length) { alert('Entre au moins une recherche.'); return; }
+  const max = Math.max(1, parseInt($('#max').value,10)||40);
+  const mobileOnly = $('#mobileOnly').checked;
+  const source = $('#source').value.trim() || 'google-maps';
+  saveToken();
+  $('#btnRun').disabled = true; $('#btnDl').disabled = true; lastRows = [];
+  log('⏳ Lancement de l\'Actor Google Maps… (1–3 min, ne ferme pas l\'onglet)');
+  $('#btnRun').innerHTML = '<span class="spin"></span> En cours…';
+  try {
+    const input = { searchStringsArray: queries, maxCrawledPlacesPerSearch: max, language: 'fr', countryCode: 'sn', skipClosedPlaces: false };
+    const url = 'https://api.apify.com/v2/acts/compass~crawler-google-places/run-sync-get-dataset-items?token=' + encodeURIComponent(t);
+    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(input) });
+    if (!r.ok) { const txt = await r.text(); throw new Error('Apify ' + r.status + ' : ' + txt.slice(0,200)); }
+    const items = await r.json();
+    const rows = items.map(it => toRow({ name: it.title||it.name, city: it.city, address: it.address||[it.street,it.city].filter(Boolean).join(', '), phone: it.phone||it.phoneUnformatted, lat: it.location?.lat, lng: it.location?.lng, source }));
+    lastRows = dedupe(rows, mobileOnly);
+    const withPhone = lastRows.filter(r=>r.Telephone).length, mob = lastRows.filter(r=>isMobile(r.Telephone)).length;
+    log('✅ Terminé : ' + items.length + ' lieu(x) bruts → ' + lastRows.length + ' fiche(s) uniques.');
+    $('#stats').textContent = lastRows.length + ' fiches · ' + withPhone + ' avec tél · ' + mob + ' mobiles';
+    // aperçu
+    const thead = $('#preview thead'), tbody = $('#preview tbody');
+    thead.innerHTML = '<tr>' + HEADER.map(h=>'<th>'+h+'</th>').join('') + '</tr>';
+    tbody.innerHTML = lastRows.slice(0,25).map(r=>'<tr>'+HEADER.map(h=>'<td title="'+csvCell(r[h]).replace(/"/g,'&quot;')+'">'+(r[h]||'')+'</td>').join('')+'</tr>').join('');
+    $('#previewWrap').classList.toggle('hidden', lastRows.length===0);
+    $('#btnDl').disabled = lastRows.length===0;
+  } catch (e) {
+    log('❌ ' + (e.message||e));
+  } finally {
+    $('#btnRun').disabled = false; $('#btnRun').textContent = '🚀 Lancer la prospection';
+  }
+};
+
+$('#btnDl').onclick = () => {
+  if (!lastRows.length) return;
+  const blob = new Blob([buildCsv(lastRows)], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = ($('#fname').value.trim() || 'maps_senegal.csv').replace(/[^\w.\-]/g,'_');
+  a.click(); URL.revokeObjectURL(a.href);
+};
+
+// ── Générateur de config annuaire ───────────────────────────────────────
+$('#btnGen').onclick = () => {
+  const cfg = { start:$('#d_start').value.trim(), source:$('#d_source').value.trim()||'annuaire', maxPages:parseInt($('#d_max').value,10)||20,
+    item:$('#d_item').value.trim(), name:$('#d_name').value.trim(), phone:$('#d_phone').value.trim(),
+    address:$('#d_addr').value.trim(), city:$('#d_city').value.trim(), next:$('#d_next').value.trim(), mobileOnly:false };
+  if (!cfg.start || !cfg.item || !cfg.name) { alert('URL de départ, sélecteur de fiche et Nom sont requis.'); return; }
+  $('#cfgJson').value = JSON.stringify(cfg, null, 2);
+  $('#genOut').classList.remove('hidden');
+};
+$('#btnCopyCfg').onclick = () => { navigator.clipboard.writeText($('#cfgJson').value); $('#btnCopyCfg').textContent = 'Copié ✓'; setTimeout(()=>$('#btnCopyCfg').textContent='Copier le JSON',1500); };
+</script>
+</body>
+</html>
