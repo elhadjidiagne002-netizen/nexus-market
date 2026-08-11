@@ -70,6 +70,32 @@ Location/Immobilier dans leurs verticales.
 
 ---
 
+## 2026-08-11 (suite 2) — Outil de prospection `tools/scraper/` (Apify Maps + Crawlee)
+
+**Demande** : mettre en place Apify/Crawlee pour automatiser la prospection, **aussi pour Google
+Maps**, sans lancer de prospection (juste installer + documenter l'usage).
+
+**Constat** : le scraping gratuit d'annuaires est fragile (annuaire-senegal masque les tél,
+GoAfrica renvoie 500 aux robots) ; Google Maps est verrouillé (JS + anti-bot) → la voie fiable
+pour Maps = l'**Actor Apify** (cloud, maintenu).
+
+**Livré** — `tools/scraper/` (outil local séparé, comme nexus_importer.html) :
+- `apify-maps.mjs` : Google Maps via l'Actor `compass/crawler-google-places` (fetch direct à
+  l'API Apify, **aucune dépendance**) → nom, tél, adresse, **GPS réel**.
+- `crawlee-directory.mjs` : annuaires statiques via **Crawlee CheerioCrawler** (léger, pas de
+  navigateur), piloté par config JSON de sélecteurs (`configs/example-directory.json`). Best-effort.
+- `lib/prospects-csv.mjs` : mapping → **format importateur** (`Nom,Ville,Region,Adresse,Telephone,
+  Source,Latitude,Longitude`) + dédup + normalisation tél `+221 XX XXX XX XX` + priorité mobile (7X).
+- `selftest.mjs` (9 assertions, OK), `README.md` (mode d'emploi + coûts + note CGU), `.gitignore`
+  (node_modules/CSV/*.log ignorés).
+
+**Périmètre éthique** : annuaires publics + Google Maps uniquement. **Pas** de Facebook/Instagram (CGU).
+**Setup vérifié SANS prospection** : `npm install` (308 paquets) OK, Crawlee charge, self-test 9/9,
+token Apify de l'utilisateur **validé** (`users/me` : compte free, 5 $/mois). Aucun scraping lancé.
+Le token n'est **pas** stocké/committé ; sortie CSV → `prospection/` (gitignored, local).
+
+---
+
 ## 2026-08-11 (suite) — Panneau admin « Prospects » + fix visibilité pros promus
 
 **Demande** : (1) les comptes pro promus par l'app n'apparaissent nulle part sur le site ; (2)
