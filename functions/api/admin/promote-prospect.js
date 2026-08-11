@@ -113,9 +113,9 @@ export async function onRequest({ request, env }) {
 
       // Fiche métier.
       if (c.fiche === 'pros') {
+        // NB: la table `pros` n'a PAS de lat/lng — la géo vit sur profiles.current_lat/lng
+        // (écrite plus haut via c.geo). Insérer lat/lng ici échoue ("column pros.lat absente").
         const fiche = { user_id: uid, profession: p.profession, name: p.name || '', phone: p.phone || '', city: p.city || null, status: 'hidden', disponible: true };
-        if (p.lat != null) fiche.lat = p.lat;
-        if (p.lng != null) fiche.lng = p.lng;
         await sb.from('pros').upsert(fiche, 'user_id').catch((e) => { throw new Error('pros: ' + e.message); });
       } else if (c.fiche === 'couriers') {
         const fiche = { user_id: uid, name: p.name || '', phone: p.phone || '', status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
