@@ -403,22 +403,86 @@ $('#btnShowPass').onclick = () => {
 $('#defaultPass').type = 'text'; // visible par défaut
 
 // ── Détection type/métier depuis le nom de fichier ──────────────────────
+// ⚠️ ORDRE = priorité : les variantes SPÉCIFIQUES (auto/moto) doivent venir AVANT
+//   les règles génériques homonymes (ex. electric.*auto avant electric, peintre.*auto
+//   avant peintre), sinon la générique capture le fichier spécifique en premier.
+//   Les libellés "pro" sont alignés sur window.__NEXUS_PRO_METIERS / METIERS du site
+//   (public/index.html) pour que la promotion d'un prospect corresponde à un chip.
 const FILE_MAP = [
+  // ── Auto / Moto (spécifiques d'abord) ──────────────────────────────────
+  [/tolier|carross|peintre.*auto|auto.*peintre/i,        "vendor","Carrosserie / Tôlerie auto"],
+  [/electric.*auto|auto.*electric/i,                     "pro","Électricien auto"],
+  [/vitrier.*auto|auto.*vitrier/i,                       "pro","Vitrier auto"],
+  [/verre.*auto|vitre.*auto|auto.*verre/i,               "vendor","Vitres / Verre auto"],
+  [/climat.*auto|clim.*auto|auto.*climat/i,              "pro","Climatisation auto"],
+  [/mecan.*moto|moto.*mecan/i,                           "pro","Mécanicien moto"],
+  [/piece.*moto|pieces.*moto|moto.*piece/i,              "vendor","Pièces moto"],
+  [/pneu|pneumatique/i,                                  "vendor","Pneus / Pneumatiques"],
+  [/batterie.*auto|auto.*batterie/i,                     "vendor","Batteries auto"],
+  [/jante/i,                                             "pro","Réparateur de jantes"],
+  [/garage|mecan/i,                                      "vendor","Garage / Mécanicien"],
+  // ── BTP & maison ───────────────────────────────────────────────────────
   [/soudeur|metall/i,       "pro","Soudeur / Métallique"],
   [/macon|btp/i,            "pro","Maçon"],
   [/electric/i,             "pro","Électricien"],
   [/plombier/i,             "pro","Plombier"],
   [/menuisier|bois/i,       "pro","Menuisier (bois)"],
   [/carreleur|carrelage/i,  "pro","Carreleur"],
+  [/carreaux|vendeur.*carreau/i,"vendor","Vente de carreaux"],
   [/peintre/i,              "pro","Peintre"],
   [/platrier|staff/i,       "pro","Plâtrier / Staff"],
   [/jardinier/i,            "pro","Jardinier"],
   [/vitrier/i,              "pro","Vitrier"],
   [/climat|froid/i,         "pro","Froid & Climatisation"],
   [/demenageur|demenagement|déménag/i,"pro","Déménageur"],
+  // ── Énergie / Technique ────────────────────────────────────────────────
+  [/technicien.*solaire|solaire/i,           "pro","Technicien solaire"],
+  [/energie.*rural|rural.*energie/i,         "pro","Technicien énergies rurales"],
+  [/groupe.*electrogene|electrogene/i,       "pro","Réparateur groupes électrogènes"],
+  [/securite.*electron|securite.*electro/i,  "pro","Technicien sécurité électronique"],
+  [/reparateur.*electron|electroniqu/i,      "pro","Réparateur électronique"],
+  // ── Services à la personne / maison ────────────────────────────────────
+  [/coiffeur|beaute|beauté/i,                "pro","Coiffure / Beauté à domicile"],
+  [/femme.*menage|menage|gouvernante/i,      "pro","Ménage / Gouvernante"],
+  [/baby.*sitter|nounou|garde.*enfant/i,     "pro","Baby-sitter / Nounou"],
+  [/aide.*soignant/i,                        "pro","Aide-soignant(e)"],
+  [/agent.*sante|sante/i,                    "pro","Agent de santé"],
+  [/coach|bien.*etre|bien.*être/i,           "pro","Coach bien-être"],
+  [/cuisinier/i,                             "pro","Cuisinier à domicile"],
+  [/traiteur|patissier|pâtissier/i,          "pro","Traiteur / Pâtissier"],
+  [/couturier|styliste|tailleur/i,           "pro","Couturier / Styliste"],
+  // ── Événementiel / Créa / Digital ──────────────────────────────────────
+  [/photographe/i,                           "pro","Photographe"],
+  [/videaste|vidéaste|producteur.*video/i,   "pro","Vidéaste / Producteur"],
+  [/animateur|griot|(^|[^a-z])dj([^a-z]|$)/i,"pro","Animateur / DJ / Griot"],
+  [/decorateur|evenementiel|événementiel/i,  "pro","Décorateur événementiel"],
+  [/graphiste|designer/i,                    "pro","Graphiste / Designer"],
+  [/community.*manager|community/i,          "pro","Community manager"],
+  [/developpeur|développeur|web.*mobile/i,   "pro","Développeur web/mobile"],
+  [/imprimeur|imprimerie/i,                  "pro","Imprimeur"],
+  [/professeur|\bformateur|enseignant/i,     "pro","Professeur / Formateur"],
+  [/avocat|notaire/i,                        "pro","Avocat / Notaire"],
+  // ── Agri / Alimentation / Artisanat ────────────────────────────────────
+  [/maraicher|maraîcher|agriculteur/i,       "pro","Maraîcher / Agriculteur"],
+  [/transformateur.*aliment|aliment.*transform/i,"pro","Transformateur alimentaire"],
+  [/epicerie|epicerie.*bio|bio/i,            "vendor","Épicerie fine / Bio"],
+  [/artisan|artisanat/i,                     "pro","Artisan (artisanat)"],
+  // ── Autres métiers courants (utiles au-delà du dossier prospection) ─────
+  [/serrurier|serrure/i,                     "pro","Serrurier"],
+  [/antenniste|parabole|antenne/i,           "pro","Antenniste / Parabole"],
+  [/puisatier|forage|foreur/i,               "pro","Puisatier / Forage"],
+  [/etancheur|étancheur|etancheite|toiture/i,"pro","Étancheur / Toiture"],
+  [/reparateur.*telephone|reparation.*telephone|reparateur.*gsm|gsm/i,"pro","Réparateur téléphone"],
+  [/informaticien|cablage.*reseau|reseau.*informatique/i,"pro","Informaticien / Réseau"],
+  [/tapissier|ameublement|rembourrage/i,     "pro","Tapissier / Ameublement"],
+  [/cordonnier|cordonnerie/i,                "pro","Cordonnier"],
+  [/pressing|blanchisserie|blanchisseur/i,   "pro","Pressing / Blanchisserie"],
+  [/veterinaire|vétérinaire/i,               "pro","Vétérinaire"],
+  [/chauffeur|location.*voiture|voiture.*location/i,"pro","Chauffeur / Location voiture"],
+  // ── Mobilité / Élevage / Verticaux existants ───────────────────────────
   [/coursier|tiak|livreur/i,"courier","Coursier"],
-  [/eleveur|berger/i,       "breeder","Éleveur"],
-  [/garage|mecan/i,         "vendor","Garage / Mécanicien"],
+  [/transport|voyageur|compagnie.*transport/i,"vendor","Transport / Voyageurs"],
+  [/eleveur|berger|avicult/i,"breeder","Éleveur"],
   [/immobili|agence.*immo/i,"vendor","Agence immobilière"],
   [/loueur|location.*materiel|materiel.*location/i,"vendor","Loueur / Location"],
 ];
@@ -585,7 +649,8 @@ function renderTbl(){
   loaded.forEach((r,i)=>{
     const tr=document.createElement('tr');
     const shownEmail = r.email || genEmail(r);
-    tr.innerHTML=`<td><input type="checkbox" class="rc" data-i="${i}" ${r.status==='new'?'checked':''}></td>
+    const isPromoted = r.status==='promoted' && r.promoted_user_id;
+    tr.innerHTML=`<td><input type="checkbox" class="rc" data-i="${i}" ${(!isPromoted && r.status==='new')?'checked':''} ${isPromoted?'disabled title="déjà promu"':''}></td>
       <td>${esc(r.name||'—')}</td><td><span class="pill">${esc(r.account_type)}</span></td>
       <td>${esc(r.profession||'')}</td><td>${esc(r.phone||'')}</td><td style="font-size:11px;color:var(--ink-soft)">${esc(shownEmail)}</td><td>${esc(r.city||'')}</td>
       <td><span class="pill">${esc(r.status)}</span></td>`;
@@ -674,19 +739,25 @@ $('#btnPromote').onclick = async () => {
       }
 
       // 1) Auth user (email uniquement — pas de phone en Auth pour éviter la validation E.164)
-      let uid=null;
-      const { data:au, error:ae } = await sb.auth.admin.createUser({
-        email, password:pass, email_confirm:true,
-        user_metadata:{ name:r.name||'', phone:r.phone||'', role:c.authRole,
-                        imported:true, account_type:r.account_type, profession:r.profession||'' }
-      });
-      if(ae){
-        if(/registered|already exists|duplicate/i.test(ae.message)){
-          uid=await findUserIdByEmail(email);
-          if(uid) log(`  ↻ ${r.name}: compte existant réutilisé (${email})`,'warn');
-        }
-        if(!uid) throw ae;
-      } else { uid=au.user.id; }
+      // Anti-duplication PROACTIF : si un compte porte déjà cet email, on le RÉUTILISE
+      // (profiles.email est UNIQUE) → jamais deux comptes pour le même prospect, même si la
+      // détection d'erreur 422 varie selon la version de GoTrue.
+      let uid=await findUserIdByEmail(email);
+      if(uid){ log(`  ↻ ${r.name}: compte existant réutilisé (${email})`,'warn'); }
+      if(!uid){
+        const { data:au, error:ae } = await sb.auth.admin.createUser({
+          email, password:pass, email_confirm:true,
+          user_metadata:{ name:r.name||'', phone:r.phone||'', role:c.authRole,
+                          imported:true, account_type:r.account_type, profession:r.profession||'' }
+        });
+        if(ae){
+          if(/registered|already exists|duplicate/i.test(ae.message)){
+            uid=await findUserIdByEmail(email);
+            if(uid) log(`  ↻ ${r.name}: compte existant réutilisé (${email})`,'warn');
+          }
+          if(!uid) throw ae;
+        } else { uid=au.user.id; }
+      }
 
       // Laisse le trigger handle_new_user créer la ligne profiles (ON CONFLICT DO NOTHING).
       // 2) Profil : UPDATE des flags + géo (jamais d'INSERT ici → pas de NOT NULL violé)
@@ -711,10 +782,12 @@ $('#btnPromote').onclick = async () => {
         if(fe) throw new Error(c.ficheTable+': '+fe.message);
       }
 
-      // 4) Marquer promu
-      const { error:me }=await sb.from('prospects')
-        .update({status:'promoted',promoted_user_id:uid,email,updated_at:new Date().toISOString()}).eq('id',r.id);
+      // 4) Marquer promu — vérifié (count) pour ne PAS laisser de zombie re-sélectionnable.
+      const { error:me, count:mc }=await sb.from('prospects')
+        .update({status:'promoted',promoted_user_id:uid,email,updated_at:new Date().toISOString()},{count:'exact'}).eq('id',r.id);
       if(me) log(`  ⚠️ ${r.name}: compte créé mais statut non mis à jour (${me.message})`,'warn');
+      else if(mc===0) log(`  ⚠️ ${r.name}: statut 'promoted' non enregistré (0 ligne modifiée — RLS/clé ?).`,'warn');
+      else { r.status='promoted'; r.promoted_user_id=uid; r.email=email; } // reflet mémoire → sort de la sélection
 
       log(`  ✓ ${r.name||email} → compte OK (${email})`,'ok'); ok++;
     }catch(e){ log(`  ✗ ${r.name||'(sans nom)'}: ${e.message||e}`,'err'); err++; }
@@ -723,7 +796,10 @@ $('#btnPromote').onclick = async () => {
 
   log(`Terminé : ${ok} ${dry?'simulés':'créés'}, ${skip} ignorés, ${err} erreurs.`, err?'warn':'ok');
   $('#btnPromote').disabled=false;
-  if(!dry) $('#btnLoad').click();
+  // Re-render depuis l'état mémoire (statuts 'promoted' mis à jour) : les promus se
+  // décochent et se désactivent, SANS effacer le rapport ci-dessus. Le bouton « Charger »
+  // reste dispo pour un refetch complet depuis la base si besoin.
+  if(!dry) renderTbl();
 };
 
 // ══════════════════════════════════════════════════════════════════════════
