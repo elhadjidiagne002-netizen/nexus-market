@@ -10851,22 +10851,55 @@ window.addEventListener('unhandledrejection', function(event) {
   }
   function fmtDate(d) { try { return new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }); } catch (e) { return ''; } }
 
+  // Villes de repli quand la géoloc est refusée / indisponible (desktop, refus…).
+  var PRO_CITIES = {
+    'Dakar': [14.6928, -17.4467], 'Pikine': [14.7549, -17.3900], 'Rufisque': [14.7164, -17.2739],
+    'Thiès': [14.7833, -16.9333], 'Mbour': [14.4200, -16.9700], 'Saint-Louis': [16.0180, -16.4900],
+    'Kaolack': [14.1520, -16.0730], 'Ziguinchor': [12.5680, -16.2720], 'Touba': [14.8500, -15.8800],
+    'Diourbel': [14.6560, -16.2340], 'Louga': [15.6140, -16.2280], 'Tambacounda': [13.7700, -13.6670]
+  };
+
   // ── Onglet « Trouver un pro » : carte + liste triée par proximité ────────────
   function showNearby(host, profession) {
     host.innerHTML = '<div style="text-align:center;color:#666;padding:1rem">📍 Localisation…</div>';
-    if (!window.NexusMap || !NexusMap.locateMe) { host.innerHTML = '<div style="color:#999;padding:1rem">Carte indisponible.</div>'; return; }
-    NexusMap.locateMe({ enableHighAccuracy: false, timeout: 8000 }).then(function (pos) {
-      var c = sb();
-      var rpc = c ? c.rpc('nearby_pros', { p_lat: pos.lat, p_lng: pos.lng, p_radius_m: 50000, p_limit: 40, p_profession: profession || null }) : Promise.resolve({ data: [] });
-      return Promise.resolve(rpc).then(function (r) {
+    var dakar = { lat: PRO_CITIES['Dakar'][0], lng: PRO_CITIES['Dakar'][1] };
+    if (!window.NexusMap || !NexusMap.locateMe) { renderProsAt(host, profession, dakar, { fallback: true, city: 'Dakar' }); return; }
+    NexusMap.locateMe({ enableHighAccuracy: false, timeout: 8000 })
+      .then(function (pos) { renderProsAt(host, profession, pos, {}); })
+      // Géoloc refusée/indispo → on n'affiche plus une impasse : repli sur Dakar + choix de ville.
+      .catch(function () { renderProsAt(host, profession, dakar, { fallback: true, city: 'Dakar' }); });
+  }
+
+  // Rend la carte + la liste des pros pour une position donnée.
+  // opts.fallback (bool) : position par défaut → ajoute un sélecteur de ville + « Ma position ».
+  function renderProsAt(host, profession, pos, opts) {
+    opts = opts || {};
+    var c = sb();
+    var rpc = c ? c.rpc('nearby_pros', { p_lat: pos.lat, p_lng: pos.lng, p_radius_m: 50000, p_limit: 40, p_profession: profession || null }) : Promise.resolve({ data: [] });
+    Promise.resolve(rpc).then(function (r) {
         var list = (r && r.data) || [];
         host.innerHTML = '';
+        if (opts.fallback) {
+          var bar = document.createElement('div');
+          bar.style.cssText = 'background:#fef9c3;border:1px solid #f59e0b;border-radius:10px;padding:.5rem .7rem;margin-bottom:.7rem;font-size:.78rem;color:#78350f;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+          var selHtml = '<select id="nx-pro-city" style="padding:.3rem .5rem;border-radius:7px;border:1px solid #d6a12a;font-size:.8rem;background:#fff">';
+          Object.keys(PRO_CITIES).forEach(function (v) { selHtml += '<option value="' + v + '"' + (v === opts.city ? ' selected' : '') + '>' + v + '</option>'; });
+          selHtml += '</select>';
+          bar.innerHTML = '<span>📍 Localisation indisponible — résultats autour de</span>' + selHtml
+            + '<button id="nx-pro-geo" style="border:none;background:#006d40;color:#fff;border-radius:7px;padding:.3rem .6rem;font-size:.76rem;cursor:pointer">📍 Ma position</button>';
+          host.appendChild(bar);
+          bar.querySelector('#nx-pro-city').addEventListener('change', function (e) {
+            var v = e.target.value, co = PRO_CITIES[v] || PRO_CITIES['Dakar'];
+            renderProsAt(host, profession, { lat: co[0], lng: co[1] }, { fallback: true, city: v });
+          });
+          bar.querySelector('#nx-pro-geo').addEventListener('click', function () { showNearby(host, profession); });
+        }
         var mapEl = document.createElement('div'); mapEl.className = 'nexus-map'; mapEl.style.height = '230px'; mapEl.style.marginBottom = '.7rem';
         host.appendChild(mapEl);
         var pins = list.filter(function (b) { return b.lat != null && b.lng != null; }).map(function (b) {
           return { lat: b.lat, lng: b.lng, name: metierEmoji(b.profession) + ' ' + (b.name || b.profession || 'Pro'), distance_km: b.distance_km };
         });
-        try { NexusMap.nearby(mapEl, { lat: pos.lat, lng: pos.lng, label: 'Vous' }, pins); } catch (e) {}
+        try { NexusMap.nearby(mapEl, { lat: pos.lat, lng: pos.lng, label: opts.fallback ? (opts.city || 'Ville') : 'Vous' }, pins); } catch (e) {}
         if (!list.length) {
           var em = document.createElement('div'); em.style.cssText = 'color:#999;text-align:center;padding:.6rem';
           em.textContent = 'Aucun professionnel ' + (profession ? '(' + profession + ') ' : '') + 'inscrit pour l’instant. Revenez bientôt !';
@@ -10905,9 +10938,8 @@ window.addEventListener('unhandledrejection', function(event) {
           tile.appendChild(actions);
           host.appendChild(tile);
         });
-      });
     }).catch(function () {
-      host.innerHTML = '<div style="color:#b45309;padding:1rem">Position indisponible (refus GPS). Activez la localisation pour voir les pros proches.</div>';
+      host.innerHTML = '<div style="color:#b45309;padding:1rem">Impossible de charger les professionnels. Réessayez.</div>';
     });
   }
 

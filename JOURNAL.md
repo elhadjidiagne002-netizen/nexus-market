@@ -70,6 +70,24 @@ Location/Immobilier dans leurs verticales.
 
 ---
 
+## 2026-08-11 (suite 3) — Module Pro : repli ville quand la géoloc est refusée
+
+**Demande** : « voir erreur localisation ». Reproduit sur le site live : `geolocationPermission='denied'`.
+
+**Cause** : dans le module NEXUS Pro (« Trouver un pro » → `showNearby`, index.html ~L10863), si
+`NexusMap.locateMe()` échoue (refus/indispo GPS — fréquent sur desktop), le `.catch` affichait une
+**impasse** (« Position indisponible (refus GPS). Activez la localisation… ») et **aucune liste** →
+personne ne pouvait voir les pros sans autoriser sa position. C'est l'« erreur localisation ».
+
+**Fix** (index.html, donc déploie sans renommer de hash) : refactor `showNearby` → `renderProsAt(host,
+profession, pos, opts)`. En cas d'échec géoloc, repli automatique sur **Dakar** + une **barre de
+repli** : sélecteur de 12 villes (`PRO_CITIES`) + bouton « 📍 Ma position » (réessaie la géoloc).
+`nearby_pros` est alors appelé avec les coords de la ville choisie → la liste s'affiche quand même.
+Vérifié en local (géoloc forcée en refus) : plus d'impasse, barre + 12 villes + bouton présents,
+`node --check` du module OK.
+
+---
+
 ## 2026-08-11 (suite 2) — Outil de prospection `tools/scraper/` (Apify Maps + Crawlee)
 
 **Demande** : mettre en place Apify/Crawlee pour automatiser la prospection, **aussi pour Google
