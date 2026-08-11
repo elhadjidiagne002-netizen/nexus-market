@@ -70,6 +70,276 @@ Location/Immobilier dans leurs verticales.
 
 ---
 
+## 2026-08-11 (suite) — Panneau admin « Prospects » + fix visibilité pros promus
+
+**Demande** : (1) les comptes pro promus par l'app n'apparaissent nulle part sur le site ; (2)
+pouvoir **promouvoir les prospects directement depuis le tableau de bord admin**.
+
+**Cause racine visibilité (trouvée)** : la promotion crée la fiche `pros` en **`status='hidden'`**,
+mais la RLS de base `pros_select_public` ne laisse lire QUE `status='active'`. Le panneau « Modération
+NEXUS Pro » lit `pros` avec la session admin (pas la service key) → il ne voit pas les fiches hidden.
+**Fix = appliquer `sql/2026_06_20_pros_admin.sql`** (policy `pros_admin_all` : l'admin voit/modifie
+toutes les fiches). C'est le seul chaînon manquant côté visibilité.
+
+**Nouvelle fonctionnalité — panneau admin « 📇 Prospects »** :
+- **Backend** `functions/api/admin/promote-prospect.js` (POST, `requireAdmin`) : lit `prospects`,
+  crée le compte Auth via l'API admin REST (**service key SERVEUR uniquement**, jamais dans le
+  navigateur), pose les flags profil (is_pro/is_courier/is_breeder) + géo, crée la fiche
+  (`pros` status='hidden' / `couriers` status='pending'), marque le prospect `promoted`. Réplique
+  fidèlement la logique de nexus_importer.html onglet ②. Batch ≤20/appel (limites sous-requêtes CF).
+  `node --check` OK.
+- **Frontend** (`public/assets/app.<hash>.js`) : composant `ProspectsAdminPanel` (liste `prospects`
+  via RLS admin, filtres type/statut, sélection multiple, boutons Promouvoir/Promouvoir la sélection
+  → appelle le backend avec le JWT admin). Entrée de menu `📇 Prospects` + route `view==='prospects'`.
+  **Hash renommé** `3e3879d434 → 8e0c806648` + `index.html` mis à jour (cache immutable, cf. mémoire
+  app-bundle-hash-cache-busting). Bundle : `node --check` OK + boot vérifié en local (React monté,
+  0 erreur JS).
+
+**SQL requis en prod (à lancer par l'utilisateur, SQL Editor)** :
+1. `sql/2026_06_20_pros_admin.sql` (visibilité admin des pros hidden — corrige le pb #1).
+2. Table `prospects` + RLS admin (SQL de l'onglet ① de l'importateur) si pas déjà fait — sinon le
+   panneau affiche « Table prospects absente ».
+Env : le backend utilise `SUPABASE_SERVICE_KEY` (déjà configurée, utilisée par les autres functions).
+
+**À déployer** (commit + push) : le panneau + le backend ne sont visibles qu'une fois en prod
+(dashboard admin + Cloudflare Function sur le site live).
+
+---
+
+## 2026-08-11 — Métiers : distinction ouvrier carreleur (pro) vs vendeur de carreaux (vendor)
+
+**Demande** : tester d'abord l'export d'un **métier** via `nexus_importer.html`, en commençant par
+les carreleurs, en distinguant **l'ouvrier (artisan qui pose) du vendeur de carreaux (marchand)**.
+
+**Constat** : `prospection/carreleurs_senegal.csv` (148 lignes, source goafricaonline) est en réalité
+un annuaire de **MARCHANDS de carreaux** (magasins carreaux/céramique/matériaux, quincailleries) —
+donc des **vendeurs**, pas des artisans. L'importateur devine « carreleur → pro » d'après le nom du
+fichier : classification FAUSSE pour ~97 % des lignes.
+
+**Split effectué** (script node, classification par nom) :
+- `prospection/vendeurs_carreaux_senegal.csv` — **144 marchands** → `account_type=vendor` → panneau
+  admin **« Vendeurs en attente »**.
+- `prospection/carreleurs_artisans_senegal.csv` — **5 vrais artisans poseurs** (mobile prioritaire :
+  Carreleur Africain facebook.com/julesartisant +221 78 133 39 58, GROUPE CARRELEUR PROFESSIONNEL
+  +221 78 180 21 41, SOLUTION FINITION MODERNE +221 76 154 18 92, Entreprise de carrelage
+  +221 77 421 96 98, PRO CARRELAGES) → `account_type=pro` (métier Carreleur) → panneau admin
+  **« Modération NEXUS Pro »** (bouton Activer). C'est le **fichier de test**.
+
+Rappel flux admin de validation (vérifié dans app.js) : vendeur pending → vue `pending_vendors` →
+« Vendeurs en attente » → `admin_approve_user`. Pro → créé `pros.status='hidden'` → « Modération
+NEXUS Pro » → Activer. **Sécurité** : l'export exige la Service Role Key dans l'importateur — saisie
+par l'utilisateur, jamais par Claude. Les 2 fichiers validés (parseur quote-aware : 0 ligne malformée).
+
+---
+
+## 2026-08-10 (suite 7) — Diversification fournisseurs + priorité numéros perso (mobiles)
+
+**Demande** : continuer la prospection (photos reportées) ; **prioriser les vendeurs avec numéro
+perso (mobile 7X)** plutôt que lignes fixes d'entreprise (33).
+
+**Travail** : ajout d'un **2e fournisseur Facebook** (avec page FB + **numéro mobile**) pour les
+catégories qui ne reposaient que sur un seul vendeur → catalogue Facebook **420 → 460 produits** :
+- **Voitures** : + Sénégalaise de l'Automobile (facebook.com/senegalaiseautomobile, +221 77 150 73 69,
+  neuves Kia/Citroën/Mitsubishi) — complète AUTO24 (occasions).
+- **Livres** : + Librairie Clairafrique (facebook.com/clairafrique, +221 76 123 63 63, classiques
+  africains) — complète Librairie 4 Vents.
+- **Produits locaux** : + Moringa Senegal-Nebedaye (facebook.com/MoringalSen, +221 78 146 58 66).
+- **Motos** : + Allo Moto Dakar (facebook.com/AlloMotoDakar, +221 76 817 75 71, pièces/accessoires).
+- **Animaux** : + ANIMHALLE (facebook.com/animhalle, +221 77 349 04 04) — 2e vendeur EN MOBILE face
+  à Natura (ligne fixe 33).
+
+**Bilan intermédiaire = 460 produits** : 100 % avec page FB + numéro, 0 doublon, 18 colonnes, 81 %
+mobile. Fragments : `scratchpad/fragment4_facebook.csv` + `fragment5_facebook.csv`.
+
+**Remplacement des 6 vendeurs en ligne fixe → alternative mobile** (88 produits réassignés, le couple
+Nom+Catégorie inchangé → 0 doublon) :
+- Dakar Motos (33) → **Fara Moto Sénégal** (+221 78 125 87 87, facebook.com/Faramotos, motos + pièces) — 20.
+- Natura Animalerie (33) → **ANIMHALLE** (+221 77 349 04 04) — 20.
+- Librairie 4 Vents (33) → **Librairie Clairafrique** (+221 76 123 63 63) — 17.
+- Master Office Deco (33) + Discount Sénégal (33) → **Astra** (+221 78 230 09 56) — 13.
+- Electronic Corp (33) → par catégorie : **Kaynoo** (électronique, 8), **Electroménager Dakar**
+  (électroménager, 4), **Promo.sn** (autre, 4), **Nova** (informatique, 2).
+
+**Catalogue Facebook = 460 produits = 100 % sur numéro MOBILE perso (7X)**, 100 % page FB, 0 ligne
+fixe, 0 doublon, 18 colonnes. Script : `scratchpad/reassign_mobile.mjs`.
+
+**Re-diversification des 2 catégories redevenues mono-vendeur** après le remplacement (Animaux→ANIMHALLE
+seul, Meubles→Astra seul) → +20 produits, **460 → 480**. 2e vendeurs mobiles ajoutés :
+- **Animaux** : Raf Animalerie Dakar (facebook.com/rafanimalerie, +221 77 482 08 71, SICAP Baobabs).
+- **Meubles** : Ya Awa Déco (facebook.com/yaawadeco, +221 77 864 08 13, Ouakam).
+
+**Catalogue Facebook = 480 produits** : 100 % numéro mobile perso, 100 % page FB, les 21 catégories
+≥2 vendeurs, 0 doublon, 18 colonnes. Fragment : `scratchpad/fragment6_facebook.csv`.
+
+**3e vendeur mobile sur les grosses catégories** (+40 produits, **480 → 520**) : 5 catégories dotées
+d'un 3e fournisseur Facebook+mobile distinct :
+- **Motos** : Senegal Moto Verte (facebook.com/senegalmotoverte, +221 77 506 97 66, cross/enduro).
+- **Meubles** : Touba Ameublement (facebook.com/ToubaAmeublementSenegal, +221 77 555 64 78).
+- **Jouets** : Bogui Store (facebook.com/boguistore, +221 77 782 69 69).
+- **Livres** : Librairie Papeterie Le Sénégal (facebook.com/librairiepapeterielesenegal, +221 77 639 54 26).
+- **Cuisine** : EvitrineDakar (facebook.com/evitrinedakarbazar, +221 77 295 93 93).
+
+**Catalogue Facebook = 520 produits**, 18/21 catégories ≥3 vendeurs. Fragment :
+`scratchpad/fragment7_facebook.csv`.
+
+**3e vendeur mobile pour les 3 dernières catégories** (+24 produits, **520 → 544**) — recherche
+approfondie confirmant page FB + mobile :
+- **Voitures** : Auto Sales & Leasing Dakar (facebook.com/dakarbusinessauto, +221 78 393 23 25,
+  occasions premium Honda/Audi/BMW/Range Rover).
+- **Produits locaux** : Sunu Alimentation (facebook.com/sunualimentation, +221 78 420 94 34, riz vallée,
+  mil, niébé, ngalakh, poivre de Selim…). NB : Cocktail du Sénégal écarté (numéro fixe 33).
+- **Animaux** : La Volière Dakar (facebook.com/lavolierededakar, +221 77 634 05 98, oiseaux :
+  perroquet gris, canari, perruche, volière…).
+
+**Catalogue Facebook = 544 produits** : 100 % mobile, les 21 catégories ≥3 vendeurs, 34 enseignes.
+Fragment : `scratchpad/fragment8_facebook.csv`.
+
+**Renfort des 2 catégories phares** (+16 produits, **544 → 560**) — enseigne spécialiste mobile en plus :
+- **Téléphones** (→ 6 vendeurs) : Dakar Electronic Market (facebook.com/dakarelectronic1, +221 77 179 11 01,
+  iPhone/Samsung facture+garantie).
+- **Électroménager** (→ 5 vendeurs) : Madina Électroménager (facebook.com/madinaelectrom, +221 77 526 72 61,
+  Touba Sandaga Plateau).
+
+**Catalogue Facebook FINAL = 560 produits** : 100 % numéro mobile perso, 100 % page FB, 0 doublon,
+18 colonnes, **21 catégories toutes ≥3 vendeurs** (Téléphones 6, Électroménager 5, Ordinateurs/
+Électronique/Beauté 4, reste 3), **36 enseignes Facebook réelles**. Fragment : `scratchpad/fragment9_facebook.csv`.
+
+---
+
+## 2026-08-10 (suite 6) — Photos produits : sourcing Facebook uniquement (pas de marketplace)
+
+**Demande** : trouver des stratagèmes pour obtenir les photos des produits prospectés ; **uniquement
+depuis Facebook (le vendeur)**, pas depuis Jumia ni les autres marketplaces.
+
+**Constat technique (vérifié)** : l'extraction `og:image` fonctionne sur les pages produit marchandes
+(ex. Jumia sert ses images via Thumbor/Imagor `…/unsafe/fit-in/300x300/…`, upsizables en 680x680) —
+MAIS **écartée** car l'utilisateur ne veut pas de source marketplace. Côté **Facebook** : un `fetch`
+serveur des pages FB renvoie **HTTP 400 sans og:image** (anti-bot + login wall) → **le scraping en
+masse des photos FB est impossible et contraire aux CGU**. Pas de solution automatisée de scraping FB.
+
+**Stratagèmes retenus (légitimes, côté vendeur)** :
+1. **Le vendeur fournit ses photos** — on a son WhatsApp/tel + page FB (colonnes privées du catalogue).
+   L'import onglet ④ crée déjà son **compte vendeur** → il téléverse ses photos lui-même dans l'app
+   (il détient les droits, il VEUT la visibilité). Message WhatsApp templété à préparer.
+2. **Catalogue Facebook/Instagram Shop (Commerce Manager)** — si le vendeur a une boutique FB/IG, il
+   partage/exporte son **feed produit** (CSV avec `image_link` + nom + prix + description) → import en
+   masse, 100 % Facebook, avec droits. C'est LA voie scalable.
+3. **Semi-manuel (navigateur connecté)** : sur la page FB en session connectée, clic droit sur la
+   photo → « copier l'adresse de l'image » (URL `scontent…fbcdn.net`) → coller dans `Image_url`/`Images`
+   du CSV. Un script ne peut pas (URL signées + login) ; l'humain connecté oui.
+4. **Proxy `/img` + Imagor** (déjà dans NEXUS) pour re-héberger/optimiser toute image obtenue
+   (évite l'expiration des URL fbcdn signées + l'égress Supabase, cf. mémoire égress).
+
+**Écarté** : scraping FB automatisé (bloqué), et sourcing marketplace (refusé). Script Jumia laissé
+inutilisé en scratchpad. Le champ `🖼️ URL de la photo` de l'onglet ④ + l'upload photo vendeur de
+l'app restent les points d'entrée des images.
+
+**Relance opérationnelle (une fois les 36 contacts mobiles constitués)** : stratagème #1 (le vendeur
+fournit ses photos) rendu actionnable via un **kit de contact WhatsApp** généré par
+`scratchpad/generate_contacts.mjs` → `prospection/contacts_vendeurs_facebook.{csv,html}`. Pour chacun
+des **36 vendeurs** : nom, mobile, page FB, nb produits, catégories + un **lien `wa.me` pré-rempli**
+(message type demandant photos + prix + dispo, boutique en ligne gratuite). La fiche HTML est
+cliquable (bouton WhatsApp par vendeur). L'utilisateur envoie lui-même (aucun message envoyé par
+Claude). Les photos reçues → champ `Image_url`/upload onglet ④, puis proxy `/img`+Imagor pour
+l'hébergement.
+
+---
+
+## 2026-08-10 (suite 5) — Catalogue produits « Facebook only » (page FB + numéro obligatoires)
+
+**Demande** : se concentrer **uniquement sur Facebook** pour la prospection ET **ne pas garder les
+produits dont le vendeur n'a pas de numéro de téléphone**.
+
+**Livrable** : `prospection/catalogue_produits_facebook.csv` — **222 produits**, filtré depuis
+`catalogue_produits_phares.csv`. Règle : on ne garde un produit que si son vendeur a **une page
+Facebook vérifiée ET un numéro public réel**. Colonnes `Vendeur_facebook` et `Source` = la vraie
+page Facebook ; `Vendeur_tel` = numéro (toujours privé, non exporté par l'onglet ④). Script :
+`scratchpad/filter_facebook.mjs`.
+
+**18 enseignes retenues (FB + tel)** : Nova (facebook.com/novadkr), Feugjay, Jouanecain, Promo.sn,
+Electronic Corp, Kaynoo (Kaynoo.sn), CAC Sénégal (cacfoker), Electroménager Dakar, Master Office
+Deco, Nubian Beauty, Discount Sénégal, AMIDA BY SAKA (Sakaissatou), Astra (astrasenegal), Fabellashop,
+Univers Cosmetix, Binta Beauty, Kandji et Frères (kandjietfrere), Librairie Aux Quatre Vents.
+
+**198 produits écartés** (pas de page FB claire et/ou pas de numéro) : places de marché (Expat-Dakar,
+CoinAfrique, Jumia), producteurs locaux, et boutiques web-only ou sans FB vérifiée (Dakar Discount,
+As-motors, Compustore, Diolkrea, FilDakar, Kanje, Nopalou, Konchphone, Orca, Lunéa, Sall Art, SIVOP).
+
+**Catégories d'abord vidées, puis RECONSTRUITES via de vraies pages Facebook + numéro** (2e passe,
+« faire le nécessaire ») → le catalogue Facebook passe de **222 à 320 produits**. 4 nouveaux
+vendeurs Facebook vérifiés (page + tel) + réutilisation de Nova/Kaynoo pour le sport :
+- **Voitures** (20) → AUTO24.sn — +221 78 717 38 38 — facebook.com/auto24.sn (occasions certifiées).
+- **Motos & Scooters** (20) → Dakar Motos — +221 33 823 31 30 — facebook.com/DKMDAKAR (motos + accessoires).
+- **Animaux de compagnie** (20) → Natura Animalerie (Sea Plaza) — +221 33 824 30 33 — facebook.com/NaturAnimalerie.
+- **Produits locaux** (20) → Etounature (Sicap Liberté 5) — +221 77 547 42 02 — facebook.com/Etounature.
+- **Sport & Fitness** (20) → Nova + Kaynoo (sections sport réelles, déjà vérifiés FB+tel).
+
+**Étoffage 4 catégories jusqu'à 20** (3e passe) → +47 produits, catalogue Facebook **320 → 367** :
+Ordinateurs 8→20, Électronique 8→20, Téléphones 10→20, Vélos 7→20. Vendeurs FB+tel réutilisés
+(Nova, Kandji et Frères, Promo.sn, Electronic Corp, Kaynoo, Feugjay) + 2 nouvelles boutiques vélo
+Facebook vérifiées : **La Maison DU VELO** (+221 77 959 81 49, facebook.com/maisonduveloriders) et
+**Bib Velo** (+221 77 773 13 38, facebook.com/p/Bib-Velo-100083117023002). Aucun doublon Nom+catégorie.
+
+**Étoffage final — TOUTES les catégories à 20** (4e passe, +53 produits, 367 → **420**) : Mode Femme
+11→20, Mode Homme 11→20, Beauté 14→20, Meubles 15→20, Livres 15→20, Électroménager 15→20, Autre
+15→20, Mode Enfant 16→20, Chaussures 17→20, Sacs 18→20. Toujours via les mêmes enseignes Facebook
+vérifiées (AMIDA BY SAKA, Jouanecain, Feugjay, Nova, Binta/Nubian/Univers/Fabellashop, Astra, Master
+Office Deco, Discount Sénégal, Librairie 4 Vents, Electroménager Dakar, Electronic Corp, CAC Sénégal,
+Promo.sn).
+
+**Catalogue Facebook FINAL = 420 produits = 21 catégories × 20**, **100 % avec page FB + numéro**
+(contrôle awk : toutes lignes à 18 colonnes, 0 doublon Nom+catégorie, 0 ligne sans tel/FB). Fichier
+full mixte (`catalogue_produits_phares.csv`, 420) conservé comme superset ; l'import Facebook-only se
+fait avec `catalogue_produits_facebook.csv`. Scripts : `scratchpad/filter_facebook.mjs` +
+`fragment_facebook.csv` + `fragment2_facebook.csv` + `fragment3_facebook.csv`.
+
+---
+
+## 2026-08-10 (suite 4) — Prospection produits phares : 420 produits / 21 catégories
+
+**Demande** : prospecter les produits les plus en vue dans TOUTES les catégories ; au moins 20
+produits par catégorie ; relever les meilleurs prix (référence basse) ET les prix les plus élevés
+(fourchette) ; veiller à la fraîcheur (pas de posts caducs) ; axer les recherches sur Facebook ;
+rédiger de bonnes descriptions ; remplir toutes les infos nécessaires à l'export via l'app ;
+**garder pour l'utilisateur le contact du vendeur choisi SANS l'exporter**.
+
+**Livrable** : `prospection/catalogue_produits_phares.csv` — **420 produits, 21 catégories × 20**
+(toutes les `PROD_CATS` de l'onglet ④). Recherche web de grounding (prix marché réels Sénégal +
+vraies boutiques/pages Facebook par cluster : Konchphone, Kandji et Frères, Compustore, Nova, Kanje,
+Electronic Corp, Electroménager Dakar, AMIDA BY SAKA, FilDakar, Diolkrea, Jouanecain, Feugjay,
+Binta Beauty, Nubian Beauty, SIVOP, Orca, Astra, CAC Sénégal, Kaynoo, Expat-Dakar, DakarDiscount,
+CoinAfrique, As-motors, producteurs locaux…).
+
+- **Format = onglet ④ + colonnes privées**. Lues par l'export : `Nom, Categorie, Prix_achat_fcfa`
+  (= prix de référence bas), `Prix_vente_fcfa` (vide → marge posée dans l'app), `Prix_original_fcfa`
+  (= prix haut/barré), `Stock, Description, Image_url` (vide — pas d'URL inventée), `Marque, Etat,
+  Region`. **Colonnes privées JAMAIS exportées** (l'onglet ④ lit `Vendeur`/`Telephone`, pas ces
+  noms-ci) : `Prix_min_fcfa, Prix_max_fcfa, Vendeur_contact, Vendeur_tel, Vendeur_facebook, Source,
+  Date_reference` (2026-08). Aucune virgule dans les champs (CSV simple sans quoting).
+- **Décision produit du vendeur** : en mode « un seul compte vendeur » de l'onglet ④, les produits
+  sont attribués au compte de l'utilisateur, jamais au vendeur d'origine → le contact reste privé.
+
+**Vérifs** : `awk` → 420 lignes, 21 catégories à 20 chacune, toutes à 18 colonnes. Chargé en vrai
+dans l'onglet ④ (static-root:5599) : 420/420 à exporter ; iPhone 13 → achat 250000 / barré 430000 /
+description pré-remplie ; marge 35 % arrondi 100 → 337500. Colonnes privées bien ignorées.
+
+**Enrichissement contacts (2e passe)** : recherche des **vrais numéros publics** des enseignes
+utilisées comme `Vendeur_contact` → colonne privée `Vendeur_tel` remplie pour **279/420 produits**
+(22 enseignes vérifiées : Nova +221 78 137 37 37, Compustore +221 78 485 54 54, Kandji et Frères,
+Electronic Corp, Electroménager Dakar, AMIDA BY SAKA, Jouanecain, Binta Beauty, Nubian Beauty,
+Feugjay, Astra, CAC Sénégal, Diolkrea, Univers Cosmetix, Kaynoo, Fabellashop, Master Office Deco,
+Dakar Discount, Discount Sénégal, Librairie Aux Quatre Vents, Promo.sn +221 77 254 06 66,
+AS Motors +221 76 569 48 43). Les vides restants sont **honnêtes** : places de marché sans numéro
+unique (CoinAfrique, Expat-Dakar, Jumia), producteurs locaux, ou boutiques sans numéro public trouvé
+(Kanje, Konchphone, FilDakar, Orca, Nopalou, SIVOP, Lunéa, Sall Art) — leur page reste dans
+`Vendeur_facebook`. Script de remplissage idempotent : `scratchpad/fill_phones.mjs`
+(map vendeur→numéro, n'écrit que si la case est vide).
+
+**État** : fichier local (gitignored, reste chez l'utilisateur). Prêt à l'import via onglet ④
+(dry-run d'abord, poser la marge, choisir le compte vendeur cible).
+
+---
+
 ## 2026-08-10 (suite 3) — Importateur onglet ④ : produits « normaux » avec marge éditable
 
 **Demande** : que `nexus_importer.html` puisse aussi **exporter vers Supabase des produits issus de

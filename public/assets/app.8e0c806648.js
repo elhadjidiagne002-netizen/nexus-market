@@ -13098,6 +13098,115 @@ const ProsAdminPanel = ({ addToast }) => {
   );
 };
 
+// ── ProspectsAdminPanel — promotion des prospects (table CRM `prospects`) ─────
+// Rendu dans AdminDashboard quand view === "prospects". Liste la table `prospects`
+// (RLS admin) et promeut en vrais comptes via le backend sécurisé
+// POST /api/admin/promote-prospect (service key côté serveur uniquement).
+const ProspectsAdminPanel = ({ addToast }) => {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [busy, setBusy] = React.useState(false);
+  const [notReady, setNotReady] = React.useState(false);
+  const [fType, setFType] = React.useState('');
+  const [fStatus, setFStatus] = React.useState('new');
+  const [sel, setSel] = React.useState({});
+  const E = React.createElement;
+  const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const TABLE_MISSING = /could not find the table|pgrst205|does not exist|schema cache/i;
+
+  const load = async () => {
+    setLoading(true); setSel({});
+    try {
+      let q = DataService._sb.from('prospects').select('*').order('created_at', { ascending: false }).limit(500);
+      if (fType) q = q.eq('account_type', fType);
+      if (fStatus) q = q.eq('status', fStatus);
+      const { data, error } = await q;
+      if (error) {
+        if (TABLE_MISSING.test((error.message || '') + ' ' + (error.code || ''))) { setNotReady(true); setItems([]); }
+        else throw error;
+      } else { setNotReady(false); setItems(data || []); }
+    } catch (e) { toast('Lecture des prospects échouée : ' + (e.message || e), 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { if (DataService._sb) load(); else setLoading(false); }, [fType, fStatus]);
+
+  const promote = async (ids) => {
+    if (!ids.length) { toast('Sélectionnez au moins un prospect', 'warning'); return; }
+    setBusy(true);
+    try {
+      let tk = '';
+      try { const { data } = await DataService._sb.auth.getSession(); tk = (data && data.session && data.session.access_token) || ''; } catch (_) {}
+      // Le backend limite à 20/appel → on découpe.
+      let promoted = 0, skipped = 0, failed = 0; const errs = [];
+      for (let i = 0; i < ids.length; i += 20) {
+        const chunk = ids.slice(i, i + 20);
+        const res = await fetch('/api/admin/promote-prospect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(tk ? { Authorization: 'Bearer ' + tk } : {}) },
+          body: JSON.stringify({ ids: chunk }),
+        });
+        const b = await res.json().catch(() => ({}));
+        if (!res.ok) { failed += chunk.length; errs.push(b.error || ('HTTP ' + res.status)); continue; }
+        promoted += b.promoted || 0; skipped += b.skipped || 0; failed += b.failed || 0;
+        (b.results || []).filter(r => r.status === 'error').forEach(r => errs.push(r.name + ' : ' + r.error));
+      }
+      toast(`✅ ${promoted} promu(s), ${skipped} ignoré(s), ${failed} échec(s)`, failed ? 'warning' : 'success');
+      if (errs.length) console.warn('[promote-prospect]', errs);
+      await load();
+    } catch (e) { toast('Échec promotion : ' + (e.message || e), 'error'); }
+    setBusy(false);
+  };
+
+  const toggle = (id) => setSel(s => ({ ...s, [id]: !s[id] }));
+  const selectedIds = items.filter(p => sel[p.id]).map(p => p.id);
+  const allChecked = items.length > 0 && items.every(p => sel[p.id]);
+  const badgeClass = (s) => s === 'promoted' ? 'success' : s === 'rejected' ? 'danger' : 'secondary';
+  const TYPE_LABEL = { pro: '🔧 Pro / Artisan', vendor: '🏪 Vendeur', courier: '🏍️ Coursier', breeder: '🐏 Éleveur', custom: 'Autre' };
+
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem' } },
+      E('h2', { className: 'card-title' }, '📇 Prospects — promotion en comptes (' + items.length + ')'),
+      E('div', { className: 'flex gap-1', style: { flexWrap: 'wrap' } },
+        E('select', { className: 'form-select', style: { width: 'auto' }, value: fType, onChange: e => setFType(e.target.value) },
+          E('option', { value: '' }, 'Tous les types'),
+          ['pro', 'vendor', 'courier', 'breeder', 'custom'].map(t => E('option', { key: t, value: t }, TYPE_LABEL[t] || t))),
+        E('select', { className: 'form-select', style: { width: 'auto' }, value: fStatus, onChange: e => setFStatus(e.target.value) },
+          E('option', { value: 'new' }, 'new (non promus)'),
+          E('option', { value: '' }, 'tous statuts'),
+          E('option', { value: 'promoted' }, 'promoted'),
+          E('option', { value: 'contacted' }, 'contacted')),
+        E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir'))
+    ),
+    loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : notReady ? E('div', { style: { padding: '1.2rem', margin: '1rem', background: '#FEF9C3', border: '1px solid #F59E0B', borderRadius: 10, color: '#78350F' } },
+          E('div', { style: { fontWeight: 800, marginBottom: 6 } }, '⚠️ Table `prospects` absente'),
+          E('div', { style: { fontSize: '.9rem' } }, "Importez d'abord des prospects avec l'outil nexus_importer.html (onglet ①), ou lancez le SQL de création de la table `prospects` dans Supabase, puis rafraîchissez."))
+      : items.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-address-book' }), E('h3', null, 'Aucun prospect pour ce filtre'))
+        : E(React.Fragment, null,
+          E('div', { style: { padding: '.6rem 1rem', display: 'flex', gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } },
+            E('button', { className: 'btn btn-sm btn-primary', disabled: busy || !selectedIds.length, onClick: () => promote(selectedIds) },
+              busy ? '⏳ Promotion…' : '🚀 Promouvoir la sélection (' + selectedIds.length + ')'),
+            E('span', { style: { fontSize: '.8rem', color: '#6b7280' } }, 'Pro → « Modération NEXUS Pro » · Vendeur → « Vendeurs en attente » (à activer ensuite)')),
+          E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
+            E('thead', null, E('tr', null,
+              E('th', null, E('input', { type: 'checkbox', checked: allChecked, onChange: e => { const v = e.target.checked; const m = {}; items.forEach(p => m[p.id] = v); setSel(m); } })),
+              ['Nom', 'Type', 'Métier', 'Téléphone', 'Ville', 'Statut', 'Action'].map((h, i) => E('th', { key: i }, h)))),
+            E('tbody', null, items.map(p => E('tr', { key: p.id },
+              E('td', { 'data-label': '' }, E('input', { type: 'checkbox', checked: !!sel[p.id], onChange: () => toggle(p.id) })),
+              E('td', { 'data-label': 'Nom' }, E('strong', null, p.name || '—')),
+              E('td', { 'data-label': 'Type' }, TYPE_LABEL[p.account_type] || p.account_type || '—'),
+              E('td', { 'data-label': 'Métier' }, p.profession || '—'),
+              E('td', { 'data-label': 'Téléphone' }, p.phone ? E('a', { href: 'tel:' + p.phone }, p.phone) : '—'),
+              E('td', { 'data-label': 'Ville' }, p.city || '—'),
+              E('td', { 'data-label': 'Statut' }, E('span', { className: 'badge badge-' + badgeClass(p.status) }, p.status)),
+              E('td', { 'data-label': 'Action' }, p.status === 'promoted'
+                ? E('span', { style: { color: '#16a34a', fontWeight: 700, fontSize: '.8rem' } }, '✓ promu')
+                : E('button', { className: 'btn btn-sm btn-success', disabled: busy, onClick: () => promote([p.id]) }, 'Promouvoir'))
+            )))
+          )))
+  );
+};
+
 // ── BreedersAdminPanel — gestion des éleveurs NEXUS (profiles.is_breeder) ──────
 // Rendu dans AdminDashboard quand view === "breeders".
 // Nécessite la migration sql/2026_06_20_breeders_admin.sql (RPC admin_list_breeders
@@ -25437,6 +25546,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "troc", icon: "exchange-alt", label: "🔄 Troc" },
     { id: "stories", icon: "video", label: "🎬 Stories" },
     { id: "pros", icon: "hard-hat", label: "🔧 Pros (artisans)" },
+    { id: "prospects", icon: "address-book", label: "📇 Prospects" },
     { id: "breeders", icon: "paw", label: "🐏 Éleveurs" },
     { id: "chat_mod", icon: "comments", label: "💬 Chat communauté" },
     { id: "flash_sales", icon: "bolt", label: "Ventes Flash" },
@@ -25574,7 +25684,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"),
       /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")
     )));
-  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "chat_mod" && /* @__PURE__ */ React.createElement(ChatModerationPanel, { addToast }), view === "products" && (() => {
+  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "prospects" && /* @__PURE__ */ React.createElement(ProspectsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "chat_mod" && /* @__PURE__ */ React.createElement(ChatModerationPanel, { addToast }), view === "products" && (() => {
     const pending = products.filter((p) => !p.moderated);
     const approved = products.filter((p) => p.moderated);
     const moderateProduct = async (pid, approve) => {
