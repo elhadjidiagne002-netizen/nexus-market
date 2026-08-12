@@ -10820,8 +10820,12 @@ window.addEventListener('unhandledrejection', function(event) {
   function sb() { return UX.sb(); }
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-  // Métiers de départ (BTP & maison). Surclassable via window.__NEXUS_PRO_METIERS.
+  // Métiers "pro". Surclassable via window.__NEXUS_PRO_METIERS.
+  // ⚠️ Les `id` doivent rester IDENTIQUES aux libellés "pro" du FILE_MAP de
+  //   nexus_importer.html : la promotion d'un prospect écrit `profession = libellé`,
+  //   et un chip ne retrouve ses pros que si la chaîne correspond exactement.
   var METIERS = window.__NEXUS_PRO_METIERS || [
+    // BTP & maison
     { id: 'Maçon',                e: '🧱' },
     { id: 'Plombier',             e: '🚰' },
     { id: 'Électricien',          e: '💡' },
@@ -10834,10 +10838,81 @@ window.addEventListener('unhandledrejection', function(event) {
     { id: 'Jardinier',            e: '🌿' },
     { id: 'Déménageur',           e: '📦' },
     { id: 'Vitrier',              e: '🪞' },
+    { id: 'Serrurier',            e: '🔐' },
+    { id: 'Antenniste / Parabole',e: '📡' },
+    { id: 'Puisatier / Forage',   e: '💧' },
+    { id: 'Étancheur / Toiture',  e: '🏠' },
+    { id: 'Tapissier / Ameublement', e: '🛋️' },
+    // Énergie / Technique
+    { id: 'Technicien solaire',   e: '☀️' },
+    { id: 'Technicien énergies rurales', e: '🔋' },
+    { id: 'Réparateur groupes électrogènes', e: '🔌' },
+    { id: 'Technicien sécurité électronique', e: '📹' },
+    { id: 'Réparateur électronique', e: '🖥️' },
+    { id: 'Réparateur téléphone', e: '📲' },
+    { id: 'Informaticien / Réseau', e: '🖧' },
+    // Auto / Moto
+    { id: 'Électricien auto',     e: '🔋' },
+    { id: 'Vitrier auto',         e: '🚙' },
+    { id: 'Climatisation auto',   e: '🧊' },
+    { id: 'Mécanicien moto',      e: '🏍️' },
+    { id: 'Réparateur de jantes', e: '⚙️' },
+    // Services à la personne / maison
+    { id: 'Coiffure / Beauté à domicile', e: '💇' },
+    { id: 'Ménage / Gouvernante', e: '🧹' },
+    { id: 'Baby-sitter / Nounou', e: '👶' },
+    { id: 'Aide-soignant(e)',     e: '🩺' },
+    { id: 'Agent de santé',       e: '⚕️' },
+    { id: 'Coach bien-être',      e: '🧘' },
+    { id: 'Cuisinier à domicile', e: '👨‍🍳' },
+    { id: 'Traiteur / Pâtissier', e: '🍰' },
+    { id: 'Couturier / Styliste', e: '🧵' },
+    { id: 'Cordonnier',           e: '👞' },
+    { id: 'Pressing / Blanchisserie', e: '🧺' },
+    { id: 'Vétérinaire',          e: '🐾' },
+    { id: 'Chauffeur / Location voiture', e: '🚕' },
+    // Événementiel / Créa / Digital
+    { id: 'Photographe',          e: '📷' },
+    { id: 'Vidéaste / Producteur',e: '🎥' },
+    { id: 'Animateur / DJ / Griot', e: '🎤' },
+    { id: 'Décorateur événementiel', e: '🎉' },
+    { id: 'Graphiste / Designer', e: '🖌️' },
+    { id: 'Community manager',     e: '📣' },
+    { id: 'Développeur web/mobile',e: '💻' },
+    { id: 'Imprimeur',            e: '🖨️' },
+    { id: 'Professeur / Formateur',e: '📚' },
+    { id: 'Avocat / Notaire',     e: '⚖️' },
+    // Agri / Alimentation / Artisanat
+    { id: 'Maraîcher / Agriculteur', e: '🌾' },
+    { id: 'Transformateur alimentaire', e: '🥫' },
+    { id: 'Artisan (artisanat)',  e: '🎭' },
   ];
   function metierEmoji(name) {
     for (var i = 0; i < METIERS.length; i++) { if (METIERS[i].id === name) return METIERS[i].e; }
     return '🔧';
+  }
+  // Fusionne les métiers RÉELLEMENT présents en base (pros actifs) dans METIERS, pour que
+  // tout métier créé via nexus_importer.html (promotion d'un prospect avec un libellé
+  // `profession` libre, hors liste codée en dur) apparaisse comme chip + option d'inscription.
+  // Idempotent, best-effort (échec silencieux → on garde la liste de base). Résout la liste
+  // des NOUVEAUX métiers ajoutés (pour rafraîchir l'UI ouverte).
+  var _dbMetiersLoaded = false;
+  function loadDbMetiers() {
+    var c = sb();
+    if (!c) return Promise.resolve([]);
+    return c.from('pros').select('profession').eq('status', 'active').not('profession', 'is', null)
+      .then(function (res) {
+        var added = [];
+        var known = {};
+        METIERS.forEach(function (m) { known[m.id] = true; });
+        (res && res.data || []).forEach(function (row) {
+          var p = (row.profession || '').trim();
+          if (p && !known[p]) { known[p] = true; var m = { id: p, e: '🔧' }; METIERS.push(m); added.push(m); }
+        });
+        _dbMetiersLoaded = true;
+        return added;
+      })
+      .catch(function () { return []; });
   }
   function waLink(phone, msg) {
     var p = String(phone || '').replace(/\D/g, '');
@@ -11106,9 +11181,19 @@ window.addEventListener('unhandledrejection', function(event) {
     var allChip = document.createElement('span'); allChip.className = 'nx-pro-chip on'; allChip.textContent = 'Tous'; chipHost.appendChild(allChip);
     var chipEls = [allChip];
     allChip.addEventListener('click', function () { cur = ''; chipEls.forEach(function (x) { x.classList.remove('on'); }); allChip.classList.add('on'); });
-    METIERS.forEach(function (m) {
+    function addChip(m) {
       var ch = document.createElement('span'); ch.className = 'nx-pro-chip'; ch.textContent = m.e + ' ' + m.id; chipHost.appendChild(ch); chipEls.push(ch);
       ch.addEventListener('click', function () { cur = m.id; chipEls.forEach(function (x) { x.classList.remove('on'); }); ch.classList.add('on'); });
+    }
+    METIERS.forEach(addChip);
+    // Métiers issus de la base (prospects promus avec un libellé libre) → chips + options
+    // d'inscription ajoutés dès qu'ils sont connus. Rafraîchit aussi le <select> métier.
+    loadDbMetiers().then(function (added) {
+      added.forEach(addChip);
+      if (added.length) {
+        var sel = ov.querySelector('select[name="profession"]');
+        if (sel) added.forEach(function (m) { var o = document.createElement('option'); o.value = m.id; o.textContent = m.e + ' ' + m.id; sel.appendChild(o); });
+      }
     });
 
     ov.querySelector('#nx-pro-search-btn').addEventListener('click', function () { showNearby(ov.querySelector('#nx-pro-results'), cur); });
