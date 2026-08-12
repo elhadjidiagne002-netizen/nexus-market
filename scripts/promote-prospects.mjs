@@ -38,6 +38,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const CFG = {
   pro:     { authRole: 'buyer',  flags: { is_pro: true },     geo: true,  fiche: 'pros' },
   courier: { authRole: 'buyer',  flags: { is_courier: true }, geo: true,  fiche: 'couriers' },
+  rescuer: { authRole: 'buyer',  flags: { is_rescuer: true, rescuer_status: 'available' }, geo: true, fiche: 'rescuers' },
   breeder: { authRole: 'buyer',  flags: { is_breeder: true }, geo: true,  fiche: null },
   vendor:  { authRole: 'vendor', flags: {},                   geo: false, fiche: null },
   custom:  { authRole: 'buyer',  flags: {},                   geo: false, fiche: null },
@@ -74,7 +75,7 @@ async function ensureAuthUser(email, password, meta) {
 }
 
 async function main() {
-  const type = arg('type');                         // filtre optionnel : pro|vendor|courier|breeder|custom
+  const type = arg('type');                         // filtre optionnel : pro|vendor|courier|rescuer|breeder|custom
   const status = arg('status', '');                 // '' (défaut) = TOUT ce qui n'est pas déjà promu
   const limit = parseInt(arg('limit', '100000'), 10) || 100000;
   const dry = arg('dry-run', false);
@@ -128,6 +129,10 @@ async function main() {
       } else if (c.fiche === 'couriers') {
         const fiche = { user_id: uid, name: p.name || '', phone: ph, status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
         await rest(`/couriers?on_conflict=user_id`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(fiche) }).catch((e) => { throw new Error('couriers: ' + e.message); });
+      } else if (c.fiche === 'rescuers') {
+        // Dépanneur (NEXUS Dépannage). phone nullable/non-unique → pas de repère. specialties par défaut = mechanic.
+        const fiche = { user_id: uid, name: p.name || '', phone: (p.phone && String(p.phone).trim()) || null, specialties: ['mechanic'], is_available: true, status: 'active' };
+        await rest(`/rescuers?on_conflict=user_id`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(fiche) }).catch((e) => { throw new Error('rescuers: ' + e.message); });
       }
 
       await rest(`/prospects?id=eq.${encodeURIComponent(p.id)}`, { method: 'PATCH', body: JSON.stringify({ status: 'promoted', promoted_user_id: uid, email, updated_at: new Date().toISOString() }) }).catch(() => {});

@@ -13173,7 +13173,7 @@ const ProspectsAdminPanel = ({ addToast }) => {
   const selectedIds = items.filter(p => sel[p.id]).map(p => p.id);
   const allChecked = items.length > 0 && items.every(p => sel[p.id]);
   const badgeClass = (s) => s === 'promoted' ? 'success' : s === 'rejected' ? 'danger' : 'secondary';
-  const TYPE_LABEL = { pro: '🔧 Pro / Artisan', vendor: '🏪 Vendeur', courier: '🏍️ Coursier', breeder: '🐏 Éleveur', custom: 'Autre' };
+  const TYPE_LABEL = { pro: '🔧 Pro / Artisan', vendor: '🏪 Vendeur', courier: '🏍️ Coursier', rescuer: '🛠️ Dépanneur', breeder: '🐏 Éleveur', custom: 'Autre' };
 
   return E('div', { className: 'card' },
     E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem' } },
@@ -13181,7 +13181,7 @@ const ProspectsAdminPanel = ({ addToast }) => {
       E('div', { className: 'flex gap-1', style: { flexWrap: 'wrap' } },
         E('select', { className: 'form-select', style: { width: 'auto' }, value: fType, onChange: e => setFType(e.target.value) },
           E('option', { value: '' }, 'Tous les types'),
-          ['pro', 'vendor', 'courier', 'breeder', 'custom'].map(t => E('option', { key: t, value: t }, TYPE_LABEL[t] || t))),
+          ['pro', 'vendor', 'courier', 'rescuer', 'breeder', 'custom'].map(t => E('option', { key: t, value: t }, TYPE_LABEL[t] || t))),
         E('select', { className: 'form-select', style: { width: 'auto' }, value: fStatus, onChange: e => setFStatus(e.target.value) },
           E('option', { value: 'new' }, 'new (non promus)'),
           E('option', { value: '' }, 'tous statuts'),

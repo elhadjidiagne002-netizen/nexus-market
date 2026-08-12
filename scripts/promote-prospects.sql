@@ -140,6 +140,8 @@ begin
       is_pro      = case when p.account_type = 'pro'     then true else is_pro end,
       is_courier  = case when p.account_type = 'courier' then true else is_courier end,
       is_breeder  = case when p.account_type = 'breeder' then true else is_breeder end,
+      is_rescuer  = case when p.account_type = 'rescuer' then true else is_rescuer end,
+      rescuer_status = case when p.account_type = 'rescuer' then 'available' else rescuer_status end,
       current_lat = coalesce(p.lat, current_lat),
       current_lng = coalesce(p.lng, current_lng),
       location_updated_at = case when p.lat is not null and p.lng is not null then now() else location_updated_at end
@@ -166,6 +168,12 @@ begin
       insert into public.couriers (user_id, name, phone, status)
       values (v_uid, coalesce(p.name,''), v_phone, 'pending')
       on conflict (user_id) do nothing;
+    elsif p.account_type = 'rescuer' then
+      -- Dépanneur (vertical NEXUS Dépannage). rescuers.phone est nullable et NON unique
+      -- → pas de repère. specialties par défaut = {mechanic} (ajustable ensuite).
+      insert into public.rescuers (user_id, name, phone, specialties, vehicle_type, is_available, status)
+      values (v_uid, coalesce(p.name,''), nullif(trim(p.phone),''), array['mechanic'], null, true, 'active')
+      on conflict (user_id) do update set status = 'active', is_available = true;
     end if;
 
     -- ---- marque le prospect ----

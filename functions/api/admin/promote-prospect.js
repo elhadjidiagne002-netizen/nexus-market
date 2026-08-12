@@ -25,6 +25,7 @@ import { options, json, err, requireAdmin, supabase } from '../_lib/utils.js';
 const CFG = {
   pro:     { authRole: 'buyer',  flags: { is_pro: true },     geo: true,  fiche: 'pros' },
   courier: { authRole: 'buyer',  flags: { is_courier: true }, geo: true,  fiche: 'couriers' },
+  rescuer: { authRole: 'buyer',  flags: { is_rescuer: true, rescuer_status: 'available' }, geo: true, fiche: 'rescuers' },
   breeder: { authRole: 'buyer',  flags: { is_breeder: true }, geo: true,  fiche: null },
   vendor:  { authRole: 'vendor', flags: {},                   geo: false, fiche: null },
   custom:  { authRole: 'buyer',  flags: {},                   geo: false, fiche: null },
@@ -136,6 +137,10 @@ export async function onRequest({ request, env }) {
       } else if (c.fiche === 'couriers') {
         const fiche = { user_id: uid, name: p.name || '', phone: ph, status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
         await sb.from('couriers').upsert(fiche, 'user_id').catch((e) => { throw new Error('couriers: ' + e.message); });
+      } else if (c.fiche === 'rescuers') {
+        // Dépanneur (NEXUS Dépannage). rescuers.phone nullable/non-unique. specialties défaut = mechanic.
+        const fiche = { user_id: uid, name: p.name || '', phone: (p.phone && String(p.phone).trim()) || null, specialties: ['mechanic'], is_available: true, status: 'active' };
+        await sb.from('rescuers').upsert(fiche, 'user_id').catch((e) => { throw new Error('rescuers: ' + e.message); });
       }
 
       // Marquer le prospect promu.
