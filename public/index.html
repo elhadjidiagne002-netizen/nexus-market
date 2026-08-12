@@ -6236,17 +6236,19 @@ window.addEventListener('unhandledrejection', function(event) {
     // course revient "no_courier") → proposer les coursiers dont le DOMICILE (à défaut
     // la dernière position connue) est proche du point de retrait, avec leurs coordonnées.
     // Plusieurs propositions possibles, triées « en ligne d'abord » puis par distance.
+    // [POOL COMPLET] On propose TOUS les coursiers de la zone (en ligne d'abord, position
+    // live si en ligne sinon position d'inscription — cf. RPC nearby_couriers_offline), dès
+    // qu'un point de retrait est choisi. Plus de condition « seulement si personne en ligne ».
     React.useEffect(function () {
       if (!DataService.nearbyCouriersOffline) return;
       var pc = coordsOf('pickup');
-      var need = (onlineCount === 0) || (nearby != null && nearby.length === 0) || (live && live.status === 'no_courier');
-      if (!need || !pc) { setOfflineCouriers([]); return; }
+      if (!pc) { setOfflineCouriers([]); return; }
       var cancelled = false;
       DataService.nearbyCouriersOffline(pc.lat, pc.lng, 40000, 8).then(function (list) {
         if (!cancelled) setOfflineCouriers(list || []);
       });
       return function () { cancelled = true; };
-    }, [onlineCount, pickup, pGeo, nearby, live && live.status]);
+    }, [pickup, pGeo]);
 
     // Suivi temps réel : tant que la course cherche un coursier, on fait avancer
     // la cascade (timeouts) et on détecte l'attribution.
@@ -6467,19 +6469,11 @@ window.addEventListener('unhandledrejection', function(event) {
           E('span', { style: { fontSize: '1.3rem' } }, '🛵'),
           E('span', { style: { color: '#fff', fontWeight: 700, fontSize: '1rem' } }, 'Demander un coursier'),
           E('button', { onClick: props.onClose, 'aria-label': 'Fermer', style: { marginLeft: 'auto', background: 'none', border: 'none', color: '#fff', fontSize: '1.3rem', cursor: 'pointer' } }, '×')),
-        // Livreurs en ligne MAINTENANT (global) — visible avant de remplir quoi que ce soit.
-        (onlineCount != null) && E('div', {
-          style: { display: 'flex', alignItems: 'center', gap: 8, padding: '.55rem 1.25rem',
-                   background: onlineCount > 0 ? '#f0fdf4' : '#fffbeb',
-                   borderBottom: '1px solid ' + (onlineCount > 0 ? '#bbf7d0' : '#fde68a'),
-                   fontSize: '.8rem', fontWeight: 600, color: onlineCount > 0 ? '#15803d' : '#b45309' } },
-          E('span', { style: { width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
-                               background: onlineCount > 0 ? '#16a34a' : '#d97706' } }),
-          onlineCount > 0
-            ? (onlineCount + ' livreur' + (onlineCount > 1 ? 's' : '') + ' en ligne en ce moment')
-            : 'Aucun livreur en ligne pour l\'instant — votre demande sera proposée dès qu\'un livreur se connecte.'),
-        // Coursiers proches (domicile/dernière position) à contacter si aucun en ligne.
-        (onlineCount === 0) && E('div', { style: { padding: '0 1.25rem' } }, renderOfflineProposals()),
+        // [MASQUÉ] On n'affiche PLUS le nombre de livreurs en ligne au commanditaire.
+        // Les coursiers de la zone (position live s'ils sont en ligne, sinon position
+        // d'inscription) sont proposés directement dès qu'un point de retrait est choisi,
+        // sans jamais exposer de compteur.
+        (offlineCouriers && offlineCouriers.length > 0) && E('div', { style: { padding: '0 1.25rem' } }, renderOfflineProposals('🛵 Coursiers de votre zone — contactez-les directement :')),
         E('div', { style: { padding: '1.25rem' } },
           E('p', { style: lbl }, 'Type de course'),
           E('div', { style: { display: 'flex', gap: 6, marginBottom: '.8rem' } },
@@ -6515,13 +6509,11 @@ window.addEventListener('unhandledrejection', function(event) {
             E('button', { onClick: function () { setShowDMap(function (v) { return !v; }); }, style: { background: 'none', border: 'none', color: '#E63946', fontWeight: 600, fontSize: '.75rem', cursor: 'pointer', padding: 0 } }, showDMap ? '▾ Masquer la carte' : '🗺️ Ajuster la livraison sur la carte'),
             showDMap && E('div', { ref: function (el) { if (!el || el.__pick || !window.NexusMap) return; el.__pick = true; var dc = coordsOf('dropoff') || { lat: 14.6928, lng: -17.4467 }; NexusMap.pickLocation(el, { lat: dc.lat, lng: dc.lng, color: '#E63946', onChange: function (la, ln) { setDGeo({ lat: la, lng: ln }); } }); }, className: 'nexus-map', style: { height: 170, marginTop: '.4rem' } }),
             showDMap && E('div', { style: { fontSize: '.68rem', color: '#888', marginTop: '.3rem' } }, 'Glissez le repère rouge sur le point de livraison exact.')),
-          // Preuve sociale : coursiers disponibles autour du retrait (+ carte de zone)
-          (nearby != null) && E('div', { style: { marginBottom: '.7rem' } },
-            nearby.length > 0
-              ? E('div', { style: { fontSize: '.8rem', color: '#006d40', fontWeight: 600, marginBottom: '.4rem' } }, '🟢 ' + nearby.length + ' coursier' + (nearby.length > 1 ? 's' : '') + ' disponible' + (nearby.length > 1 ? 's' : '') + ' pour ce retrait')
-              : E('div', { style: { fontSize: '.8rem', color: '#b45309', marginBottom: '.4rem' } }, '⏳ Aucun coursier en ligne à l\'instant — votre demande sera proposée dès qu\'un coursier se connecte.'),
-            (function () { var pc = coordsOf('pickup'); return (pc && nearby.length > 0) && E('div', { ref: function (el) { if (!el || el.__nb || !window.NexusMap) return; el.__nb = true; NexusMap.nearby(el, { lat: pc.lat, lng: pc.lng, label: 'Point de retrait' }, []); }, className: 'nexus-map', style: { height: 160 } }); })()
-          ),
+          // Réassurance SANS compteur (on n'expose plus le nombre de coursiers) + carte de zone.
+          (function () { var pc = coordsOf('pickup'); return pc && E('div', { style: { marginBottom: '.7rem' } },
+            E('div', { style: { fontSize: '.8rem', color: '#006d40', fontWeight: 600, marginBottom: '.4rem' } }, '🛵 Des coursiers desservent votre zone — votre demande leur sera proposée.'),
+            E('div', { ref: function (el) { if (!el || el.__nb || !window.NexusMap) return; el.__nb = true; NexusMap.nearby(el, { lat: pc.lat, lng: pc.lng, label: 'Point de retrait' }, []); }, className: 'nexus-map', style: { height: 160 } })
+          ); })(),
           E('p', { style: lbl }, type === 'errand' ? 'À acheter / détails' : 'Détails (optionnel)'),
           E('textarea', { value: items, onChange: function (e) { setItems(e.target.value); }, rows: 2, placeholder: 'Ex : 2 kg de poisson, légumes, pain…', style: Object.assign({}, inp, { resize: 'vertical' }) }),
           E('p', { style: lbl }, '📞 Votre téléphone (le coursier vous appellera)'),
@@ -9784,29 +9776,17 @@ window.addEventListener('unhandledrejection', function(event) {
   var st = document.createElement('style'); st.textContent = '@keyframes nxCoachIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}'; document.head.appendChild(st);
 })();
 
-/* ── 4. « Coursiers en ligne » : badge live sur le FAB Coursier ─────────── */
+/* ── 4. [DÉSACTIVÉ] Badge « coursiers en ligne » sur le FAB ───────────────── */
+/* On n'affiche plus le nombre de livreurs en ligne au commanditaire (demande produit).
+   Le badge live est retiré ; on nettoie aussi un éventuel badge déjà injecté. */
 (function () {
   'use strict';
   if (window.__NEXUS_PULSE_LOADED__) return; window.__NEXUS_PULSE_LOADED__ = true;
-  // Centre de Dakar par défaut (le badge montre l'offre globale de la zone).
-  var DAKAR = { lat: 14.6928, lng: -17.4467 };
-  function update() {
+  try {
     var fab = document.getElementById('nexus-courier-fab');
-    if (!fab || fab.offsetParent === null) return;
-    if (!window.DataService || !DataService.nearbyCouriers) return;
-    DataService.nearbyCouriers(DAKAR.lat, DAKAR.lng, 30000, 50).then(function (list) {
-      var n = (list && list.length) || 0;
-      var dot = fab.querySelector('.nx-online-dot');
-      if (n > 0) {
-        if (!dot) { dot = document.createElement('span'); dot.className = 'nx-online-dot'; dot.style.cssText = 'margin-left:6px;background:#25D366;color:#06310f;border-radius:20px;padding:1px 7px;font-size:11px;font-weight:800;vertical-align:middle'; fab.appendChild(dot); }
-        dot.textContent = '🟢 ' + n;
-        dot.title = n + ' coursier(s) en ligne';
-      } else if (dot) { dot.remove(); }
-    }).catch(function () {});
-  }
-  // Premier essai après montage des FAB, puis rafraîchissement périodique.
-  setTimeout(update, 3000);
-  setInterval(update, 60000);
+    var dot = fab && fab.querySelector('.nx-online-dot');
+    if (dot) dot.remove();
+  } catch (e) {}
 })();
 
 /* ── 5. Partage produit WhatsApp (enhancer DOM des .product-card) ───────── */
