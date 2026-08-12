@@ -11211,6 +11211,72 @@ window.addEventListener('unhandledrejection', function(event) {
   function close() { if (ov) ov.classList.remove('open'); }
   function curUser() { try { return (window.NexusUX && window.NexusUX.user && window.NexusUX.user()) || null; } catch (e) { return null; } }
 
+  // ── API globale : la barre de recherche de l'accueil peut lancer des recherches
+  //    de pros — par métier (chip + géoloc existante) ou par nom d'un pro précis. ──
+  function ensureFindTab() {
+    buildOverlay(); ov.classList.add('open');
+    var btn = ov.querySelector('.nx-pro-tab[data-t="find"]'); if (btn) try { btn.click(); } catch (e) {}
+    return ov;
+  }
+  // Recherche par MÉTIER : réutilise la mécanique existante (sélection du chip +
+  // bouton de recherche géolocalisée). Repli sur la recherche par nom si le chip
+  // n'existe pas encore (métier de base absent).
+  function openFor(profession) {
+    ensureFindTab();
+    setTimeout(function () {
+      if (!ov) return;
+      var target = null;
+      Array.prototype.forEach.call(ov.querySelectorAll('#nx-pro-chips .nx-pro-chip'), function (ch) {
+        var lbl = ch.textContent.replace(/^\S+\s/, '').trim(); // retire l'emoji de tête
+        if (lbl === profession) target = ch;
+      });
+      if (target) { target.click(); var btn = ov.querySelector('#nx-pro-search-btn'); if (btn) btn.click(); }
+      else searchPros(ov.querySelector('#nx-pro-results'), profession);
+    }, 250);
+  }
+  // Recherche par NOM / texte libre : interroge la table pros (actifs) sur name OU profession.
+  function searchPros(host, query) {
+    if (!host) return;
+    var q = String(query || '').replace(/[%,()]/g, ' ').trim();
+    host.innerHTML = '<div style="text-align:center;color:#666;padding:1rem">🔎 Recherche « ' + esc(q) + ' »…</div>';
+    var c = sb();
+    if (!c || !q) { host.innerHTML = '<div style="color:#b45309;padding:1rem">Recherche indisponible.</div>'; return; }
+    c.from('pros').select('user_id,profession,name,phone,city,photo_url,experience_years,tarif_text,disponible,rating')
+      .eq('status', 'active').or('name.ilike.%' + q + '%,profession.ilike.%' + q + '%').limit(40)
+      .then(function (res) { renderProList(host, (res && res.data) || [], q); })
+      .catch(function () { host.innerHTML = '<div style="color:#b45309;padding:1rem">Impossible de charger les professionnels.</div>'; });
+  }
+  function renderProList(host, list, q) {
+    if (!list.length) { host.innerHTML = '<div style="color:#666;padding:1rem;text-align:center">Aucun professionnel trouvé pour « ' + esc(q) + ' ».</div>'; return; }
+    var h = '';
+    list.forEach(function (b) {
+      var dispo = b.disponible === false ? '<span style="color:#b45309">Occupé</span>' : '<span style="color:#059669">Disponible</span>';
+      var meta = [b.profession, (b.experience_years ? b.experience_years + ' ans d’exp.' : ''), b.tarif_text, b.city].filter(Boolean).join(' · ');
+      h += '<div style="display:flex;gap:.7rem;align-items:center;padding:.6rem;border:1px solid #eee;border-radius:12px;margin-bottom:.5rem">'
+        + '<div style="width:44px;height:44px;border-radius:50%;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:1.3rem;overflow:hidden;flex:none">'
+        + (b.photo_url ? '<img src="' + esc(b.photo_url) + '" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.parentNode.textContent=\'' + metierEmoji(b.profession) + '\'">' : metierEmoji(b.profession)) + '</div>'
+        + '<div style="flex:1;min-width:0"><div style="font-weight:700;line-height:1.2">' + esc(b.name || b.profession || 'Professionnel') + '</div>'
+        + '<div style="font-size:.78rem;color:#666">' + esc(meta) + '</div><div style="font-size:.72rem">' + (b.rating ? stars(b.rating) + ' ' : '') + dispo + '</div></div>'
+        + '<button data-wa="' + esc(b.phone || '') + '" data-prof="' + esc(b.profession || '') + '" style="border:none;background:#25D366;color:#fff;border-radius:9px;padding:.5rem .7rem;font-weight:700;cursor:pointer;flex:none">WhatsApp</button>'
+        + '</div>';
+    });
+    host.innerHTML = h;
+    Array.prototype.forEach.call(host.querySelectorAll('[data-wa]'), function (btn) {
+      btn.addEventListener('click', function () {
+        window.open(waLink(btn.getAttribute('data-wa'), 'Bonjour, j’ai vu votre profil de ' + (btn.getAttribute('data-prof') || 'professionnel') + ' sur NEXUS Market. J’aurais besoin de vos services.'), '_blank');
+      });
+    });
+  }
+  function openSearch(text) {
+    ensureFindTab();
+    setTimeout(function () { if (ov) searchPros(ov.querySelector('#nx-pro-results'), text); }, 250);
+  }
+  window.NexusPro = {
+    open: open, openTab: openTab, openFor: openFor, openSearch: openSearch,
+    metiers: function () { return METIERS.slice(); }, loadMetiers: loadDbMetiers
+  };
+  try { loadDbMetiers(); } catch (e) {} // enrichit tôt la liste (pour les suggestions de l'accueil)
+
   // ── FAB + ouverture par événement (intégrable au lanceur unique) ─────────────
   function injectFab() {
     if (document.getElementById('nx-pro-fab') || !document.body) return;
@@ -13924,7 +13990,7 @@ function initProto(){
     q=(q||'').trim().toLowerCase();var html='';
     if(!q){var rs=recentSearches();if(rs.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Recherches récentes</p>'+rs.map(function(t){return'<button data-sq="'+t+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-on-surface-variant">history</span>'+t+'</button>';}).join('')+'</div>';}
     html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+CATS.slice(0,5).map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}
-    else{var cats=CATS.filter(function(c){return c.toLowerCase().indexOf(q)>=0;});var prods=prodsOverride||nxpFuzzy(ALL_PRODS.filter(function(p){return String(p.id).indexOf('nxp-')!==0;}),q,['name']).slice(0,6);if(cats.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+cats.map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}if(prods.length){html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Produits</p>'+prods.map(function(p){return'<button data-sp-prod="'+p.id+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-3"><img src="'+p.img+'" alt="'+_esc(p.name)+'" loading="lazy" class="w-9 h-9 object-contain rounded bg-surface-container-low"/><span class="flex-1">'+p.name+'</span><span class="text-primary font-bold text-xs">'+p.price+' F</span></button>';}).join('')+'</div>';}if(!cats.length&&!prods.length){html='<div class="p-4 text-sm text-on-surface-variant text-center">Aucun résultat pour « '+q+' »</div>';}}
+    else{var cats=CATS.filter(function(c){return c.toLowerCase().indexOf(q)>=0;});var prods=prodsOverride||nxpFuzzy(ALL_PRODS.filter(function(p){return String(p.id).indexOf('nxp-')!==0;}),q,['name']).slice(0,6);if(cats.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+cats.map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}if(prods.length){html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Produits</p>'+prods.map(function(p){return'<button data-sp-prod="'+p.id+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-3"><img src="'+p.img+'" alt="'+_esc(p.name)+'" loading="lazy" class="w-9 h-9 object-contain rounded bg-surface-container-low"/><span class="flex-1">'+p.name+'</span><span class="text-primary font-bold text-xs">'+p.price+' F</span></button>';}).join('')+'</div>';}if(!cats.length&&!prods.length){html='<div class="p-3 text-sm text-on-surface-variant text-center">Aucun produit pour « '+q+' »</div>';}var _pros=(window.NexusPro&&window.NexusPro.metiers?window.NexusPro.metiers():[]).filter(function(m){return String(m.id).toLowerCase().indexOf(q)>=0;}).slice(0,4);html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Professionnels 🔧</p>';_pros.forEach(function(m){html+='<button data-pro="'+_esc(m.id)+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span style="font-size:16px">'+m.e+'</span><span class="flex-1">'+_esc(m.id)+'</span><span class="material-symbols-outlined text-[16px] text-on-surface-variant">chevron_right</span></button>';});html+='<button data-pro-search="'+_esc(q)+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">handyman</span><span class="flex-1">Chercher un pro « '+_esc(q)+' »</span></button></div>';}
     if(sp)sp.innerHTML=html;
   }
   function renderSearch(q){
@@ -13945,6 +14011,10 @@ function initProto(){
   }
   if(sp){
     sp.addEventListener('click',function(e){
+      var prb=e.target.closest('[data-pro]');
+      if(prb){sp.classList.add('hidden');if(window.NexusPro)window.NexusPro.openFor(prb.getAttribute('data-pro'));return;}
+      var prs=e.target.closest('[data-pro-search]');
+      if(prs){sp.classList.add('hidden');if(window.NexusPro)window.NexusPro.openSearch(prs.getAttribute('data-pro-search'));return;}
       var pb=e.target.closest('[data-sp-prod]');
       if(pb){var pid=pb.getAttribute('data-sp-prod');sp.classList.add('hidden');if(pid&&pid.indexOf('nxp-')!==0){evt('nexus:open-product',pid);}else{var pp=NXP_PRODS[pid];if(pp&&pp.name)nxpShowAll({q:pp.name});}return;}
       var b=e.target.closest('[data-sq]');if(b){doSearch(b.getAttribute('data-sq'));}
