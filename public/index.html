@@ -11454,7 +11454,7 @@ window.addEventListener('unhandledrejection', function(event) {
       + '<div id="nx-resc-sos-status" style="font-size:.78rem;color:#b91c1c;text-align:center;margin-top:.5rem"></div>';
 
     host.querySelector('#nx-resc-send').addEventListener('click', function () {
-      var u = curUser(); if (!u || !u.id) { UX.toast('Connectez-vous pour envoyer un SOS.'); return; }
+      var u = curUser(); // SOS possible SANS connexion : requester_id reste null (demande anonyme).
       var c = sb(); if (!c) { UX.toast('Service indisponible.'); return; }
       var phone = host.querySelector('#nx-resc-phone').value.trim();
       if (!phone) { UX.toast('Indiquez un numéro de téléphone.'); return; }
@@ -11465,7 +11465,7 @@ window.addEventListener('unhandledrejection', function(event) {
         statusEl.textContent = '⏳ Envoi du SOS…';
         var fee = TARIF.base, commission = Math.round(fee * (TARIF.commissionPct || 0) / 100);
         return c.rpc('create_rescue_request', { payload: {
-          requester_id: u.id, requester_name: u.name || u.full_name || null, requester_phone: phone,
+          requester_id: (u && u.id) || null, requester_name: (u && (u.name || u.full_name)) || null, requester_phone: phone,
           issue_type: host.querySelector('#nx-resc-issue').value,
           vehicle_info: host.querySelector('#nx-resc-vehicle').value.trim() || null,
           description: host.querySelector('#nx-resc-desc').value.trim() || null,
@@ -11543,7 +11543,8 @@ window.addEventListener('unhandledrejection', function(event) {
       var cancelBtn = host.querySelector('#nx-resc-cancel');
       if (cancelBtn) cancelBtn.addEventListener('click', function () {
         if (!confirm('Annuler cette demande de dépannage ?')) return;
-        Promise.resolve(c.rpc('cancel_rescue_request', { p_request_id: requestId })).then(function () {
+        var uC = curUser();
+        Promise.resolve(c.rpc((uC && uC.id) ? 'cancel_rescue_request' : 'cancel_rescue_request_public', { p_request_id: requestId })).then(function () {
           try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
           clearSosPoll(); renderSosForm(host);
         }).catch(function () { UX.toast('Échec de l’annulation.', { bg: '#b45309' }); });
@@ -11563,7 +11564,8 @@ window.addEventListener('unhandledrejection', function(event) {
         starsEl.addEventListener('click', function (e) { var v = e.target && e.target.dataset && e.target.dataset.v; if (v) { chosen = parseInt(v, 10); paintStars(chosen); } });
         host.querySelector('#nx-resc-rate').addEventListener('click', function () {
           if (chosen < 1) { UX.toast('Choisissez une note.'); return; }
-          Promise.resolve(c.rpc('rate_rescuer', { p_request_id: requestId, p_rating: chosen })).then(function () {
+          var uR = curUser();
+          Promise.resolve(c.rpc((uR && uR.id) ? 'rate_rescuer' : 'rate_rescuer_public', { p_request_id: requestId, p_rating: chosen })).then(function () {
             UX.toast('Merci pour votre avis !', { bg: '#059669' });
             try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
             clearSosPoll(); renderSosForm(host);
@@ -11574,7 +11576,9 @@ window.addEventListener('unhandledrejection', function(event) {
 
     function tick() {
       Promise.resolve(c.rpc('rescue_dispatch_tick', { p_request_id: requestId })).catch(function () {});
-      Promise.resolve(c.from('rescue_requests').select('*').eq('id', requestId).maybeSingle()).then(function (r) {
+      // Statut via RPC public (RLS bloque la lecture directe de rescue_requests pour un
+      // demandeur anonyme). Fonctionne aussi pour un compte connecté (jeton = UUID).
+      Promise.resolve(c.rpc('rescue_request_public_status', { p_request_id: requestId })).then(function (r) {
         paint(r && r.data);
       }).catch(function () {});
     }
