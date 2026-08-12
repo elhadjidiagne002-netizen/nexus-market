@@ -11464,18 +11464,24 @@ window.addEventListener('unhandledrejection', function(event) {
       NexusMap.locateMe({ enableHighAccuracy: true, timeout: 9000 }).then(function (pos) {
         statusEl.textContent = '⏳ Envoi du SOS…';
         var fee = TARIF.base, commission = Math.round(fee * (TARIF.commissionPct || 0) / 100);
-        return c.rpc('create_rescue_request', { payload: {
-          requester_id: (u && u.id) || null, requester_name: (u && (u.name || u.full_name)) || null, requester_phone: phone,
-          issue_type: host.querySelector('#nx-resc-issue').value,
-          vehicle_info: host.querySelector('#nx-resc-vehicle').value.trim() || null,
-          description: host.querySelector('#nx-resc-desc').value.trim() || null,
-          location_label: 'Position GPS', location_lat: pos.lat, location_lng: pos.lng,
-          fee_fcfa: fee, commission_fcfa: commission, rescuer_payout: fee - commission,
-          payment_method: 'cod'
-        } });
+        // Création via la Function Cloudflare /api/rescue/create (rate-limit par IP) :
+        // PAS d'appel RPC direct, pour que la limite anti-abus ne soit pas contournable.
+        return fetch('/api/rescue/create', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requester_id: (u && u.id) || null, requester_name: (u && (u.name || u.full_name)) || null, requester_phone: phone,
+            issue_type: host.querySelector('#nx-resc-issue').value,
+            vehicle_info: host.querySelector('#nx-resc-vehicle').value.trim() || null,
+            description: host.querySelector('#nx-resc-desc').value.trim() || null,
+            location_label: 'Position GPS', location_lat: pos.lat, location_lng: pos.lng,
+            fee_fcfa: fee, commission_fcfa: commission, rescuer_payout: fee - commission,
+            payment_method: 'cod'
+          })
+        }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (d) { return { ok: res.ok, status: res.status, d: d }; }); });
       }).then(function (r) {
-        var d = r && r.data;
-        if (!d || !d.id) { statusEl.textContent = ''; UX.toast('Échec de l’envoi du SOS. Réessayez.', { bg: '#b45309' }); return; }
+        if (r && r.status === 429) { statusEl.textContent = ''; UX.toast('Trop de SOS envoyés — patientez quelques minutes.', { bg: '#b45309' }); return; }
+        var d = r && r.d;
+        if (!r || !r.ok || !d || !d.id) { statusEl.textContent = ''; UX.toast('Échec de l’envoi du SOS. Réessayez.', { bg: '#b45309' }); return; }
         try { localStorage.setItem(STORAGE_KEY, d.id); } catch (e) {}
         statusEl.textContent = '';
         renderSosTracking(host, d.id);

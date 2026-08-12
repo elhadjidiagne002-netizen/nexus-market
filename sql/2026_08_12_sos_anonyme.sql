@@ -4,9 +4,12 @@
 -- côté client dans localStorage). Les demandes anonymes ont requester_id = NULL.
 -- ============================================================================
 
--- 1) Autoriser anon à créer une demande + à faire avancer la cascade au polling.
-grant execute on function public.create_rescue_request(jsonb) to anon;
-grant execute on function public.rescue_dispatch_tick(uuid)   to anon;
+-- 1) Faire avancer la cascade au polling (anon). La CRÉATION ne passe PAS par un grant
+--    anon : elle transite par la Function Cloudflare /api/rescue/create (service key +
+--    rate-limit par IP), pour que la limite anti-abus ne soit pas contournable par un
+--    appel RPC direct. On RÉVOQUE donc explicitement tout grant anon sur create_*.
+revoke execute on function public.create_rescue_request(jsonb) from anon;
+grant execute on function public.rescue_dispatch_tick(uuid)    to anon;
 
 -- 2) Statut public par id (RLS bloque la lecture directe pour anon). Renvoie la
 --    demande complète à quiconque possède l'UUID.
