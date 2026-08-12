@@ -9,12 +9,18 @@
 //   SUPABASE_SERVICE_KEY  (Service Role Key — Settings → API → service_role) — REQUISE
 //
 // Usage :
-//   # PowerShell
-//   $env:SUPABASE_SERVICE_KEY="eyJ..."; node scripts/promote-prospects.mjs --status new
+//   # PowerShell — TOUT promouvoir (tous les prospects non encore promus) :
+//   $env:SUPABASE_SERVICE_KEY="eyJ..."; node scripts/promote-prospects.mjs
+//   # simuler d'abord (aucune écriture) :
+//   node scripts/promote-prospects.mjs --dry-run
 //   # options
 //   node scripts/promote-prospects.mjs --type pro            # ne promouvoir que les pros
-//   node scripts/promote-prospects.mjs --status new --dry-run
+//   node scripts/promote-prospects.mjs --status new          # forcer un statut précis
 //   node scripts/promote-prospects.mjs --limit 50 --throttle 150 --password "Nexus@2024"
+//
+// NB : ce script tourne sur TA machine (Node), PAS sur Cloudflare Workers → il n'a
+//   AUCUNE limite de sous-requêtes. C'est LE moyen de promouvoir des centaines de
+//   prospects d'un coup (le panneau admin du site est plafonné à 8/appel par la limite CF).
 
 const REF = 'pqcqbstbdujzaclsiosv';
 const URL = (process.env.SUPABASE_URL || `https://${REF}.supabase.co`).replace(/\/$/, '');
@@ -66,15 +72,17 @@ async function ensureAuthUser(email, password, meta) {
 
 async function main() {
   const type = arg('type');                         // filtre optionnel : pro|vendor|courier|breeder|custom
-  const status = arg('status', 'new');              // par défaut : non promus
+  const status = arg('status', '');                 // '' (défaut) = TOUT ce qui n'est pas déjà promu
   const limit = parseInt(arg('limit', '100000'), 10) || 100000;
   const dry = arg('dry-run', false);
   const throttle = Math.max(0, parseInt(arg('throttle', '120'), 10) || 0);
   const password = arg('password') || process.env.PROSPECT_DEFAULT_PASSWORD || 'Nexus@2024';
 
-  // Charger les prospects (pagination par 1000)
+  // Charger les prospects (pagination par 1000). Par défaut : tous les non-promus
+  // (status<>promoted) → « tout promouvoir ». --status <valeur> force un statut précis.
+  const statusFilter = status ? `status=eq.${encodeURIComponent(status)}` : `status=neq.promoted`;
   let prospects = [], from = 0;
-  const filt = [`select=*`, status ? `status=eq.${encodeURIComponent(status)}` : '', type ? `account_type=eq.${encodeURIComponent(type)}` : '', `order=created_at.asc`].filter(Boolean).join('&');
+  const filt = [`select=*`, statusFilter, type ? `account_type=eq.${encodeURIComponent(type)}` : '', `order=created_at.asc`].filter(Boolean).join('&');
   while (prospects.length < limit) {
     const page = await rest(`/prospects?${filt}&limit=1000&offset=${from}`).catch((e) => {
       if (/prospects.*(does not exist|schema cache)|pgrst205/i.test(e.message)) { console.error('❌ Table `prospects` absente. Lance d\'abord le SQL de création (importateur étape 1).'); process.exit(1); }
@@ -86,7 +94,7 @@ async function main() {
   prospects = prospects.slice(0, limit);
 
   console.log(`=== PROMOTION ${dry ? '(DRY-RUN — aucune écriture)' : ''} ===`);
-  console.log(`Base : ${URL} · ${prospects.length} prospect(s) [status=${status || 'tous'}${type ? ', type=' + type : ''}]`);
+  console.log(`Base : ${URL} · ${prospects.length} prospect(s) [status=${status || 'non-promus'}${type ? ', type=' + type : ''}]`);
   if (!prospects.length) { console.log('Rien à promouvoir.'); return; }
 
   let ok = 0, skip = 0, err = 0, i = 0;
