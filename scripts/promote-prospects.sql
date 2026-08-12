@@ -25,6 +25,11 @@ language sql immutable as $fn$
     'aaaaaceeeeiiiiooooouuuuyn');
 $fn$;
 
+-- Journal des résultats — affiché dans la grille « Results » à la fin (visible même si
+-- l'onglet Messages ne montre pas les RAISE NOTICE).
+drop table if exists _promo_log;
+create temp table _promo_log (seq serial, name text, account_type text, email text, outcome text, detail text);
+
 do $$
 declare
   p            record;
@@ -46,10 +51,11 @@ begin
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   perform set_config('request.jwt.claim.role', 'service_role', true); -- variante ancienne d'auth.role()
 
-  -- Diagnostic (onglet Messages) : le bypass a-t-il pris ? combien de lignes à traiter ?
-  raise notice '--- DIAGNOSTIC : auth.role()=[%] · prospects non-promus=% ---',
-    auth.role(),
-    (select count(*) from public.prospects where status is distinct from 'promoted');
+  -- Diagnostic : le bypass a-t-il pris ? combien de lignes à traiter ?
+  insert into _promo_log(name, outcome, detail) values (
+    '(DIAGNOSTIC)', 'info',
+    'auth.role()=[' || coalesce(auth.role(), 'NULL') || '] · prospects non-promus=' ||
+    (select count(*) from public.prospects where status is distinct from 'promoted')::text);
 
   for p in
     select * from public.prospects
@@ -63,7 +69,7 @@ begin
    begin
     -- profession requise pour une fiche pro
     if p.account_type = 'pro' and coalesce(nullif(trim(p.profession), ''), null) is null then
-      raise notice '⊘ %  (pro sans profession — ignoré)', p.name;
+      insert into _promo_log(name, account_type, outcome, detail) values (p.name, p.account_type, 'ignoré', 'pro sans profession');
       n_skip := n_skip + 1;
       continue;
     end if;
@@ -154,13 +160,24 @@ begin
      where id = p.id;
 
     n_ok := n_ok + 1;
-    raise notice '✓ %  →  %', coalesce(p.name,'(sans nom)'), v_email;
+    insert into _promo_log(name, account_type, email, outcome, detail)
+      values (p.name, p.account_type, v_email, 'promu', null);
    exception when others then
      n_err := n_err + 1;
-     raise notice '✗ %  : %', coalesce(p.name,'(sans nom)'), sqlerrm;
+     insert into _promo_log(name, account_type, email, outcome, detail)
+       values (p.name, p.account_type, v_email, 'ERREUR', sqlerrm);
    end;
   end loop;
 
-  raise notice '=== Terminé : % promus (dont % réutilisés), % ignorés, % erreurs. Mot de passe: % ===',
-    n_ok, n_reuse, n_skip, n_err, v_pwd;
+  insert into _promo_log(name, outcome, detail) values (
+    '(RÉCAP)', 'info',
+    n_ok || ' promus, ' || n_reuse || ' réutilisés, ' || n_skip || ' ignorés, ' || n_err || ' erreurs · mdp=' || v_pwd);
 end $$;
+
+-- ── Résultats (grille « Results ») ────────────────────────────────────────────
+-- Dernier SELECT = ce qui s'affiche : DIAGNOSTIC + RÉCAP + toutes les ERREURS (avec le
+-- message exact). Le détail complet (dont les 'promu') reste requêtable via _promo_log.
+select seq, outcome, name, account_type, email, detail
+  from _promo_log
+ where outcome in ('info', 'ERREUR')
+ order by seq;
