@@ -81,6 +81,7 @@ depuis <b>Google Maps</b>, <b>Facebook</b>, <b>TikTok</b> (via Apify) ou un <b>a
     <div style="flex:1;min-width:150px">
       <label>Résultats max / recherche</label><input type="number" id="max" value="40" min="1" max="300">
       <label style="margin-top:10px">Colonne « Source »</label><input type="text" id="source" value="google-maps">
+      <label style="margin-top:10px">Actor Apify</label><input type="text" id="maps_actor" value="compass~crawler-google-places">
       <label style="display:flex;align-items:center;gap:8px;font-weight:normal;color:var(--ink);margin-top:12px">
         <input type="checkbox" id="mobileOnly" style="width:auto"> Mobiles uniquement (7X)</label>
     </div>
@@ -99,6 +100,7 @@ depuis <b>Google Maps</b>, <b>Facebook</b>, <b>TikTok</b> (via Apify) ou un <b>a
       <label>Métier (colonne Profession)</label><input type="text" id="fb_prof" placeholder="Garage / Mécanicien">
       <label style="margin-top:10px">Résultats max</label><input type="number" id="fb_max" value="50" min="1" max="500">
       <label style="margin-top:10px">Colonne « Source »</label><input type="text" id="fb_source" value="facebook">
+      <label style="margin-top:10px">Actor Apify</label><input type="text" id="fb_actor" value="apify~facebook-pages-scraper">
       <label style="display:flex;align-items:center;gap:8px;font-weight:normal;color:var(--ink);margin-top:12px">
         <input type="checkbox" id="fb_mobile" style="width:auto"> Mobiles uniquement (7X)</label>
     </div>
@@ -117,6 +119,7 @@ depuis <b>Google Maps</b>, <b>Facebook</b>, <b>TikTok</b> (via Apify) ou un <b>a
       <label>Métier (colonne Profession)</label><input type="text" id="tk_prof" placeholder="Garage / Mécanicien">
       <label style="margin-top:10px">Résultats max</label><input type="number" id="tk_max" value="50" min="1" max="500">
       <label style="margin-top:10px">Colonne « Source »</label><input type="text" id="tk_source" value="tiktok">
+      <label style="margin-top:10px">Actor Apify</label><input type="text" id="tk_actor" value="clockworks~tiktok-scraper">
       <label style="display:flex;align-items:center;gap:8px;font-weight:normal;color:var(--ink);margin-top:12px">
         <input type="checkbox" id="tk_mobile" style="width:auto"> Mobiles uniquement (7X)</label>
     </div>
@@ -255,7 +258,8 @@ $('#btnRun').onclick = async () => {
   const queries = $('#queries').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if (!queries.length) { alert('Entre au moins une recherche.'); return; }
   const max = Math.max(1, parseInt($('#max').value,10)||40), source = $('#source').value.trim()||'google-maps', mobileOnly = $('#mobileOnly').checked;
-  const items = await runApify('compass~crawler-google-places', { searchStringsArray: queries, maxCrawledPlacesPerSearch: max, language:'fr', countryCode:'sn', skipClosedPlaces:false }, $('#btnRun'), 'Actor Google Maps');
+  const actor = $('#maps_actor').value.trim() || 'compass~crawler-google-places';
+  const items = await runApify(actor, { searchStringsArray: queries, maxCrawledPlacesPerSearch: max, language:'fr', countryCode:'sn', skipClosedPlaces:false }, $('#btnRun'), 'Actor Google Maps');
   if (!items) return;
   const rows = items.map(it => toRow({ name: it.title||it.name, city: it.city, address: it.address||[it.street,it.city].filter(Boolean).join(', '), phone: it.phone||it.phoneUnformatted, lat: it.location?.lat, lng: it.location?.lng, source }));
   showResults(dedupe(rows, mobileOnly));
@@ -267,7 +271,8 @@ $('#btnRunFb').onclick = async () => {
   const urls = $('#fb_urls').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if (!urls.length) { alert('Colle au moins une URL de page Facebook (publique).'); return; }
   const max = Math.max(1, parseInt($('#fb_max').value,10)||50), prof = $('#fb_prof').value.trim(), source = $('#fb_source').value.trim()||'facebook', mobileOnly = $('#fb_mobile').checked;
-  const items = await runApify('apify~facebook-pages-scraper', { startUrls: urls.map(u=>({url:u})), resultsLimit: max }, $('#btnRunFb'), 'Actor Facebook');
+  const actor = $('#fb_actor').value.trim() || 'apify~facebook-pages-scraper';
+  const items = await runApify(actor, { startUrls: urls.map(u=>({url:u})), resultsLimit: max }, $('#btnRunFb'), 'Actor Facebook');
   if (!items) return;
   showResults(dedupe(items.map(it=>socialItem(it, prof, source)), mobileOnly));
   log('✅ Terminé : ' + items.length + ' item(s) → ' + lastRows.length + ' fiche(s).');
@@ -281,7 +286,8 @@ $('#btnRunTk').onclick = async () => {
   const max = Math.max(1, parseInt($('#tk_max').value,10)||50), prof = $('#tk_prof').value.trim(), source = $('#tk_source').value.trim()||'tiktok', mobileOnly = $('#tk_mobile').checked;
   const base = { resultsPerPage: max, shouldDownloadVideos:false, shouldDownloadCovers:false, shouldDownloadSubtitles:false };
   const input = urls.length ? { ...base, profiles: urls } : { ...base, searchQueries: queries };
-  const items = await runApify('clockworks~tiktok-scraper', input, $('#btnRunTk'), 'Actor TikTok');
+  const actor = $('#tk_actor').value.trim() || 'clockworks~tiktok-scraper';
+  const items = await runApify(actor, input, $('#btnRunTk'), 'Actor TikTok');
   if (!items) return;
   showResults(dedupe(items.map(it=>socialItem(it, prof, source)), mobileOnly));
   log('✅ Terminé : ' + items.length + ' item(s) → ' + lastRows.length + ' fiche(s).');
