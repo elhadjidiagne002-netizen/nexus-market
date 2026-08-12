@@ -13134,21 +13134,33 @@ const ProspectsAdminPanel = ({ addToast }) => {
     if (!ids.length) { toast('Sélectionnez au moins un prospect', 'warning'); return; }
     setBusy(true);
     try {
+      // Jeton admin frais — évite les 401 quand la session vient d'expirer.
       let tk = '';
       try { const { data } = await DataService._sb.auth.getSession(); tk = (data && data.session && data.session.access_token) || ''; } catch (_) {}
-      // Le backend limite à 20/appel → on découpe.
+      if (!tk) { try { const { data } = await DataService._sb.auth.refreshSession(); tk = (data && data.session && data.session.access_token) || ''; } catch (_) {} }
+      if (!tk) { toast('Session expirée — reconnectez-vous puis réessayez.', 'error'); setBusy(false); return; }
+      // Le backend limite à 8/appel (limite de sous-requêtes Cloudflare : chaque prospect
+      // = ~4 fetch, 8×4≈32 < 50). On découpe en petits lots SÉQUENTIELS ; chaque lot est
+      // marqué `promoted` avant le suivant → la progression est conservée même si l'un échoue.
       let promoted = 0, skipped = 0, failed = 0; const errs = [];
-      for (let i = 0; i < ids.length; i += 20) {
-        const chunk = ids.slice(i, i + 20);
-        const res = await fetch('/api/admin/promote-prospect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(tk ? { Authorization: 'Bearer ' + tk } : {}) },
-          body: JSON.stringify({ ids: chunk }),
-        });
-        const b = await res.json().catch(() => ({}));
-        if (!res.ok) { failed += chunk.length; errs.push(b.error || ('HTTP ' + res.status)); continue; }
-        promoted += b.promoted || 0; skipped += b.skipped || 0; failed += b.failed || 0;
-        (b.results || []).filter(r => r.status === 'error').forEach(r => errs.push(r.name + ' : ' + r.error));
+      const CHUNK = 8;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const chunk = ids.slice(i, i + CHUNK);
+        try {
+          const res = await fetch('/api/admin/promote-prospect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk },
+            body: JSON.stringify({ ids: chunk }),
+          });
+          const b = await res.json().catch(() => ({}));
+          if (!res.ok) { failed += chunk.length; errs.push(b.error || ('HTTP ' + res.status)); }
+          else {
+            promoted += b.promoted || 0; skipped += b.skipped || 0; failed += b.failed || 0;
+            (b.results || []).filter(r => r.status === 'error').forEach(r => errs.push(r.name + ' : ' + r.error));
+          }
+        } catch (e) { failed += chunk.length; errs.push(String(e.message || e)); }
+        if (ids.length > CHUNK) toast(`⏳ ${Math.min(i + CHUNK, ids.length)}/${ids.length} traités…`, 'info');
+        await new Promise(r => setTimeout(r, 200)); // souffle pour ne pas saturer Supabase/CF
       }
       toast(`✅ ${promoted} promu(s), ${skipped} ignoré(s), ${failed} échec(s)`, failed ? 'warning' : 'success');
       if (errs.length) console.warn('[promote-prospect]', errs);

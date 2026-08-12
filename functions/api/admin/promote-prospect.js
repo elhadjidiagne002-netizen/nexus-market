@@ -6,7 +6,12 @@
 // (onglet ②) mais côté serveur : la création de comptes Auth exige la SERVICE ROLE KEY,
 // qui vit UNIQUEMENT côté serveur (env.SUPABASE_SERVICE_KEY) — jamais dans le navigateur.
 //
-// Body : { ids: [uuid, ...], password? }   (max 20 par appel — limites de sous-requêtes CF)
+// Body : { ids: [uuid, ...], password? }   (max 8 par appel — limite de sous-requêtes CF)
+// ⚠️ Chaque prospect = ~4 sous-requêtes (createUser + profiles + fiche + update prospect).
+//   La limite Cloudflare Workers est de 50 sous-requêtes/invocation (palier standard).
+//   8 × ~4 = ~32 (+ overhead requireAdmin/SELECT) reste sous 50. NE PAS remonter ce plafond
+//   sans réduire le nombre de sous-requêtes par prospect, sinon « Too many subrequests »
+//   fait échouer la fin du lot (comptes non créés ET prospects jamais marqués `promoted`).
 // Pour chaque prospect :
 //   1. Compte Auth (email confirmé, pas d'email de validation)   → auth.users
 //   2. Flags de profil (is_pro / is_courier / is_breeder) + géo   → profiles
@@ -68,7 +73,7 @@ export async function onRequest({ request, env }) {
   try { body = await request.json(); } catch { return err('JSON invalide', 400); }
   const ids = Array.isArray(body?.ids) ? body.ids.filter(Boolean).map(String) : [];
   if (!ids.length) return err('Aucun prospect (ids requis)', 400);
-  if (ids.length > 20) return err('Maximum 20 prospects par appel', 400);
+  if (ids.length > 8) return err('Maximum 8 prospects par appel (limite de sous-requêtes Cloudflare)', 400);
   const password = (typeof body?.password === 'string' && body.password.length >= 6)
     ? body.password : (env.PROSPECT_DEFAULT_PASSWORD || 'Nexus@2024');
 
