@@ -53,11 +53,14 @@ async function rest(path, opts = {}) {
 const digits = (p) => String(p || '').replace(/\D/g, '');
 function slugify(n) { return String(n || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, ''); }
 function genEmail(p) {
-  if (p.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) return p.email.trim().toLowerCase();
+  // On ignore l'email-placeholder non-unique 'prospect_@...' (sinon des entreprises
+  // distinctes fusionnent sur un seul compte). Uniquifieur déterministe = id du prospect.
+  const stored = String(p.email || '').trim().toLowerCase();
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(stored) && !/^prospect_?@/.test(stored)) return stored;
   const s = slugify(p.name), d4 = digits(p.phone).slice(-4);
-  if (s) return `${s}${d4 ? '.' + d4 : ''}@nexusmarket.sn`;
-  if (d4) return `prospect.${d4}@nexusmarket.sn`;
-  return `prospect.${Math.random().toString(36).slice(2, 8)}@nexusmarket.sn`;
+  const uniq = d4 || String(p.id || '').replace(/-/g, '').slice(0, 6) || Math.random().toString(36).slice(2, 8);
+  if (s) return `${s}.${uniq}@nexusmarket.sn`;
+  return `prospect.${uniq}@nexusmarket.sn`;
 }
 async function ensureAuthUser(email, password, meta) {
   const res = await fetch(`${URL}/auth/v1/admin/users`, { method: 'POST', headers: H(), body: JSON.stringify({ email, password, email_confirm: true, user_metadata: meta }) });

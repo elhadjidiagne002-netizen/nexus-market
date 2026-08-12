@@ -79,18 +79,21 @@ begin
     v_role := case p.account_type when 'vendor' then 'vendor' else 'buyer' end;
 
     -- ---- email ----
-    if coalesce(p.email,'') ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    -- On IGNORE l'email-placeholder non-unique 'prospect_@...' (généré à l'import pour les
+    -- fiches sans numéro, ex. « Voir Facebook ») : sinon plusieurs entreprises distinctes le
+    -- partagent → fusionnées sur UN seul compte. Suffixe déterministe (hash de l'id) quand il
+    -- n'y a pas de chiffres de téléphone → email UNIQUE par prospect ET idempotent (re-run OK).
+    if coalesce(p.email,'') ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+       and lower(p.email) !~ '^prospect_?@' then
       v_email := lower(trim(p.email));
     else
       v_slug := regexp_replace(lower(pg_temp.unaccent_safe(coalesce(p.name,''))), '[^a-z0-9]+', '.', 'g');
       v_slug := trim(both '.' from v_slug);
       v_d4   := right(regexp_replace(coalesce(p.phone,''), '\D', '', 'g'), 4);
       if v_slug <> '' then
-        v_email := v_slug || case when v_d4 <> '' then '.'||v_d4 else '' end || '@nexusmarket.sn';
-      elsif v_d4 <> '' then
-        v_email := 'prospect.'||v_d4||'@nexusmarket.sn';
+        v_email := v_slug || '.' || coalesce(nullif(v_d4,''), left(md5(p.id::text),4)) || '@nexusmarket.sn';
       else
-        v_email := 'prospect.'||substr(md5(random()::text),1,6)||'@nexusmarket.sn';
+        v_email := 'prospect.' || coalesce(nullif(v_d4,''), left(md5(p.id::text),6)) || '@nexusmarket.sn';
       end if;
     end if;
 

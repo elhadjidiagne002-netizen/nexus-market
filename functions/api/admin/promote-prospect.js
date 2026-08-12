@@ -37,11 +37,14 @@ function slugify(name) {
     .replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '');
 }
 function genEmail(p) {
-  if (p.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) return p.email.trim().toLowerCase();
+  // On ignore l'email-placeholder non-unique 'prospect_@...' (sinon des entreprises
+  // distinctes fusionnent sur un seul compte). Uniquifieur déterministe = id du prospect.
+  const stored = String(p.email || '').trim().toLowerCase();
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(stored) && !/^prospect_?@/.test(stored)) return stored;
   const slug = slugify(p.name), d4 = digits(p.phone).slice(-4);
-  if (slug) return `${slug}${d4 ? '.' + d4 : ''}@nexusmarket.sn`;
-  if (d4) return `prospect.${d4}@nexusmarket.sn`;
-  return `prospect.${Math.random().toString(36).slice(2, 8)}@nexusmarket.sn`;
+  const uniq = d4 || String(p.id || '').replace(/-/g, '').slice(0, 6) || Math.random().toString(36).slice(2, 8);
+  if (slug) return `${slug}.${uniq}@nexusmarket.sn`;
+  return `prospect.${uniq}@nexusmarket.sn`;
 }
 
 // Création (ou récupération) d'un compte Auth via l'API admin REST (service key).
