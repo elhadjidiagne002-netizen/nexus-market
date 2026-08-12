@@ -6,6 +6,67 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-12 — Campagnes WhatsApp de masse (pendant de la campagne email)
+
+**Demande** : comme pour les campagnes email, pouvoir envoyer des messages WhatsApp
+en masse depuis l'admin.
+
+**Travail effectué** :
+- **Backend** `functions/api/admin/broadcast-whatsapp.js` (nouveau) — POST admin only,
+  calqué sur `broadcast.js`. Lit les téléphones depuis `profiles` (filtre audience/rôle,
+  `phone NOT NULL`), dédoublonne + valide E.164 (SN), envoie un message individuel via
+  `sendWhatsAppDirect` (Green API → repli WAHA) et journalise chaque envoi dans
+  `whatsapp_logs`. Mode `test` = envoi au téléphone de l'admin (résolu via profiles).
+  Rate-limit 3/10 min. Envoi **séquentiel** et plafonné (`BROADCAST_WA_MAX`, défaut 200)
+  pour ménager le quota fournisseur + la limite de sous-requêtes Cloudflare.
+  Pas d'audience `newsletter` (cette table n'a pas de téléphone).
+- **Frontend** (bundle `app.<hash>.js`) — composant `AdminBroadcastWhatsAppPanel`
+  (message + lien optionnel + sélecteur d'audience + test/envoi), entrée de menu admin
+  « 📲 Campagne WhatsApp » et routing `view === "broadcast_wa"`.
+- **Cache-busting** : `app.b8916030d4.js` → `app.9981232cb5.js` + MAJ `index.html`
+  (obligatoire, /assets/* immutable 1 an).
+
+**État** : code écrit, `node --check` OK (backend + bundle). **Non déployé / non testé
+en prod** (panneau derrière l'auth admin). À vérifier après déploiement : envoyer un test
+depuis le panneau (nécessite un téléphone sur le profil admin).
+
+---
+
+## 2026-08-11 — Élargissement des métiers pris en charge (importer + site)
+
+**Demande** : en se basant sur le dossier `prospection/`, élargir le nombre de métiers
+« pros » pris en charge dans le site et dans l'app `nexus_importer`, et ajouter les autres
+métiers nécessaires.
+
+**Travail effectué** :
+- **`nexus_importer.html` — `FILE_MAP`** passé de **17 → ~65 règles**. Auparavant seuls
+  ~17 des 68 CSV de `prospection/` étaient reconnus (le reste tombait en `custom`, à
+  corriger à la main). Désormais chacun des 68 CSV est classé correctement (vérifié par
+  script `/tmp/testmap.mjs` : **0 non-reconnu**). Ajout de sections : Auto/Moto, Énergie/
+  Technique, Services à la personne, Événementiel/Créa/Digital, Agri/Alim/Artisanat, plus
+  des métiers courants au-delà du dossier (serrurier, antenniste, puisatier, étancheur,
+  réparateur téléphone, informaticien, tapissier, cordonnier, pressing, vétérinaire,
+  chauffeur…).
+- **Ordre = priorité** : les variantes spécifiques (auto/moto) placées AVANT les génériques
+  homonymes (`electric.*auto` avant `electric`, `peintre.*auto`/`tolier` avant `peintre`,
+  `mecan.*moto` avant `garage|mecan`, `climat.*auto` avant `climat|froid`, `vitrier.*auto`
+  avant `vitrier`). Deux collisions détectées au test et corrigées : `transformateurs_
+  alimentaires` était capté par `/formateur/` (« transFORMATEUR ») → frontière de mot
+  `\bformateur` ; `transport_*` non reconnu → nouvelle règle `vendor` « Transport / Voyageurs ».
+- **`public/index.html` — liste `METIERS`** du module NEXUS Pro passée de **12 → 55 métiers**
+  (chips « Trouver un pro » + inscription). Les `id` sont **strictement alignés** sur les
+  libellés « pro » du `FILE_MAP` (cross-check `/tmp/xcheck.mjs` : 55 = 55, aucune divergence
+  dans les deux sens) — indispensable car la promotion d'un prospect écrit `profession =
+  libellé`, et un chip ne retrouve ses pros que si la chaîne correspond exactement.
+
+**État** : appliqué localement. ⚠️ **Non déployé** — `public/index.html` charge le React
+compilé depuis `public/assets/app.<hash>.js` mais la liste `METIERS` vit bien dans
+`index.html` (module IIFE NEXUS Pro inline), donc pas de rebuild de bundle nécessaire ici.
+Reste à commit + push (déclenche le build Cloudflare Pages). Vérifs faites : classification
+des 68 CSV, alignement des libellés. Non fait : test visuel des chips en preview.
+
+---
+
 ## 2026-08-10 — Importateur catalogue : Transport (lignes+récurrences), Location, Immobilier
 
 **Demande** : que `nexus_importer.html` puisse exporter vers nexusmarket.sn les données de

@@ -24694,6 +24694,88 @@ const AdminBroadcastPanel = ({ addToast, initialAudience }) => {
   );
 };
 
+// ── AdminBroadcastWhatsAppPanel — Campagne WhatsApp de masse ─────────────────
+// Rendu dans AdminDashboard quand view === "broadcast_wa".
+// POST /api/admin/broadcast-whatsapp (admin only, Green API → repli WAHA, log
+// whatsapp_logs). Cible les comptes profiles AVEC téléphone (la newsletter n'a
+// que des emails). Message texte brut + lien optionnel appended en fin.
+const AdminBroadcastWhatsAppPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const [message, setMessage] = React.useState('');
+  const [link, setLink]       = React.useState('');
+  const [audience, setAudience] = React.useState('all');
+  const [sending, setSending] = React.useState(false);
+  const [result, setResult]   = React.useState(null);
+
+  // Pas de 'newsletter' : cette liste ne contient pas de téléphone.
+  const AUDIENCES = [
+    { v: 'all',       l: 'Tous les comptes avec téléphone' },
+    { v: 'buyer',     l: 'Acheteurs / particuliers' },
+    { v: 'buyer_pro', l: 'Acheteurs Pro (B2B)' },
+    { v: 'vendor',    l: 'Vendeurs' },
+    { v: 'pro',       l: 'Artisans (NEXUS Pro)' },
+    { v: 'breeder',   l: 'Éleveurs' },
+    { v: 'courier',   l: 'Livreurs' },
+  ];
+
+  const send = async (test) => {
+    if (!message.trim()) { addToast('Message requis', 'warning'); return; }
+    if (!test && !window.confirm('Envoyer ce message WhatsApp à « ' + ((AUDIENCES.find(a => a.v === audience) || {}).l || '') + ' » ? Cette action est irréversible.')) return;
+    setSending(true); setResult(null);
+    try {
+      const res = await DataService.paymentFetch('/api/admin/broadcast-whatsapp', {
+        method: 'POST',
+        body: JSON.stringify({ message, link: link || undefined, audience, test: !!test }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        if (test) addToast('✅ Message WhatsApp de test envoyé à votre numéro admin', 'success');
+        else { setResult(data); addToast('✅ Campagne WhatsApp envoyée : ' + data.sent + '/' + data.total, 'success'); }
+      } else {
+        addToast('❌ ' + (data.error || 'Échec de l\'envoi'), 'error');
+      }
+    } catch (e) {
+      addToast('❌ ' + (e.message === 'AUTH_REQUIRED' ? 'Reconnectez-vous en tant qu\'admin' : e.message), 'error');
+    } finally { setSending(false); }
+  };
+
+  const inp = { width: '100%', padding: '0.7rem', border: '1px solid var(--border)', borderRadius: 8, fontSize: '0.92rem', fontFamily: 'inherit', boxSizing: 'border-box' };
+  const lbl = { fontWeight: 700, fontSize: '0.85rem', display: 'block', marginBottom: '0.3rem' };
+
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header' }, E('h2', { className: 'card-title' }, '📲 Campagne WhatsApp — envoi en masse')),
+    E('p', { style: { color: 'var(--text-secondary)', fontSize: '0.88rem', marginTop: '-0.5rem' } },
+      'Envoie un message WhatsApp aux comptes disposant d\'un numéro (acheteurs, vendeurs, livreurs…). Chaque destinataire reçoit un message individuel. Teste d\'abord avec « Envoyer un test ». ',
+      'Envoi séquentiel plafonné pour ménager le quota fournisseur — relance la campagne si tu dépasses le plafond.'),
+    E('div', { style: { display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '1rem' } },
+      E('div', null,
+        E('label', { style: lbl }, 'Destinataires'),
+        E('select', { value: audience, onChange: (e) => setAudience(e.target.value), style: inp },
+          AUDIENCES.map((a) => E('option', { key: a.v, value: a.v }, a.l)))
+      ),
+      E('div', null,
+        E('label', { style: lbl }, 'Message'),
+        E('textarea', { value: message, onChange: (e) => setMessage(e.target.value), maxLength: 4000, rows: 8, placeholder: 'Votre message WhatsApp… (les sauts de ligne sont conservés)', style: { ...inp, resize: 'vertical' } })
+      ),
+      E('div', null,
+        E('label', { style: lbl }, 'Lien à ajouter en fin de message — optionnel'),
+        E('input', { value: link, onChange: (e) => setLink(e.target.value), placeholder: 'https://nexusmarket.sn/...', style: inp })
+      ),
+      E('div', { style: { display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.5rem' } },
+        E('button', { className: 'btn btn-secondary', disabled: sending, onClick: () => send(true) },
+          E('i', { className: 'fas fa-vial' }), ' Envoyer un test (à moi)'),
+        E('button', { className: 'btn btn-primary', disabled: sending, onClick: () => send(false) },
+          E('i', { className: sending ? 'fas fa-spinner fa-spin' : 'fab fa-whatsapp' }), sending ? ' Envoi…' : ' Envoyer à tous')
+      ),
+      result && E('div', { style: { marginTop: '0.5rem', padding: '0.8rem 1rem', background: 'var(--bg-light)', borderRadius: 8, fontSize: '0.9rem' } },
+        E('strong', null, 'Résultat : '), (result.sent + ' envoyés / ' + result.total + ' destinataires'),
+        result.failed ? E('span', { style: { color: 'var(--danger)' } }, ' · ' + result.failed + ' échecs') : null,
+        result.note ? E('div', { style: { color: 'var(--text-secondary)', marginTop: '0.3rem' } }, result.note) : null
+      )
+    )
+  );
+};
+
 // ── AdminNewsletterPanel — liste des inscrits newsletter (footer public) ────
 // GET /api/admin/newsletter-subscribers (admin only). Table newsletter_subscribers,
 // alimentée par le formulaire "S'abonner" du footer (email uniquement — pas de
@@ -25569,6 +25651,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "emails", icon: "envelope", label: "Emails envoy\xE9s" },
     { id: "newsletter", icon: "newspaper", label: "📰 Newsletter" },
     { id: "broadcast", icon: "bullhorn", label: "📣 Campagne email" },
+    { id: "broadcast_wa", icon: "comment-dots", label: "📲 Campagne WhatsApp" },
     { id: "revenue", icon: "crown", label: "💰 Revenus & Commissions" },
     { id: "payouts", icon: "money-bill-wave", label: "Paiements vendeurs" },
     { id: "payout_requests", icon: "hand-holding-usd", label: "Retraits", badge: stats.pendingPayouts ?? _payoutReqs.filter((r) => r.status === "pending").length },
@@ -26998,6 +27081,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
   view === "validations" && React.createElement(AdminValidationPanel, { addToast }),
   view === "newsletter" && React.createElement(AdminNewsletterPanel, { addToast }),
   view === "broadcast" && React.createElement(AdminBroadcastPanel, { addToast }),
+  view === "broadcast_wa" && React.createElement(AdminBroadcastWhatsAppPanel, { addToast }),
   view === "livraison_admin" && React.createElement(AdminLivraisonPanel, { addToast }),
   view === "depannage_admin" && React.createElement(AdminRescuePanel, { addToast }),
   view === "transport_admin" && React.createElement(AdminTransportPanel, { addToast }),
