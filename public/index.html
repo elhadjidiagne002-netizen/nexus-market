@@ -7292,8 +7292,15 @@ window.addEventListener('unhandledrejection', function(event) {
     function openProfileEditor() {
       if (!DataService._sb) return;
       DataService._sb.from('couriers').select('id,vehicle_type,vehicle_plate,zones').eq('user_id', userId).maybeSingle().then(function (r) {
-        if (r && r.data) setProfileForm({ id: r.data.id, vehicle_type: r.data.vehicle_type || 'moto', vehicle_plate: r.data.vehicle_plate || '', zones: r.data.zones || [] });
-        setShowProfile(true);
+        var base = (r && r.data)
+          ? { id: r.data.id, vehicle_type: r.data.vehicle_type || 'moto', vehicle_plate: r.data.vehicle_plate || '', zones: r.data.zones || [] }
+          : { id: null, vehicle_type: 'moto', vehicle_plate: '', zones: [] };
+        // Position de base (adresse par défaut) = profiles.home_lat/lng, utilisée quand le
+        // coursier est hors ligne (cf. RPC nearby_couriers_offline, based_on='inscription').
+        DataService._sb.from('profiles').select('home_lat,home_lng').eq('id', userId).maybeSingle().then(function (pr) {
+          if (pr && pr.data && pr.data.home_lat != null && pr.data.home_lng != null) { base.home_lat = pr.data.home_lat; base.home_lng = pr.data.home_lng; }
+          setProfileForm(base); setShowProfile(true);
+        }).catch(function () { setProfileForm(base); setShowProfile(true); });
       });
       if (!allZones.length) { try { DataService.getDeliveryZones().then(function (zs) { setAllZones(zs || []); }).catch(function () {}); } catch (e) {} }
     }
@@ -7308,15 +7315,22 @@ window.addEventListener('unhandledrejection', function(event) {
     function saveProfile() {
       if (!profileForm) return;
       setProfileBusy(true);
-      DataService._sb.from('couriers').update({
+      var sb = DataService._sb;
+      function done() { setProfileBusy(false); toast('✅ Profil mis à jour', 'success'); setShowProfile(false); }
+      // Position de base → profiles.home_lat/lng (adresse par défaut hors ligne).
+      function saveHome() {
+        if (profileForm.home_lat == null || profileForm.home_lng == null) { done(); return; }
+        sb.from('profiles').update({ home_lat: profileForm.home_lat, home_lng: profileForm.home_lng }).eq('id', userId)
+          .then(function () { done(); }, function () { done(); });
+      }
+      if (!profileForm.id) { saveHome(); return; } // fiche coursier pas encore créée : on ne sauve que la position
+      sb.from('couriers').update({
         vehicle_type: profileForm.vehicle_type,
         vehicle_plate: profileForm.vehicle_plate,
         zones: profileForm.zones
       }).eq('id', profileForm.id).then(function (r) {
-        setProfileBusy(false);
-        if (r && r.error) { toast('Erreur : ' + r.error.message, 'error'); return; }
-        toast('✅ Profil mis à jour', 'success');
-        setShowProfile(false);
+        if (r && r.error) { setProfileBusy(false); toast('Erreur : ' + r.error.message, 'error'); return; }
+        saveHome();
       });
     }
 
@@ -7670,6 +7684,21 @@ window.addEventListener('unhandledrejection', function(event) {
                 var on = profileForm.zones.indexOf(name) >= 0;
                 return E('span', { key: name, onClick: function () { toggleZone(name); }, style: { padding: '.35rem .7rem', borderRadius: 99, fontSize: '.78rem', fontWeight: 600, cursor: 'pointer', border: '1px solid ' + (on ? '#006d40' : '#e5e7eb'), background: on ? '#006d40' : '#fff', color: on ? '#fff' : '#374151' } }, name);
               }))),
+          // Position de base / adresse par défaut : sert à vous proposer aux clients quand
+          // vous êtes hors ligne (sinon on utilise votre position live). GPS ou repère carte.
+          E('div', { className: 'form-group' },
+            E('label', { className: 'form-label' }, '📍 Ma position de base (adresse par défaut)'),
+            E('div', { style: { fontSize: '.72rem', color: '#888', marginBottom: '.45rem' } }, 'Utilisée pour vous proposer aux clients proches quand vous êtes hors ligne.'),
+            E('button', { type: 'button', className: 'btn btn-secondary', style: { width: '100%', marginBottom: '.45rem' }, onClick: function () {
+              if (!window.NexusMap || !NexusMap.locateMe) { toast('Carte indisponible — placez le repère à la main.', 'warning'); return; }
+              NexusMap.locateMe({ enableHighAccuracy: false, timeout: 8000 }).then(function (p) {
+                setProfileForm(function (f) { return Object.assign({}, f, { home_lat: p.lat, home_lng: p.lng }); });
+                toast('📍 Position enregistrée', 'success');
+              }).catch(function () { toast('GPS indisponible — glissez le repère sur la carte.', 'warning'); });
+            } }, '📍 Utiliser ma position actuelle (GPS)'),
+            (profileForm.home_lat != null && profileForm.home_lng != null) && E('div', { style: { fontSize: '.74rem', color: '#006d40', fontWeight: 600, marginBottom: '.45rem' } }, '✓ Position définie (' + Number(profileForm.home_lat).toFixed(4) + ', ' + Number(profileForm.home_lng).toFixed(4) + ')'),
+            E('div', { ref: function (el) { if (!el || el.__homepick || !window.NexusMap) return; el.__homepick = true; var c = (profileForm.home_lat != null && profileForm.home_lng != null) ? { lat: profileForm.home_lat, lng: profileForm.home_lng } : { lat: 14.6928, lng: -17.4467 }; NexusMap.pickLocation(el, { lat: c.lat, lng: c.lng, color: '#006d40', onChange: function (la, ln) { setProfileForm(function (f) { return Object.assign({}, f, { home_lat: la, home_lng: ln }); }); } }); }, className: 'nexus-map', style: { height: 170 } }),
+            E('div', { style: { fontSize: '.68rem', color: '#888', marginTop: '.3rem' } }, 'Glissez le repère vert sur votre point de départ habituel.')),
           E('div', { style: { display: 'flex', gap: '.5rem', marginTop: '1rem' } },
             E('button', { className: 'btn btn-secondary', style: { flex: 1 }, onClick: function () { setShowProfile(false); } }, 'Annuler'),
             E('button', { className: 'btn btn-primary', style: { flex: 1 }, disabled: profileBusy, onClick: saveProfile }, profileBusy ? '…' : 'Enregistrer'))
