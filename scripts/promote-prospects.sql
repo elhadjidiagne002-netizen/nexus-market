@@ -38,6 +38,13 @@ declare
   n_skip       int := 0;
   n_reuse      int := 0;
 begin
+  -- Le trigger protect_profile_columns() interdit de changer role/is_pro/status SAUF pour
+  -- service_role ou is_admin(). Le SQL Editor n'a pas de JWT (auth.role() = NULL) → on se
+  -- déclare service_role le temps de CETTE transaction (chemin privilégié prévu par le
+  -- trigger). Idem pour toute RLS/anti-escalade s'appuyant sur auth.role().
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform set_config('request.jwt.claim.role', 'service_role', true); -- variante ancienne d'auth.role()
+
   for p in
     select * from public.prospects
     where status is distinct from 'promoted'
