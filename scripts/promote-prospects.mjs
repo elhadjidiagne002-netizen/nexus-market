@@ -115,13 +115,15 @@ async function main() {
       if (c.geo && p.lat != null && p.lng != null) { upd.current_lat = p.lat; upd.current_lng = p.lng; upd.location_updated_at = new Date().toISOString(); }
       if (Object.keys(upd).length) await rest(`/profiles?id=eq.${encodeURIComponent(uid)}`, { method: 'PATCH', body: JSON.stringify(upd) }).catch((e) => { throw new Error('profiles: ' + e.message); });
 
+      // couriers.phone (et parfois pros.phone) est NOT NULL + UNIQUE → téléphone-repère
+      // unique si le prospect n'a pas de numéro (évite null/'' en doublon).
+      const ph = (p.phone && String(p.phone).trim()) || ('na-' + String(uid).replace(/-/g, '').slice(0, 8));
       if (c.fiche === 'pros') {
         // status 'active' (visible direct) ; PAS de lat/lng ici (colonnes absentes → géo sur profiles).
-        // phone NULL si vide : un index unique sur phone rejette deux '' mais accepte plusieurs NULL.
-        const fiche = { user_id: uid, profession: p.profession, name: p.name || '', phone: p.phone || null, city: p.city || null, status: 'active', disponible: true };
+        const fiche = { user_id: uid, profession: p.profession, name: p.name || '', phone: ph, city: p.city || null, status: 'active', disponible: true };
         await rest(`/pros?on_conflict=user_id`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(fiche) }).catch((e) => { throw new Error('pros: ' + e.message); });
       } else if (c.fiche === 'couriers') {
-        const fiche = { user_id: uid, name: p.name || '', phone: p.phone || null, status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
+        const fiche = { user_id: uid, name: p.name || '', phone: ph, status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
         await rest(`/couriers?on_conflict=user_id`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(fiche) }).catch((e) => { throw new Error('couriers: ' + e.message); });
       }
 

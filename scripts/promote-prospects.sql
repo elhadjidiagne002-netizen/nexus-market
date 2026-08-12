@@ -38,6 +38,8 @@ declare
   v_slug       text;
   v_d4         text;
   v_role       text;
+  v_phone      text;
+  v_note       text;
   v_pwd        text := 'Nexus@2024';   -- ← mot de passe attribué à tous les comptes créés
   n_ok         int := 0;
   n_skip       int := 0;
@@ -141,16 +143,25 @@ begin
     where id = v_uid;
 
     -- ---- fiche métier ----
+    -- `couriers.phone` (et parfois `pros.phone`) est NOT NULL + UNIQUE. Un prospect sans
+    -- numéro, ou dont le numéro duplique une fiche existante, reçoit un téléphone-repère
+    -- UNIQUE (`na-<8 hex de l'uid>`) pour satisfaire les contraintes et sortir de la file.
+    -- La note le signale → l'admin pourra corriger/rejeter ensuite.
+    v_note := null;
     if p.account_type = 'pro' then
-      -- phone en NULL si vide : un index unique sur phone rejette deux chaînes '' mais
-      -- accepte plusieurs NULL (btree traite les NULL comme distincts).
+      v_phone := nullif(trim(p.phone), '');
+      if v_phone is not null and exists (select 1 from public.pros where phone = v_phone and user_id <> v_uid) then v_phone := null; end if;
+      if v_phone is null then v_phone := 'na-' || left(v_uid::text, 8); v_note := 'téléphone manquant/dupliqué → repère'; end if;
       insert into public.pros (user_id, profession, name, phone, city, status, disponible)
-      values (v_uid, p.profession, coalesce(p.name,''), nullif(p.phone,''), p.city, 'active', true)
+      values (v_uid, p.profession, coalesce(p.name,''), v_phone, p.city, 'active', true)
       on conflict (user_id) do update
         set profession = excluded.profession, status = 'active', disponible = true;
     elsif p.account_type = 'courier' then
+      v_phone := nullif(trim(p.phone), '');
+      if v_phone is not null and exists (select 1 from public.couriers where phone = v_phone and user_id <> v_uid) then v_phone := null; end if;
+      if v_phone is null then v_phone := 'na-' || left(v_uid::text, 8); v_note := 'téléphone manquant/dupliqué → repère'; end if;
       insert into public.couriers (user_id, name, phone, status)
-      values (v_uid, coalesce(p.name,''), nullif(p.phone,''), 'pending')
+      values (v_uid, coalesce(p.name,''), v_phone, 'pending')
       on conflict (user_id) do nothing;
     end if;
 
@@ -161,7 +172,7 @@ begin
 
     n_ok := n_ok + 1;
     insert into _promo_log(name, account_type, email, outcome, detail)
-      values (p.name, p.account_type, v_email, 'promu', null);
+      values (p.name, p.account_type, v_email, 'promu', v_note);
    exception when others then
      n_err := n_err + 1;
      insert into _promo_log(name, account_type, email, outcome, detail)

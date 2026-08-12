@@ -117,6 +117,7 @@ export async function onRequest({ request, env }) {
       }
 
       // Fiche métier.
+      const ph = (p.phone && String(p.phone).trim()) || ('na-' + String(uid).replace(/-/g, '').slice(0, 8));
       if (c.fiche === 'pros') {
         // NB: la table `pros` n'a PAS de lat/lng — la géo vit sur profiles.current_lat/lng
         // (écrite plus haut via c.geo) et se propage à profiles.geolocation via le trigger
@@ -125,11 +126,12 @@ export async function onRequest({ request, env }) {
         // status='active' : la promotion est faite par l'ADMIN depuis son dashboard (=validation)
         // → le pro est directement visible dans la recherche. L'admin peut le « Masquer »
         // ensuite depuis « Modération NEXUS Pro » si besoin.
-        // phone NULL si vide : un index unique sur phone rejette deux '' mais accepte plusieurs NULL.
-        const fiche = { user_id: uid, profession: p.profession, name: p.name || '', phone: p.phone || null, city: p.city || null, status: 'active', disponible: true };
+        // couriers.phone (et parfois pros.phone) est NOT NULL + UNIQUE → téléphone-repère
+        // unique si le prospect n'a pas de numéro (évite null/'' en doublon).
+        const fiche = { user_id: uid, profession: p.profession, name: p.name || '', phone: ph, city: p.city || null, status: 'active', disponible: true };
         await sb.from('pros').upsert(fiche, 'user_id').catch((e) => { throw new Error('pros: ' + e.message); });
       } else if (c.fiche === 'couriers') {
-        const fiche = { user_id: uid, name: p.name || '', phone: p.phone || null, status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
+        const fiche = { user_id: uid, name: p.name || '', phone: ph, status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
         await sb.from('couriers').upsert(fiche, 'user_id').catch((e) => { throw new Error('couriers: ' + e.message); });
       }
 
