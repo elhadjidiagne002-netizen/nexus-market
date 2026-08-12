@@ -97,7 +97,7 @@ reste dans ton navigateur (aucun envoi ailleurs que vers ton propre projet Supab
 <div class="tabs">
   <div class="tab active" data-tab="import">① Importer les CSV → prospects</div>
   <div class="tab" data-tab="promote">② Promouvoir prospects → comptes</div>
-  <div class="tab" data-tab="catalogue">③ Catalogue (Transport · Location · Immobilier)</div>
+  <div class="tab" data-tab="catalogue">③ Catalogue (tous modules)</div>
   <div class="tab" data-tab="produits">④ Produits (marge & export)</div>
 </div>
 
@@ -179,15 +179,20 @@ reste dans ton navigateur (aucun envoi ailleurs que vers ton propre projet Supab
 <!-- ─── CATALOGUE (Transport / Location / Immobilier) ─── -->
 <div class="card hidden" id="tab-catalogue">
   <h2><span class="num">C</span> Importer le catalogue vers nexusmarket.sn</h2>
-  <p class="muted">Trois familles, détectées automatiquement d'après les colonnes du CSV :</p>
+  <p class="muted">Familles détectées automatiquement d'après les colonnes du CSV — couvre <b>tous les modules</b> du site :</p>
   <ul class="muted" style="line-height:1.7;margin-top:4px;">
-    <li>🚌 <b>Transport</b> (colonnes <code>Compagnie</code> + <code>Type_vehicule</code>) → tables
-      <code>transport_lines</code> + <code>transport_recurrences</code>. Une <b>ligne</b> par trajet, une ou
-      plusieurs <b>récurrences</b> (quotidien, plusieurs/jour, hebdo à jours fixes, sur demande, jours d'événement).</li>
-    <li>🔑 <b>Location</b> (colonnes <code>Categorie</code> + <code>Prix_jour_fcfa</code>) → un <b>compte annonceur</b>
-      (vendeur) par téléphone + un <b>produit</b> <code>is_rental</code> (specs <code>rental_specs</code>).</li>
-    <li>🏠 <b>Immobilier</b> (colonnes <code>Transaction</code> + <code>Type_bien</code>) → un <b>compte annonceur</b>
-      + un <b>produit</b> <code>is_realestate</code> (specs <code>realestate_specs</code>). Catégorie = « Immobilier ».</li>
+    <li>🚌 <b>Transport</b> (<code>Compagnie</code> + <code>Type_vehicule</code>) → <code>transport_lines</code> +
+      <code>transport_recurrences</code> (module Covoiturage, onglet « Lignes »).</li>
+    <li>🔑 <b>Location</b> (<code>Categorie</code> + <code>Prix_jour_fcfa</code>) → compte annonceur + produit
+      <code>is_rental</code> (<code>rental_specs</code>) — module NEXUS Location.</li>
+    <li>🏠 <b>Immobilier</b> (<code>Transaction</code> + <code>Type_bien</code>) → compte annonceur + produit
+      <code>is_realestate</code> (<code>realestate_specs</code>) — module Immobilier.</li>
+    <li>🐏 <b>Élevage/Animaux</b> (<code>Espece</code>/<code>Race</code> + <code>Prix_fcfa</code>) → compte éleveur
+      (<code>is_breeder</code>) + produit <code>is_animal</code> (<code>animal_specs</code> : type, race, poids, âge, sexe).</li>
+    <li>🚗 <b>Covoiturage</b> (<code>Origine</code> + <code>Destination</code> + <code>Date_depart</code>) →
+      <code>transport_trips</code> (module Covoiturage, onglet « Trajets »), conducteur = compte créé.</li>
+    <li>⚡ <b>Annonce Express</b> (<code>Titre</code> + <code>Categorie</code> + <code>Prix_fcfa</code>) →
+      <code>annonces_express</code> (petites annonces, sans compte, expiration 30 j).</li>
   </ul>
   <div class="warnbox">💶 <b>Convention monétaire</b> : les prix des CSV sont en <b>FCFA</b>. Location/Immobilier sont des
     <code>products</code> → <code>price</code> est stocké en <b>EUR</b> (÷ 655,957, convention de la pile) ; les
@@ -202,7 +207,7 @@ reste dans ton navigateur (aucun envoi ailleurs que vers ton propre projet Supab
       <code>is_realestate</code>/<code>realestate_specs</code> déjà présentes en prod).</p>
   </details>
 
-  <div class="filebox" id="dropCat">📂 Dépose ici tes CSV transport / location / immobilier
+  <div class="filebox" id="dropCat">📂 Dépose ici tes CSV (transport · location · immobilier · animaux · covoiturage · annonces)
     <input type="file" id="filesCat" accept=".csv" multiple class="hidden"></div>
   <div id="fileListCat"></div>
 
@@ -934,15 +939,30 @@ function buildRecurrence(freqRaw, joursRaw, depTimes, arrTimes){
   return rec;
 }
 
+// Date+heure → timestamp ISO (« 2026-08-15 » + « 08h00 » → 2026-08-15T08:00:00).
+function parseDepart(dateStr, timeStr){
+  const d=String(dateStr||'').trim(); if(!d) return null;
+  let iso=null;
+  if(/^\d{4}-\d{2}-\d{2}/.test(d)) iso=d.slice(0,10);
+  else { const m=d.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/); if(m){ let y=m[3]; if(y.length===2) y='20'+y; iso=`${y}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`; } }
+  if(!iso) return null;
+  let hh='08', mm='00'; const tm=String(timeStr||'').trim().match(/(\d{1,2})\s*[:hH]?\s*(\d{2})?/);
+  if(tm){ hh=String(tm[1]).padStart(2,'0'); mm=tm[2]?String(tm[2]).padStart(2,'0'):'00'; }
+  return `${iso}T${hh}:${mm}:00`;
+}
 function detectCatType(headers){
   const H=(headers||[]).map(h=>String(h).trim());
   const has=k=>H.includes(k);
   if(has('Compagnie') && has('Type_vehicule')) return 'transport';
   if(has('Transaction') && has('Type_bien')) return 'immobilier';
   if(has('Categorie') && (has('Prix_jour_fcfa')||has('Prix_jour'))) return 'location';
+  if(has('Espece')||has('Espèce')||has('Type_animal')||(has('Race')&&has('Prix_fcfa'))) return 'animaux';
+  if((has('Origine')||has('Ville_depart')||has('Depart')) && (has('Destination')||has('Ville_arrivee')||has('Arrivee')) && (has('Date_depart')||has('Places')||has('Prix_place_fcfa')||has('Prix_place'))) return 'covoiturage';
+  if(has('Titre') && has('Prix_fcfa') && has('Categorie') && !has('Transaction')) return 'annonce';
   return null;
 }
-const CAT_LABEL = { transport:'🚌 Transport', location:'🔑 Location', immobilier:'🏠 Immobilier' };
+const CAT_LABEL = { transport:'🚌 Transport', location:'🔑 Location', immobilier:'🏠 Immobilier',
+  animaux:'🐏 Élevage/Animaux', covoiturage:'🚗 Covoiturage', annonce:'⚡ Annonce Express' };
 
 // ── Sélection de fichiers (onglet catalogue) ────────────────────────────────
 let parsedCat=[]; // {name, catType, rows, headers}
@@ -961,7 +981,7 @@ function handleCatFiles(fl){
       parsedCat.push({name:f.name,catType:ct,rows:res.data,headers});
       renderCatFiles();
       log(`Chargé ${f.name} — ${res.data.length} lignes (${ct?CAT_LABEL[ct]:'type inconnu ✗'}).`, ct?'info':'warn');
-      if(!ct) log(`  → colonnes non reconnues. Transport=Compagnie+Type_vehicule · Location=Categorie+Prix_jour_fcfa · Immobilier=Transaction+Type_bien.`,'warn');
+      if(!ct) log(`  → colonnes non reconnues. Transport=Compagnie+Type_vehicule · Location=Categorie+Prix_jour_fcfa · Immobilier=Transaction+Type_bien · Animaux=Espece(+Prix_fcfa) · Covoiturage=Origine+Destination+Date_depart · Annonce=Titre+Categorie+Prix_fcfa.`,'warn');
     }, error:err=>log(`✗ ${f.name}: ${err.message}`,'err')});
   });
 }
@@ -1152,6 +1172,60 @@ $('#btnImportCat').onclick = async () => {
             image_url:s(pick(r,'Image_url')), vendor_id:v.uid, vendor_name:annonceur, active:true,
             is_realestate:true, realestate_specs:specs }, 'is_realestate');
           log(`  ✓ Immobilier « ${name} » ${st} (annonceur ${v.email})`,'ok'); ok++;
+        }
+        else if(p.catType==='animaux'){
+          // Élevage/Animaux → products.is_animal + animal_specs (module Élevage).
+          const name=pick(r,'Nom','Titre'), phone=pick(r,'Telephone');
+          const annonceur=pick(r,'Annonceur','Eleveur','Éleveur','Vendeur')||name;
+          const price=intFcfa(pick(r,'Prix_fcfa','Prix'));
+          if(!name || !price){ log(`  ⊘ animal « ${name||'?'} » sans nom/prix ignoré`,'warn'); done++; prog.value=done; continue; }
+          const lat=num(pick(r,'Latitude')), lng=num(pick(r,'Longitude')), region=s(pick(r,'Region'));
+          const specs={ type:s(pick(r,'Espece','Espèce','Type_animal','Type')), race:s(pick(r,'Race')),
+            poids_kg:num(pick(r,'Poids_kg','Poids')), age:s(pick(r,'Age','Âge')),
+            sexe:((s(pick(r,'Sexe'))||'').toUpperCase().slice(0,1))||null };
+          if(dry){ log(`  • [dry] Animal « ${name} » — ${price} F · ${specs.type||'?'} ${specs.race||''} · éleveur ${annonceur} (${phone||'sans tel'})`,'info'); ok++; done++; prog.value=done; continue; }
+          const v=await ensureVendor(annonceur, phone, region, lat, lng, dry); if(v.created) vendors++;
+          await sb.from('profiles').update({ is_breeder:true }).eq('id',v.uid).then(function(){},function(){});
+          const st=await upsertAnnonce({ name, category:specs.type||'Élevage',
+            price:price/EUR_TO_XOF, stock:parseInt(pick(r,'Stock'),10)||1, description:s(pick(r,'Description')),
+            image_url:s(pick(r,'Image_url')), vendor_id:v.uid, vendor_name:annonceur, active:true,
+            is_animal:true, animal_specs:specs, is_local:true, local_region:region||null }, 'is_animal');
+          log(`  ✓ Animal « ${name} » ${st} (éleveur ${v.email})`,'ok'); ok++;
+        }
+        else if(p.catType==='covoiturage'){
+          // Covoiturage → transport_trips (module Covoiturage, onglet Trajets). status='scheduled'.
+          const origin=pick(r,'Origine','Ville_depart','Depart')||'Dakar';
+          const dest=pick(r,'Destination','Ville_arrivee','Arrivee');
+          const departISO=parseDepart(pick(r,'Date_depart','Date'), pick(r,'Heure_depart','Heure'));
+          const seats=parseInt(pick(r,'Places','Places_total','Nb_places'),10)||3;
+          const price=intFcfa(pick(r,'Prix_place_fcfa','Prix_place','Prix_fcfa'));
+          const driver=pick(r,'Conducteur','Transporteur','Compagnie','Annonceur')||'Transporteur';
+          const phone=pick(r,'Telephone');
+          if(!dest || !departISO){ log(`  ⊘ covoiturage « ${origin}→${dest||'?'} » sans destination/date ignoré`,'warn'); done++; prog.value=done; continue; }
+          if(dry){ log(`  • [dry] Covoiturage ${origin} → ${dest} @${departISO} · ${seats} pl · ${price||'?'} F · ${driver}`,'info'); ok++; done++; prog.value=done; continue; }
+          const lat=num(pick(r,'Latitude')), lng=num(pick(r,'Longitude'));
+          const v=await ensureVendor(driver, phone, s(pick(r,'Region')), lat, lng, dry); if(v.created) vendors++;
+          const { error }=await sb.from('transport_trips').insert({ driver_id:v.uid, driver_type:'transporteur',
+            origin_city:origin, destination_city:dest, origin_address:s(pick(r,'Adresse_depart')), destination_address:s(pick(r,'Adresse_arrivee')),
+            departure_at:departISO, vehicle_type:vehType(pick(r,'Type_vehicule')||'voiture'),
+            seats_total:seats, seats_available:seats, price_per_seat_fcfa:price||0,
+            allows_packages: boolOui(pick(r,'Colis','Bagages'))===true, notes:s(pick(r,'Notes','Description')), status:'scheduled' });
+          if(error) throw new Error('transport_trips: '+error.message);
+          log(`  ✓ Covoiturage ${origin} → ${dest} inséré (conducteur ${v.email})`,'ok'); ok++;
+        }
+        else if(p.catType==='annonce'){
+          // Annonce Express → annonces_express (petites annonces sans compte). status='active'.
+          const title=pick(r,'Titre','Nom'), price=intFcfa(pick(r,'Prix_fcfa','Prix'));
+          const cat=s(pick(r,'Categorie')), phone=pick(r,'Telephone');
+          if(!title || !price){ log(`  ⊘ annonce « ${title||'?'} » sans titre/prix ignorée`,'warn'); done++; prog.value=done; continue; }
+          if(dry){ log(`  • [dry] Annonce express « ${title} » — ${price} F · ${cat||'?'} · ${phone||'sans tel'}`,'info'); ok++; done++; prog.value=done; continue; }
+          const desc=[title, s(pick(r,'Description'))].filter(Boolean).join(' — ');
+          const { error }=await sb.from('annonces_express').insert({ photo_url:s(pick(r,'Image_url','Photo_url')),
+            price_fcfa:price, category:cat||'Divers', description:desc, phone:phone||null, email:s(pick(r,'Email')),
+            city:s(pick(r,'Ville','City')), status:'active', source:s(pick(r,'Source'))||'import',
+            expires_at:new Date(Date.now()+30*864e5).toISOString() });
+          if(error) throw new Error('annonces_express: '+error.message);
+          log(`  ✓ Annonce express « ${title} » insérée`,'ok'); ok++;
         }
       }catch(e){ err++; log(`  ✗ ${e.message||e}`,'err');
         if(/transport_lines|transport_recurrences.*does not exist|schema cache/i.test(String(e.message)))
