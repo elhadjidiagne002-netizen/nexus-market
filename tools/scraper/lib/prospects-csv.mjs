@@ -42,6 +42,15 @@ export function isMobile(phoneFmt) {
   return d.startsWith('221') && d[3] === '7';
 }
 
+// Extrait le 1er téléphone sénégalais valide d'un texte libre (bio Facebook/TikTok,
+// description…). Renvoie le format normalisé, ou '' si aucun.
+export function extractPhone(text) {
+  const s = String(text || '');
+  const cands = s.match(/\+?\d[\d\s.\-]{7,}\d/g) || [];
+  for (const c of cands) { const p = normalizePhone(c); if (p) return p; }
+  return '';
+}
+
 // Devine la ville depuis une adresse texte (dernier segment connu).
 export function cityFromAddress(addr) {
   const s = String(addr || '');
@@ -57,19 +66,23 @@ const csvCell = (v) => {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 
-// Construit une ligne { Nom, Ville, Region, Adresse, Telephone, Source, Latitude, Longitude }.
-export function toRow({ name, city, region, address, phone, source, lat, lng }) {
-  const tel = normalizePhone(phone);
-  const ville = city || cityFromAddress(address);
+// Construit une ligne prospect. `phone` peut être déjà normalisé ou brut ; si vide et
+// `bio` fourni (réseaux sociaux), on tente d'extraire un numéro du texte. `profession`
+// et `url` (lien de la page/profil) sont optionnels — lus par nexus_importer.html.
+export function toRow({ name, city, region, address, phone, source, lat, lng, profession, url, bio }) {
+  const tel = normalizePhone(phone) || extractPhone(phone) || extractPhone(bio);
+  const ville = city || cityFromAddress(address) || cityFromAddress(bio);
   return {
     Nom: String(name || '').trim(),
+    Profession: String(profession || '').trim(),
+    Telephone: tel,
     Ville: ville,
     Region: region || regionOf(ville),
     Adresse: String(address || '').replace(/\s+/g, ' ').trim(),
-    Telephone: tel,
-    Source: source || '',
     Latitude: (lat != null && isFinite(lat)) ? Number(lat).toFixed(6) : '',
     Longitude: (lng != null && isFinite(lng)) ? Number(lng).toFixed(6) : '',
+    Source: source || '',
+    Url: String(url || '').trim(),
   };
 }
 
@@ -88,7 +101,7 @@ export function dedupe(rows, { mobileOnly = false } = {}) {
   return out;
 }
 
-const HEADER = ['Nom', 'Ville', 'Region', 'Adresse', 'Telephone', 'Source', 'Latitude', 'Longitude'];
+const HEADER = ['Nom', 'Profession', 'Telephone', 'Ville', 'Region', 'Adresse', 'Latitude', 'Longitude', 'Source', 'Url'];
 
 export function writeCsv(rows, outPath) {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });

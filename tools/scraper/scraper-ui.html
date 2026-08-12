@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NEXUS — Prospection (Google Maps + Annuaires)</title>
+<title>NEXUS — Prospection (Google Maps · Facebook · TikTok · Annuaires)</title>
 <style>
   :root{--bg:#12121e;--card:#1e1e2f;--card2:#252538;--line:#2a2a40;--ink:#e0e0e0;--ink-soft:#9a9ab5;
     --green:#4CAF50;--green-d:#45a049;--blue:#2196F3;--blue-d:#1976D2;--red:#e05a5a;--amber:#e0a94f;}
@@ -45,8 +45,9 @@
 <body>
 
 <h1>🔎 NEXUS — Prospection assistée</h1>
-<p class="muted">Génère des CSV au format de l'importateur (<code>Nom,Ville,Region,Adresse,Telephone,Source,Latitude,Longitude</code>)
-depuis <b>Google Maps</b> (via Apify) ou un <b>annuaire</b>. Tout se passe dans ton navigateur — le token reste local.</p>
+<p class="muted">Génère des CSV au format de l'importateur (<code>Nom,Profession,Telephone,Ville,Region,Adresse,Latitude,Longitude,Source,Url</code>)
+depuis <b>Google Maps</b>, <b>Facebook</b>, <b>TikTok</b> (via Apify) ou un <b>annuaire</b>. Tout se passe dans ton navigateur — le token reste local.
+⚖️ N'utilise Facebook/TikTok que pour des <b>pages/comptes professionnels publics</b> (contact pro), dans le respect des CGU de chaque plateforme.</p>
 
 <!-- Connexion Apify -->
 <div class="card">
@@ -66,6 +67,8 @@ depuis <b>Google Maps</b> (via Apify) ou un <b>annuaire</b>. Tout se passe dans 
 
 <div class="tabs">
   <div class="tab active" data-tab="maps">🗺️ Google Maps</div>
+  <div class="tab" data-tab="fb">📘 Facebook</div>
+  <div class="tab" data-tab="tk">🎵 TikTok</div>
   <div class="tab" data-tab="dir">📇 Annuaire (config)</div>
 </div>
 
@@ -83,10 +86,51 @@ depuis <b>Google Maps</b> (via Apify) ou un <b>annuaire</b>. Tout se passe dans 
     </div>
   </div>
   <div class="warnbox">💳 Consomme le crédit Apify (~2–5 $ / 1000 lieux ; 5 $/mois gratuits). Une recherche de 40 lieux peut prendre <b>1 à 3 min</b> (l'Actor démarre puis crawle).</div>
-  <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <button class="btn" id="btnRun">🚀 Lancer la prospection</button>
+  <div style="margin-top:12px"><button class="btn" id="btnRun">🚀 Lancer la prospection</button></div>
+</div>
+
+<!-- Facebook -->
+<div class="card hidden" id="tab-fb">
+  <h2><span class="num">A</span> Prospection Facebook (Pages publiques)</h2>
+  <div class="row">
+    <div style="flex:2"><label>URLs de pages Facebook (une par ligne)</label>
+      <textarea id="fb_urls" placeholder="https://facebook.com/GarageX&#10;https://facebook.com/GarageY"></textarea></div>
+    <div style="flex:1;min-width:150px">
+      <label>Métier (colonne Profession)</label><input type="text" id="fb_prof" placeholder="Garage / Mécanicien">
+      <label style="margin-top:10px">Résultats max</label><input type="number" id="fb_max" value="50" min="1" max="500">
+      <label style="margin-top:10px">Colonne « Source »</label><input type="text" id="fb_source" value="facebook">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;color:var(--ink);margin-top:12px">
+        <input type="checkbox" id="fb_mobile" style="width:auto"> Mobiles uniquement (7X)</label>
+    </div>
+  </div>
+  <div class="warnbox">🔎 Cherche « garage Dakar »… sur facebook.com, puis colle ici les <b>URLs des pages</b>. ⚖️ Pages PUBLIQUES de commerces uniquement (prospection B2B, contact pro). 💳 Consomme le crédit Apify.</div>
+  <div style="margin-top:12px"><button class="btn" id="btnRunFb">🚀 Lancer Facebook</button></div>
+</div>
+
+<!-- TikTok -->
+<div class="card hidden" id="tab-tk">
+  <h2><span class="num">A</span> Prospection TikTok (mots-clés / profils)</h2>
+  <div class="row">
+    <div style="flex:2"><label>Mots-clés / hashtags (une par ligne) — ou URLs de profils</label>
+      <textarea id="tk_query" placeholder="garage dakar&#10;mecanicien senegal&#10;#depannageauto"></textarea></div>
+    <div style="flex:1;min-width:150px">
+      <label>Métier (colonne Profession)</label><input type="text" id="tk_prof" placeholder="Garage / Mécanicien">
+      <label style="margin-top:10px">Résultats max</label><input type="number" id="tk_max" value="50" min="1" max="500">
+      <label style="margin-top:10px">Colonne « Source »</label><input type="text" id="tk_source" value="tiktok">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;color:var(--ink);margin-top:12px">
+        <input type="checkbox" id="tk_mobile" style="width:auto"> Mobiles uniquement (7X)</label>
+    </div>
+  </div>
+  <div class="warnbox">📞 Le téléphone est extrait de la <b>bio</b> du créateur quand il y figure. ⚖️ Comptes pro/commerces publics. 💳 Consomme le crédit Apify.</div>
+  <div style="margin-top:12px"><button class="btn" id="btnRunTk">🚀 Lancer TikTok</button></div>
+</div>
+
+<!-- Résultats (partagé) -->
+<div class="card" id="tab-results">
+  <h2><span class="num">B</span> Résultats</h2>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
     <button class="btn blue" id="btnDl" disabled>⬇️ Télécharger le CSV</button>
-    <input type="text" id="fname" value="maps_senegal.csv" style="width:auto;flex:1;min-width:180px">
+    <input type="text" id="fname" value="prospection.csv" style="width:auto;flex:1;min-width:180px">
     <span class="pill" id="stats"></span>
   </div>
   <div id="log">Prêt.</div>
@@ -149,8 +193,7 @@ $('#btnTest').onclick = async () => {
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
   t.classList.add('active');
-  $('#tab-maps').classList.toggle('hidden', t.dataset.tab !== 'maps');
-  $('#tab-dir').classList.toggle('hidden', t.dataset.tab !== 'dir');
+  ['maps','fb','tk','dir'].forEach(k => { const el = $('#tab-'+k); if (el) el.classList.toggle('hidden', t.dataset.tab !== k); });
 });
 
 // ── Transform (repris de lib/prospects-csv.mjs) ─────────────────────────
@@ -159,55 +202,96 @@ const regionOf = v => { v = String(v||'').trim().toLowerCase(); if (VILLE_REGION
 const cityFromAddress = a => { const s = String(a||''); for (const k in VILLE_REGION){ if (new RegExp('\\b'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b','i').test(s)) return k.split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' '); } return ''; };
 function normalizePhone(raw){ let d = String(raw||'').replace(/\D/g,'').replace(/^00/,''); if(!d) return ''; if(d.length===9&&/^[73]/.test(d)) d='221'+d; if(!d.startsWith('221')) return ''; const n=d.slice(3); if(n.length!==9) return ''; return `+221 ${n.slice(0,2)} ${n.slice(2,5)} ${n.slice(5,7)} ${n.slice(7,9)}`; }
 const isMobile = p => { const d=String(p||'').replace(/\D/g,''); return d.startsWith('221')&&d[3]==='7'; };
-function toRow(o){ const tel=normalizePhone(o.phone); const ville=o.city||cityFromAddress(o.address); return {Nom:String(o.name||'').trim(),Ville:ville,Region:o.region||regionOf(ville),Adresse:String(o.address||'').replace(/\s+/g,' ').trim(),Telephone:tel,Source:o.source||'',Latitude:(o.lat!=null&&isFinite(o.lat))?Number(o.lat).toFixed(6):'',Longitude:(o.lng!=null&&isFinite(o.lng))?Number(o.lng).toFixed(6):''}; }
+function extractPhone(text){ const cands=String(text||'').match(/\+?\d[\d\s.\-]{7,}\d/g)||[]; for(const c of cands){ const p=normalizePhone(c); if(p) return p; } return ''; }
+const getPath=(o,p)=>p.split('.').reduce((v,k)=>v==null?v:v[k],o);
+const firstOf=(o,keys)=>{ for(const k of keys){ const v=getPath(o,k); if(v!=null&&String(v).trim()!=='') return v; } return ''; };
+function toRow(o){ const tel=normalizePhone(o.phone)||extractPhone(o.phone)||extractPhone(o.bio); const ville=o.city||cityFromAddress(o.address)||cityFromAddress(o.bio); return {Nom:String(o.name||'').trim(),Profession:String(o.profession||'').trim(),Telephone:tel,Ville:ville,Region:o.region||regionOf(ville),Adresse:String(o.address||'').replace(/\s+/g,' ').trim(),Latitude:(o.lat!=null&&isFinite(o.lat))?Number(o.lat).toFixed(6):'',Longitude:(o.lng!=null&&isFinite(o.lng))?Number(o.lng).toFixed(6):'',Source:o.source||'',Url:String(o.url||'').trim()}; }
+// Normalise un item Facebook (page) ou TikTok (créateur) → ligne prospect.
+function socialItem(it, profession, source){
+  const name=firstOf(it,['title','name','pageName','fullName','authorMeta.nickName','authorMeta.name','author.nickname','nickName','username','authorMeta.uniqueId']);
+  const bio=firstOf(it,['bio','about','intro','description','pageInfo','info','signature','authorMeta.signature','author.signature','text']);
+  const phoneField=firstOf(it,['phone','phoneNumber','contactPhone','mobile','whatsapp','tel']);
+  const address=firstOf(it,['address','addressString','location','city','authorMeta.region']);
+  const url=firstOf(it,['url','pageUrl','webUrl','facebookUrl','profileUrl','authorMeta.profileUrl','authorMeta.webUrl','webVideoUrl']);
+  const lat=firstOf(it,['location.lat','lat','latitude','coordinates.lat']), lng=firstOf(it,['location.lng','lng','longitude','coordinates.lng']);
+  return toRow({name,profession,bio,phone:phoneField,address,url,source,lat:lat===''?null:Number(lat),lng:lng===''?null:Number(lng)});
+}
 function dedupe(rows,mobileOnly){ const seen=new Set(),out=[]; for(const r of rows){ if(!r.Nom) continue; if(mobileOnly&&!isMobile(r.Telephone)) continue; const k=r.Nom.toLowerCase().replace(/\s+/g,' ')+'|'+r.Telephone; if(seen.has(k)) continue; seen.add(k); out.push(r);} out.sort((a,b)=>isMobile(b.Telephone)-isMobile(a.Telephone)); return out; }
-const HEADER=['Nom','Ville','Region','Adresse','Telephone','Source','Latitude','Longitude'];
+const HEADER=['Nom','Profession','Telephone','Ville','Region','Adresse','Latitude','Longitude','Source','Url'];
 const csvCell=v=>{const s=String(v==null?'':v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
 function buildCsv(rows){ return [HEADER.join(',')].concat(rows.map(r=>HEADER.map(h=>csvCell(r[h])).join(','))).join('\n')+'\n'; }
 
-// ── Lancer Google Maps ──────────────────────────────────────────────────
+// ── Résultats partagés + moteur Apify ───────────────────────────────────
 let lastRows = [];
 function log(m){ $('#log').textContent = m; }
-$('#btnRun').onclick = async () => {
-  const t = $('#token').value.trim(); if (!t) { alert('Colle et teste ton token Apify (encadré 0).'); return; }
-  const queries = $('#queries').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  if (!queries.length) { alert('Entre au moins une recherche.'); return; }
-  const max = Math.max(1, parseInt($('#max').value,10)||40);
-  const mobileOnly = $('#mobileOnly').checked;
-  const source = $('#source').value.trim() || 'google-maps';
+function showResults(rows){
+  lastRows = rows;
+  const withPhone = rows.filter(r=>r.Telephone).length, mob = rows.filter(r=>isMobile(r.Telephone)).length;
+  $('#stats').textContent = rows.length + ' fiches · ' + withPhone + ' avec tél · ' + mob + ' mobiles';
+  const thead = $('#preview thead'), tbody = $('#preview tbody');
+  thead.innerHTML = '<tr>' + HEADER.map(h=>'<th>'+h+'</th>').join('') + '</tr>';
+  tbody.innerHTML = rows.slice(0,25).map(r=>'<tr>'+HEADER.map(h=>'<td title="'+csvCell(r[h]).replace(/"/g,'&quot;')+'">'+(r[h]||'')+'</td>').join('')+'</tr>').join('');
+  $('#previewWrap').classList.toggle('hidden', rows.length===0);
+  $('#btnDl').disabled = rows.length===0;
+}
+// Lance un Actor Apify (run-sync) et renvoie les items bruts (ou null si erreur).
+async function runApify(actor, input, btn, label){
+  const t = $('#token').value.trim(); if (!t) { alert('Colle et teste ton token Apify (encadré 0).'); return null; }
   saveToken();
-  $('#btnRun').disabled = true; $('#btnDl').disabled = true; lastRows = [];
-  log('⏳ Lancement de l\'Actor Google Maps… (1–3 min, ne ferme pas l\'onglet)');
-  $('#btnRun').innerHTML = '<span class="spin"></span> En cours…';
+  btn.disabled = true; $('#btnDl').disabled = true; lastRows = [];
+  const html0 = btn.innerHTML; btn.innerHTML = '<span class="spin"></span> En cours…';
+  log('⏳ ' + label + '… (1–3 min, ne ferme pas l\'onglet)');
   try {
-    const input = { searchStringsArray: queries, maxCrawledPlacesPerSearch: max, language: 'fr', countryCode: 'sn', skipClosedPlaces: false };
-    const url = 'https://api.apify.com/v2/acts/compass~crawler-google-places/run-sync-get-dataset-items?token=' + encodeURIComponent(t);
+    const url = 'https://api.apify.com/v2/acts/' + actor + '/run-sync-get-dataset-items?token=' + encodeURIComponent(t);
     const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(input) });
     if (!r.ok) { const txt = await r.text(); throw new Error('Apify ' + r.status + ' : ' + txt.slice(0,200)); }
-    const items = await r.json();
-    const rows = items.map(it => toRow({ name: it.title||it.name, city: it.city, address: it.address||[it.street,it.city].filter(Boolean).join(', '), phone: it.phone||it.phoneUnformatted, lat: it.location?.lat, lng: it.location?.lng, source }));
-    lastRows = dedupe(rows, mobileOnly);
-    const withPhone = lastRows.filter(r=>r.Telephone).length, mob = lastRows.filter(r=>isMobile(r.Telephone)).length;
-    log('✅ Terminé : ' + items.length + ' lieu(x) bruts → ' + lastRows.length + ' fiche(s) uniques.');
-    $('#stats').textContent = lastRows.length + ' fiches · ' + withPhone + ' avec tél · ' + mob + ' mobiles';
-    // aperçu
-    const thead = $('#preview thead'), tbody = $('#preview tbody');
-    thead.innerHTML = '<tr>' + HEADER.map(h=>'<th>'+h+'</th>').join('') + '</tr>';
-    tbody.innerHTML = lastRows.slice(0,25).map(r=>'<tr>'+HEADER.map(h=>'<td title="'+csvCell(r[h]).replace(/"/g,'&quot;')+'">'+(r[h]||'')+'</td>').join('')+'</tr>').join('');
-    $('#previewWrap').classList.toggle('hidden', lastRows.length===0);
-    $('#btnDl').disabled = lastRows.length===0;
-  } catch (e) {
-    log('❌ ' + (e.message||e));
-  } finally {
-    $('#btnRun').disabled = false; $('#btnRun').textContent = '🚀 Lancer la prospection';
-  }
+    return await r.json();
+  } catch (e) { log('❌ ' + (e.message||e)); return null; }
+  finally { btn.disabled = false; btn.innerHTML = html0; }
+}
+
+// ── Google Maps ─────────────────────────────────────────────────────────
+$('#btnRun').onclick = async () => {
+  const queries = $('#queries').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if (!queries.length) { alert('Entre au moins une recherche.'); return; }
+  const max = Math.max(1, parseInt($('#max').value,10)||40), source = $('#source').value.trim()||'google-maps', mobileOnly = $('#mobileOnly').checked;
+  const items = await runApify('compass~crawler-google-places', { searchStringsArray: queries, maxCrawledPlacesPerSearch: max, language:'fr', countryCode:'sn', skipClosedPlaces:false }, $('#btnRun'), 'Actor Google Maps');
+  if (!items) return;
+  const rows = items.map(it => toRow({ name: it.title||it.name, city: it.city, address: it.address||[it.street,it.city].filter(Boolean).join(', '), phone: it.phone||it.phoneUnformatted, lat: it.location?.lat, lng: it.location?.lng, source }));
+  showResults(dedupe(rows, mobileOnly));
+  log('✅ Terminé : ' + items.length + ' lieu(x) → ' + lastRows.length + ' fiche(s) uniques.');
+};
+
+// ── Facebook (Pages publiques) ──────────────────────────────────────────
+$('#btnRunFb').onclick = async () => {
+  const urls = $('#fb_urls').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if (!urls.length) { alert('Colle au moins une URL de page Facebook (publique).'); return; }
+  const max = Math.max(1, parseInt($('#fb_max').value,10)||50), prof = $('#fb_prof').value.trim(), source = $('#fb_source').value.trim()||'facebook', mobileOnly = $('#fb_mobile').checked;
+  const items = await runApify('apify~facebook-pages-scraper', { startUrls: urls.map(u=>({url:u})), resultsLimit: max }, $('#btnRunFb'), 'Actor Facebook');
+  if (!items) return;
+  showResults(dedupe(items.map(it=>socialItem(it, prof, source)), mobileOnly));
+  log('✅ Terminé : ' + items.length + ' item(s) → ' + lastRows.length + ' fiche(s).');
+};
+
+// ── TikTok (mots-clés / profils) ────────────────────────────────────────
+$('#btnRunTk').onclick = async () => {
+  const lines = $('#tk_query').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if (!lines.length) { alert('Entre des mots-clés/hashtags ou des URLs de profils.'); return; }
+  const urls = lines.filter(l=>/^https?:\/\//.test(l)), queries = lines.filter(l=>!/^https?:\/\//.test(l));
+  const max = Math.max(1, parseInt($('#tk_max').value,10)||50), prof = $('#tk_prof').value.trim(), source = $('#tk_source').value.trim()||'tiktok', mobileOnly = $('#tk_mobile').checked;
+  const base = { resultsPerPage: max, shouldDownloadVideos:false, shouldDownloadCovers:false, shouldDownloadSubtitles:false };
+  const input = urls.length ? { ...base, profiles: urls } : { ...base, searchQueries: queries };
+  const items = await runApify('clockworks~tiktok-scraper', input, $('#btnRunTk'), 'Actor TikTok');
+  if (!items) return;
+  showResults(dedupe(items.map(it=>socialItem(it, prof, source)), mobileOnly));
+  log('✅ Terminé : ' + items.length + ' item(s) → ' + lastRows.length + ' fiche(s).');
 };
 
 $('#btnDl').onclick = () => {
   if (!lastRows.length) return;
   const blob = new Blob([buildCsv(lastRows)], { type:'text/csv;charset=utf-8' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = ($('#fname').value.trim() || 'maps_senegal.csv').replace(/[^\w.\-]/g,'_');
+  a.download = ($('#fname').value.trim() || 'prospection.csv').replace(/[^\w.\-]/g,'_');
   a.click(); URL.revokeObjectURL(a.href);
 };
 

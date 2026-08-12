@@ -1,77 +1,73 @@
-# NEXUS — Outils de prospection (Apify Google Maps + Crawlee annuaires)
+# NEXUS — Outils de prospection (Google Maps · Facebook · TikTok · Annuaires)
 
-Deux scrapers qui produisent des **CSV au format de l'importateur** NEXUS
-(`Nom,Ville,Region,Adresse,Telephone,Source,Latitude,Longitude`), prêts à charger dans
-`nexus_importer.html` (onglet ①) **ou** le panneau admin **📇 Prospects**.
+Des scrapers qui produisent des **CSV au format de l'importateur** NEXUS
+(`Nom,Profession,Telephone,Ville,Region,Adresse,Latitude,Longitude,Source,Url`), prêts à
+charger dans `nexus_importer.html` (onglet ①) **ou** le panneau admin **📇 Prospects**.
 
-> ⚠️ **Éthique / légal** : on scrape uniquement des **annuaires publics** et **Google Maps**
-> (données professionnelles : nom, téléphone, adresse, GPS). **Pas** de Facebook/Instagram
-> (contraire à leurs CGU). Reste raisonnable sur les volumes.
+> ⚖️ **Éthique / légal** : ne cible que des **pages/comptes PROFESSIONNELS PUBLICS**
+> (commerces) pour de la prospection B2B (nom, téléphone pro, adresse, GPS). Le scraping
+> Facebook/TikTok passe par des **Actors Apify** (Apify exécute la collecte côté serveur et
+> gère la conformité plateforme ; tu fournis ton token). Respecte les **CGU** de chaque
+> plateforme et le **RGPD** (contact professionnel). Ne cible **pas** de comptes privés.
 
 ## 0. Prérequis
-- **Node.js 18+** (déjà présent : `node -v`).
-- Installer les dépendances **une fois** :
-  ```bash
-  cd tools/scraper
-  npm install
-  ```
-  *(Le script Google Maps n'a en réalité besoin d'aucune dépendance — `npm install` ne sert
-  que pour le crawler d'annuaires Crawlee.)*
+- **Node.js 18+** (`node -v`). Aucune dépendance pour Apify (Maps/Facebook/TikTok) ; `npm install` ne sert qu'au crawler d'annuaires Crawlee.
+- Compte **[apify.com](https://apify.com)** (offre gratuite ≈ 5 $/mois de crédit) → *Settings → API tokens*.
+- Vérifier le plumbing sans rien scraper : `npm run selftest`.
 
-Vérifier que tout est en place (sans rien scraper) :
+## Interface graphique (le plus simple) — `scraper-ui.html`
+Ouvre **`scraper-ui.html`** dans ton navigateur (double-clic). Un seul écran, 4 onglets
+(**Google Maps · Facebook · TikTok · Annuaire**) : colle ton token Apify, lance, **aperçu**
+puis **⬇️ Télécharger le CSV**. Tout se passe dans le navigateur, le token reste en local.
+
+## En ligne de commande
+
+### 1. Google Maps (le plus fiable — GPS réel)
 ```bash
-npm run selftest
+# PowerShell
+$env:APIFY_TOKEN="apify_api_xxx"; node apify-maps.mjs --query "carreleur Dakar; carreleur Thiès" --out ../../prospection/carreleurs_maps.csv --max 60
 ```
 
-## 1. Google Maps (recommandé — fiable, avec GPS réel)
-Utilise l'Actor Apify **« Google Maps Scraper »** (`compass/crawler-google-places`).
-
-**a) Crée un compte gratuit sur [apify.com](https://apify.com)** → *Settings → API tokens* → copie ton token.
-Offre gratuite ≈ **5 $/mois** de crédit (≈ quelques milliers de lieux).
-
-**b) Lance** (remplace le token) :
+### 2. Facebook (Pages publiques)
+La découverte se fait sur facebook.com (cherche « garage Dakar »…), puis on **colle les URLs
+des pages**. L'Actor renvoie nom, téléphone, adresse ; le téléphone est aussi **extrait de la
+description** si besoin.
 ```bash
-# Windows PowerShell
-$env:APIFY_TOKEN="apify_api_xxx"; node apify-maps.mjs --query "carreleur Dakar; carreleur Thiès" --out ../../prospection/carreleurs_maps_senegal.csv --max 60
-
-# Git Bash / Linux / Mac
-APIFY_TOKEN=apify_api_xxx node apify-maps.mjs --query "carreleur Dakar" --out ../../prospection/carreleurs_maps_senegal.csv --max 60
+$env:APIFY_TOKEN="apify_api_xxx"; node apify-social.mjs --platform facebook `
+  --urls "https://facebook.com/GarageX; https://facebook.com/GarageY" `
+  --profession "Garage / Mécanicien" --out ../../prospection/fb_garages.csv
 ```
 
-Options :
-| Option | Rôle |
-|---|---|
-| `--query "a; b; c"` | une ou plusieurs recherches Maps (séparées par `;`) |
-| `--out <fichier>` | CSV de sortie (mets-le dans `prospection/`) |
-| `--max 60` | nb max de lieux par recherche |
-| `--mobile-only` | ne garder que les numéros **mobiles (7X)** |
-| `--source "google-maps"` | valeur de la colonne `Source` |
+### 3. TikTok (mots-clés / hashtags / profils)
+Le **téléphone est extrait de la bio** du créateur quand il y figure.
+```bash
+$env:APIFY_TOKEN="apify_api_xxx"; node apify-social.mjs --platform tiktok `
+  --query "garage dakar; mecanicien senegal; #depannageauto" --max 50 `
+  --profession "Garage / Mécanicien" --out ../../prospection/tiktok_garages.csv
+```
 
-## 2. Annuaires publics (Crawlee — best-effort)
-Pour un annuaire **statique** (HTML sans JS). Piloté par un fichier de config de sélecteurs CSS.
+Options communes : `--actor <id>` (surcharge l'Actor Apify), `--input-json '{...}'` (input Apify
+complet), `--mobile-only` (mobiles 7X uniquement), `--source`, `--max`, `--profession`.
 
-**a) Copie et adapte** `configs/example-directory.json` (inspecte la page cible avec les DevTools
-pour trouver les bons sélecteurs `.item`, `.name`, `.phone`, `.address`, `.next`).
-
-**b) Lance** :
+### 4. Annuaires publics (Crawlee — best-effort)
+Pour un annuaire **statique**. Config de sélecteurs CSS (`configs/example-directory.json`) :
 ```bash
 node crawlee-directory.mjs --config configs/mon-annuaire.json --out ../../prospection/mon_annuaire.csv
 ```
 
-> Certains annuaires (GoAfrica, annuaire-senegal…) **masquent les téléphones** ou bloquent les
-> robots (500). Dans ce cas → passe par **Google Maps** (§1), plus fiable.
-
-## 3. Après le scraping
-1. Le CSV est déjà **normalisé** (téléphones `+221 XX XXX XX XX`, mobiles triés en premier, doublons retirés).
+## Après le scraping
+1. Le CSV est **normalisé** (téléphones `+221 XX XXX XX XX`, mobiles triés en premier, doublons retirés).
 2. Ouvre `nexus_importer.html` (onglet ①) **ou** le dashboard admin → **📇 Prospects**.
-3. Choisis le **type de compte** (pro / vendeur / …) et importe/promeus.
+3. Choisis le **type de compte** (pro / vendeur / **dépanneur** / …) et importe/promeus.
+   La colonne **Profession** est lue par ligne (ex. « Remorquage » → spécialité `tow_truck` pour un dépanneur).
 
 ## Fichiers
 ```
 tools/scraper/
-  apify-maps.mjs          → Google Maps via Apify (aucune dépendance)
+  scraper-ui.html         → interface unique (Maps · Facebook · TikTok · Annuaire)
+  apify-maps.mjs          → Google Maps via Apify
+  apify-social.mjs        → Facebook + TikTok via Apify (extraction tél. depuis la bio)
   crawlee-directory.mjs   → annuaires statiques via Crawlee
-  configs/example-directory.json
-  lib/prospects-csv.mjs   → mapping + dédup + normalisation tél + priorité mobile
+  lib/prospects-csv.mjs   → mapping + dédup + normalisation tél + extractPhone + priorité mobile
   selftest.mjs            → vérifie le plumbing (sans scraper)
 ```
