@@ -63,6 +63,18 @@ function genEmail(p) {
   if (s) return `${s}.${uniq}@nexusmarket.sn`;
   return `prospect.${uniq}@nexusmarket.sn`;
 }
+// Dérive les specialties dépanneur (codes valides) depuis profession + nom. Défaut mechanic.
+function deriveSpecialties(p) {
+  const h = (String(p.profession || '') + ' ' + String(p.name || '')).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const s = [];
+  if (/remorqu|depanneuse|tow|plateau/.test(h)) s.push('tow_truck');
+  if (/batterie|battery|demarrage|survolt/.test(h)) s.push('battery');
+  if (/pneu|tire|crevaison|roue/.test(h)) s.push('tire');
+  if (/carburant|essence|fuel|panne seche/.test(h)) s.push('fuel');
+  if (/serrur|clef|\bcle\b|lockout|ouverture/.test(h)) s.push('lockout');
+  if (/mecanic|garage|moteur|electr|diagnostic/.test(h)) s.push('mechanic');
+  return s.length ? s : ['mechanic'];
+}
 async function ensureAuthUser(email, password, meta) {
   const res = await fetch(`${URL}/auth/v1/admin/users`, { method: 'POST', headers: H(), body: JSON.stringify({ email, password, email_confirm: true, user_metadata: meta }) });
   const b = await res.json().catch(() => ({}));
@@ -131,7 +143,7 @@ async function main() {
         await rest(`/couriers?on_conflict=user_id`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(fiche) }).catch((e) => { throw new Error('couriers: ' + e.message); });
       } else if (c.fiche === 'rescuers') {
         // Dépanneur (NEXUS Dépannage). phone nullable/non-unique → pas de repère. specialties par défaut = mechanic.
-        const fiche = { user_id: uid, name: p.name || '', phone: (p.phone && String(p.phone).trim()) || null, specialties: ['mechanic'], is_available: true, status: 'active' };
+        const fiche = { user_id: uid, name: p.name || '', phone: (p.phone && String(p.phone).trim()) || null, specialties: deriveSpecialties(p), is_available: true, status: 'active' };
         await rest(`/rescuers?on_conflict=user_id`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(fiche) }).catch((e) => { throw new Error('rescuers: ' + e.message); });
       }
 

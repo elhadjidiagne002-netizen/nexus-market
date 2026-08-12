@@ -48,6 +48,19 @@ function genEmail(p) {
   return `prospect.${uniq}@nexusmarket.sn`;
 }
 
+// Dérive les specialties dépanneur (codes valides) depuis profession + nom. Défaut mechanic.
+function deriveSpecialties(p) {
+  const h = (String(p.profession || '') + ' ' + String(p.name || '')).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const s = [];
+  if (/remorqu|depanneuse|tow|plateau/.test(h)) s.push('tow_truck');
+  if (/batterie|battery|demarrage|survolt/.test(h)) s.push('battery');
+  if (/pneu|tire|crevaison|roue/.test(h)) s.push('tire');
+  if (/carburant|essence|fuel|panne seche/.test(h)) s.push('fuel');
+  if (/serrur|clef|\bcle\b|lockout|ouverture/.test(h)) s.push('lockout');
+  if (/mecanic|garage|moteur|electr|diagnostic/.test(h)) s.push('mechanic');
+  return s.length ? s : ['mechanic'];
+}
+
 // Création (ou récupération) d'un compte Auth via l'API admin REST (service key).
 async function ensureAuthUser(env, sb, { email, password, meta }) {
   const url = env.SUPABASE_URL, key = env.SUPABASE_SERVICE_KEY;
@@ -139,7 +152,7 @@ export async function onRequest({ request, env }) {
         await sb.from('couriers').upsert(fiche, 'user_id').catch((e) => { throw new Error('couriers: ' + e.message); });
       } else if (c.fiche === 'rescuers') {
         // Dépanneur (NEXUS Dépannage). rescuers.phone nullable/non-unique. specialties défaut = mechanic.
-        const fiche = { user_id: uid, name: p.name || '', phone: (p.phone && String(p.phone).trim()) || null, specialties: ['mechanic'], is_available: true, status: 'active' };
+        const fiche = { user_id: uid, name: p.name || '', phone: (p.phone && String(p.phone).trim()) || null, specialties: deriveSpecialties(p), is_available: true, status: 'active' };
         await sb.from('rescuers').upsert(fiche, 'user_id').catch((e) => { throw new Error('rescuers: ' + e.message); });
       }
 

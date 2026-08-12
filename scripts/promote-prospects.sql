@@ -40,6 +40,8 @@ declare
   v_role       text;
   v_phone      text;
   v_note       text;
+  v_spec       text[];
+  v_hay        text;
   v_pwd        text := 'Nexus@2024';   -- ← mot de passe attribué à tous les comptes créés
   n_ok         int := 0;
   n_skip       int := 0;
@@ -169,11 +171,21 @@ begin
       values (v_uid, coalesce(p.name,''), v_phone, 'pending')
       on conflict (user_id) do nothing;
     elsif p.account_type = 'rescuer' then
-      -- Dépanneur (vertical NEXUS Dépannage). rescuers.phone est nullable et NON unique
-      -- → pas de repère. specialties par défaut = {mechanic} (ajustable ensuite).
+      -- Dépanneur (vertical NEXUS Dépannage). rescuers.phone nullable et NON unique → pas de
+      -- repère. specialties dérivées de la profession (codes valides mechanic|tow_truck|
+      -- battery|tire|fuel|lockout), défaut mechanic si aucun mot-clé.
+      v_hay := lower(pg_temp.unaccent_safe(coalesce(p.profession,'') || ' ' || coalesce(p.name,'')));
+      v_spec := array[]::text[];
+      if v_hay ~ 'remorqu|depanneuse|tow|plateau' then v_spec := v_spec || 'tow_truck'; end if;
+      if v_hay ~ 'batterie|battery|demarrage|survolt' then v_spec := v_spec || 'battery'; end if;
+      if v_hay ~ 'pneu|tire|crevaison|roue' then v_spec := v_spec || 'tire'; end if;
+      if v_hay ~ 'carburant|essence|fuel|panne seche' then v_spec := v_spec || 'fuel'; end if;
+      if v_hay ~ 'serrur|clef|^cle | cle |lockout|ouverture' then v_spec := v_spec || 'lockout'; end if;
+      if v_hay ~ 'mecanic|garage|moteur|electr|diagnostic' then v_spec := v_spec || 'mechanic'; end if;
+      if array_length(v_spec,1) is null then v_spec := array['mechanic']; end if;
       insert into public.rescuers (user_id, name, phone, specialties, vehicle_type, is_available, status)
-      values (v_uid, coalesce(p.name,''), nullif(trim(p.phone),''), array['mechanic'], null, true, 'active')
-      on conflict (user_id) do update set status = 'active', is_available = true;
+      values (v_uid, coalesce(p.name,''), nullif(trim(p.phone),''), v_spec, null, true, 'active')
+      on conflict (user_id) do update set specialties = excluded.specialties, status = 'active', is_available = true;
     end if;
 
     -- ---- marque le prospect ----
