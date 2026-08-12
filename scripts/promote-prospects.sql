@@ -46,6 +46,11 @@ begin
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   perform set_config('request.jwt.claim.role', 'service_role', true); -- variante ancienne d'auth.role()
 
+  -- Diagnostic (onglet Messages) : le bypass a-t-il pris ? combien de lignes à traiter ?
+  raise notice '--- DIAGNOSTIC : auth.role()=[%] · prospects non-promus=% ---',
+    auth.role(),
+    (select count(*) from public.prospects where status is distinct from 'promoted');
+
   for p in
     select * from public.prospects
     where status is distinct from 'promoted'
