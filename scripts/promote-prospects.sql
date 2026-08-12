@@ -175,13 +175,15 @@ begin
       -- repère. specialties dérivées de la profession (codes valides mechanic|tow_truck|
       -- battery|tire|fuel|lockout), défaut mechanic si aucun mot-clé.
       v_hay := lower(pg_temp.unaccent_safe(coalesce(p.profession,'') || ' ' || coalesce(p.name,'')));
+      -- NB: array_append (PAS `|| 'texte'`) : `text[] || 'litteral'` non typé fait un
+      -- array_cat et échoue avec "malformed array literal".
       v_spec := array[]::text[];
-      if v_hay ~ 'remorqu|depanneuse|tow|plateau' then v_spec := v_spec || 'tow_truck'; end if;
-      if v_hay ~ 'batterie|battery|demarrage|survolt' then v_spec := v_spec || 'battery'; end if;
-      if v_hay ~ 'pneu|tire|crevaison|roue' then v_spec := v_spec || 'tire'; end if;
-      if v_hay ~ 'carburant|essence|fuel|panne seche' then v_spec := v_spec || 'fuel'; end if;
-      if v_hay ~ 'serrur|clef|^cle | cle |lockout|ouverture' then v_spec := v_spec || 'lockout'; end if;
-      if v_hay ~ 'mecanic|garage|moteur|electr|diagnostic' then v_spec := v_spec || 'mechanic'; end if;
+      if v_hay ~ 'remorqu|depanneuse|tow|plateau' then v_spec := array_append(v_spec, 'tow_truck'); end if;
+      if v_hay ~ 'batterie|battery|demarrage|survolt' then v_spec := array_append(v_spec, 'battery'); end if;
+      if v_hay ~ 'pneu|tire|crevaison|roue' then v_spec := array_append(v_spec, 'tire'); end if;
+      if v_hay ~ 'carburant|essence|fuel|panne seche' then v_spec := array_append(v_spec, 'fuel'); end if;
+      if v_hay ~ 'serrur|clef|^cle | cle |lockout|ouverture' then v_spec := array_append(v_spec, 'lockout'); end if;
+      if v_hay ~ 'mecanic|garage|moteur|electr|diagnostic' then v_spec := array_append(v_spec, 'mechanic'); end if;
       if array_length(v_spec,1) is null then v_spec := array['mechanic']; end if;
       insert into public.rescuers (user_id, name, phone, specialties, vehicle_type, is_available, status)
       values (v_uid, coalesce(p.name,''), nullif(trim(p.phone),''), v_spec, null, true, 'active')
