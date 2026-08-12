@@ -66,6 +66,62 @@ const csvCell = (v) => {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 };
 
+// ── Registre global (anti-doublon inter-prospections) ────────────────────────
+// Clés de comparaison : 9 derniers chiffres du téléphone, et nom normalisé.
+export function phone9(raw) { const d = String(raw || '').replace(/\D/g, ''); return d.length >= 9 ? d.slice(-9) : ''; }
+export function nameNorm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim(); }
+
+// Parse un CSV (gère les guillemets). Retourne { header:[], rows:[{col:val}] }.
+export function parseCsv(text) {
+  const out = []; let i = 0, field = '', row = [], inQ = false; const s = String(text || '');
+  while (i < s.length) {
+    const c = s[i];
+    if (inQ) { if (c === '"') { if (s[i + 1] === '"') { field += '"'; i += 2; continue; } inQ = false; i++; continue; } field += c; i++; continue; }
+    if (c === '"') { inQ = true; i++; continue; }
+    if (c === ',') { row.push(field); field = ''; i++; continue; }
+    if (c === '\r') { i++; continue; }
+    if (c === '\n') { row.push(field); out.push(row); row = []; field = ''; i++; continue; }
+    field += c; i++;
+  }
+  if (field.length || row.length) { row.push(field); out.push(row); }
+  const header = (out.shift() || []).map((h) => h.trim());
+  const rows = out.filter((r) => r.some((x) => x !== '')).map((r) => { const o = {}; header.forEach((h, j) => { o[h] = r[j] !== undefined ? r[j] : ''; }); return o; });
+  return { header, rows };
+}
+
+// Charge le registry.csv (colonnes phone9,name_norm) → { phones:Set, names:Set }.
+export function loadRegistry(csvPath) {
+  const { header, rows } = parseCsv(fs.readFileSync(csvPath, 'utf8'));
+  const pk = header.find((h) => /^phone9$/i.test(h)) || 'phone9';
+  const nk = header.find((h) => /^name_norm$/i.test(h)) || 'name_norm';
+  const phones = new Set(), names = new Set();
+  for (const r of rows) { const p = String(r[pk] || '').trim(); const n = String(r[nk] || '').trim(); if (p) phones.add(p); if (n) names.add(n); }
+  return { phones, names };
+}
+
+// Filtre les lignes déjà connues du registre. mode: 'phone' | 'name' | 'both'.
+// nameCol/phoneCol : noms de colonnes du CSV d'entrée (défaut Nom / Telephone).
+export function filterKnown(rows, reg, { mode = 'both', nameCol = 'Nom', phoneCol = 'Telephone' } = {}) {
+  const kept = [], dropped = [];
+  for (const r of rows) {
+    const p = phone9(r[phoneCol]); const n = nameNorm(r[nameCol]);
+    const knownP = p && reg.phones.has(p);
+    const knownN = n && reg.names.has(n);
+    const isKnown = mode === 'phone' ? knownP : mode === 'name' ? knownN : (knownP || knownN);
+    (isKnown ? dropped : kept).push(r);
+  }
+  return { kept, dropped };
+}
+
+// Écrit des lignes génériques en CSV en préservant l'ordre des colonnes `header`.
+export function writeCsvGeneric(header, rows, outPath) {
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  const lines = [header.map(csvCell).join(',')];
+  for (const r of rows) lines.push(header.map((h) => csvCell(r[h])).join(','));
+  fs.writeFileSync(outPath, lines.join('\n') + '\n', 'utf8');
+  return { path: outPath, count: rows.length };
+}
+
 // Construit une ligne prospect. `phone` peut être déjà normalisé ou brut ; si vide et
 // `bio` fourni (réseaux sociaux), on tente d'extraire un numéro du texte. `profession`
 // et `url` (lien de la page/profil) sont optionnels — lus par nexus_importer.html.

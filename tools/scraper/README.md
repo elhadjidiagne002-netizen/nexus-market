@@ -55,6 +55,18 @@ Pour un annuaire **statique**. Config de sélecteurs CSS (`configs/example-direc
 node crawlee-directory.mjs --config configs/mon-annuaire.json --out ../../prospection/mon_annuaire.csv
 ```
 
+## Éviter les doublons entre prospections (registre global)
+Un **registre** recense tout ce qui est déjà dans Supabase (comptes, prospects, produits,
+lignes transport, annonces). Avant d'importer un nouveau CSV, filtre-le contre ce registre :
+1. Dans Supabase → SQL Editor, lance `sql/2026_08_12_export_registry.sql` (crée la vue
+   `export_registry`), puis exécute la requête finale et **Download CSV** → `tools/scraper/registry.csv`.
+2. Filtre ton nouveau CSV :
+   ```bash
+   node dedupe-registry.mjs --registry registry.csv --in ../../prospection/nouveaux.csv --out ../../prospection/nouveaux_clean.csv
+   ```
+   Retire les lignes dont le **téléphone** (9 derniers chiffres) OU le **nom** normalisé
+   existe déjà. Options : `--by phone|name|both`, `--name-col`, `--phone-col`.
+
 ## Après le scraping
 1. Le CSV est **normalisé** (téléphones `+221 XX XXX XX XX`, mobiles triés en premier, doublons retirés).
 2. Ouvre `nexus_importer.html` (onglet ①) **ou** le dashboard admin → **📇 Prospects**.
