@@ -37,6 +37,7 @@ declare
   n_ok         int := 0;
   n_skip       int := 0;
   n_reuse      int := 0;
+  n_err        int := 0;
 begin
   -- Le trigger protect_profile_columns() interdit de changer role/is_pro/status SAUF pour
   -- service_role ou is_admin(). Le SQL Editor n'a pas de JWT (auth.role() = NULL) → on se
@@ -51,6 +52,10 @@ begin
     -- and account_type = 'pro'          -- ← dé-commente pour filtrer par type
     order by created_at asc
   loop
+   -- Sous-bloc par prospect : une erreur (doublon de téléphone, contrainte…) est CAPTURÉE
+   -- et n'annule que CE prospect (savepoint implicite), pas toute la transaction. Sans ça,
+   -- une seule ligne fautive ferait tout échouer (rien d'enregistré).
+   begin
     -- profession requise pour une fiche pro
     if p.account_type = 'pro' and coalesce(nullif(trim(p.profession), ''), null) is null then
       raise notice '⊘ %  (pro sans profession — ignoré)', p.name;
@@ -126,13 +131,15 @@ begin
 
     -- ---- fiche métier ----
     if p.account_type = 'pro' then
+      -- phone en NULL si vide : un index unique sur phone rejette deux chaînes '' mais
+      -- accepte plusieurs NULL (btree traite les NULL comme distincts).
       insert into public.pros (user_id, profession, name, phone, city, status, disponible)
-      values (v_uid, p.profession, coalesce(p.name,''), coalesce(p.phone,''), p.city, 'active', true)
+      values (v_uid, p.profession, coalesce(p.name,''), nullif(p.phone,''), p.city, 'active', true)
       on conflict (user_id) do update
         set profession = excluded.profession, status = 'active', disponible = true;
     elsif p.account_type = 'courier' then
       insert into public.couriers (user_id, name, phone, status)
-      values (v_uid, coalesce(p.name,''), coalesce(p.phone,''), 'pending')
+      values (v_uid, coalesce(p.name,''), nullif(p.phone,''), 'pending')
       on conflict (user_id) do nothing;
     end if;
 
@@ -143,8 +150,12 @@ begin
 
     n_ok := n_ok + 1;
     raise notice '✓ %  →  %', coalesce(p.name,'(sans nom)'), v_email;
+   exception when others then
+     n_err := n_err + 1;
+     raise notice '✗ %  : %', coalesce(p.name,'(sans nom)'), sqlerrm;
+   end;
   end loop;
 
-  raise notice '=== Terminé : % promus (dont % comptes réutilisés), % ignorés. Mot de passe: % ===',
-    n_ok, n_reuse, n_skip, v_pwd;
+  raise notice '=== Terminé : % promus (dont % réutilisés), % ignorés, % erreurs. Mot de passe: % ===',
+    n_ok, n_reuse, n_skip, n_err, v_pwd;
 end $$;

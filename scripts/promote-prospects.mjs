@@ -117,10 +117,11 @@ async function main() {
 
       if (c.fiche === 'pros') {
         // status 'active' (visible direct) ; PAS de lat/lng ici (colonnes absentes → géo sur profiles).
-        const fiche = { user_id: uid, profession: p.profession, name: p.name || '', phone: p.phone || '', city: p.city || null, status: 'active', disponible: true };
+        // phone NULL si vide : un index unique sur phone rejette deux '' mais accepte plusieurs NULL.
+        const fiche = { user_id: uid, profession: p.profession, name: p.name || '', phone: p.phone || null, city: p.city || null, status: 'active', disponible: true };
         await rest(`/pros?on_conflict=user_id`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(fiche) }).catch((e) => { throw new Error('pros: ' + e.message); });
       } else if (c.fiche === 'couriers') {
-        const fiche = { user_id: uid, name: p.name || '', phone: p.phone || '', status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
+        const fiche = { user_id: uid, name: p.name || '', phone: p.phone || null, status: 'pending', zones: ['Dakar'], vehicle_type: 'moto' };
         await rest(`/couriers?on_conflict=user_id`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: JSON.stringify(fiche) }).catch((e) => { throw new Error('couriers: ' + e.message); });
       }
 
