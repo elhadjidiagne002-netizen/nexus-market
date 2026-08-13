@@ -33,8 +33,10 @@ async function handle({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const nowIso = new Date().toISOString().slice(0, 10);
 
-  // Produits actifs + annonces express + trocs + stories actifs + pros (NEXUS Pro).
-  const [products, annonces, trocs, stories, pros] = await Promise.all([
+  // Produits actifs + annonces express + trocs + stories actifs + pros (NEXUS Pro)
+  // + vendeurs/boutiques (vitrines /vendeur/:id, JSON-LD Store — étaient absentes
+  //   de tout sitemap, donc jamais découvertes par Google).
+  const [products, annonces, trocs, stories, pros, vendors] = await Promise.all([
     // [ADSENSE/SEO] Les produits de DÉMO (seed UUID a0000001-…) sont filtrés plus bas,
     // côté JS (isDemoId) : products.id est UUID, et l'opérateur PostgREST `like` (texte)
     // appliqué à une colonne uuid renvoie une erreur — la requête entière échouait
@@ -44,6 +46,7 @@ async function handle({ request, env }) {
     sbGet(env, `troc_listings?select=id,title,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
     sbGet(env, `stories?select=id,mux_playback_id,created_at&status=eq.active&order=created_at.desc&limit=5000`),
     sbGet(env, `pros?select=id,profession,photo_url,updated_at&status=eq.active&order=updated_at.desc&limit=5000`),
+    sbGet(env, `profiles?select=id,name,avatar,updated_at&role=eq.vendor&order=updated_at.desc&limit=5000`),
   ]);
 
   const urls = [];
@@ -78,6 +81,14 @@ async function handle({ request, env }) {
     const loc = `${origin}/pro/${encodeURIComponent(pr.id)}`;
     const img = pr.photo_url ? `\n    <image:image><image:loc>${xmlEscape(pr.photo_url)}</image:loc><image:title>${xmlEscape(pr.profession)}</image:title></image:image>` : '';
     urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(pr.updated_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>${img}\n  </url>`);
+  }
+
+  // Boutiques/vendeurs → /vendeur/:id (vitrine SEO Store). Découverte auto des
+  // futures boutiques (sitemap dynamique, requêté à chaque crawl, cache 1h).
+  for (const vd of (vendors || [])) {
+    const loc = `${origin}/vendeur/${encodeURIComponent(vd.id)}`;
+    const img = vd.avatar ? `\n    <image:image><image:loc>${xmlEscape(vd.avatar)}</image:loc><image:title>${xmlEscape(vd.name || 'Boutique')}</image:title></image:image>` : '';
+    urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(vd.updated_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>${img}\n  </url>`);
   }
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>

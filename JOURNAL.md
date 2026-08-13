@@ -6,6 +6,69 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-13 — SEO : couverture d'indexation de toutes les entités (+ vendeurs)
+
+**Demande** : que chaque entité (annonces pros/agents, coursiers, produits, services,
+fonctionnalités) soit indexée par Google et bien positionnée, et que ce soit
+**automatique pour les futurs produits**.
+
+**Audit (ancré dans le code)** : le site a déjà une forte infra SEO programmatique —
+pages `/produit/[id]`, `/pro/[id]`, `/vendeur/[id]`, `/annonce/[id]`, `/troc/[id]`,
+`/stories/[id]`, `/categorie/[slug]`, `/ville/[slug]`, 15 guides, 16 posts blog, +
+3 sitemaps **dynamiques** (index/listings/categories) dans robots.txt, bots IA autorisés,
+schema Product complet (offers+shipping+return+aggregateRating) via `_lib/seo.js`.
+→ Les nouveaux produits/annonces/trocs/stories/pros `active` sont **déjà** repris
+automatiquement (sitemap dynamique, cache 1h). L'automatisation demandée existait déjà
+pour les produits.
+
+**Trou trouvé + corrigé** : les boutiques **vendeurs** (`/vendeur/[id]`, vraie vitrine
+JSON-LD Store) n'étaient dans **aucun sitemap** → jamais découvertes. Ajout de la requête
+`profiles?role=eq.vendor` au sitemap **dynamique** `sitemap-listings.xml.js` → boutiques
+actuelles ET futures indexées automatiquement.
+
+**Non fait (raison)** :
+- **Coursiers** : pas de page individuelle. Recommandation = hubs `/coursiers/[ville]`
+  (anti contenu-mince), MAIS `couriers.zones`/ville non renseigné à la promotion des 88
+  livreurs → un hub serait vide. À débloquer en enrichissant la ville des coursiers
+  (dispo dans `prospection/livreurs_google_maps_senegal.csv`).
+- **Agents immobiliers / immobilier** : à clarifier (comptes `vendor` → déjà couverts ;
+  sinon route dédiée). `produit/[id]` ne pose pas de schema RealEstateListing spécifique
+  (page Product générique servie — indexable, non bloquant).
+
+**État** : `node --check` OK. À déployer. Reste manuel côté utilisateur : soumettre
+`/sitemap_index.xml` dans Google Search Console.
+
+---
+
+## 2026-08-13 — Importateur : upload des photos produit vers Supabase Storage
+
+**Demande** : pour les produits de `catalogue_produits_facebook.csv`, avoir les photos
+et faire en sorte que `nexus_importer.html` puisse uploader les photos vers Supabase
+avant l'export vers `products`.
+
+**Décision sourcing** : Facebook non scrapable (noms de page seulement, mur d'auth, CGU) ;
+téléchargement web de masse écarté (qualité/droits). L'utilisateur fournira un **dossier
+de fichiers locaux** → l'importateur les apparie et les upload.
+
+**Travail effectué** (`nexus_importer.html`, onglet ④) :
+- Zone de dépôt accepte désormais **CSV + images** (`accept=".csv,image/*"`).
+- **Appariement auto image↔produit par nom de fichier** (normalisation sans accents/
+  extension/suffixe `-1`, score de recouvrement ≥ 0,5 ; multi-images/produit ; non
+  appariés signalés).
+- **Attache manuelle par ligne** (bouton « 📎 Ajouter un fichier » / « ✕ Retirer »).
+- À l'export : **upload des fichiers locaux vers Supabase Storage bucket `products`**
+  (`sb.storage…upload` + `getPublicUrl`, cache 1 an) → renseigne `image_url`/`images`
+  avant `upsertPlainProduct`. Le champ URL reste dispo en repli.
+- Le bucket cible `products` = celui utilisé par `nexus_studio_ai.py`.
+
+**État** : implémenté + **vérifié en navigateur** (serveur statique local) — parse OK,
+module chargé sans erreur, simulation dépôt CSV+images : 2 appariées / 1 non appariée
+correctement, badges « à uploader » et contrôles 📎 rendus. Upload réel non testé
+(nécessite la Service Role Key + Storage). ⚠️ Le bucket `products` doit être **public**
+pour que `getPublicUrl` serve les images.
+
+---
+
 ## 2026-08-13 — Coursiers : mise en ligne par l'admin (validation → dispo + en ligne)
 
 **Demande** : un coursier n'est pas en ligne par défaut ; dès que l'admin valide le
