@@ -23921,9 +23921,35 @@ const AdminLivraisonPanel = ({ addToast }) => {
     return ()=>{ try { clearTimeout(_t); sb.removeChannel(ch); } catch(_){} };
   },[]);
 
+  // Valider un coursier = le passer 'active' ET le mettre EN LIGNE (dispo + intention
+  // courier_status='available' + position fraîche). RPC serveur admin_approve_courier
+  // (SECURITY DEFINER, garde is_admin) ; repli direct si le RPC n'est pas déployé.
   const approveCourier = async (id) => {
-    await sb.from('couriers').update({ status:'active', approved_at:new Date().toISOString() }).eq('id',id);
-    addToast('✅ Coursier approuvé','success'); load();
+    try {
+      const { error } = await sb.rpc('admin_approve_courier', { p_courier_id: id });
+      if (error) throw error;
+    } catch(_) {
+      await sb.from('couriers').update({ status:'active', is_available:true, approved_at:new Date().toISOString() }).eq('id',id);
+      const co = couriers.find(c=>c.id===id);
+      if (co && co.user_id) { try { await sb.from('profiles').update({ courier_status:'available', location_updated_at:new Date().toISOString() }).eq('id', co.user_id); } catch(_){} }
+    }
+    addToast('✅ Coursier approuvé et mis en ligne','success'); load();
+  };
+  // Mettre en ligne / hors ligne un coursier déjà actif (toggle admin).
+  const setCourierOnline = async (id, online) => {
+    try {
+      const { error } = await sb.rpc('admin_set_courier_online', { p_courier_id: id, p_online: online });
+      if (error) throw error;
+    } catch(_) {
+      await sb.from('couriers').update({ is_available: online }).eq('id',id);
+      const co = couriers.find(c=>c.id===id);
+      if (co && co.user_id) {
+        const upd = { courier_status: online ? 'available' : 'offline' };
+        if (online) upd.location_updated_at = new Date().toISOString();
+        try { await sb.from('profiles').update(upd).eq('id', co.user_id); } catch(_){}
+      }
+    }
+    addToast(online ? '🟢 Coursier mis en ligne' : '⚪ Coursier mis hors ligne', online ? 'success' : 'info'); load();
   };
   const suspendCourier = async (id) => {
     await sb.from('couriers').update({ status:'suspended' }).eq('id',id);
@@ -24226,11 +24252,14 @@ const AdminLivraisonPanel = ({ addToast }) => {
               E('span',null,'📦 ',co.deliveries_done,' livraisons'),
               E('span',null,'💰 Total : ',FCFA(co.total_earned||0)),
               E('span',{style:{color:statusColor,fontWeight:600}},{pending:'⏳ En attente',active:'✅ Actif',suspended:'⏸ Suspendu'}[co.status]||co.status),
-              co.is_available&&E('span',{style:{color:'#25D366',fontWeight:600}},'🟢 Disponible')
+              E('span',{style:{color:co.is_available?'#25D366':'#9ca3af',fontWeight:600}},co.is_available?'🟢 En ligne':'⚪ Hors ligne')
             )
           ),
           E('div',{style:{display:'flex',gap:'.4rem',flexWrap:'wrap'}},
-            co.status==='pending'&&E('button',{className:'btn btn-primary btn-sm',onClick:()=>approveCourier(co.id)},'✅ Approuver'),
+            co.status==='pending'&&E('button',{className:'btn btn-primary btn-sm',onClick:()=>approveCourier(co.id)},'✅ Approuver + en ligne'),
+            co.status==='active'&&(co.is_available
+              ? E('button',{className:'btn btn-secondary btn-sm',onClick:()=>setCourierOnline(co.id,false)},'⚪ Mettre hors ligne')
+              : E('button',{className:'btn btn-primary btn-sm',onClick:()=>setCourierOnline(co.id,true)},'🟢 Mettre en ligne')),
             co.status==='active'&&E('button',{className:'btn btn-secondary btn-sm',onClick:()=>suspendCourier(co.id)},'⏸ Suspendre'),
             co.status==='suspended'&&E('button',{className:'btn btn-primary btn-sm',onClick:()=>reactivateCourier(co.id)},'↩️ Réintégrer')
           )

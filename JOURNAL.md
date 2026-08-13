@@ -6,6 +6,36 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-13 — Coursiers : mise en ligne par l'admin (validation → dispo + en ligne)
+
+**Demande** : un coursier n'est pas en ligne par défaut ; dès que l'admin valide le
+compte, le livreur doit être disponible ET en ligne ; et l'admin doit pouvoir mettre
+en ligne / hors ligne un coursier à la main.
+
+**Contexte technique** : « en ligne » = `couriers.is_available=true` + `profiles.courier_status='available'`
+(flag d'intention — le cron `dispatch_tick_all` bloc C2 remet `is_available=false` si
+`courier_status<>'available'`, donc c'est LUI la source de vérité) + `location_updated_at`
+frais (< 30 min) pour le badge live et le tri « en ligne d'abord ». L'ancien
+`approveCourier` ne posait que `status='active'` → le coursier restait hors ligne.
+
+**Travail effectué** :
+- **`sql/2026_08_13_courier_admin_online.sql`** (nouveau) — 2 RPC SECURITY DEFINER,
+  garde `is_admin()` : `admin_approve_courier(id)` (pending→active + is_available + geo/
+  intention en ligne) et `admin_set_courier_online(id, online)` (toggle). Bloc optionnel
+  (commenté) pour valider+mettre en ligne en masse les 88 coursiers `pending`.
+- **Frontend** (bundle) — `approveCourier` appelle désormais `admin_approve_courier`
+  (repli direct si RPC absent) et le libellé devient « ✅ Approuver + en ligne » ; ajout
+  de `setCourierOnline` + bouton « 🟢 Mettre en ligne » / « ⚪ Mettre hors ligne » sur les
+  coursiers actifs ; badge « 🟢 En ligne / ⚪ Hors ligne ».
+- **Cache-busting** : `app.9981232cb5.js` → `app.9e3420e669.js` + MAJ `index.html`.
+
+**État** : code écrit, `node --check` OK. **À déployer + exécuter le SQL** dans Supabase.
+Non testé en prod (panneau admin derrière auth). Rappel : le « en ligne live » (badge)
+décroît après 30 min sans ping réel, mais le coursier reste **proposable** (fonction
+`nearby_couriers_offline`, intention `available` conservée).
+
+---
+
 ## 2026-08-12 — Campagnes WhatsApp de masse (pendant de la campagne email)
 
 **Demande** : comme pour les campagnes email, pouvoir envoyer des messages WhatsApp
