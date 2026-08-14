@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kit carrousels promo — NEXUS Market</title>
+<style>
+  /* ─── Page chrome (thème-aware) ─────────────────────────────────────────── */
+  :root{
+    --page-bg:#0d1712; --page-fg:#e8f0ea; --page-muted:#9fb4a6;
+    --page-card:#132019; --page-line:#24352b; --page-accent:#37c26a;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --page-bg:#eef3ee; --page-fg:#0c1a11; --page-muted:#5e7266;
+      --page-card:#ffffff; --page-line:#d7e2d9; --page-accent:#00853E;
+    }
+  }
+  :root[data-theme="light"]{
+    --page-bg:#eef3ee; --page-fg:#0c1a11; --page-muted:#5e7266;
+    --page-card:#ffffff; --page-line:#d7e2d9; --page-accent:#00853E;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--page-bg); color:var(--page-fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,"Helvetica Neue",Arial,sans-serif;
+    line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 18px 80px}
+  .topbar{display:flex;flex-wrap:wrap;gap:14px 20px;align-items:flex-end;justify-content:space-between;
+    border-bottom:1px solid var(--page-line);padding-bottom:18px;margin-bottom:8px}
+  .topbar h1{font-size:1.55rem;font-weight:900;letter-spacing:-.02em;margin:0}
+  .topbar p{margin:.25rem 0 0;color:var(--page-muted);font-size:.92rem;max-width:60ch}
+  .toolbtns{display:flex;gap:10px;flex-wrap:wrap}
+  .btn{border:1px solid var(--page-line);background:var(--page-card);color:var(--page-fg);
+    border-radius:10px;padding:.55rem .9rem;font-weight:700;font-size:.85rem;cursor:pointer}
+  .btn:hover{border-color:var(--page-accent)}
+  .btn-solid{background:var(--page-accent);color:#fff;border-color:transparent}
+  .hint{color:var(--page-muted);font-size:.82rem;margin:10px 0 26px;max-width:80ch}
+  .hint code{background:var(--page-card);border:1px solid var(--page-line);border-radius:5px;padding:1px 6px}
+
+  .deck{margin:34px 0 12px}
+  .deck-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 2px 12px}
+  .deck-head .k{font-size:.72rem;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--page-accent)}
+  .deck-head h2{font-size:1.15rem;font-weight:800;margin:0}
+  .deck-head .cnt{color:var(--page-muted);font-size:.82rem}
+  .deck-head .dl{margin-left:auto}
+  .rail{display:flex;gap:22px;overflow-x:auto;padding:6px 2px 18px;scroll-snap-type:x mandatory}
+  .rail::-webkit-scrollbar{height:9px}
+  .rail::-webkit-scrollbar-thumb{background:var(--page-line);border-radius:9px}
+
+  .cell{scroll-snap-align:center;flex:0 0 auto;display:flex;flex-direction:column;gap:8px}
+  .cell .cap{display:flex;justify-content:space-between;align-items:center;font-size:.78rem;color:var(--page-muted)}
+  .cell .cap .dlone{border:none;background:none;color:var(--page-accent);font-weight:800;cursor:pointer;font-size:.78rem;padding:2px 4px}
+
+  /* ─── SLIDE 1080×1350 (aperçu à l'échelle) ──────────────────────────────── */
+  .slide{
+    width:360px;height:450px;               /* aperçu = 1/3 de 1080×1350 */
+    --s:0.3333333;
+    border-radius:20px;overflow:hidden;position:relative;
+    box-shadow:0 10px 30px rgba(0,0,0,.28);
+    background:var(--sb);color:var(--sf);
+    font-family:inherit;
+  }
+  /* Grille interne à l'échelle réelle : on dessine à 1080×1350 puis on scale. */
+  .canvas{
+    position:absolute;top:0;left:0;width:1080px;height:1350px;
+    transform:scale(var(--s));transform-origin:top left;
+    background:var(--sb);color:var(--sf);
+    display:flex;flex-direction:column;
+    padding:96px 84px 0;
+  }
+  /* Palettes de slide */
+  .sl-hero{--sb:radial-gradient(120% 90% at 15% 0%, #0a5a30 0%, #053d22 55%, #042a18 100%);--sf:#f3faf4;--sacc:#FCD116;--smut:#bfe0c8}
+  .sl-green{--sb:linear-gradient(160deg,#00853E 0%,#046a34 100%);--sf:#ffffff;--sacc:#FCD116;--smut:#d8f0df}
+  .sl-paper{--sb:#f2f6f1;--sf:#0c1a11;--sacc:#00853E;--smut:#5e7266}
+  .sl-dark{--sb:linear-gradient(160deg,#0c1a11,#08130c);--sf:#eef7f0;--sacc:#37c26a;--smut:#9fb4a6}
+
+  .eyebrow{font-size:26px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--sacc);
+    display:flex;align-items:center;gap:14px}
+  .eyebrow .bar{width:54px;height:5px;border-radius:3px;background:var(--sacc)}
+  .stepn{font-size:150px;font-weight:900;line-height:.9;letter-spacing:-.04em;color:var(--sacc);opacity:.95;margin:6px 0 -6px}
+  .ico{font-size:220px;line-height:1;margin:0 0 8px}
+  .ico.sm{font-size:150px}
+  .big{font-size:104px;font-weight:900;letter-spacing:-.035em;line-height:.98;text-wrap:balance;margin:14px 0 0}
+  .big.two{font-size:88px}
+  .mid{font-size:64px;font-weight:900;letter-spacing:-.03em;line-height:1.02;margin:10px 0 0;text-wrap:balance}
+  .lede{font-size:40px;font-weight:500;line-height:1.34;color:var(--smut);margin:26px 0 0;max-width:20ch}
+  .lede b{color:var(--sf);font-weight:800}
+  .spacer{flex:1}
+
+  .chips{display:flex;flex-wrap:wrap;gap:18px 16px;margin-top:34px}
+  .chip{display:flex;align-items:center;gap:14px;background:rgba(255,255,255,.1);border:2px solid rgba(255,255,255,.18);
+    border-radius:999px;padding:16px 26px;font-size:34px;font-weight:700}
+  .sl-paper .chip{background:rgba(0,133,62,.08);border-color:rgba(0,133,62,.2)}
+  .chip .e{font-size:40px}
+
+  .pills{display:flex;flex-wrap:wrap;gap:16px;margin-top:30px}
+  .pill{background:var(--sacc);color:#0b2a16;font-weight:900;font-size:34px;border-radius:14px;padding:14px 24px}
+  .sl-paper .pill{color:#fff}
+
+  .grid9{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin-top:40px}
+  .g{background:rgba(255,255,255,.08);border:2px solid rgba(255,255,255,.16);border-radius:24px;
+    padding:30px 18px;text-align:center}
+  .sl-paper .g{background:#fff;border-color:#dde8df;box-shadow:0 6px 18px rgba(6,40,22,.06)}
+  .g .e{font-size:74px;line-height:1}
+  .g .t{font-size:28px;font-weight:800;margin-top:14px}
+
+  /* Faux écran d'appli (maquette CSS) */
+  .mock{position:absolute;right:-30px;bottom:150px;width:430px;height:760px;background:#fff;border-radius:46px;
+    border:12px solid #0b2113;box-shadow:0 30px 60px rgba(0,0,0,.4);overflow:hidden;transform:rotate(4deg)}
+  .mock .st{height:120px;background:linear-gradient(135deg,#00853E,#046a34);display:flex;align-items:center;
+    justify-content:center;color:#fff;font-weight:900;font-size:34px;letter-spacing:.5px}
+  .mock .bd{padding:26px}
+  .mock .sr{height:64px;background:#eef3ee;border-radius:14px;margin-bottom:22px}
+  .mock .ln{height:26px;background:#e6ede7;border-radius:8px;margin:14px 0}
+  .mock .ln.s{width:60%}
+  .mock .card{height:150px;background:#f2f6f1;border-radius:18px;border:2px solid #e2ebe3;margin-bottom:20px}
+  .mock .cta{height:74px;background:#00853E;border-radius:16px;margin-top:20px}
+
+  .foot{position:absolute;left:0;bottom:0;width:1080px;height:88px;
+    display:flex;align-items:center;gap:16px;padding:0 84px;
+    background:rgba(0,0,0,.16);color:var(--sf);font-size:30px;font-weight:700}
+  .sl-paper .foot{background:rgba(0,133,62,.07);color:#0c1a11}
+  .foot .dot{width:20px;height:20px;border-radius:50%;background:var(--sacc)}
+  .foot .url{opacity:.9}
+  .foot .snflag{margin-left:auto;display:inline-flex;width:78px;height:50px;border-radius:7px;overflow:hidden;box-shadow:0 0 0 2px rgba(255,255,255,.3)}
+  .foot .snflag i{flex:1;display:flex;align-items:center;justify-content:center;font-style:normal}
+  .foot .snflag .g{background:#00853E}
+  .foot .snflag .y{background:#FDEF42;color:#00853E;font-size:32px;font-weight:900}
+  .foot .snflag .r{background:#E31B23}
+  .num{position:absolute;top:64px;right:84px;font-size:30px;font-weight:800;color:var(--smut)}
+
+  @media print{
+    body{background:#fff}
+    .topbar,.hint,.deck-head,.cell .cap{display:none}
+    .rail{display:block;overflow:visible;padding:0}
+    .slide{width:1080px;height:1350px;border-radius:0;box-shadow:none;page-break-after:always;margin:0 auto}
+    .canvas{transform:none}
+    .cell{margin:0}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>🟢 Kit carrousels promo — NEXUS Market</h1>
+      <p>Un carrousel par service, chaque slide au format <b>1080×1350</b> (portrait 4:5, idéal Instagram / Facebook / LinkedIn). Fais défiler chaque rangée horizontalement.</p>
+    </div>
+    <div class="toolbtns">
+      <button class="btn btn-solid" onclick="exportAll()">📥 Tout exporter (PNG)</button>
+      <button class="btn" onclick="window.print()">🖨️ Imprimer / PDF</button>
+    </div>
+  </div>
+  <p class="hint">Astuce : bouton <code>PNG</code> sous chaque slide pour la télécharger, ou <code>Exporter</code> à droite du titre pour tout un carrousel. Copie prête à publier — modifie le texte directement dans le fichier si besoin. Les visuels sont des maquettes brandées ; tu peux remplacer par de vraies captures.</p>
+
+  <div id="decks"></div>
+</div>
+
+<script>
+/* ─── Données des carrousels ──────────────────────────────────────────────── */
+const FOOT = '<div class="foot"><span class="dot"></span><span>NEXUS Market</span><span class="url">· nexusmarket.sn</span><span class="snflag"><i class="g"></i><i class="y">★</i><i class="r"></i></span></div>';
+
+// Types de slide : hero | step | grid | cta | feature
+function slide(o){
+  const pal = o.pal || 'sl-paper';
+  const num = o.num ? `<div class="num">${o.num}</div>` : '';
+  let body = '';
+  if(o.type==='hero'){
+    body = `${o.eyebrow?`<div class="eyebrow"><span class="bar"></span>${o.eyebrow}</div>`:''}
+      ${o.ico?`<div class="ico">${o.ico}</div>`:''}
+      <div class="big${(o.title||'').length>22?' two':''}">${o.title}</div>
+      ${o.lede?`<div class="lede">${o.lede}</div>`:''}
+      ${o.mock?mock():''}<div class="spacer"></div>`;
+  } else if(o.type==='grid'){
+    body = `${o.eyebrow?`<div class="eyebrow"><span class="bar"></span>${o.eyebrow}</div>`:''}
+      <div class="mid">${o.title}</div>
+      <div class="grid9">${o.items.map(it=>`<div class="g"><div class="e">${it.e}</div><div class="t">${it.t}</div></div>`).join('')}</div>
+      <div class="spacer"></div>`;
+  } else if(o.type==='step'){
+    body = `<div class="eyebrow"><span class="bar"></span>${o.eyebrow||'Étape'}</div>
+      <div class="stepn">${o.step}</div>
+      <div class="mid">${o.title}</div>
+      ${o.lede?`<div class="lede">${o.lede}</div>`:''}
+      ${o.chips?chips(o.chips):''}<div class="spacer"></div>`;
+  } else if(o.type==='cta'){
+    body = `${o.ico?`<div class="ico sm">${o.ico}</div>`:''}
+      <div class="big${(o.title||'').length>22?' two':''}">${o.title}</div>
+      ${o.lede?`<div class="lede">${o.lede}</div>`:''}
+      ${o.pills?`<div class="pills">${o.pills.map(p=>`<span class="pill">${p}</span>`).join('')}</div>`:''}
+      <div class="spacer"></div>`;
+  } else { /* feature */
+    body = `${o.eyebrow?`<div class="eyebrow"><span class="bar"></span>${o.eyebrow}</div>`:''}
+      ${o.ico?`<div class="ico sm">${o.ico}</div>`:''}
+      <div class="mid">${o.title}</div>
+      ${o.lede?`<div class="lede">${o.lede}</div>`:''}
+      ${o.chips?chips(o.chips):''}<div class="spacer"></div>`;
+  }
+  return `<div class="slide ${pal}"><div class="canvas">${num}${body}${FOOT}</div></div>`;
+}
+function chips(arr){return `<div class="chips">${arr.map(c=>`<span class="chip"><span class="e">${c.e}</span>${c.t}</span>`).join('')}</div>`;}
+function mock(){return `<div class="mock"><div class="st">NEXUS</div><div class="bd"><div class="sr"></div><div class="card"></div><div class="ln"></div><div class="ln s"></div><div class="cta"></div></div></div>`;}
+
+const DECKS = [
+{ k:'Découvrir', name:'Bienvenue sur NEXUS Market', slides:[
+  {type:'hero',pal:'sl-hero',eyebrow:'La marketplace du Sénégal',title:'Tout le Sénégal, au même endroit.',lede:'Acheter, vendre, se faire livrer, trouver un pro — une seule appli.',ico:'🛍️',num:'1/5'},
+  {type:'grid',pal:'sl-paper',eyebrow:'Une appli, tous les services',title:'12 services réunis',num:'2/5',items:[
+    {e:'🛍️',t:'Produits'},{e:'🛵',t:'Coursier'},{e:'🔧',t:'Artisans'},{e:'🎬',t:'Stories'},{e:'🔄',t:'Troc'},{e:'🏪',t:'Louma'},{e:'🐑',t:'Élevage'},{e:'🏠',t:'Immobilier'},{e:'🚗',t:'Covoiturage'} ]},
+  {type:'feature',pal:'sl-green',eyebrow:'Paiement sécurisé',title:'Ton argent est protégé.',lede:'Paie par <b>Orange Money</b>, <b>Wave</b>, carte — ou <b>à la livraison</b>. On garde le paiement jusqu’à ce que tu reçoives.',ico:'🔒',num:'3/5'},
+  {type:'feature',pal:'sl-paper',eyebrow:'Livraison',title:'Livré partout au Sénégal.',lede:'Dakar et régions, avec <b>suivi en direct</b> de ta commande.',ico:'📦',num:'4/5'},
+  {type:'cta',pal:'sl-hero',title:'Rejoins NEXUS Market.',lede:'Ouvre le site, crée ton compte en 5 secondes.',ico:'🇸🇳',pills:['nexusmarket.sn'],num:'5/5'} ]},
+
+{ k:'Parcours', name:'Acheter en toute sécurité', slides:[
+  {type:'hero',pal:'sl-green',eyebrow:'Guide',title:'Acheter en 4 étapes.',lede:'Simple, sécurisé, livré chez toi.',ico:'🛒',num:'1/5'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 1',step:'1',title:'Cherche ton produit',lede:'Barre de recherche ou catégories : téléphones, mode, électro, local…',num:'2/5'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 2',step:'2',title:'Choisis & vérifie',lede:'Photos, prix, description, <b>avis</b> et note du vendeur.',num:'3/5'},
+  {type:'step',pal:'sl-green',eyebrow:'Étape 3',step:'3',title:'Paie en sécurité',lede:'Orange Money · Wave · carte · ou à la livraison. <b>Argent protégé</b> jusqu’à réception.',num:'4/5',chips:[{e:'🟠',t:'Orange Money'},{e:'🌊',t:'Wave'},{e:'💳',t:'Carte'}]},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 4',step:'4',title:'Reçois chez toi',lede:'Livraison suivie. Tu confirmes la réception, le vendeur est payé.',num:'5/5'} ]},
+
+{ k:'Service', name:'Coursier à la demande', slides:[
+  {type:'hero',pal:'sl-hero',eyebrow:'Livraison express',title:'Un coursier en quelques minutes.',lede:'Fais livrer un colis, un plat, une course — à Dakar.',ico:'🛵',num:'1/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 1',step:'1',title:'Point de retrait & livraison',lede:'Indique où récupérer et où déposer.',num:'2/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 2',step:'2',title:'Un livreur proche accepte',lede:'On attribue automatiquement le coursier le plus proche.',num:'3/4'},
+  {type:'step',pal:'sl-green',eyebrow:'Étape 3',step:'3',title:'Suis la course en direct',lede:'Position <b>GPS</b> en temps réel. Paie à l’arrivée.',num:'4/4',chips:[{e:'📍',t:'Suivi GPS'},{e:'⚡',t:'Rapide'}]} ]},
+
+{ k:'Service', name:'NEXUS Pro — artisans & ouvriers', slides:[
+  {type:'hero',pal:'sl-green',eyebrow:'NEXUS Pro',title:'Un pro près de chez toi.',lede:'Plombier, maçon, électricien, menuisier, coiffure…',ico:'🔧',num:'1/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 1',step:'1',title:'Choisis le métier',lede:'Plus de 50 métiers disponibles.',num:'2/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 2',step:'2',title:'Vois les pros proches',lede:'Triés par proximité, avec <b>note</b>, expérience et tarif.',num:'3/4'},
+  {type:'step',pal:'sl-green',eyebrow:'Étape 3',step:'3',title:'Contacte en 1 tap',lede:'Appelle ou écris sur <b>WhatsApp</b> directement.',num:'4/4',chips:[{e:'⭐',t:'Pros notés'},{e:'💬',t:'WhatsApp'}]} ]},
+
+{ k:'Service', name:'NEXUS Stories', slides:[
+  {type:'hero',pal:'sl-dark',eyebrow:'Vidéo',title:'Les produits en vidéo.',lede:'Façon Reels : découvre les articles en mouvement.',ico:'🎬',num:'1/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 1',step:'1',title:'Regarde les stories',lede:'Les vendeurs présentent leurs produits en 30 secondes.',num:'2/4'},
+  {type:'step',pal:'sl-green',eyebrow:'Étape 2',step:'2',title:'Achète ou fais une offre',lede:'En <b>1 tap</b>, sans quitter la vidéo. Négocie ton prix.',num:'3/4'},
+  {type:'feature',pal:'sl-paper',eyebrow:'Vendeur ?',title:'Publie ta story en 30s',lede:'Filme, ajoute ton prix, publie. Tes clients te voient tout de suite.',ico:'📲',num:'4/4'} ]},
+
+{ k:'Service', name:'NEXUS Troc', slides:[
+  {type:'hero',pal:'sl-hero',eyebrow:'Échange',title:'Échange sans argent.',lede:'Troque ce que tu n’utilises plus contre ce dont tu as besoin.',ico:'🔄',num:'1/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 1',step:'1',title:'Publie ton objet',lede:'Photo, titre, état — en 1 minute.',num:'2/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 2',step:'2',title:'Dis ce que tu cherches',lede:'Indique ce que tu veux en échange.',num:'3/4'},
+  {type:'step',pal:'sl-green',eyebrow:'Étape 3',step:'3',title:'Reçois des propositions',lede:'Choisis la meilleure offre et échange en toute confiance.',num:'4/4'} ]},
+
+{ k:'Service', name:'Louma du vendredi', slides:[
+  {type:'hero',pal:'sl-green',eyebrow:'Chaque vendredi',title:'La Louma, en ligne.',lede:'Le marché hebdomadaire du Sénégal, version 2.0.',ico:'🏪',num:'1/4'},
+  {type:'feature',pal:'sl-paper',eyebrow:'Le vendredi',title:'Des offres spéciales',lede:'Bons plans et promos réservés au jour du marché.',ico:'🏷️',num:'2/4'},
+  {type:'feature',pal:'sl-paper',eyebrow:'Terroir',title:'Produits locaux',lede:'Artisanat, alimentaire, made in Sénégal.',ico:'🧺',num:'3/4'},
+  {type:'cta',pal:'sl-green',title:'Rendez-vous vendredi !',lede:'Active tes notifications pour ne rien rater.',ico:'📅',num:'4/4'} ]},
+
+{ k:'Service', name:'Local & Élevage', slides:[
+  {type:'hero',pal:'sl-hero',eyebrow:'NEXUS Élevage',title:'Produits locaux & élevage.',lede:'Bétail, volaille, produits du terroir.',ico:'🐑',num:'1/4'},
+  {type:'feature',pal:'sl-paper',eyebrow:'Tabaski & tous les jours',title:'Moutons, volaille, bétail',lede:'Commande ton mouton de Tabaski et fais-le livrer.',ico:'🐏',num:'2/4'},
+  {type:'feature',pal:'sl-paper',eyebrow:'Confiance',title:'Éleveurs vérifiés',lede:'Photos réelles, prix clairs, contact direct.',ico:'✅',num:'3/4'},
+  {type:'cta',pal:'sl-green',title:'Commande & fais livrer.',lede:'Le terroir sénégalais à portée de clic.',ico:'🚚',num:'4/4'} ]},
+
+{ k:'Service', name:'Immobilier & Location', slides:[
+  {type:'hero',pal:'sl-dark',eyebrow:'NEXUS Immobilier',title:'Se loger & louer, simplement.',lede:'Appartements, maisons, terrains — et location de matériel.',ico:'🏠',num:'1/4'},
+  {type:'feature',pal:'sl-paper',eyebrow:'Immobilier',title:'À louer ou à vendre',lede:'Appartements, maisons, terrains dans tout le Sénégal.',ico:'🔑',num:'2/4'},
+  {type:'feature',pal:'sl-paper',eyebrow:'Location',title:'Louer du matériel',lede:'Événementiel, BTP, sono, véhicules… au juste prix.',ico:'📸',num:'3/4'},
+  {type:'cta',pal:'sl-green',title:'Contacte l’annonceur.',lede:'Directement, sans intermédiaire.',ico:'💬',num:'4/4'} ]},
+
+{ k:'Service', name:'Covoiturage', slides:[
+  {type:'hero',pal:'sl-hero',eyebrow:'NEXUS Covoiturage',title:'Partage la route.',lede:'Voyage moins cher, rencontre du monde.',ico:'🚗',num:'1/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 1',step:'1',title:'Trouve un trajet',lede:'Dakar ↔ régions, aux horaires qui t’arrangent.',num:'2/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 2',step:'2',title:'Réserve ta place',lede:'Conducteurs et passagers identifiés.',num:'3/4'},
+  {type:'cta',pal:'sl-green',title:'Voyage malin.',lede:'Partage les frais, réduis ton budget transport.',ico:'💸',num:'4/4'} ]},
+
+{ k:'Service', name:'Dépannage Auto', slides:[
+  {type:'hero',pal:'sl-dark',eyebrow:'NEXUS Dépannage',title:'En panne ? On arrive.',lede:'Un dépanneur proche, quand tu en as besoin.',ico:'🚨',num:'1/4'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 1',step:'1',title:'Décris ta panne',lede:'Ta position et le problème, en quelques mots.',num:'2/4'},
+  {type:'step',pal:'sl-green',eyebrow:'Étape 2',step:'2',title:'Un dépanneur intervient',lede:'Mécanique, batterie, pneu, remorquage.',num:'3/4',chips:[{e:'🔋',t:'Batterie'},{e:'🛞',t:'Pneu'},{e:'🚗',t:'Remorquage'}]},
+  {type:'cta',pal:'sl-paper',title:'Reprends la route.',lede:'Un SOS auto simple et rapide.',ico:'🧰',num:'4/4'} ]},
+
+{ k:'Gagner', name:'Vendre & fidélité', slides:[
+  {type:'hero',pal:'sl-green',eyebrow:'Vendre sur NEXUS',title:'Vends et gagne.',lede:'Ta boutique en ligne, sans loyer.',ico:'💼',num:'1/5'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 1',step:'1',title:'Crée ta boutique',lede:'Inscris-toi et publie tes produits en 5 minutes.',num:'2/5'},
+  {type:'step',pal:'sl-paper',eyebrow:'Étape 2',step:'2',title:'Reçois tes paiements',lede:'Encaisse par <b>Orange Money</b> ou <b>Wave</b>, directement.',num:'3/5'},
+  {type:'feature',pal:'sl-green',eyebrow:'Récompenses',title:'Fidélité & cashback',lede:'Points à chaque achat, cashback, parrainage ambassadeur.',ico:'🎁',num:'4/5'},
+  {type:'cta',pal:'sl-hero',title:'Deviens vendeur.',lede:'Lance ta boutique aujourd’hui.',ico:'🚀',pills:['nexusmarket.sn'],num:'5/5'} ]}
+];
+
+/* ─── Rendu ────────────────────────────────────────────────────────────────── */
+const root = document.getElementById('decks');
+DECKS.forEach((d,di)=>{
+  const deck=document.createElement('section'); deck.className='deck';
+  deck.innerHTML=`<div class="deck-head"><span class="k">${d.k}</span><h2>${d.name}</h2>
+    <span class="cnt">${d.slides.length} slides · 1080×1350</span>
+    <button class="btn dl" onclick="exportDeck(${di})">📥 Exporter ce carrousel</button></div>
+    <div class="rail" id="rail-${di}"></div>`;
+  root.appendChild(deck);
+  const rail=deck.querySelector('#rail-'+di);
+  d.slides.forEach((s,si)=>{
+    const cell=document.createElement('div'); cell.className='cell';
+    cell.innerHTML=`${slide(s)}<div class="cap"><span>${si+1}/${d.slides.length}</span>
+      <button class="dlone" onclick="exportOne(${di},${si})">PNG ↓</button></div>`;
+    rail.appendChild(cell);
+  });
+});
+
+/* ─── Export PNG (foreignObject → canvas) ───────────────────────────────────── */
+const CSS = [...document.querySelectorAll('style')].map(s=>s.textContent).join('\n');
+function nodeToPng(slideEl, filename){
+  return new Promise((resolve)=>{
+    const clone = slideEl.querySelector('.canvas').cloneNode(true);
+    clone.style.transform='none';
+    const html = `<div xmlns="http://www.w3.org/1999/xhtml" style="width:1080px;height:1350px">${new XMLSerializer().serializeToString(clone)}</div>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350"><style>${CSS}</style><foreignObject width="1080" height="1350">${html}</foreignObject></svg>`;
+    const img = new Image();
+    img.onload=()=>{ const c=document.createElement('canvas'); c.width=1080;c.height=1350;
+      const x=c.getContext('2d'); x.fillStyle='#ffffff'; x.fillRect(0,0,1080,1350); x.drawImage(img,0,0);
+      c.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=filename; a.click();
+        setTimeout(()=>{URL.revokeObjectURL(a.href);resolve();},400); },'image/png'); };
+    img.onerror=()=>resolve();
+    img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+  });
+}
+function slug(s){return s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40);}
+function slideEl(di,si){return document.querySelectorAll('#rail-'+di+' .slide')[si];}
+async function exportOne(di,si){ await nodeToPng(slideEl(di,si), `nexus-${slug(DECKS[di].name)}-${si+1}.png`); }
+async function exportDeck(di){ for(let si=0;si<DECKS[di].slides.length;si++){ await exportOne(di,si); await new Promise(r=>setTimeout(r,500)); } }
+async function exportAll(){ for(let di=0;di<DECKS.length;di++){ await exportDeck(di); } }
+</script>
+</body>
+</html>
