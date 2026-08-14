@@ -6,6 +6,39 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-13 — URLs produit partageables (History API) sans casser la SPA/SEO
+
+**Demande** : pouvoir avoir un lien différent à chaque élément touché, partageable,
+sans problème avec Google.
+
+**Cause du problème** : au deep-link `?product=id`, l'app faisait un
+`history.replaceState(..., pathname)` qui **effaçait le `?product`** juste après ouverture
+→ impossible de copier le lien de l'élément courant.
+
+**Travail (bundle, composant PublicCatalog — point central `selectedProduct`)** :
+- Sync URL↔produit **sans rechargement** : ouverture → `pushState ?product=<id>`,
+  fermeture → `replaceState` propre. Le bouton retour ferme la fiche (popstate), avant
+  la rouvre.
+- **Canonical dynamique** vers la vraie fiche serveur `/produit/<id>` quand un produit
+  est ouvert, réinitialisé à `/` sinon (anti-doublon Google : l'état SPA pointe vers la
+  page indexable dédiée).
+- Deep-link robuste : si le produit partagé n'est pas dans le lot chargé, ouverture via
+  l'événement `nexus:open-product` (repli Supabase).
+- **Piège corrigé (course au montage)** : un ref `_prevProdRef` empêche l'effet de sync
+  de retirer le `?product` d'un lien partagé au tout premier rendu (avant que le handler
+  deep-link l'ait lu). On ne nettoie l'URL que sur une vraie fermeture.
+- Les **annonces express** passent par le même `selectedProduct` → déjà couvertes.
+
+**Vérifié en navigateur** (serveur local, SW purgé) : ouverture/fermeture/retour/avant +
+rechargement d'un lien partagé → tous OK (URL, canonical, modale). `node --check` OK.
+Cache-busting : `app.9e3420e669.js` → `app.c586309029.js` + index.html.
+
+**Non fait (à étendre, même patron)** : vendeurs (`showVendorPagePub`), pros (module),
+trocs (`?troc`), stories (`?story`) — chacun a son propre point d'ouverture ; à faire
+un par un + vérif, pour ne rien casser.
+
+---
+
 ## 2026-08-13 — SEO : couverture d'indexation de toutes les entités (+ vendeurs)
 
 **Demande** : que chaque entité (annonces pros/agents, coursiers, produits, services,

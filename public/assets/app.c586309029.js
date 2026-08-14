@@ -32902,6 +32902,55 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
     window.addEventListener('nexus:open-product', h);
     return () => window.removeEventListener('nexus:open-product', h);
   }, [products]);
+  // [URL PARTAGEABLE] Synchronise l'URL avec le produit ouvert, SANS rechargement :
+  //   ouverture → pushState ?product=<id> (copiable/partageable, back ferme la fiche)
+  //   fermeture → replaceState propre (pas d'entrée d'historique en trop)
+  //   + canonical dynamique vers la vraie fiche serveur /produit/<id> (anti-doublon
+  //     Google : l'état SPA ?product pointe vers la page indexable dédiée).
+  // Non-invasif : un seul point (l'état selectedProduct par lequel passent toutes les
+  // cartes) ; les autres paramètres d'URL (troc, story, ref…) sont préservés.
+  const _prevProdRef = React.useRef(undefined); // undefined = tout premier rendu
+  React.useEffect(() => {
+    try {
+      const u = new URL(window.location.href);
+      const cur = u.searchParams.get('product');
+      const canon = document.querySelector('link[rel="canonical"]');
+      if (selectedProduct && selectedProduct.id != null) {
+        const id = String(selectedProduct.id);
+        if (cur !== id) {
+          u.searchParams.set('product', id);
+          window.history.pushState({ nxProduct: id }, '', u.pathname + u.search + u.hash);
+        }
+        if (canon) canon.setAttribute('href', u.origin + '/produit/' + encodeURIComponent(id));
+        _prevProdRef.current = id;
+      } else {
+        // ⚠️ Au tout premier rendu (aucun produit ouvert AVANT), on ne touche à RIEN :
+        // sinon on retirerait le ?product d'un lien partagé AVANT que le handler de
+        // deep-link ait pu le lire (course). On ne nettoie que sur une vraie fermeture
+        // (un produit était réellement ouvert juste avant).
+        if (_prevProdRef.current) {
+          if (cur) {
+            u.searchParams.delete('product');
+            window.history.replaceState({}, '', u.pathname + (u.search ? u.search : '') + u.hash);
+          }
+          if (canon) canon.setAttribute('href', u.origin + '/');
+        }
+        _prevProdRef.current = null;
+      }
+    } catch (_) {}
+  }, [selectedProduct && selectedProduct.id]);
+  // Bouton « retour » du navigateur : ré-ouvre le produit de l'URL, ou ferme la fiche.
+  React.useEffect(() => {
+    const onPop = () => {
+      try {
+        const pid = new URLSearchParams(window.location.search).get('product');
+        if (!pid) { setSelectedProduct(null); return; }
+        window.dispatchEvent(new CustomEvent('nexus:open-product', { detail: pid }));
+      } catch (_) {}
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   // Ouvrir le panneau On Demand depuis n'importe où dans l'app
   React.useEffect(() => {
     const _od = () => setShowOnDemandPage(true);
@@ -32950,7 +32999,14 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
         const _dlProduct = (allProducts || []).find(p => String(p.id) === String(_dlId));
         if (_dlProduct) {
           setSelectedProduct(_dlProduct);
-          window.history.replaceState({}, document.title, window.location.pathname);
+          // [URL PARTAGEABLE] On NE retire plus ?product ici : l'effet de synchronisation
+          // URL↔produit (ci-dessous) conserve le lien copiable/partageable pendant la
+          // consultation, et pose le canonical vers la vraie fiche /produit/:id.
+        } else {
+          // Produit hors du lot chargé → ouverture via l'événement, qui va le chercher
+          // dans Supabase (même repli que le clic depuis une story). Garantit qu'un lien
+          // partagé vers N'IMPORTE quel produit s'ouvre au rechargement.
+          window.dispatchEvent(new CustomEvent('nexus:open-product', { detail: _dlId }));
         }
       }
     } catch(_) {}
