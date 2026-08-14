@@ -33,9 +33,17 @@ sans problème avec Google.
 rechargement d'un lien partagé → tous OK (URL, canonical, modale). `node --check` OK.
 Cache-busting : `app.9e3420e669.js` → `app.c586309029.js` + index.html.
 
-**Non fait (à étendre, même patron)** : vendeurs (`showVendorPagePub`), pros (module),
-trocs (`?troc`), stories (`?story`) — chacun a son propre point d'ouverture ; à faire
-un par un + vérif, pour ne rien casser.
+**Étendu aux BOUTIQUES (2026-08-13, suite)** : même patron sur l'état `showVendorPagePub`
+→ `?vendor=<id>` partageable + canonical `/vendeur/<id>` + deep-link + retour navigateur
+(popstate réconcilie produit ET boutique). ⚠️ Piège corrigé : l'effet boutique doit être
+déclaré APRÈS le `useState` de `showVendorPagePub` (sinon TDZ dans le tableau de deps →
+écran blanc). Vérifié navigateur : deep-link `?vendor` ouvre + garde l'URL + canonical ;
+fermeture nettoie ; app rend sans erreur. Bundle → `app.bd70d1d096.js`.
+
+**Non fait (à étendre, même patron)** : pros (module annuaire séparé, PAS d'état
+« pro sélectionné » ni lecture `?pro=` dans le bundle → nécessiterait une vue détail pro ;
+la fiche serveur `/pro/[id]` reste partageable/indexable en direct), trocs (`?troc`),
+stories (`?story`).
 
 ---
 

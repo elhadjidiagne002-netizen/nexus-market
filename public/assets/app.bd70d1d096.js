@@ -32939,13 +32939,16 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
       }
     } catch (_) {}
   }, [selectedProduct && selectedProduct.id]);
-  // Bouton « retour » du navigateur : ré-ouvre le produit de l'URL, ou ferme la fiche.
+  // Bouton « retour »/« avant » du navigateur : réconcilie produit ET boutique avec l'URL.
   React.useEffect(() => {
     const onPop = () => {
       try {
-        const pid = new URLSearchParams(window.location.search).get('product');
-        if (!pid) { setSelectedProduct(null); return; }
-        window.dispatchEvent(new CustomEvent('nexus:open-product', { detail: pid }));
+        const q = new URLSearchParams(window.location.search);
+        const pid = q.get('product'), vid = q.get('vendor');
+        if (!pid) setSelectedProduct(null);
+        else window.dispatchEvent(new CustomEvent('nexus:open-product', { detail: pid }));
+        if (!vid) setShowVendorPagePub(null);
+        else setShowVendorPagePub({ id: vid, name: '' });
       } catch (_) {}
     };
     window.addEventListener('popstate', onPop);
@@ -33009,6 +33012,10 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           window.dispatchEvent(new CustomEvent('nexus:open-product', { detail: _dlId }));
         }
       }
+      // Deeplink ?vendor=ID — ouvrir la vitrine boutique partagée (VendorPublicPage
+      // résout le vendeur par son id ; l'effet de sync garde le lien copiable).
+      const _dlVendor = _dlParams.get('vendor');
+      if (_dlVendor) setShowVendorPagePub({ id: _dlVendor, name: '' });
     } catch(_) {}
   })(); }, []);
   const addToCart = (product, quantity = 1) => {
@@ -33262,6 +33269,35 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   };
 
   const [showVendorPagePub, setShowVendorPagePub] = useState(null);
+  // [URL PARTAGEABLE — BOUTIQUE] Même patron que le produit, sur l'état showVendorPagePub
+  // (vitrine /vendeur/:id). Paramètre ?vendor indépendant → gère l'overlap produit↔boutique.
+  // Déclaré ICI (après le state) pour éviter la zone morte temporelle (TDZ).
+  const _prevVendorRef = React.useRef(undefined);
+  React.useEffect(() => {
+    try {
+      const u = new URL(window.location.href);
+      const cur = u.searchParams.get('vendor');
+      const canon = document.querySelector('link[rel="canonical"]');
+      const vid = (showVendorPagePub && showVendorPagePub.id != null) ? String(showVendorPagePub.id) : null;
+      if (vid) {
+        if (cur !== vid) {
+          u.searchParams.set('vendor', vid);
+          window.history.pushState({ nxVendor: vid }, '', u.pathname + u.search + u.hash);
+        }
+        if (canon) canon.setAttribute('href', u.origin + '/vendeur/' + encodeURIComponent(vid));
+        _prevVendorRef.current = vid;
+      } else {
+        if (_prevVendorRef.current) {
+          if (cur) {
+            u.searchParams.delete('vendor');
+            window.history.replaceState({}, '', u.pathname + (u.search ? u.search : '') + u.hash);
+          }
+          if (canon) canon.setAttribute('href', u.origin + '/');
+        }
+        _prevVendorRef.current = null;
+      }
+    } catch (_) {}
+  }, [showVendorPagePub && showVendorPagePub.id]);
   // [UX #5] Réinitialiser la quantité modale à chaque nouveau produit sélectionné
   useEffect(() => { setModalQty(1); }, [selectedProduct?.id]);
   const NEXUS_ALL_CATS = ["Téléphones & Accessoires","Ordinateurs & Tablettes","Électronique & Hi-Fi","Appareils photo & Vidéo","Jeux vidéo & Consoles","Montres connectées","Mode Femme","Mode Homme","Mode Enfant","Chaussures","Sacs & Maroquinerie","Bijoux & Accessoires","Beauté & Cosmétiques","Parfums","Tissus & Wax","Meubles & Décoration","Électroménager","Cuisine & Art de la table","Linge de maison","Jardinage & Extérieur","Bricolage & Outillage","Éclairage","Alimentation générale","Produits bio & locaux","Boissons","Épices & Condiments","Céréales & Légumineuses","Produits laitiers","Boulangerie & Pâtisserie","Voitures","Motos & Scooters","Vélos & Trottinettes","Pièces & Accessoires auto","Transport & Logistique","Location appartement","Vente immobilier","Terrains & Parcelles","Bureaux & Locaux commerciaux","Animaux de compagnie","Accessoires animaux","Alimentation animaux","Livres & Presses","Livres papier","eBooks & PDF","Livres audio","BD & Mangas","Manuels scolaires","Presse & Magazines","Livres anciens & Rares","Musique & Instruments","Jouets & Jeux","Sport & Fitness","Voyages & Tourisme","Arts & Artisanat","Services à domicile","Formation & Cours","Santé & Bien-être","Informatique & Tech (services)","Événementiel","BTP & Construction","Matériel professionnel","Agriculture & Élevage","Fournitures de bureau","Textile & Couture (pro)","Collections & Antiquités","Dons & Trocs","Produits locaux","Autre"];
