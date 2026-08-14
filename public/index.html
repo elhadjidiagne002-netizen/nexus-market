@@ -3076,7 +3076,7 @@
     })();
     </script>
 
-    <script src="/assets/app.6458cdda46.js"></script>
+    <script src="/assets/app.80cf413a23.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -11005,21 +11005,24 @@ window.addEventListener('unhandledrejection', function(event) {
           var actions = document.createElement('div'); actions.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex:0 0 auto';
           var wa = document.createElement('button'); wa.textContent = '💬'; wa.title = 'Contacter sur WhatsApp';
           wa.style.cssText = 'border:none;border-radius:8px;background:#25D366;color:#fff;font-size:1rem;padding:.35rem .55rem;cursor:pointer';
-          wa.addEventListener('click', function () {
+          wa.addEventListener('click', function (e) {
+            e.stopPropagation();
             window.open(waLink(b.phone, 'Bonjour, j’ai vu votre profil de ' + (b.profession || 'professionnel') + ' sur NEXUS Market. J’aurais besoin de vos services.'), '_blank');
           });
           actions.appendChild(wa);
           if (b.lat != null && b.lng != null) {
             var nav = document.createElement('button'); nav.textContent = '🧭'; nav.title = 'Itinéraire';
             nav.style.cssText = 'border:1px solid #006d40;background:#fff;color:#006d40;border-radius:8px;font-size:1rem;padding:.35rem .55rem;cursor:pointer';
-            nav.addEventListener('click', function () { NexusMap.openDirections(b.lat, b.lng, b.name || b.profession || 'Pro'); });
+            nav.addEventListener('click', function (e) { e.stopPropagation(); NexusMap.openDirections(b.lat, b.lng, b.name || b.profession || 'Pro'); });
             actions.appendChild(nav);
           }
           var rev = document.createElement('button'); rev.textContent = '⭐'; rev.title = 'Avis & notation';
           rev.style.cssText = 'border:1px solid #f59e0b;background:#fff;color:#f59e0b;border-radius:8px;font-size:1rem;padding:.35rem .55rem;cursor:pointer';
-          rev.addEventListener('click', function () { showReviews(b); });
+          rev.addEventListener('click', function (e) { e.stopPropagation(); showReviews(b); });
           actions.appendChild(rev);
           tile.appendChild(actions);
+          tile.style.cursor = 'pointer';
+          tile.addEventListener('click', function () { showProDetail(b); });
           host.appendChild(tile);
         });
     }).catch(function () {
@@ -11097,6 +11100,71 @@ window.addEventListener('unhandledrejection', function(event) {
         loadList();
       }).catch(function () { statusEl.textContent = ''; UX.toast('Échec de l’envoi de l’avis.', { bg: '#b45309' }); });
     });
+  }
+
+  // ── Fiche détail d'un pro (modal) — partageable : URL ?pro=<id>, page serveur /pro/:id ──
+  var proModal = null, _proUrlActive = false;
+  function proIdOf(b) { return (b && (b.pro_id || b.id)) || null; }
+  // Synchronise l'URL avec le pro ouvert (impératif) + canonical vers /pro/:id.
+  function syncProUrl(id) {
+    try {
+      var u = new URL(window.location.href);
+      var canon = document.querySelector('link[rel="canonical"]');
+      if (id) {
+        if (u.searchParams.get('pro') !== String(id)) { u.searchParams.set('pro', String(id)); history.pushState({ nxPro: String(id) }, '', u.pathname + u.search + u.hash); }
+        if (canon) canon.setAttribute('href', u.origin + '/pro/' + encodeURIComponent(id));
+        _proUrlActive = true;
+      } else if (_proUrlActive) {
+        if (u.searchParams.get('pro')) { u.searchParams.delete('pro'); history.replaceState({}, '', u.pathname + (u.search ? u.search : '') + u.hash); }
+        if (canon) canon.setAttribute('href', u.origin + '/');
+        _proUrlActive = false;
+      }
+    } catch (e) {}
+  }
+  function closeProDetail() { if (proModal) proModal.style.display = 'none'; syncProUrl(null); }
+  function showProDetail(b) {
+    if (!b) return;
+    if (!b.pro_id && b.id) b.pro_id = b.id;           // showReviews attend pro_id
+    var id = proIdOf(b);
+    if (!proModal) {
+      proModal = document.createElement('div'); proModal.id = 'nx-pro-detail';
+      proModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10062;display:none;align-items:center;justify-content:center;padding:1rem';
+      proModal.addEventListener('click', function (e) { if (e.target === proModal) closeProDetail(); });
+      document.body.appendChild(proModal);
+    }
+    var dispo = (b.disponible === false) ? '🔴 Indisponible' : '🟢 Disponible';
+    var meta = [b.profession, (b.experience_years ? b.experience_years + ' ans d’exp.' : ''), b.tarif_text, (b.city ? ('📍 ' + b.city) : '')].filter(Boolean).join(' · ');
+    proModal.innerHTML =
+      '<div style="background:#fff;border-radius:16px;max-width:480px;width:100%;max-height:88vh;overflow:auto;font-family:Inter,system-ui,-apple-system,sans-serif">'
+      + '<div style="display:flex;align-items:center;gap:8px;padding:.9rem 1.1rem;background:#006d40;color:#fff;border-radius:16px 16px 0 0">'
+      + '<span style="font-size:1.3rem">' + metierEmoji(b.profession) + '</span><b style="flex:1">' + esc(b.name || b.profession || 'Professionnel') + '</b>'
+      + '<button id="nx-prod-x" aria-label="Fermer" style="background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer">×</button></div>'
+      + '<div style="padding:1rem 1.1rem">'
+      + (b.photo_url ? '<img src="' + esc(b.photo_url) + '" alt="" style="width:100%;max-height:260px;object-fit:cover;border-radius:12px;margin-bottom:.7rem" onerror="this.style.display=\'none\'">' : '')
+      + '<div style="font-size:.85rem;color:#006d40;font-weight:600;margin-bottom:.3rem">' + esc(meta) + '</div>'
+      + '<div style="font-size:.82rem;margin-bottom:.6rem">' + dispo + '</div>'
+      + (b.rating_count > 0 ? '<div style="color:#f59e0b;font-weight:700;margin-bottom:.6rem">' + stars(b.rating_avg) + ' ' + Number(b.rating_avg).toFixed(1) + ' <span style="color:#999;font-weight:400">(' + b.rating_count + ' avis)</span></div>' : '')
+      + (b.description ? '<p style="color:#374151;line-height:1.6;margin:.2rem 0 .9rem">' + esc(b.description) + '</p>' : '')
+      + '<div style="display:flex;gap:.5rem;flex-wrap:wrap">'
+      + '<button id="nx-prod-wa" style="flex:1 1 auto;background:#25D366;color:#fff;border:none;border-radius:10px;padding:.7rem;font-weight:800;cursor:pointer">💬 Contacter</button>'
+      + '<button id="nx-prod-rev" style="background:#fff;color:#f59e0b;border:1px solid #f59e0b;border-radius:10px;padding:.7rem 1rem;font-weight:700;cursor:pointer">⭐ Avis</button>'
+      + '<button id="nx-prod-share" style="background:#eef2f0;color:#111;border:none;border-radius:10px;padding:.7rem 1rem;font-weight:700;cursor:pointer">🔗 Partager</button>'
+      + '</div></div></div>';
+    proModal.style.display = 'flex';
+    proModal.querySelector('#nx-prod-x').addEventListener('click', closeProDetail);
+    proModal.querySelector('#nx-prod-wa').addEventListener('click', function () { window.open(waLink(b.phone, 'Bonjour, j’ai vu votre profil de ' + (b.profession || 'professionnel') + ' sur NEXUS Market. J’aurais besoin de vos services.'), '_blank'); });
+    proModal.querySelector('#nx-prod-rev').addEventListener('click', function () { showReviews(b); });
+    proModal.querySelector('#nx-prod-share').addEventListener('click', function () { var url = window.location.origin + '/pro/' + id; if (navigator.share) { navigator.share({ title: (b.name || b.profession || 'Pro'), url: url }).catch(function () {}); } else { try { navigator.clipboard.writeText(url); UX.toast('Lien copié'); } catch (e) {} } });
+    syncProUrl(id);
+  }
+  // Ouvre la fiche d'un pro par son id (deep-link ?pro=<id> / lien partagé).
+  function openPro(id) {
+    if (!id) return;
+    var c = sb();
+    if (!c) { open(); return; }
+    Promise.resolve(c.from('pros').select('*').eq('id', id).limit(1).maybeSingle())
+      .then(function (r) { var b = r && r.data; if (b) showProDetail(b); else open(); })
+      .catch(function () { open(); });
   }
 
   // ── Onglet « Je suis un pro » : inscription / mise à jour de la fiche ─────────
@@ -11250,7 +11318,7 @@ window.addEventListener('unhandledrejection', function(event) {
     host.innerHTML = '<div style="text-align:center;color:#666;padding:1rem">🔎 Recherche « ' + esc(q) + ' »…</div>';
     var c = sb();
     if (!c || !q) { host.innerHTML = '<div style="color:#b45309;padding:1rem">Recherche indisponible.</div>'; return; }
-    c.from('pros').select('user_id,profession,name,phone,city,photo_url,experience_years,tarif_text,disponible,rating')
+    c.from('pros').select('id,user_id,profession,name,phone,city,photo_url,experience_years,tarif_text,disponible,rating,rating_avg,rating_count,description')
       .eq('status', 'active').or('name.ilike.%' + q + '%,profession.ilike.%' + q + '%').limit(40)
       .then(function (res) { renderProList(host, (res && res.data) || [], q); })
       .catch(function () { host.innerHTML = '<div style="color:#b45309;padding:1rem">Impossible de charger les professionnels.</div>'; });
@@ -11271,9 +11339,16 @@ window.addEventListener('unhandledrejection', function(event) {
     });
     host.innerHTML = h;
     Array.prototype.forEach.call(host.querySelectorAll('[data-wa]'), function (btn) {
-      btn.addEventListener('click', function () {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
         window.open(waLink(btn.getAttribute('data-wa'), 'Bonjour, j’ai vu votre profil de ' + (btn.getAttribute('data-prof') || 'professionnel') + ' sur NEXUS Market. J’aurais besoin de vos services.'), '_blank');
       });
+    });
+    // Ligne cliquable → fiche détail (partageable)
+    Array.prototype.forEach.call(host.children, function (row, i) {
+      if (!list[i]) return;
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', function () { showProDetail(list[i]); });
     });
   }
   function openSearch(text) {
@@ -11281,10 +11356,20 @@ window.addEventListener('unhandledrejection', function(event) {
     setTimeout(function () { if (ov) searchPros(ov.querySelector('#nx-pro-results'), text); }, 250);
   }
   window.NexusPro = {
-    open: open, openTab: openTab, openFor: openFor, openSearch: openSearch,
+    open: open, openTab: openTab, openFor: openFor, openSearch: openSearch, openPro: openPro,
     metiers: function () { return METIERS.slice(); }, loadMetiers: loadDbMetiers
   };
   try { loadDbMetiers(); } catch (e) {} // enrichit tôt la liste (pour les suggestions de l'accueil)
+  // Deep-link ?pro=<id> : ouvre la fiche du pro partagé (depuis /pro/:id ou un lien copié).
+  try { var _proDl = new URLSearchParams(location.search).get('pro'); if (_proDl) setTimeout(function () { openPro(_proDl); }, 700); } catch (e) {}
+  // Bouton retour du navigateur : ferme la fiche (ou rouvre le pro de l'URL).
+  window.addEventListener('popstate', function () {
+    try {
+      var pid = new URLSearchParams(location.search).get('pro');
+      if (!pid) { if (proModal) proModal.style.display = 'none'; syncProUrl(null); }
+      else openPro(pid);
+    } catch (e) {}
+  });
 
   // ── FAB + ouverture par événement (intégrable au lanceur unique) ─────────────
   function injectFab() {

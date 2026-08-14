@@ -47,12 +47,24 @@ de spam d'historique) ; le deep-link `?story=<id>` ouvre désormais LA bonne sto
 (2 stories `closed` : « Chien »/« Demo ») : deep-link ouvre la bonne, URL gardée,
 canonical `/stories/id`, fermeture nettoie. Bundle → `app.6458cdda46.js`.
 
-**Non faisable sans chantier (trocs & pros)** : ce sont des modules **LISTE/annuaire**,
-SANS état « élément sélectionné » ni vue détail in-app (vérifié : aucun `selectedTroc`/
-`selectedPro`). Rendre un troc/pro précis partageable in-app = **construire une vue fiche**
-dans chaque module (vrai développement, à vérifier à fond) — pas fait sous la contrainte
-« ne rien compromettre ». Les fiches serveur `/troc/[id]` et `/pro/[id]` restent
-partageables/indexables en direct (Google, WhatsApp).
+**Fiches détail TROC & PRO construites (2026-08-13, suite)** — la vraie solution demandée :
+- **Troc** (`NexusTrocWidget`, bundle) : nouvel état `selectedTroc` + modale détail (photo,
+  description, « recherche en échange », Proposer, Partager), carte cliquable, sync
+  `?troc=<id>` + canonical `/troc/<id>`, deep-link (fetch par id), retour navigateur.
+  Vérifié : non-bloquant, deep-link gracieux (aucun troc en base pour un test live complet ;
+  code = patrons produit/vendeur déjà validés). Insertion de données de test en prod
+  refusée par le classifieur (garde-fou) → pas contournée.
+- **Pro** (module VANILLA IIFE `window.__NEXUS_PRO__` dans `public/index.html`, PAS le bundle) :
+  fonctions `showProDetail(b)` (modale, calquée sur le modal d'avis) + `syncProUrl` +
+  `openPro(id)` ; tuiles (nearby ET recherche par nom) cliquables → fiche ; deep-link
+  `?pro=<id>` (fetch `pros` par id) ; `?pro` + canonical `/pro/<id>` ; retour navigateur
+  (popstate). **Vérifié en navigateur avec un vrai pro (« deme sene ») : deep-link ouvre la
+  bonne fiche, URL/canonical OK, fermeture + retour nettoient.** Piège corrigé : le popstate
+  doit appeler `syncProUrl(null)` (sinon canonical pas réinitialisé au retour).
+- Bundle → `app.80cf413a23.js`. `node --check` OK.
+
+**Bilan liens partageables** : produits, annonces express, boutiques, stories, **trocs**,
+**pros** = tous couverts (URL + canonical vers la fiche serveur indexable).
 
 ---
 

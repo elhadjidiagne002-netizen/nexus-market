@@ -12258,6 +12258,7 @@ const NexusTrocWidget = ({ user }) => {
   const [busy, setBusy] = React.useState(false);
   const [form, setForm] = React.useState({ title: '', description: '', category: 'Électronique', city: 'Dakar', want: '', phone: '', photoUrl: '' });
   const [proposeFor, setProposeFor] = React.useState(null);
+  const [selectedTroc, setSelectedTroc] = React.useState(null); // fiche détail d'un troc
   const [prop, setProp] = React.useState({ offered_title: '', message: '', phone: '' });
   const fileRef = React.useRef(null);
   const toast = (m, t) => (window.__nexusToast || function () {})(m, t || 'info');
@@ -12275,9 +12276,50 @@ const NexusTrocWidget = ({ user }) => {
     setLoading(false);
   };
   React.useEffect(() => { if (open) load(); }, [open]);
-  // Ouverture auto si l'URL contient ?troc=... (depuis une page SEO /troc/:id)
+  // Deep-link ?troc=<id> : ouvre la FICHE DÉTAIL du troc partagé (depuis la page SEO
+  // /troc/:id ou un lien copié). ?troc=1/true = simple flag → ouvre la liste.
   React.useEffect(() => {
-    try { if (new URLSearchParams(location.search).get('troc')) setOpen(true); } catch (_) {}
+    try {
+      const tid = new URLSearchParams(location.search).get('troc');
+      if (!tid) return;
+      if (tid === '1' || tid === 'true') { setOpen(true); return; }
+      if (DataService._sb) {
+        DataService._sb.from('troc_listings').select('*').eq('id', tid).maybeSingle()
+          .then(({ data }) => { if (data) setSelectedTroc(data); else setOpen(true); }).catch(() => setOpen(true));
+      } else setOpen(true);
+    } catch (_) {}
+  }, []);
+  // [URL PARTAGEABLE — TROC] Sync URL↔fiche détail : ouverture → pushState ?troc=<id>,
+  // fermeture → replaceState propre, + canonical vers la fiche serveur /troc/<id>.
+  const _prevTrocRef = React.useRef(undefined);
+  React.useEffect(() => {
+    try {
+      const u = new URL(window.location.href);
+      const cur = u.searchParams.get('troc');
+      const canon = document.querySelector('link[rel="canonical"]');
+      const tid = (selectedTroc && selectedTroc.id != null) ? String(selectedTroc.id) : null;
+      if (tid) {
+        if (cur !== tid) { u.searchParams.set('troc', tid); window.history.pushState({ nxTroc: tid }, '', u.pathname + u.search + u.hash); }
+        if (canon) canon.setAttribute('href', u.origin + '/troc/' + encodeURIComponent(tid));
+        _prevTrocRef.current = tid;
+      } else if (_prevTrocRef.current) {
+        if (cur) { u.searchParams.delete('troc'); window.history.replaceState({}, '', u.pathname + (u.search ? u.search : '') + u.hash); }
+        if (canon) canon.setAttribute('href', u.origin + '/');
+        _prevTrocRef.current = null;
+      }
+    } catch (_) {}
+  }, [selectedTroc && selectedTroc.id]);
+  // Bouton retour : ferme la fiche (ou rouvre le troc de l'URL).
+  React.useEffect(() => {
+    const onPop = () => {
+      try {
+        const tid = new URLSearchParams(location.search).get('troc');
+        if (!tid || tid === '1' || tid === 'true') { setSelectedTroc(null); return; }
+        if (DataService._sb) DataService._sb.from('troc_listings').select('*').eq('id', tid).maybeSingle().then(({ data }) => { if (data) setSelectedTroc(data); }).catch(() => {});
+      } catch (_) {}
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
   }, []);
   // Ouverture via événement global (menu / bannière / liens divers)
   React.useEffect(() => {
@@ -12341,13 +12383,13 @@ const NexusTrocWidget = ({ user }) => {
 
   const inp = (val, on, ph, type) => E('input', { type: type || 'text', value: val, onChange: e => on(e.target.value), placeholder: ph, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem' } });
 
-  const card = (item) => E('div', { key: item.id, style: { border: '1px solid var(--border,#e5e7eb)', borderRadius: 12, overflow: 'hidden', background: '#fff', display: 'flex', flexDirection: 'column' } },
+  const card = (item) => E('div', { key: item.id, onClick: () => setSelectedTroc(item), style: { border: '1px solid var(--border,#e5e7eb)', borderRadius: 12, overflow: 'hidden', background: '#fff', display: 'flex', flexDirection: 'column', cursor: 'pointer' } },
     item.photo_url ? E('img', { src: item.photo_url, alt: item.title, loading: 'lazy', style: { width: '100%', height: 120, objectFit: 'cover' } }) : E('div', { style: { height: 120, background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34 } }, '🔄'),
     E('div', { style: { padding: '0.6rem', flex: 1, display: 'flex', flexDirection: 'column' } },
       E('div', { style: { fontWeight: 700, fontSize: '0.9rem' } }, item.title),
       E('div', { style: { fontSize: '0.8rem', color: 'var(--text-secondary,#6b7280)', margin: '0.2rem 0', flex: 1 } }, t('troc.looking_for') + (item.want || '—')),
       E('div', { style: { fontSize: '0.72rem', color: '#9ca3af', marginBottom: '0.4rem' } }, (item.category || '') + (item.city ? ' · ' + item.city : '')),
-      E('button', { onClick: () => setProposeFor(item), style: { background: '#006d40', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' } }, t('troc.propose_btn'))
+      E('button', { onClick: (e) => { e.stopPropagation(); setProposeFor(item); }, style: { background: '#006d40', color: '#fff', border: 'none', borderRadius: 8, padding: '0.4rem', cursor: 'pointer', fontWeight: 700, fontSize: '0.8rem' } }, t('troc.propose_btn'))
     )
   );
 
@@ -12400,7 +12442,23 @@ const NexusTrocWidget = ({ user }) => {
       E('textarea', { value: prop.message, onChange: e => setProp(p => ({ ...p, message: e.target.value })), placeholder: t('troc.message_placeholder'), rows: 3, style: { width: '100%', padding: '0.55rem 0.7rem', border: '1px solid var(--border,#ddd)', borderRadius: 8, marginBottom: '0.6rem', fontSize: '0.9rem', resize: 'vertical' } }),
       inp(prop.phone, v => setProp(p => ({ ...p, phone: v })), t('troc.your_phone_placeholder'), 'tel'),
       E('button', { onClick: submitProposal, disabled: busy, style: { width: '100%', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, busy ? t('troc.sending') : t('troc.send_proposal_btn'))
-    ))
+    )),
+    // Fiche détail d'un troc (partageable : URL ?troc=<id>, page serveur /troc/:id)
+    selectedTroc && E('div', { onClick: () => setSelectedTroc(null), style: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' } },
+      E('div', { onClick: e => e.stopPropagation(), style: { background: '#fff', borderRadius: 16, width: '100%', maxWidth: 520, maxHeight: '88vh', overflow: 'auto', padding: '1.2rem' } },
+        E('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' } },
+          E('h2', { style: { margin: 0, fontSize: '1.15rem', color: '#006d40' } }, '🔄 ' + (selectedTroc.title || 'Troc')),
+          E('button', { onClick: () => setSelectedTroc(null), 'aria-label': 'Fermer', style: { background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', lineHeight: 1 } }, '×')),
+        selectedTroc.photo_url && E('img', { src: selectedTroc.photo_url, alt: selectedTroc.title, style: { width: '100%', maxHeight: 280, objectFit: 'cover', borderRadius: 12, marginBottom: '0.7rem' } }),
+        selectedTroc.description && E('p', { style: { color: '#374151', lineHeight: 1.6, marginTop: 0 } }, selectedTroc.description),
+        E('div', { style: { background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '0.6rem 0.8rem', margin: '0.6rem 0', fontSize: '0.9rem' } }, '🔁 ' + t('troc.looking_for') + (selectedTroc.want || '—')),
+        E('div', { style: { fontSize: '0.8rem', color: '#6b7280', marginBottom: '0.9rem' } }, (selectedTroc.category || '') + (selectedTroc.city ? ' · ' + selectedTroc.city : '')),
+        E('div', { style: { display: 'flex', gap: '0.6rem', flexWrap: 'wrap' } },
+          E('button', { onClick: () => setProposeFor(selectedTroc), style: { flex: '1 1 auto', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, padding: '0.7rem', fontWeight: 800, cursor: 'pointer' } }, t('troc.propose_btn')),
+          E('button', { onClick: () => { const url = window.location.origin + '/troc/' + selectedTroc.id; if (navigator.share) { navigator.share({ title: selectedTroc.title, url }).catch(() => {}); } else { try { navigator.clipboard.writeText(url); toast('Lien copié', 'success'); } catch (_) {} } }, style: { background: '#eef2f0', color: '#111', border: 'none', borderRadius: 10, padding: '0.7rem 1rem', fontWeight: 700, cursor: 'pointer' } }, '🔗 Partager')
+        )
+      )
+    )
   );
 };
 
