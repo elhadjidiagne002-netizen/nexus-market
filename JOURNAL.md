@@ -40,10 +40,19 @@ déclaré APRÈS le `useState` de `showVendorPagePub` (sinon TDZ dans le tableau
 écran blanc). Vérifié navigateur : deep-link `?vendor` ouvre + garde l'URL + canonical ;
 fermeture nettoie ; app rend sans erreur. Bundle → `app.bd70d1d096.js`.
 
-**Non fait (à étendre, même patron)** : pros (module annuaire séparé, PAS d'état
-« pro sélectionné » ni lecture `?pro=` dans le bundle → nécessiterait une vue détail pro ;
-la fiche serveur `/pro/[id]` reste partageable/indexable en direct), trocs (`?troc`),
-stories (`?story`).
+**Étendu aux STORIES (2026-08-13, suite)** : `NexusStoriesWidget` a un élément courant
+(`items[idx]`) → sync `?story=<id>` + canonical `/stories/<id>` (replaceState seul → pas
+de spam d'historique) ; le deep-link `?story=<id>` ouvre désormais LA bonne story (fix :
+`wantIdRef` lu depuis l'URL, avant il ouvrait toujours à l'index 0). Vérifié navigateur
+(2 stories `closed` : « Chien »/« Demo ») : deep-link ouvre la bonne, URL gardée,
+canonical `/stories/id`, fermeture nettoie. Bundle → `app.6458cdda46.js`.
+
+**Non faisable sans chantier (trocs & pros)** : ce sont des modules **LISTE/annuaire**,
+SANS état « élément sélectionné » ni vue détail in-app (vérifié : aucun `selectedTroc`/
+`selectedPro`). Rendre un troc/pro précis partageable in-app = **construire une vue fiche**
+dans chaque module (vrai développement, à vérifier à fond) — pas fait sous la contrainte
+« ne rien compromettre ». Les fiches serveur `/troc/[id]` et `/pro/[id]` restent
+partageables/indexables en direct (Google, WhatsApp).
 
 ---
 

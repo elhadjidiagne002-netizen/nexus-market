@@ -12535,7 +12535,33 @@ const NexusStoriesWidget = ({ user }) => {
   };
   React.useEffect(() => { if (open) load(); }, [open]);
   React.useEffect(() => { const h = (e) => { try { wantIdRef.current = (e && e.detail && e.detail.id) || null; } catch (_) { wantIdRef.current = null; } setOpen(true); }; window.addEventListener('nexus:open-stories', h); return () => window.removeEventListener('nexus:open-stories', h); }, []);
-  React.useEffect(() => { try { const q = new URLSearchParams(location.search); if (q.get('stories') || q.get('story')) setOpen(true); } catch (_) {} }, []);
+  React.useEffect(() => { try { const q = new URLSearchParams(location.search); const _sid = q.get('story') || q.get('stories'); if (_sid) { if (_sid !== '1' && _sid !== 'true' && String(_sid).length > 3) wantIdRef.current = _sid; setOpen(true); } } catch (_) {} }, []);
+  // [URL PARTAGEABLE — STORY] Reflète la story courante dans l'URL (?story=<id>) sans
+  // rechargement + canonical vers la vraie page /stories/<id>. replaceState seul (pas
+  // d'entrée d'historique en trop pendant qu'on fait défiler ; le carrousel garde sa
+  // propre fermeture). Ne nettoie l'URL que si on l'avait posée (garde _storyUrlRef).
+  const _storyUrlRef = React.useRef(false);
+  React.useEffect(() => {
+    try {
+      const u = new URL(window.location.href);
+      const cur = u.searchParams.get('story');
+      const canon = document.querySelector('link[rel="canonical"]');
+      const sid = (open && items[idx] && items[idx].id != null) ? String(items[idx].id) : null;
+      if (sid) {
+        if (cur !== sid) {
+          u.searchParams.delete('stories'); u.searchParams.set('story', sid);
+          window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
+        }
+        if (canon) canon.setAttribute('href', u.origin + '/stories/' + encodeURIComponent(sid));
+        _storyUrlRef.current = true;
+      } else if (_storyUrlRef.current) {
+        u.searchParams.delete('story'); u.searchParams.delete('stories');
+        window.history.replaceState(window.history.state, '', u.pathname + (u.search ? u.search : '') + u.hash);
+        if (canon) canon.setAttribute('href', u.origin + '/');
+        _storyUrlRef.current = false;
+      }
+    } catch (_) {}
+  }, [open, idx, items]);
 
   // Charge la vidéo HLS courante
   React.useEffect(() => {
