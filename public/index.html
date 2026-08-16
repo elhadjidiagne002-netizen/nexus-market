@@ -3076,7 +3076,7 @@
     })();
     </script>
 
-    <script src="/assets/app.80cf413a23.js"></script>
+    <script src="/assets/app.f427b8920b.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -13747,8 +13747,12 @@ function card(p){
     +'<h4 class="text-sm font-semibold truncate mb-1">'+p.name+'</h4>'
     +'<div class="flex items-center gap-1 mb-1.5">'+starsHtml(p.rating)+'<span class="text-[11px] font-bold text-on-surface ml-0.5">'+ratingNum(p)+'</span><span class="text-[11px] text-on-surface-variant">('+reviewsOf(p)+')</span></div>'
     +'<p class="text-[11px] text-on-surface-variant mb-2 flex items-center gap-1"><span class="material-symbols-outlined text-[14px] text-primary">local_shipping</span>'+deliveryOf(p)+'</p>'
-    +'<div class="flex items-center justify-between mb-3"><p class="text-primary font-bold text-md">'+p.price+' F</p><span class="text-[10px] font-bold text-primary bg-primary-container px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Protection acheteur"><span class="material-symbols-outlined text-[12px]">shield</span>Protégé</span></div>'
-    +'<button class="mt-auto bg-surface-container-highest text-on-surface py-2 rounded font-bold text-xs uppercase hover:bg-primary hover:text-white transition-all shadow-sm nxp-atc" data-pid="'+p.id+'" data-i18n="product.addToCart">'+window.nxT('product.addToCart',null,'Ajouter au panier')+'</button>'
+    +'<div class="flex items-center justify-between mb-3"><p class="text-primary font-bold text-md">'+(p.vitrine?'Sur devis':(p.price+' F'))+'</p><span class="text-[10px] font-bold text-primary bg-primary-container px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Protection acheteur"><span class="material-symbols-outlined text-[12px]">shield</span>Protégé</span></div>'
+    /* [ADAPTATION PAR TYPE] Annonce vitrine (loueur/dépanneur importé, prix placeholder) :
+       ni panier ni stock réel → contact WhatsApp direct plutôt qu'« Ajouter au panier ». */
+    +(p.vitrine
+      ? '<a href="'+p.waUrl+'" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="mt-auto text-center py-2 rounded font-bold text-xs text-white transition-all" style="background:#25D366"><span class="material-symbols-outlined text-[14px] align-middle">chat</span> Contacter</a>'
+      : '<button class="mt-auto bg-surface-container-highest text-on-surface py-2 rounded font-bold text-xs uppercase hover:bg-primary hover:text-white transition-all shadow-sm nxp-atc" data-pid="'+p.id+'" data-i18n="product.addToCart">'+window.nxT('product.addToCart',null,'Ajouter au panier')+'</button>')
     +'</div>';
 }
 
@@ -13865,7 +13869,18 @@ function sbCard(p,fallbackImg){
   var priceStr=fcfa.toLocaleString('fr-FR');
   var rat=Math.min(5,Math.max(1,Math.round(parseFloat(p.rating)||4)));
   var boosted=!!p.is_boosted&&(!p.boost_ends_at||new Date(p.boost_ends_at).getTime()>Date.now());
-  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat,boosted:boosted};
+  /* [ADAPTATION PAR TYPE] Annonce vitrine (loueur/dépanneur importé en masse) : le prix
+     stocké est un placeholder (1.00€ → 656 FCFA), sans rapport avec un vrai tarif — ne
+     jamais l'afficher converti. Détection fiable : rental_specs/animal_specs.is_vitrine. */
+  var specs=p.rental_specs||p.animal_specs||null;
+  var vitrine=!!(specs&&specs.is_vitrine===true);
+  var waUrl='';
+  if(vitrine){
+    var tel=String((specs&&(specs.contact_phone||specs.phone))||'').replace(/\D/g,'');
+    var msg='Bonjour, je suis intéressé par « '+(p.name||'votre annonce')+' » vu sur NEXUS Market. Pouvez-vous me faire un devis ?';
+    waUrl='https://wa.me/'+tel+'?text='+encodeURIComponent(msg);
+  }
+  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat,boosted:boosted,vitrine:vitrine,waUrl:waUrl};
   NXP_PRODS[pObj.id]=pObj;
   return card(pObj);
 }
@@ -14009,7 +14024,7 @@ function initProto(){
     var FB_ELEVAGE='https://images.unsplash.com/photo-1500076656116-558758c991c1?w=400&h=280&fit=crop&auto=format&q=80';
     var FB_LOCATION='https://images.unsplash.com/photo-1504148455328-c376907d081c?w=400&h=280&fit=crop&auto=format&q=80';
     var FB_IMMOBILIER='https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=400&h=280&fit=crop&auto=format&q=80';
-    var PQ='select=id,name,price,images,image_url,rating,category,stock,is_boosted,boost_ends_at&active=not.is.false&limit=12&order=is_boosted.desc.nullslast,created_at.desc';
+    var PQ='select=id,name,price,images,image_url,rating,category,stock,is_boosted,boost_ends_at,rental_specs,animal_specs&active=not.is.false&limit=12&order=is_boosted.desc.nullslast,created_at.desc';
     mountSection('nxp-elevage',     'mod_elevage_enabled',    'products?'+PQ+'&or=(is_animal.eq.true,is_local.eq.true)', function(p){return sbCard(p,FB_ELEVAGE);});
     mountSection('nxp-location',    'rental_enabled',         'products?'+PQ+'&is_rental=eq.true', function(p){return sbCard(p,FB_LOCATION);});
     mountSection('nxp-immobilier',  'mod_realestate_enabled', 'products?'+PQ+'&is_realestate=eq.true', function(p){return sbCard(p,FB_IMMOBILIER);});

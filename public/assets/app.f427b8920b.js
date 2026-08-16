@@ -10623,6 +10623,11 @@ const getPasswordStrength = (pw) => {
 };
 // [FIX] Composant prix avec prix barré optionnel
 const PriceDisplay = ({ product, style = {}, className = "product-price", currentUser }) => {
+  // [ADAPTATION PAR TYPE] Annonce vitrine (prix placeholder, tarif réel = sur devis) :
+  // ne jamais afficher le prix converti, qui n'a aucun rapport avec la réalité.
+  if (isVitrineListing(product)) {
+    return React.createElement("div", { className, style }, "Sur devis");
+  }
   // [FIX #4] B2B: afficher le prix pro sur les cartes produit pour buyer_pro
   const _b2bRate = (currentUser && currentUser.role === "buyer_pro" && currentUser._b2bDiscount > 0) ? currentUser._b2bDiscount : 0;
   const _proPrice = _b2bRate > 0 ? product.price * (1 - _b2bRate / 100) : null;
@@ -10742,12 +10747,49 @@ const CATEGORY_IMAGES = {
   "Alimentation":             "https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=400&h=280&fit=crop&auto=format&q=80",
   "Artisanat":                "https://images.unsplash.com/photo-1567225557594-88d73e55f2cb?w=400&h=280&fit=crop&auto=format&q=80",
 };
+// [ADAPTATION PAR TYPE D'ANNONCE] Les annonces élevage/terroir, location, immobilier
+// importées en masse (vitrines scrapées) portent des catégories libres (« Voiture »,
+// « Immobilier »…) qui ne correspondent à AUCUNE clé de CATEGORY_IMAGES (ex-clé attendue :
+// « Voitures », « Vente immobilier »…) → repli sur l'emoji 📦, hors-contexte pour ces
+// verticales. On teste le FLAG DE TYPE (is_rental/is_realestate/is_animal/is_local),
+// fiable quel que soit le libellé de catégorie, avant le repli générique par catégorie.
+const VERTICAL_FALLBACK_IMAGES = {
+  rental:     "https://images.unsplash.com/photo-1504148455328-c376907d081c?w=400&h=280&fit=crop&auto=format&q=80",
+  realestate: "https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=400&h=280&fit=crop&auto=format&q=80",
+  animal:     "https://images.unsplash.com/photo-1500076656116-558758c991c1?w=400&h=280&fit=crop&auto=format&q=80",
+  local:      "https://images.unsplash.com/photo-1471193945509-9ad0617afabf?w=400&h=280&fit=crop&auto=format&q=80",
+};
 const getProductImage = (product) => {
   if (product.imageUrl) return product.imageUrl;
+  if (product.is_rental || product.isRental) return VERTICAL_FALLBACK_IMAGES.rental;
+  if (product.is_realestate || product.isRealestate) return VERTICAL_FALLBACK_IMAGES.realestate;
+  if (product.is_animal || product.isAnimal) return VERTICAL_FALLBACK_IMAGES.animal;
+  if (product.is_local || product.isLocal) return VERTICAL_FALLBACK_IMAGES.local;
   // Fallback 1 — image par catégorie (Unsplash, pertinente)
   if (CATEGORY_IMAGES[product.category]) return CATEGORY_IMAGES[product.category];
   // Fallback 2 — placeholder NEXUS brandé (plus jamais de photo aléatoire)
   return `https://placehold.co/400x280/f9f7f0/00853E?text=📦`;
+};
+
+// [ADAPTATION PAR TYPE D'ANNONCE] Annonces « vitrine » = fiches contact importées en
+// masse (loueurs/dépanneurs scrapés, cf. sql/2026_08_12_loueurs_vitrine.sql) : le champ
+// `price` porte une valeur PLACEHOLDER (1.00€) sans rapport avec un vrai tarif — l'afficher
+// converti (« 656 FCFA ») induit en erreur. Ce ne sont pas des produits panier/stock : la
+// bonne action est de contacter le vendeur, pas « Ajouter au panier ».
+const isVitrineListing = (product) => !!(product && (
+  (product.rental_specs && product.rental_specs.is_vitrine === true) ||
+  (product.animal_specs && product.animal_specs.is_vitrine === true) ||
+  (product.rentalSpecs && product.rentalSpecs.is_vitrine === true) ||
+  (product.animalSpecs && product.animalSpecs.is_vitrine === true)
+));
+const vitrineContactPhone = (product) => {
+  const specs = (product && (product.rental_specs || product.animal_specs || product.rentalSpecs || product.animalSpecs)) || {};
+  return String(specs.contact_phone || specs.phone || '').replace(/\D/g, '') || null;
+};
+const vitrineWhatsappUrl = (product) => {
+  const tel = vitrineContactPhone(product);
+  const msg = 'Bonjour, je suis intéressé par « ' + (product && product.name || 'votre annonce') + ' » vu sur NEXUS Market. Pouvez-vous me faire un devis ?';
+  return tel ? ('https://wa.me/' + tel + '?text=' + encodeURIComponent(msg)) : ('https://wa.me/?text=' + encodeURIComponent(msg));
 };
 const ToastContext = createContext();
 const ToastProvider = ({ children }) => {
@@ -31814,6 +31856,7 @@ const NxCard = ({ p, inGrid, status, onSelect, onAddToCart, addToast, addedIds }
   const E = React.createElement;
   const st = NX_STATUS[status || nxStatusOf(p)] || NX_STATUS.normal;
   const isExpress = !!p._isExpress;
+  const isVitrine = isVitrineListing(p);
   const added = addedIds && addedIds.has(p.id);
   const badge = p.flashDiscount ? ('-' + p.flashDiscount + '%') : st.label;
   return E('div', {
@@ -31848,9 +31891,9 @@ const NxCard = ({ p, inGrid, status, onSelect, onAddToCart, addToast, addedIds }
         E('span', null, '·'),
         E('span', null, '🚚 Livraison Sénégal')
       ),
-      E('div', { className: 'product-row-price' }, isExpress ? ((p._priceFcfa || 0).toLocaleString('fr-FR') + ' FCFA') : formatPrice(p.price)),
-      isExpress
-        ? E('a', { href: 'https://wa.me/221' + String(p._phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent('Bonjour, je suis interesse par votre annonce NEXUS : ' + (p.name || '')), target: '_blank', rel: 'noopener noreferrer', className: 'product-row-add', style: { display: 'block', textAlign: 'center', textDecoration: 'none', background: '#25D366', color: '#fff' }, onClick: (e) => e.stopPropagation() }, '💬 Contacter')
+      E('div', { className: 'product-row-price' }, isExpress ? ((p._priceFcfa || 0).toLocaleString('fr-FR') + ' FCFA') : (isVitrine ? 'Sur devis' : formatPrice(p.price))),
+      isExpress || isVitrine
+        ? E('a', { href: isVitrine ? vitrineWhatsappUrl(p) : ('https://wa.me/221' + String(p._phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent('Bonjour, je suis interesse par votre annonce NEXUS : ' + (p.name || ''))), target: '_blank', rel: 'noopener noreferrer', className: 'product-row-add', style: { display: 'block', textAlign: 'center', textDecoration: 'none', background: '#25D366', color: '#fff' }, onClick: (e) => e.stopPropagation() }, '💬 Contacter')
         : E('button', { className: 'product-row-add' + (added ? ' btn-cart-added' : ''), onClick: (e) => { e.stopPropagation(); onAddToCart && onAddToCart(p); } }, added ? '✓ Ajoute' : '🛒 Panier')
     )
   );
@@ -33926,15 +33969,18 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
               React.createElement('i', { className: 'fas fa-external-link-alt', style: { fontSize: '0.72rem', marginLeft: '0.35rem', opacity: 0.6 } })
             ),
             React.createElement('p', { style: { marginBottom: '1.5rem', lineHeight: '1.8', color: 'var(--text-secondary)' } }, selectedProduct.description),
-            React.createElement('div', { className: 'mb-2' },
+            // [ADAPTATION PAR TYPE] Annonce vitrine = fiche contact (loueur/dépanneur importé),
+            // pas un produit panier : ni stock réel, ni livraison NEXUS, ni quantité — la seule
+            // action valide est de contacter l'annonceur pour un devis.
+            !isVitrineListing(selectedProduct) && React.createElement('div', { className: 'mb-2' },
               React.createElement('span', { className: `badge ${(selectedProduct.stock == null || selectedProduct.stock > 10) ? 'badge-success' : selectedProduct.stock > 0 ? 'badge-warning' : 'badge-danger'}` },
                 selectedProduct.stock == null ? 'En stock' : selectedProduct.stock > 0 ? `${selectedProduct.stock} en stock` : 'Rupture de stock'
               )
             ),
             // [DEVIS LIVRAISON] Estimation instantanée selon la ville
-            React.createElement(DeliveryEstimate, { product: selectedProduct }),
+            !isVitrineListing(selectedProduct) && React.createElement(DeliveryEstimate, { product: selectedProduct }),
             // [UX #5] Sélecteur de quantité
-            (selectedProduct.stock == null || selectedProduct.stock > 0) && React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' } },
+            !isVitrineListing(selectedProduct) && (selectedProduct.stock == null || selectedProduct.stock > 0) && React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' } },
               React.createElement('span', { style: { fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-secondary)' } }, 'Quantité :'),
               React.createElement('div', { className: 'qty-selector' },
                 React.createElement('button', { onClick: () => setModalQty(q => Math.max(1, q - 1)), disabled: modalQty <= 1 }, '−'),
@@ -33943,7 +33989,14 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
               ),
               React.createElement('span', { style: { fontSize: '0.82rem', color: 'var(--text-secondary)' } }, `= ${formatPrice(selectedProduct.price * modalQty)}`)
             ),
-            React.createElement('div', { className: 'flex gap-2' },
+            isVitrineListing(selectedProduct)
+              ? React.createElement('div', { className: 'flex gap-2' },
+                  React.createElement('a', {
+                    className: 'btn btn-lg flex-1', style: { background: '#25D366', color: '#fff', border: 'none', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' },
+                    href: vitrineWhatsappUrl(selectedProduct), target: '_blank', rel: 'noopener noreferrer'
+                  }, React.createElement('i', { className: 'fab fa-whatsapp' }), ' Demander un devis')
+                )
+              : React.createElement('div', { className: 'flex gap-2' },
               React.createElement('button', {
                 className: 'btn btn-primary btn-lg flex-1',
                 onClick: () => { addToCart(selectedProduct, modalQty); setSelectedProduct(null); },

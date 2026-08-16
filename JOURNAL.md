@@ -6,6 +6,49 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-16 — Fix affichage annonces « vitrine » (prix placeholder + image cassée)
+
+**Demande** (avec capture d'écran) : une fiche « 2JR Location de Voitures » affichait
+« 656 FCFA » (prix absurde) et une image cassée, alors que la description dit
+« Tarif sur devis ». Demande d'adapter l'affichage de chaque type d'annonce à son
+besoin réel plutôt que d'imposer le gabarit produit e-commerce.
+
+**Cause racine (vérifiée en base)** : 65 annonces `is_rental` (et par construction
+toutes les 39 `is_realestate`) sont des **fiches vitrine** importées en masse depuis
+`sql/2026_08_12_loueurs_vitrine.sql` (`rental_specs.is_vitrine=true`) — contact-only,
+sans stock ni tarif réel. Leur colonne `price` porte un **placeholder 1.00€**
+(→ 656 FCFA une fois converti) et `image_url`/`images` sont `null`. `getProductImage()`
+retombait sur `CATEGORY_IMAGES[product.category]`, mais ces imports utilisent des
+catégories libres (« Voiture », « Immobilier ») qui ne correspondent à AUCUNE clé de
+la map (clés attendues : « Voitures », « Vente immobilier »…) → image cassée.
+
+**Fait** (`public/assets/app.<hash>.js`, `public/index.html`) :
+- `isVitrineListing(product)` (détecte `rental_specs`/`animal_specs.is_vitrine`) +
+  `vitrineWhatsappUrl()` — nouveaux helpers, réutilisés partout où un prix/image de
+  produit est affiché.
+- `getProductImage()` : repli par **flag de type** (is_rental/is_realestate/is_animal/
+  is_local) AVANT le repli par catégorie — fiable quel que soit le libellé importé.
+- `PriceDisplay` (fiche détail) et `NxCard` (grille catalogue) : affichent « Sur devis »
+  au lieu du prix converti pour une annonce vitrine, avec bouton WhatsApp « Contacter »/
+  « Demander un devis » à la place d'« Ajouter au panier » (stock/quantité/livraison
+  masqués — aucun sens pour une fiche contact importée).
+- Même traitement appliqué aux nouvelles sections homepage (`sbCard`/`card()` dans
+  `index.html`, ajout de `rental_specs,animal_specs` au `select` REST).
+- **Piège de diagnostic** : le bug semblait persister après chaque édition malgré des
+  rechargements — cause = un Service Worker qui reprenait le contrôle de la page plus
+  vite que je ne pouvais le désinscrire (`clients.claim()` immédiat), servant une
+  ancienne exécution du bundle. Confirmé par un `console.log` de canari jamais déclenché.
+  Résolu en appliquant la règle CLAUDE.md §« Bundle app.hash.js » : renommage vers un
+  nouveau hash de contenu (`app.f427b8920b.js`) + MAJ du `<script src>` — un hash inédit
+  ne peut être servi par aucun cache existant.
+
+**État** : vérifié en local (`static-py`), le cas réel « 2JR Location de Voitures »
+affiche désormais « Sur devis » + bouton WhatsApp fonctionnel, sans stock/quantité/
+livraison factices, sur la fiche détail ET la carte grille ET les rails homepage. Pas
+encore commité/poussé.
+
+---
+
 ## 2026-08-16 — Élevage/Terroir, Location, Immobilier, Covoiturage, Troc sur l'accueil + admin
 
 **Demande** : afficher les annonces élevage/terroir, location, immobilier, covoiturage et
