@@ -13785,9 +13785,10 @@ function transportCard(t){
   var tel=String(t.whatsapp||t.phone||'').replace(/\D/g,'');
   if(tel.length===9&&tel[0]==='7')tel='221'+tel;
   var wa=tel?('https://wa.me/'+tel+'?text='+encodeURIComponent('Bonjour, je suis intéressé par le trajet '+from+' → '+to+' ('+(t.operator||'')+') vu sur NEXUS Market.')):'';
+  var img='https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?w=400&h=280&fit=crop&auto=format&q=80';
   return '<div class="relative bg-white p-3 rounded-xl border-2 border-dashed border-primary hover:shadow-md transition-all flex flex-col group min-w-[180px] md:min-w-[210px] w-[180px] md:w-[210px] shrink-0">'
     +'<span class="absolute top-2 left-2 z-10 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded">🚌 Trajet</span>'
-    +'<div class="h-36 flex items-center justify-center mb-2 bg-surface-container-low rounded-lg"><span class="material-symbols-outlined text-primary" style="font-size:48px">directions_bus</span></div>'
+    +'<div class="relative h-36 flex items-center justify-center mb-2 overflow-hidden rounded-lg"><img loading="lazy" alt="'+op+'" class="w-full h-full object-cover group-hover:scale-110 transition-transform" src="'+img+'"/></div>'
     +'<p class="text-[11px] text-on-surface-variant truncate mb-0.5">'+op+'</p>'
     +'<h4 class="text-sm font-semibold mb-1 truncate">'+from+(to?' → '+to:'')+'</h4>'
     +'<div class="flex items-center justify-between mb-3 mt-auto"><p class="text-primary font-bold text-md">'+price+'</p></div>'
@@ -13797,7 +13798,8 @@ function transportCard(t){
 
 /* ─── Carte TROC (troc_listings) — clic → fiche détail partageable ?troc=id ─── */
 function trocCard(t){
-  var img=t.photo_url||'https://placehold.co/300x300/fff3e0/e65100?text=Troc';
+  var FB_TROC='https://images.unsplash.com/photo-1559027615-cd4628902d4a?w=400&h=280&fit=crop&auto=format&q=80';
+  var img=t.photo_url||FB_TROC;
   img=(typeof img==='string')?img.replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\/[^/]+\//,'/img/'):img;
   var title=_esc(String(t.title||'Objet à troquer').slice(0,60));
   var city=_esc(t.city||'Sénégal');
@@ -13805,7 +13807,7 @@ function trocCard(t){
   return '<a href="/?troc='+encodeURIComponent(t.id)+'" class="relative bg-white p-3 rounded-xl border-2 border-dashed border-secondary hover:shadow-md transition-all flex flex-col group min-w-[180px] md:min-w-[210px] w-[180px] md:w-[210px] shrink-0" style="text-decoration:none;color:inherit">'
     +'<span class="absolute top-2 left-2 z-10 bg-secondary text-white text-[10px] font-bold px-2 py-0.5 rounded">🔄 Troc</span>'
     +'<div class="relative h-36 flex items-center justify-center mb-2 overflow-hidden">'
-      +'<img loading="lazy" alt="'+title+'" class="max-h-full w-full object-cover rounded-lg group-hover:scale-110 transition-transform" src="'+img+'" onerror="this.onerror=null;this.src=\'https://placehold.co/300x300/fff3e0/e65100?text=Troc\'"/>'
+      +'<img loading="lazy" alt="'+title+'" class="max-h-full w-full object-cover rounded-lg group-hover:scale-110 transition-transform" src="'+img+'" onerror="this.onerror=null;this.src=\''+FB_TROC+'\'"/>'
     +'</div>'
     +'<p class="text-[11px] text-on-surface-variant truncate mb-0.5 flex items-center gap-1"><span class="material-symbols-outlined text-[13px] text-primary">place</span>'+city+'</p>'
     +'<h4 class="text-sm font-semibold mb-1 truncate">'+title+'</h4>'
@@ -13852,11 +13854,11 @@ function sbFetch(path, _attempt){
 }
 
 /* Convertit un produit Supabase en objet produit overlay + HTML card */
-function sbCard(p){
+function sbCard(p,fallbackImg){
   if(!p||!p.id) return '';
   var imgs=p.images;
   if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
-  var img=p.image_url||(Array.isArray(imgs)&&imgs[0])||IMGS[hash(String(p.id))%IMGS.length];
+  var img=p.image_url||(Array.isArray(imgs)&&imgs[0])||fallbackImg||IMGS[hash(String(p.id))%IMGS.length];
   /* [ÉGRESS] Image du bucket nexus-images → proxy caché Cloudflare /img/ (externe inchangée) */
   img=(typeof img==='string')?img.replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\/nexus-images\//,'/img/'):img;
   var fcfa=Math.round((parseFloat(p.price)||0)*655.957);
@@ -14001,10 +14003,16 @@ function initProto(){
         el.innerHTML=data.map(renderer).join('');
       });
     }
+    /* Images de repli PAR TYPE (mêmes URLs Unsplash déjà utilisées comme visuels de
+       catégorie ailleurs dans l'app — testées/en prod) : évite qu'un produit sans photo
+       tire une image générique hors-contexte (ex. écouteurs pour une annonce mouton). */
+    var FB_ELEVAGE='https://images.unsplash.com/photo-1500076656116-558758c991c1?w=400&h=280&fit=crop&auto=format&q=80';
+    var FB_LOCATION='https://images.unsplash.com/photo-1504148455328-c376907d081c?w=400&h=280&fit=crop&auto=format&q=80';
+    var FB_IMMOBILIER='https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=400&h=280&fit=crop&auto=format&q=80';
     var PQ='select=id,name,price,images,image_url,rating,category,stock,is_boosted,boost_ends_at&active=not.is.false&limit=12&order=is_boosted.desc.nullslast,created_at.desc';
-    mountSection('nxp-elevage',     'mod_elevage_enabled',    'products?'+PQ+'&or=(is_animal.eq.true,is_local.eq.true)', sbCard);
-    mountSection('nxp-location',    'rental_enabled',         'products?'+PQ+'&is_rental=eq.true', sbCard);
-    mountSection('nxp-immobilier',  'mod_realestate_enabled', 'products?'+PQ+'&is_realestate=eq.true', sbCard);
+    mountSection('nxp-elevage',     'mod_elevage_enabled',    'products?'+PQ+'&or=(is_animal.eq.true,is_local.eq.true)', function(p){return sbCard(p,FB_ELEVAGE);});
+    mountSection('nxp-location',    'rental_enabled',         'products?'+PQ+'&is_rental=eq.true', function(p){return sbCard(p,FB_LOCATION);});
+    mountSection('nxp-immobilier',  'mod_realestate_enabled', 'products?'+PQ+'&is_realestate=eq.true', function(p){return sbCard(p,FB_IMMOBILIER);});
     mountSection('nxp-covoiturage', 'mod_transport_enabled',  'transport_lines?select=id,operator,origin_city,destination_main,price_fcfa,vehicle_type,whatsapp,phone&active=eq.true&order=operator.asc&limit=12', transportCard);
     mountSection('nxp-troc',        'mod_troc_enabled',       'troc_listings?select=id,title,photo_url,category,city,want,est_value_fcfa,status&status=eq.active&order=created_at.desc&limit=12', trocCard);
   })();
