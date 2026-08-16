@@ -140,14 +140,55 @@ export async function onRequestPost(ctx) {
   return json({ ok: true, idMessage: result.id, chatId, provider: providerUsed }, 200, corsHeaders);
 }
 
+// [DIAGNOSTIC RÉEL] L'ancienne version ne vérifiait que la PRÉSENCE des variables
+// d'env (greenApiReady/wahaReady = "les clés sont configurées"), jamais si la
+// session WhatsApp elle-même est authentifiée. Résultat trompeur constaté : Green
+// API sendMessage peut répondre 200 + idMessage (message mis en file) même quand
+// l'instance est déconnectée (QR expiré, session fermée côté téléphone) — le
+// message ne part jamais, mais `whatsapp_logs` l'enregistre comme "sent". On
+// interroge donc le VRAI état de session de chaque fournisseur.
+async function greenApiState(env) {
+  const instanceId = env.GREEN_API_INSTANCE_ID;
+  const apiToken   = env.GREEN_API_TOKEN;
+  const baseUrl    = env.GREEN_API_BASE_URL || 'https://api.greenapi.com';
+  if (!instanceId || !apiToken) return { configured: false };
+  try {
+    const r = await fetch(`${baseUrl}/waInstance${instanceId}/getStateInstance/${apiToken}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return { configured: true, ok: false, httpStatus: r.status, detail: data };
+    // stateInstance attendu : "authorized" (connectée) | "notAuthorized" | "blocked" | "starting" | "sleepMode"
+    return { configured: true, ok: data.stateInstance === 'authorized', state: data.stateInstance || null };
+  } catch (e) {
+    return { configured: true, ok: false, error: 'Green API injoignable : ' + e.message };
+  }
+}
+async function wahaState(env) {
+  const base    = (env.WAHA_BASE_URL || '').replace(/\/+$/, '');
+  const apiKey  = env.WAHA_API_KEY;
+  const session = env.WAHA_SESSION || 'default';
+  if (!base || !apiKey) return { configured: false };
+  try {
+    const r = await fetch(`${base}/api/sessions/${session}`, { headers: { 'X-Api-Key': apiKey } });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return { configured: true, ok: false, httpStatus: r.status, detail: data };
+    // status attendu WAHA : "WORKING" (connectée) | "SCAN_QR_CODE" | "STARTING" | "FAILED" | "STOPPED"
+    return { configured: true, ok: data.status === 'WORKING', state: data.status || null };
+  } catch (e) {
+    return { configured: true, ok: false, error: 'WAHA injoignable : ' + e.message };
+  }
+}
+
 export async function onRequestGet(ctx) {
   const env = ctx.env;
+  const [green, waha] = await Promise.all([greenApiState(env), wahaState(env)]);
   return json({
     service:         'NEXUS WhatsApp Gateway',
     instance:        env.GREEN_API_INSTANCE_ID || '7107631852',
     greenApiReady:   !!(env.GREEN_API_INSTANCE_ID && env.GREEN_API_TOKEN),
     wahaReady:       !!(env.WAHA_BASE_URL && env.WAHA_API_KEY),
-    status:          'ready',
+    greenApiSession: green,
+    wahaSession:     waha,
+    status:          (green.ok || waha.ok) ? 'ready' : 'degraded',
     timestamp:       new Date().toISOString(),
   }, 200, { 'Access-Control-Allow-Origin': '*' });
 }
