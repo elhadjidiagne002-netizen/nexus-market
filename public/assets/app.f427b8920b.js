@@ -10791,6 +10791,18 @@ const vitrineWhatsappUrl = (product) => {
   const msg = 'Bonjour, je suis intéressé par « ' + (product && product.name || 'votre annonce') + ' » vu sur NEXUS Market. Pouvez-vous me faire un devis ?';
   return tel ? ('https://wa.me/' + tel + '?text=' + encodeURIComponent(msg)) : ('https://wa.me/?text=' + encodeURIComponent(msg));
 };
+// [ADAPTATION PAR TYPE] Location/Immobilier/Élevage/Terroir sont, par conception,
+// des verticales « mise en relation » (MVP annonce + contact WhatsApp/message, cf.
+// CLAUDE.md § NEXUS Location — pas un flux panier/checkout classique), que la fiche
+// soit vitrine ou un vrai compte vendeur. « Ajouter au panier » n'a pas de sens ici :
+// on adapte le mot vers ce que l'utilisateur veut vraiment faire (voir/contacter).
+const isContactOnlyListing = (product) => !!(product && (
+  isVitrineListing(product) ||
+  product.is_rental || product.isRental ||
+  product.is_realestate || product.isRealestate ||
+  product.is_animal || product.isAnimal ||
+  product.is_local || product.isLocal
+));
 const ToastContext = createContext();
 const ToastProvider = ({ children }) => {
   const [toasts, setToasts] = useState([]);
@@ -31857,6 +31869,7 @@ const NxCard = ({ p, inGrid, status, onSelect, onAddToCart, addToast, addedIds }
   const st = NX_STATUS[status || nxStatusOf(p)] || NX_STATUS.normal;
   const isExpress = !!p._isExpress;
   const isVitrine = isVitrineListing(p);
+  const isContactOnly = isContactOnlyListing(p);
   const added = addedIds && addedIds.has(p.id);
   const badge = p.flashDiscount ? ('-' + p.flashDiscount + '%') : st.label;
   return E('div', {
@@ -31892,9 +31905,15 @@ const NxCard = ({ p, inGrid, status, onSelect, onAddToCart, addToast, addedIds }
         E('span', null, '🚚 Livraison Sénégal')
       ),
       E('div', { className: 'product-row-price' }, isExpress ? ((p._priceFcfa || 0).toLocaleString('fr-FR') + ' FCFA') : (isVitrine ? 'Sur devis' : formatPrice(p.price))),
-      isExpress || isVitrine
-        ? E('a', { href: isVitrine ? vitrineWhatsappUrl(p) : ('https://wa.me/221' + String(p._phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent('Bonjour, je suis interesse par votre annonce NEXUS : ' + (p.name || ''))), target: '_blank', rel: 'noopener noreferrer', className: 'product-row-add', style: { display: 'block', textAlign: 'center', textDecoration: 'none', background: '#25D366', color: '#fff' }, onClick: (e) => e.stopPropagation() }, '💬 Contacter')
-        : E('button', { className: 'product-row-add' + (added ? ' btn-cart-added' : ''), onClick: (e) => { e.stopPropagation(); onAddToCart && onAddToCart(p); } }, added ? '✓ Ajoute' : '🛒 Panier')
+      isExpress
+        ? E('a', { href: 'https://wa.me/221' + String(p._phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent('Bonjour, je suis interesse par votre annonce NEXUS : ' + (p.name || '')), target: '_blank', rel: 'noopener noreferrer', className: 'product-row-add', style: { display: 'block', textAlign: 'center', textDecoration: 'none', background: '#25D366', color: '#fff' }, onClick: (e) => e.stopPropagation() }, '💬 Contacter')
+        : isVitrine
+          ? E('a', { href: vitrineWhatsappUrl(p), target: '_blank', rel: 'noopener noreferrer', className: 'product-row-add', style: { display: 'block', textAlign: 'center', textDecoration: 'none', background: '#25D366', color: '#fff' }, onClick: (e) => e.stopPropagation() }, '💬 Contacter')
+          // [ADAPTATION PAR TYPE] Location/Immobilier/Élevage à compte réel : « Voir »
+          // ouvre la fiche, où le vrai bouton de contact adapté (fiche détail) vit.
+          : isContactOnly
+            ? E('button', { className: 'product-row-add', style: { background: 'var(--primary)', color: '#fff' }, onClick: (e) => { e.stopPropagation(); onSelect && onSelect(p); } }, '👁️ Voir')
+            : E('button', { className: 'product-row-add' + (added ? ' btn-cart-added' : ''), onClick: (e) => { e.stopPropagation(); onAddToCart && onAddToCart(p); } }, added ? '✓ Ajoute' : '🛒 Panier')
     )
   );
 };
@@ -33969,18 +33988,19 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
               React.createElement('i', { className: 'fas fa-external-link-alt', style: { fontSize: '0.72rem', marginLeft: '0.35rem', opacity: 0.6 } })
             ),
             React.createElement('p', { style: { marginBottom: '1.5rem', lineHeight: '1.8', color: 'var(--text-secondary)' } }, selectedProduct.description),
-            // [ADAPTATION PAR TYPE] Annonce vitrine = fiche contact (loueur/dépanneur importé),
-            // pas un produit panier : ni stock réel, ni livraison NEXUS, ni quantité — la seule
-            // action valide est de contacter l'annonceur pour un devis.
-            !isVitrineListing(selectedProduct) && React.createElement('div', { className: 'mb-2' },
+            // [ADAPTATION PAR TYPE] Location/Immobilier/Élevage/Terroir = verticales
+            // « mise en relation » par conception (MVP annonce + contact, cf. CLAUDE.md
+            // § NEXUS Location), vitrine ou vrai compte : ni stock réel à afficher, ni
+            // livraison NEXUS, ni quantité — juste voir puis contacter.
+            !isContactOnlyListing(selectedProduct) && React.createElement('div', { className: 'mb-2' },
               React.createElement('span', { className: `badge ${(selectedProduct.stock == null || selectedProduct.stock > 10) ? 'badge-success' : selectedProduct.stock > 0 ? 'badge-warning' : 'badge-danger'}` },
                 selectedProduct.stock == null ? 'En stock' : selectedProduct.stock > 0 ? `${selectedProduct.stock} en stock` : 'Rupture de stock'
               )
             ),
             // [DEVIS LIVRAISON] Estimation instantanée selon la ville
-            !isVitrineListing(selectedProduct) && React.createElement(DeliveryEstimate, { product: selectedProduct }),
+            !isContactOnlyListing(selectedProduct) && React.createElement(DeliveryEstimate, { product: selectedProduct }),
             // [UX #5] Sélecteur de quantité
-            !isVitrineListing(selectedProduct) && (selectedProduct.stock == null || selectedProduct.stock > 0) && React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' } },
+            !isContactOnlyListing(selectedProduct) && (selectedProduct.stock == null || selectedProduct.stock > 0) && React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' } },
               React.createElement('span', { style: { fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-secondary)' } }, 'Quantité :'),
               React.createElement('div', { className: 'qty-selector' },
                 React.createElement('button', { onClick: () => setModalQty(q => Math.max(1, q - 1)), disabled: modalQty <= 1 }, '−'),
@@ -33995,6 +34015,13 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
                     className: 'btn btn-lg flex-1', style: { background: '#25D366', color: '#fff', border: 'none', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' },
                     href: vitrineWhatsappUrl(selectedProduct), target: '_blank', rel: 'noopener noreferrer'
                   }, React.createElement('i', { className: 'fab fa-whatsapp' }), ' Demander un devis')
+                )
+              : isContactOnlyListing(selectedProduct)
+              ? React.createElement('div', { className: 'flex gap-2' },
+                  React.createElement('button', {
+                    className: 'btn btn-primary btn-lg flex-1',
+                    onClick: () => { setComposeRecipient({ id: selectedProduct.vendor, name: selectedProduct.vendorName || 'Vendeur' }); setShowComposeMessage(true); }
+                  }, React.createElement('i', { className: 'fas fa-comment-dots' }), ' Contacter le vendeur')
                 )
               : React.createElement('div', { className: 'flex gap-2' },
               React.createElement('button', {

@@ -13748,11 +13748,15 @@ function card(p){
     +'<div class="flex items-center gap-1 mb-1.5">'+starsHtml(p.rating)+'<span class="text-[11px] font-bold text-on-surface ml-0.5">'+ratingNum(p)+'</span><span class="text-[11px] text-on-surface-variant">('+reviewsOf(p)+')</span></div>'
     +'<p class="text-[11px] text-on-surface-variant mb-2 flex items-center gap-1"><span class="material-symbols-outlined text-[14px] text-primary">local_shipping</span>'+deliveryOf(p)+'</p>'
     +'<div class="flex items-center justify-between mb-3"><p class="text-primary font-bold text-md">'+(p.vitrine?'Sur devis':(p.price+' F'))+'</p><span class="text-[10px] font-bold text-primary bg-primary-container px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Protection acheteur"><span class="material-symbols-outlined text-[12px]">shield</span>Protégé</span></div>'
-    /* [ADAPTATION PAR TYPE] Annonce vitrine (loueur/dépanneur importé, prix placeholder) :
-       ni panier ni stock réel → contact WhatsApp direct plutôt qu'« Ajouter au panier ». */
+    /* [ADAPTATION PAR TYPE] Location/Immobilier/Élevage/Terroir = verticales « mise en
+       relation » par conception (MVP annonce + contact, pas de panier NEXUS) : vitrine
+       (loueur/dépanneur importé, sans compte réel) → WhatsApp direct ; vrai compte
+       → « Voir l'annonce » (ouvre la fiche, où vit le vrai bouton de contact). */
     +(p.vitrine
       ? '<a href="'+p.waUrl+'" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="mt-auto text-center py-2 rounded font-bold text-xs text-white transition-all" style="background:#25D366"><span class="material-symbols-outlined text-[14px] align-middle">chat</span> Contacter</a>'
-      : '<button class="mt-auto bg-surface-container-highest text-on-surface py-2 rounded font-bold text-xs uppercase hover:bg-primary hover:text-white transition-all shadow-sm nxp-atc" data-pid="'+p.id+'" data-i18n="product.addToCart">'+window.nxT('product.addToCart',null,'Ajouter au panier')+'</button>')
+      : p.contactOnly
+        ? '<button class="mt-auto bg-primary text-white py-2 rounded font-bold text-xs uppercase hover:brightness-110 transition-all shadow-sm" data-pid="'+p.id+'"><span class="material-symbols-outlined text-[14px] align-middle">visibility</span> Voir l\'annonce</button>'
+        : '<button class="mt-auto bg-surface-container-highest text-on-surface py-2 rounded font-bold text-xs uppercase hover:bg-primary hover:text-white transition-all shadow-sm nxp-atc" data-pid="'+p.id+'" data-i18n="product.addToCart">'+window.nxT('product.addToCart',null,'Ajouter au panier')+'</button>')
     +'</div>';
 }
 
@@ -13880,7 +13884,9 @@ function sbCard(p,fallbackImg){
     var msg='Bonjour, je suis intéressé par « '+(p.name||'votre annonce')+' » vu sur NEXUS Market. Pouvez-vous me faire un devis ?';
     waUrl='https://wa.me/'+tel+'?text='+encodeURIComponent(msg);
   }
-  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat,boosted:boosted,vitrine:vitrine,waUrl:waUrl};
+  /* Location/Immobilier/Élevage/Terroir = verticales « mise en relation », pas de panier. */
+  var contactOnly=vitrine||!!(p.is_rental||p.is_realestate||p.is_animal||p.is_local);
+  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat,boosted:boosted,vitrine:vitrine,waUrl:waUrl,contactOnly:contactOnly};
   NXP_PRODS[pObj.id]=pObj;
   return card(pObj);
 }
@@ -14024,7 +14030,7 @@ function initProto(){
     var FB_ELEVAGE='https://images.unsplash.com/photo-1500076656116-558758c991c1?w=400&h=280&fit=crop&auto=format&q=80';
     var FB_LOCATION='https://images.unsplash.com/photo-1504148455328-c376907d081c?w=400&h=280&fit=crop&auto=format&q=80';
     var FB_IMMOBILIER='https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=400&h=280&fit=crop&auto=format&q=80';
-    var PQ='select=id,name,price,images,image_url,rating,category,stock,is_boosted,boost_ends_at,rental_specs,animal_specs&active=not.is.false&limit=12&order=is_boosted.desc.nullslast,created_at.desc';
+    var PQ='select=id,name,price,images,image_url,rating,category,stock,is_boosted,boost_ends_at,rental_specs,animal_specs,is_rental,is_realestate,is_animal,is_local&active=not.is.false&limit=12&order=is_boosted.desc.nullslast,created_at.desc';
     mountSection('nxp-elevage',     'mod_elevage_enabled',    'products?'+PQ+'&or=(is_animal.eq.true,is_local.eq.true)', function(p){return sbCard(p,FB_ELEVAGE);});
     mountSection('nxp-location',    'rental_enabled',         'products?'+PQ+'&is_rental=eq.true', function(p){return sbCard(p,FB_LOCATION);});
     mountSection('nxp-immobilier',  'mod_realestate_enabled', 'products?'+PQ+'&is_realestate=eq.true', function(p){return sbCard(p,FB_IMMOBILIER);});

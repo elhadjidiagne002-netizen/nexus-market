@@ -44,8 +44,18 @@ la map (clés attendues : « Voitures », « Vente immobilier »…) → image c
 
 **État** : vérifié en local (`static-py`), le cas réel « 2JR Location de Voitures »
 affiche désormais « Sur devis » + bouton WhatsApp fonctionnel, sans stock/quantité/
-livraison factices, sur la fiche détail ET la carte grille ET les rails homepage. Pas
-encore commité/poussé.
+livraison factices, sur la fiche détail ET la carte grille ET les rails homepage.
+
+**Suite (même session)** : demande complémentaire — « pas d'ajouter au panier mais
+voir/contacte, des mots plus adaptés ». Élargi : Location/Immobilier/Élevage/Terroir
+sont par conception des verticales **mise en relation** (MVP annonce + contact, cf.
+CLAUDE.md § NEXUS Location — pas un flux panier), vitrine ou **vrai compte vendeur**.
+Nouveau `isContactOnlyListing()` (is_rental/is_realestate/is_animal/is_local OU
+vitrine) : carte → bouton « 👁️ Voir l'annonce » (vrai compte) ou « 💬 Contacter »
+WhatsApp (vitrine) au lieu d'« Ajouter au panier » ; fiche détail → bouton unique
+« Contacter le vendeur » (message interne) au lieu d'Ajouter/Offre pour un vrai
+compte. Vérifié sur un vrai bien immobilier (`Studio meublé Mermoz`, 249 998 FCFA
+— prix réel affiché, pas de stock/quantité, CTA adapté).
 
 ---
 
