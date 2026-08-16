@@ -6,6 +6,69 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-16 — Élevage/Terroir, Location, Immobilier, Covoiturage, Troc sur l'accueil + admin
+
+**Demande** : afficher les annonces élevage/terroir, location, immobilier, covoiturage et
+troc sur la page d'accueil au même titre que les produits, avec un contrôle admin pour
+activer/désactiver chaque type.
+
+**Découverte clé** : le contrôle admin demandé **existait déjà** — `nexus_monetization_cfg`
+(`app_config`, exposé publiquement dans `window.NEXUS_MONET`) porte déjà les flags
+`mod_elevage_enabled`, `rental_enabled`, `mod_realestate_enabled`, `mod_transport_enabled`,
+`mod_troc_enabled`, éditables depuis Admin → Paramètres → onglets **Modules**/**Location**.
+Ces flags ne gataient jusqu'ici que les FAB/modales (widgets), pas l'accueil — les 5 verticales
+étaient donc invisibles sur la page d'accueil (élevage/terroir et location/immobilier sont des
+`products` avec des flags `is_animal`/`is_local`/`is_rental`/`is_realestate` non inclus dans les
+requêtes des sections existantes ; covoiturage/troc sont des tables séparées `transport_lines`/
+`troc_listings`, jamais interrogées par l'overlay statique).
+
+**Fait** (`public/index.html`) :
+- 5 nouvelles sections horizontales sur l'accueil (même style que Meilleures Ventes/Nouveaux
+  Arrivages), insérées après « Recommandé pour vous » : Élevage & Terroir, Location, Immobilier,
+  Covoiturage & Transport, Troc & Échange.
+- Chaque section respecte le flag admin existant correspondant (fail-open si non chargé, comme
+  le gate central) et se masque automatiquement si désactivée OU si aucune annonce n'est
+  disponible (même pattern que Ventes Flash).
+- 2 nouveaux rendus de carte : `transportCard()` (trajet + bouton WhatsApp) et `trocCard()`
+  (clique vers `/?troc=<id>`, réutilise la fiche détail partageable construite le 2026-08-13).
+  Élevage/Location/Immobilier réutilisent `sbCard()` existant (déjà branché sur le clic-ouverture
+  produit générique `.nx-prodcard`).
+- Aucune nouvelle table/RLS nécessaire : `products` (is_animal/is_local/is_rental/is_realestate),
+  `transport_lines` et `troc_listings` sont déjà lisibles publiquement (vérifié en base).
+
+**État** : vérifié en local (`static-py`, port 5598) — les 5 sections existent, Location/
+Immobilier/Covoiturage affichent de vraies données (12 items chacune), Élevage/Terroir et Troc
+se masquent correctement (aucune donnée active actuellement en base pour ces deux-là, comportement
+attendu). Pas encore déployé/commité.
+
+---
+
+## 2026-08-15 — Slogan « Purement Sénégalais » + stratégie marketing (4 cadres) + kit carrousel complémentaire
+
+**Demande** : l'utilisateur a communiqué le slogan officiel de NEXUS Market — **« Purement
+Sénégalais »** — et a partagé une synthèse de 4 ouvrages marketing (Cercle d'Or de Sinek,
+6 principes d'influence de Cialdini, méthode problème DUR/avatar de Leloup, piliers marketing
+digital de Gastaud), en demandant de mettre en place ces stratégies.
+
+**Fait** :
+- Intégré « Purement Sénégalais » dans le pied de page de **tous les slides** des 4 kits de
+  carrousels existants (`carrousels-nexus.html`, `-lancement.html`, `-tutoriel.html`,
+  `-complementaires.html`) — remplace l'ancien texte « · nexusmarket.sn ».
+- Ajouté un **5e deck « Pourquoi NEXUS Market »** (6 slides) en tête de
+  `carrousels-complementaires.html`, structuré explicitement Pourquoi → Comment → Quoi
+  (Cercle d'Or), avec un slide « problème » formulé en DUR (Douloureux/Urgent/Reconnu).
+- Écrit `publicite/strategie-marketing-4-livres.md` : traduit les 4 cadres en décisions
+  concrètes pour NEXUS Market (personas, leviers d'influence déjà actifs vs à activer,
+  entonnoir acquisition→rétention→recommandation mappé aux contenus déjà produits, règles
+  vidéo sous-titres/3 premières secondes, ce qui reste à décider par l'utilisateur — chiffres
+  réels de preuve sociale, cibles chiffrées, budget pub).
+
+**État** : vérifié en preview (rendu correct, footer + nouveau deck). Kit 4
+(`carrousels-complementaires.html`, 12 decks au total avec l'ajout) pas encore committé — à
+committer avec la même confirmation que les kits 1-3 (commit `a0e5d0e`, toujours non poussé).
+
+---
+
 ## 2026-08-13 — URLs produit partageables (History API) sans casser la SPA/SEO
 
 **Demande** : pouvoir avoir un lien différent à chaque élément touché, partageable,
