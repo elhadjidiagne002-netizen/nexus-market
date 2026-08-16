@@ -13986,17 +13986,19 @@ function initProto(){
      requête ne remontait même pas la colonne (contrairement au catalogue React
      qui, lui, en tient déjà compte via nexusRankScore/NxCard). */
   var Q='select=id,name,price,images,image_url,rating,category,stock,is_boosted,boost_ends_at&active=not.is.false&limit=12';
-  sbFetch('products?'+Q+'&order=is_boosted.desc.nullslast,rating.desc.nullslast').then(function(data){
+  /* [ADAPTATION PAR TYPE] Meilleures Ventes / Nouveaux Arrivages / Recommandé =
+     exclusivement des PRODUITS classiques (panier). Élevage/Terroir/Location/Immobilier
+     ont désormais leurs propres sections dédiées plus bas — les exclure ici évite le
+     doublon et les CTA/prix inadaptés (« Sur devis », « Voir l'annonce ») dans des
+     sections pensées pour un panier produit normal. */
+  var QP=Q+'&is_rental=not.is.true&is_realestate=not.is.true&is_animal=not.is.true&is_local=not.is.true';
+  sbFetch('products?'+QP+'&order=is_boosted.desc.nullslast,rating.desc.nullslast').then(function(data){
     if(bsEl) bsEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):best.map(card).join('');
   });
-  /* [ADAPTATION PAR TYPE] Nouveaux Arrivages = exclusivement des PRODUITS classiques.
-     Élevage/Terroir/Location/Immobilier ont désormais leurs propres sections dédiées
-     plus bas — les exclure ici évite le doublon et les CTA/prix inadaptés (« Sur devis »,
-     « Voir l'annonce ») dans une section pensée pour un panier produit normal. */
-  sbFetch('products?'+Q+'&is_rental=not.is.true&is_realestate=not.is.true&is_animal=not.is.true&is_local=not.is.true&order=is_boosted.desc.nullslast,created_at.desc').then(function(data){
+  sbFetch('products?'+QP+'&order=is_boosted.desc.nullslast,created_at.desc').then(function(data){
     if(naEl) naEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):arrivals.map(card).join('');
   });
-  sbFetch('products?'+Q+'&order=is_boosted.desc.nullslast,rating.desc.nullslast,created_at.desc').then(function(data){
+  sbFetch('products?'+QP+'&order=is_boosted.desc.nullslast,rating.desc.nullslast,created_at.desc').then(function(data){
     if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):recommended.map(card).join('');
     /* Annonces Express : affichées EN TÊTE des « Recommandés » (l'overlay ne les
        chargeait pas → invisibles sur l'accueil). Cartes WhatsApp dédiées. */

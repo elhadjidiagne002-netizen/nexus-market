@@ -66,6 +66,12 @@ l'exclusion `is_rental/is_realestate/is_animal/is_local=not.is.true` à sa requ�
 uniquement (Meilleures Ventes/Recommandé inchangés, non demandé). Vérifié : les 12
 items affichés sont tous des produits réels (prix normaux, aucun « Sur devis »).
 
+**Suite** : même exclusion étendue à Meilleures Ventes et Recommandé (mutualisée
+dans une nouvelle variable `QP`), qui partageaient auparavant la requête non filtrée
+`Q` et pouvaient donc aussi afficher élevage/location/immobilier avec un prix/CTA
+inadapté. Vérifié en local : les 12 items de chaque section sont exclusivement des
+produits réels.
+
 ---
 
 ## 2026-08-16 — Élevage/Terroir, Location, Immobilier, Covoiturage, Troc sur l'accueil + admin
