@@ -57,6 +57,15 @@ WhatsApp (vitrine) au lieu d'« Ajouter au panier » ; fiche détail → bouton 
 compte. Vérifié sur un vrai bien immobilier (`Studio meublé Mermoz`, 249 998 FCFA
 — prix réel affiché, pas de stock/quantité, CTA adapté).
 
+**Suite** : vérifié en prod (nexusmarket.sn) que le déploiement avait bien pris le
+nouveau hash `app.f427b8920b.js` et que le cas réel se comportait identiquement au
+local (Sur devis + Contacter, fiche détail sans stock/quantité). Demande complémentaire :
+« Nouveaux Arrivages » ne doit rester QUE des produits classiques (pas les nouvelles
+verticales, qui ont désormais leurs propres sections dédiées plus bas). Ajouté
+l'exclusion `is_rental/is_realestate/is_animal/is_local=not.is.true` à sa requête
+uniquement (Meilleures Ventes/Recommandé inchangés, non demandé). Vérifié : les 12
+items affichés sont tous des produits réels (prix normaux, aucun « Sur devis »).
+
 ---
 
 ## 2026-08-16 — Élevage/Terroir, Location, Immobilier, Covoiturage, Troc sur l'accueil + admin
