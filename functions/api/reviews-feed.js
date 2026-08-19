@@ -4,7 +4,7 @@
 // Schéma : https://support.google.com/merchants/answer/7045996
 // Public en lecture seule, cache 6h.
 
-const BASE_URL = 'https://nexus-market-asb.pages.dev';
+const BASE_URL = 'https://nexusmarket.sn';
 
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

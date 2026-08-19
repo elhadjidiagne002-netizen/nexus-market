@@ -24,7 +24,6 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
 };
 
-const BASE_URL = 'https://nexus-market-asb.pages.dev';
 // [FIX PRIX] products.price est stocké en EUR (cf. frontend ×EUR_TO_FCFA).
 // Le feed doit sortir des FCFA/XOF → conversion ici (entier, FCFA sans décimale).
 const EUR_TO_FCFA = 655.957;
@@ -78,14 +77,14 @@ function esc(s) {
   return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function toXML(products) {
+function toXML(products, baseUrl) {
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     `<!-- NEXUS Pro API — flux Google Merchant — ${new Date().toISOString().slice(0,10)} — ${products.length} produits -->`,
     '<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">',
     '  <channel>',
     '    <title>NEXUS Market Sénégal</title>',
-    `    <link>${BASE_URL}</link>`,
+    `    <link>${baseUrl}</link>`,
     '    <description>Marketplace B2C/B2B — Sénégal &amp; Afrique de l\'Ouest</description>',
   ];
 
@@ -104,7 +103,7 @@ function toXML(products) {
   };
 
   for (const p of products) {
-    const url    = `${BASE_URL}/produit/${esc(p.id)}`;
+    const url    = `${baseUrl}/produit/${esc(p.id)}`;
     const img    = p.image_url || '';
     const gCat   = CAT_MAP[p.category] || 'Shopping';
     const avail  = (p.stock || 0) > 0 ? 'in stock' : 'out of stock';
@@ -130,11 +129,11 @@ function toXML(products) {
   return lines.join('\n');
 }
 
-function toJSON(products) {
+function toJSON(products, baseUrl) {
   return JSON.stringify({
     meta: {
       source:     'NEXUS Market Sénégal',
-      url:        BASE_URL,
+      url:        baseUrl,
       generated:  new Date().toISOString(),
       count:      products.length,
     },
@@ -147,13 +146,13 @@ function toJSON(products) {
       stock:        p.stock || 0,
       available:    (p.stock || 0) > 0,
       image_url:    p.image_url || '',
-      product_url:  `${BASE_URL}/produit/${p.id}`,
+      product_url:  `${baseUrl}/produit/${p.id}`,
       updated_at:   p.updated_at || p.created_at,
     })),
   }, null, 2);
 }
 
-function toCSV(products) {
+function toCSV(products, baseUrl) {
   const header = 'id,name,description,price_xof,category,stock,available,image_url,product_url,updated_at';
   const rows = products.map(p => {
     const csvStr = (s) => '"' + String(s || '').replace(/"/g, '""') + '"';
@@ -161,7 +160,7 @@ function toCSV(products) {
       csvStr(p.id), csvStr(p.name), csvStr((p.description||'').slice(0,200)),
       priceXof(p), csvStr(p.category || ''), p.stock || 0,
       (p.stock || 0) > 0 ? 'true' : 'false',
-      csvStr(p.image_url || ''), csvStr(`${BASE_URL}/produit/${p.id}`),
+      csvStr(p.image_url || ''), csvStr(`${baseUrl}/produit/${p.id}`),
       csvStr(p.updated_at || p.created_at),
     ].join(',');
   });
@@ -174,8 +173,9 @@ export async function onRequest({ request, env }) {
   if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (method !== 'GET') return new Response('GET uniquement', { status: 405, headers: CORS });
 
-  const url    = new URL(request.url);
-  const apiKey = url.searchParams.get('key') || request.headers.get('X-API-Key');
+  const url     = new URL(request.url);
+  const baseUrl = env.SITE_URL || url.origin;
+  const apiKey  = url.searchParams.get('key') || request.headers.get('X-API-Key');
 
   // ── Clé publique NEXUS (flux Google Shopping interne, sans auth) ──
   // Le flux public est en lecture seule, sans quota, pour Google Merchant Center uniquement
@@ -184,7 +184,7 @@ export async function onRequest({ request, env }) {
   if (!apiKey && !isPublicBot) {
     return new Response(JSON.stringify({
       error: 'Clé API requise',
-      doc:   'Pour obtenir une clé API NEXUS Pro, visitez ' + BASE_URL + '/?api=subscribe',
+      doc:   'Pour obtenir une clé API NEXUS Pro, visitez ' + baseUrl + '/?api=subscribe',
       price: '15 000 FCFA/mois — 1 000 appels/jour — XML + JSON',
     }), {
       status: 401,
@@ -226,7 +226,7 @@ export async function onRequest({ request, env }) {
 
   switch (format) {
     case 'json':
-      return new Response(toJSON(products), {
+      return new Response(toJSON(products, baseUrl), {
         headers: {
           ...CORS,
           'Content-Type':  'application/json; charset=utf-8',
@@ -236,7 +236,7 @@ export async function onRequest({ request, env }) {
       });
 
     case 'csv':
-      return new Response(toCSV(products), {
+      return new Response(toCSV(products, baseUrl), {
         headers: {
           ...CORS,
           'Content-Type':        'text/csv; charset=utf-8',
@@ -246,7 +246,7 @@ export async function onRequest({ request, env }) {
       });
 
     default: // xml
-      return new Response(toXML(products), {
+      return new Response(toXML(products, baseUrl), {
         headers: {
           ...CORS,
           'Content-Type':  'application/rss+xml; charset=utf-8',

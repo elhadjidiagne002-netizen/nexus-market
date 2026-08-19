@@ -18,14 +18,14 @@ export function indexNowKey(env) {
  * doit pas casser un flux métier). À appeler idéalement via ctx.waitUntil(...).
  * @param {object} env  variables d'environnement Cloudflare
  * @param {string|string[]} urls  URLs absolues (même hôte que `host`)
- * @param {string} [origin]  ex. https://nexus-market-asb.pages.dev
+ * @param {string} [origin]  ex. https://nexusmarket.sn
  */
 export async function submitToIndexNow(env, urls, origin) {
   try {
     const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
     if (!list.length) return { ok: false, skipped: 'no-urls' };
 
-    const base = origin || env.SITE_URL || 'https://nexus-market-asb.pages.dev';
+    const base = origin || env.SITE_URL || 'https://nexusmarket.sn';
     const host = new URL(base).host;
     const key = indexNowKey(env);
 
