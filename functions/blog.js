@@ -23,6 +23,9 @@ export async function onRequest({ request, env }) {
     ['/blog/organiser-evenement-mariage-bapteme-materiel-loue', '🎉 Organiser un mariage ou un baptême avec du matériel loué', 'Bien planifier vos locations pour un événement familial réussi.'],
     ['/blog/garantie-retour-remboursement-marketplace-senegal', '🛡️ Garantie, retour et remboursement : ce qu’il faut savoir', 'Ce que couvre réellement la protection acheteur NEXUS Market.'],
     ['/blog/entretenir-electromenager-saison-chaude-senegal', '❄️ Bien entretenir son électroménager en saison chaude', 'Prolonger la durée de vie de vos appareils et éviter les pannes.'],
+    ['/blog/louer-appartement-bureau-local-dakar', '🏢 Louer un appartement, un bureau ou un local à Dakar', 'Location résidentielle et professionnelle : prix, points à vérifier et où chercher.'],
+    ['/blog/location-voiture-senegal-agences-prix', '🚙 Location de voiture au Sénégal : agences, prix et conseils', 'Avec ou sans chauffeur : comment bien choisir et ce qu\'il faut vérifier avant de partir.'],
+    ['/blog/choisir-ligne-transport-bus-car-ferry-senegal', '🚌 Bus, car ou ferry : bien choisir sa ligne de transport', 'Comparer les compagnies, horaires et prix pour vos trajets interurbains au Sénégal.'],
   ];
   const body = `
 <h1>Blog NEXUS Market</h1>
