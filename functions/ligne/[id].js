@@ -36,6 +36,11 @@ async function handle({ request, env, params }) {
   const vehicleLabel = VEHICLE_LABELS[t.vehicle_type] || 'Transport';
   const title = `${t.operator} — ${t.origin_city} → ${t.destination_main || (t.destinations || '').split('|')[0]}`;
   const priceTxt = t.price_fcfa ? `${Number(t.price_fcfa).toLocaleString('fr-FR')} FCFA` : '';
+  // Pas de photo par ligne en base (transport_lines n'a pas de colonne image) →
+  // image de partage générique du site, comme le fait déjà produit/[id].js pour
+  // les fiches vitrine sans photo. Sans ça, un lien /ligne/ partagé sur
+  // WhatsApp/Facebook n'affichait aucune vignette dans l'aperçu.
+  const img = `${origin}/og-image.png`;
 
   const descParts = [
     `${vehicleLabel} ${t.operator} : ${t.origin_city} → ${t.destination_main || (t.destinations || '').split('|')[0]}.`,
@@ -47,7 +52,7 @@ async function handle({ request, env, params }) {
 
   const service = {
     '@type': 'Service', serviceType: `Transport ${vehicleLabel.toLowerCase()}`,
-    name: title, description: desc, url,
+    name: title, description: desc, url, image: [img],
     provider: { '@type': 'Organization', name: t.operator, ...(t.url_site ? { url: t.url_site } : {}) },
     areaServed: [t.origin_city, t.destination_main].filter(Boolean).map(n => ({ '@type': 'City', name: n })),
   };
@@ -85,11 +90,13 @@ async function handle({ request, env, params }) {
 <meta property="og:type" content="website">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(desc)}">
+<meta property="og:image" content="${esc(img)}">
 <meta property="og:url" content="${esc(url)}">
 <meta property="og:site_name" content="NEXUS Market Sénégal">
 <meta property="og:locale" content="fr_SN">
-<meta name="twitter:card" content="summary">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${esc(title)}">
+<meta name="twitter:image" content="${esc(img)}">
 <script type="application/ld+json">${graph}</script>
 <style>body{font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:20px;color:#1F2937;line-height:1.6}h1{font-size:1.5rem;margin:.4rem 0}.cat{color:#1d4ed8;font-weight:700;font-size:.95rem;margin-bottom:.5rem}.meta{color:#6B7280;font-size:.9rem;margin:.3rem 0}.price{color:#00853E;font-size:1.5rem;font-weight:800;margin:.6rem 0}.crumb{font-size:.8rem;color:#6B7280;margin-bottom:1rem}.crumb a{color:#1d4ed8;text-decoration:none}.crumb .sep{margin:0 4px}.cta{display:inline-block;background:#00853E;color:#fff;padding:13px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:1.2rem}.foot{color:#9CA3AF;font-size:.8rem;margin-top:2.2rem}</style>
 </head><body>

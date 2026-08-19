@@ -16,17 +16,26 @@
 // approximations raisonnables faute de bucket dédié (immobilier, livres, voyages,
 // dons/troc → pas de slug propre parmi les 11 piliers actuels) : à ajuster si de
 // nouvelles pages de catégorie dédiées sont créées plus tard.
+// [FIX VITRINE 2026-08-19] Les 65 fiches "vitrine" importées (loueurs,
+// sql/2026_08_12_loueurs_vitrine.sql) utilisent 15 libellés de catégorie
+// libres issus du prospecting (rental_specs.category), dont 13 ne
+// correspondaient à AUCUN alias ci-dessous → fil d'Ariane pointant vers une
+// page /categorie/:slug inexistante (404), détecté en vérifiant les liens
+// internes en production. Alias ajoutés (approximations raisonnables, même
+// logique que le fix 2026-07-05 ci-dessus) : Audiovisuel/IT, Mode/Mariage,
+// Bien-être, Animation enfants, Nautique, Pêche/Bateau, BTP/Énergie,
+// Espace/Bureau, Food truck, Location, Moto/Scooter, Quad/Aventure, Voiture.
 export const CATEGORIES = [
-  { slug: 'electronique', label: 'Électronique',     aliases: ['Électronique', 'Electronique', 'Électronique & Hi-Fi', 'Appareils photo & Vidéo', 'Jeux vidéo & Consoles', 'Montres connectées', 'Éclairage'], google: 'Electronics' },
+  { slug: 'electronique', label: 'Électronique',     aliases: ['Électronique', 'Electronique', 'Électronique & Hi-Fi', 'Appareils photo & Vidéo', 'Jeux vidéo & Consoles', 'Montres connectées', 'Éclairage', 'Audiovisuel/IT'], google: 'Electronics' },
   { slug: 'informatique', label: 'Informatique',     aliases: ['Informatique', 'Ordinateurs & Tablettes', 'Informatique & Tech (services)'], google: 'Electronics > Computers' },
   { slug: 'telephones',   label: 'Téléphones',        aliases: ['Téléphones', 'Telephones', 'Téléphonie', 'Téléphones & Accessoires'],            google: 'Electronics > Communications > Telephony' },
-  { slug: 'mode',         label: 'Mode & Vêtements',  aliases: ['Mode & Vêtements', 'Mode', 'Vêtements', 'Vetements', 'Mode Femme', 'Mode Homme', 'Mode Enfant', 'Chaussures', 'Sacs & Maroquinerie', 'Bijoux & Accessoires', 'Tissus & Wax', 'Textile & Couture (pro)'], google: 'Apparel & Accessories' },
+  { slug: 'mode',         label: 'Mode & Vêtements',  aliases: ['Mode & Vêtements', 'Mode', 'Vêtements', 'Vetements', 'Mode Femme', 'Mode Homme', 'Mode Enfant', 'Chaussures', 'Sacs & Maroquinerie', 'Bijoux & Accessoires', 'Tissus & Wax', 'Textile & Couture (pro)', 'Mode/Mariage'], google: 'Apparel & Accessories' },
   { slug: 'alimentation', label: 'Alimentation',      aliases: ['Alimentation', 'Alimentation générale', 'Produits bio & locaux', 'Boissons', 'Épices & Condiments', 'Céréales & Légumineuses', 'Produits laitiers', 'Boulangerie & Pâtisserie', 'Produits locaux'], google: 'Food, Beverages & Tobacco' },
   { slug: 'maison',       label: 'Maison & Déco',     aliases: ['Maison & Déco', 'Maison', 'Maison & Deco', 'Déco', 'Meubles & Décoration', 'Électroménager', 'Cuisine & Art de la table', 'Linge de maison', 'Jardinage & Extérieur', 'Bricolage & Outillage'],  google: 'Home & Garden' },
-  { slug: 'beaute',       label: 'Beauté & Santé',    aliases: ['Beauté & Santé', 'Beauté', 'Beaute & Sante', 'Santé', 'Beauté & Cosmétiques', 'Parfums', 'Santé & Bien-être'], google: 'Health & Beauty' },
-  { slug: 'sport',        label: 'Sport & Loisirs',   aliases: ['Sport & Loisirs', 'Sport', 'Loisirs', 'Sport & Fitness', 'Jouets & Jeux', 'Musique & Instruments', 'Livres & Presses', 'Livres papier', 'eBooks & PDF', 'Livres audio', 'BD & Mangas', 'Manuels scolaires', 'Presse & Magazines', 'Livres anciens & Rares', 'Voyages & Tourisme', 'Arts & Artisanat', 'Collections & Antiquités'], google: 'Sporting Goods' },
-  { slug: 'services',     label: 'Services',          aliases: ['Services', 'Services à domicile', 'Formation & Cours', 'Événementiel', 'Transport & Logistique', 'Location appartement', 'Vente immobilier', 'Terrains & Parcelles', 'Bureaux & Locaux commerciaux', 'BTP & Construction', 'Matériel professionnel', 'Fournitures de bureau', 'Dons & Trocs', 'Autre'], google: 'Shopping' },
-  { slug: 'auto',         label: 'Auto & Moto',       aliases: ['Auto & Moto', 'Auto', 'Moto', 'Véhicules', 'Voitures', 'Motos & Scooters', 'Vélos & Trottinettes', 'Pièces & Accessoires auto'],          google: 'Vehicles & Parts' },
+  { slug: 'beaute',       label: 'Beauté & Santé',    aliases: ['Beauté & Santé', 'Beauté', 'Beaute & Sante', 'Santé', 'Beauté & Cosmétiques', 'Parfums', 'Santé & Bien-être', 'Bien-être'], google: 'Health & Beauty' },
+  { slug: 'sport',        label: 'Sport & Loisirs',   aliases: ['Sport & Loisirs', 'Sport', 'Loisirs', 'Sport & Fitness', 'Jouets & Jeux', 'Musique & Instruments', 'Livres & Presses', 'Livres papier', 'eBooks & PDF', 'Livres audio', 'BD & Mangas', 'Manuels scolaires', 'Presse & Magazines', 'Livres anciens & Rares', 'Voyages & Tourisme', 'Arts & Artisanat', 'Collections & Antiquités', 'Animation enfants', 'Nautique', 'Pêche/Bateau'], google: 'Sporting Goods' },
+  { slug: 'services',     label: 'Services',          aliases: ['Services', 'Services à domicile', 'Formation & Cours', 'Événementiel', 'Transport & Logistique', 'Location appartement', 'Vente immobilier', 'Terrains & Parcelles', 'Bureaux & Locaux commerciaux', 'BTP & Construction', 'Matériel professionnel', 'Fournitures de bureau', 'Dons & Trocs', 'Autre', 'BTP/Énergie', 'Espace/Bureau', 'Food truck', 'Location'], google: 'Shopping' },
+  { slug: 'auto',         label: 'Auto & Moto',       aliases: ['Auto & Moto', 'Auto', 'Moto', 'Véhicules', 'Voitures', 'Motos & Scooters', 'Vélos & Trottinettes', 'Pièces & Accessoires auto', 'Moto/Scooter', 'Quad/Aventure', 'Voiture'],          google: 'Vehicles & Parts' },
   { slug: 'animaux',      label: 'Animaux & Élevage', aliases: ['Animaux & Élevage', 'Animaux', 'Élevage', 'Elevage', 'Bétail', 'Agriculture & Élevage', 'Animaux de compagnie', 'Accessoires animaux', 'Alimentation animaux'], google: 'Animals & Pet Supplies' },
 ];
 
