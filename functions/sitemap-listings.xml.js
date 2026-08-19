@@ -7,20 +7,41 @@ function xmlEscape(s) {
   return String(s || '').replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 }
 
-async function sbGet(env, path) {
-  try {
-    const r = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
-      headers: { apikey: env.SUPABASE_SERVICE_KEY || env.SUPABASE_ANON_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY || env.SUPABASE_ANON_KEY}` },
-    });
-    if (!r.ok) {
-      console.error(`sitemap-listings: requête échouée (${r.status}) sur ${path} — ${await r.text().catch(() => '')}`);
-      return [];
+// [PAGINATION] Supabase/PostgREST plafonne CHAQUE réponse à 1000 lignes côté
+// serveur (db-max-rows), quel que soit le &limit= demandé dans la query string
+// — un &limit=5000 ne sert donc à rien au-delà de 1000. Constaté en prod le
+// 19/08/2026 : la table `pros` a 2497 lignes actives mais le sitemap n'en
+// listait que 1000 (1497 fiches invisibles pour Google, silencieusement,
+// sans erreur). sbGetAll pagine via l'en-tête Range par tranches de 1000
+// jusqu'à épuisement (page < 1000 lignes) ou jusqu'à maxRows par sécurité.
+async function sbGetAll(env, path, maxRows = 20000) {
+  const pageSize = 1000;
+  const headers = {
+    apikey: env.SUPABASE_SERVICE_KEY || env.SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY || env.SUPABASE_ANON_KEY}`,
+  };
+  const all = [];
+  let offset = 0;
+  while (offset < maxRows) {
+    try {
+      const r = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
+        headers: { ...headers, Range: `${offset}-${offset + pageSize - 1}` },
+      });
+      if (!r.ok) {
+        console.error(`sitemap-listings: requête échouée (${r.status}) sur ${path} (offset ${offset}) — ${await r.text().catch(() => '')}`);
+        break;
+      }
+      const page = await r.json();
+      if (!Array.isArray(page) || page.length === 0) break;
+      all.push(...page);
+      if (page.length < pageSize) break; // dernière page atteinte
+      offset += pageSize;
+    } catch (e) {
+      console.error(`sitemap-listings: exception sur ${path} (offset ${offset}) — ${e?.message || e}`);
+      break;
     }
-    return await r.json();
-  } catch (e) {
-    console.error(`sitemap-listings: exception sur ${path} — ${e?.message || e}`);
-    return [];
   }
+  return all;
 }
 
 import { cachedResponse } from './_lib/edgecache.js';
@@ -40,16 +61,16 @@ async function handle({ request, env }) {
     // [ADSENSE/SEO] Les produits de DÉMO (seed UUID a0000001-…) sont filtrés plus bas,
     // côté JS (isDemoId) : products.id est UUID, et l'opérateur PostgREST `like` (texte)
     // appliqué à une colonne uuid renvoie une erreur — la requête entière échouait
-    // silencieusement (sbGet avalait l'erreur), vidant le sitemap de tous les produits.
-    sbGet(env, 'products?select=id,name,image_url,updated_at&active=eq.true&order=updated_at.desc&limit=5000'),
-    sbGet(env, `annonces_express?select=id,category,city,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
-    sbGet(env, `troc_listings?select=id,title,photo_url,created_at&status=eq.active&order=created_at.desc&limit=5000`),
-    sbGet(env, `stories?select=id,mux_playback_id,created_at&status=eq.active&order=created_at.desc&limit=5000`),
-    sbGet(env, `pros?select=id,profession,photo_url,updated_at&status=eq.active&order=updated_at.desc&limit=5000`),
-    sbGet(env, `profiles?select=id,name,avatar,updated_at&role=eq.vendor&order=updated_at.desc&limit=5000`),
+    // silencieusement (sbGetAll avalait l'erreur), vidant le sitemap de tous les produits.
+    sbGetAll(env, 'products?select=id,name,image_url,updated_at&active=eq.true&order=updated_at.desc'),
+    sbGetAll(env, `annonces_express?select=id,category,city,photo_url,created_at&status=eq.active&order=created_at.desc`),
+    sbGetAll(env, `troc_listings?select=id,title,photo_url,created_at&status=eq.active&order=created_at.desc`),
+    sbGetAll(env, `stories?select=id,mux_playback_id,created_at&status=eq.active&order=created_at.desc`),
+    sbGetAll(env, `pros?select=id,profession,photo_url,updated_at&status=eq.active&order=updated_at.desc`),
+    sbGetAll(env, `profiles?select=id,name,avatar,updated_at&role=eq.vendor&order=updated_at.desc`),
     // Lignes de transport régulières (annuaire public, sql/2026_08_10_transport_lines.sql)
     // → /ligne/:id. Contenu réel/unique par ligne (pas de flag is_vitrine ici).
-    sbGet(env, `transport_lines?select=id,operator,updated_at,collected_at&active=eq.true&order=operator.asc&limit=2000`),
+    sbGetAll(env, `transport_lines?select=id,operator,updated_at,collected_at&active=eq.true&order=operator.asc`),
   ]);
 
   const urls = [];
