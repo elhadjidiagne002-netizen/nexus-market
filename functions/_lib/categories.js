@@ -25,6 +25,12 @@
 // logique que le fix 2026-07-05 ci-dessus) : Audiovisuel/IT, Mode/Mariage,
 // Bien-être, Animation enfants, Nautique, Pêche/Bateau, BTP/Énergie,
 // Espace/Bureau, Food truck, Location, Moto/Scooter, Quad/Aventure, Voiture.
+// [FIX CATALOGUE COMPLET 2026-08-19] Même passage étendu à TOUT le catalogue
+// actif (pas seulement les 65 vitrine) : requête exhaustive des valeurs
+// distinctes de `products.category` en base → 5 libellés supplémentaires
+// non couverts, dont "Immobilier" à lui seul sur 39 fiches actives (issues
+// de sql/2026_08_12_catalogue_annonces.sql). Alias ajoutés : Immobilier,
+// Hébergement, Sport nautique, Bâche/Structure, Karting.
 export const CATEGORIES = [
   { slug: 'electronique', label: 'Électronique',     aliases: ['Électronique', 'Electronique', 'Électronique & Hi-Fi', 'Appareils photo & Vidéo', 'Jeux vidéo & Consoles', 'Montres connectées', 'Éclairage', 'Audiovisuel/IT'], google: 'Electronics' },
   { slug: 'informatique', label: 'Informatique',     aliases: ['Informatique', 'Ordinateurs & Tablettes', 'Informatique & Tech (services)'], google: 'Electronics > Computers' },
@@ -33,8 +39,8 @@ export const CATEGORIES = [
   { slug: 'alimentation', label: 'Alimentation',      aliases: ['Alimentation', 'Alimentation générale', 'Produits bio & locaux', 'Boissons', 'Épices & Condiments', 'Céréales & Légumineuses', 'Produits laitiers', 'Boulangerie & Pâtisserie', 'Produits locaux'], google: 'Food, Beverages & Tobacco' },
   { slug: 'maison',       label: 'Maison & Déco',     aliases: ['Maison & Déco', 'Maison', 'Maison & Deco', 'Déco', 'Meubles & Décoration', 'Électroménager', 'Cuisine & Art de la table', 'Linge de maison', 'Jardinage & Extérieur', 'Bricolage & Outillage'],  google: 'Home & Garden' },
   { slug: 'beaute',       label: 'Beauté & Santé',    aliases: ['Beauté & Santé', 'Beauté', 'Beaute & Sante', 'Santé', 'Beauté & Cosmétiques', 'Parfums', 'Santé & Bien-être', 'Bien-être'], google: 'Health & Beauty' },
-  { slug: 'sport',        label: 'Sport & Loisirs',   aliases: ['Sport & Loisirs', 'Sport', 'Loisirs', 'Sport & Fitness', 'Jouets & Jeux', 'Musique & Instruments', 'Livres & Presses', 'Livres papier', 'eBooks & PDF', 'Livres audio', 'BD & Mangas', 'Manuels scolaires', 'Presse & Magazines', 'Livres anciens & Rares', 'Voyages & Tourisme', 'Arts & Artisanat', 'Collections & Antiquités', 'Animation enfants', 'Nautique', 'Pêche/Bateau'], google: 'Sporting Goods' },
-  { slug: 'services',     label: 'Services',          aliases: ['Services', 'Services à domicile', 'Formation & Cours', 'Événementiel', 'Transport & Logistique', 'Location appartement', 'Vente immobilier', 'Terrains & Parcelles', 'Bureaux & Locaux commerciaux', 'BTP & Construction', 'Matériel professionnel', 'Fournitures de bureau', 'Dons & Trocs', 'Autre', 'BTP/Énergie', 'Espace/Bureau', 'Food truck', 'Location'], google: 'Shopping' },
+  { slug: 'sport',        label: 'Sport & Loisirs',   aliases: ['Sport & Loisirs', 'Sport', 'Loisirs', 'Sport & Fitness', 'Jouets & Jeux', 'Musique & Instruments', 'Livres & Presses', 'Livres papier', 'eBooks & PDF', 'Livres audio', 'BD & Mangas', 'Manuels scolaires', 'Presse & Magazines', 'Livres anciens & Rares', 'Voyages & Tourisme', 'Arts & Artisanat', 'Collections & Antiquités', 'Animation enfants', 'Nautique', 'Pêche/Bateau', 'Sport nautique', 'Karting'], google: 'Sporting Goods' },
+  { slug: 'services',     label: 'Services',          aliases: ['Services', 'Services à domicile', 'Formation & Cours', 'Événementiel', 'Transport & Logistique', 'Location appartement', 'Vente immobilier', 'Terrains & Parcelles', 'Bureaux & Locaux commerciaux', 'BTP & Construction', 'Matériel professionnel', 'Fournitures de bureau', 'Dons & Trocs', 'Autre', 'BTP/Énergie', 'Espace/Bureau', 'Food truck', 'Location', 'Immobilier', 'Hébergement', 'Bâche/Structure'], google: 'Shopping' },
   { slug: 'auto',         label: 'Auto & Moto',       aliases: ['Auto & Moto', 'Auto', 'Moto', 'Véhicules', 'Voitures', 'Motos & Scooters', 'Vélos & Trottinettes', 'Pièces & Accessoires auto', 'Moto/Scooter', 'Quad/Aventure', 'Voiture'],          google: 'Vehicles & Parts' },
   { slug: 'animaux',      label: 'Animaux & Élevage', aliases: ['Animaux & Élevage', 'Animaux', 'Élevage', 'Elevage', 'Bétail', 'Agriculture & Élevage', 'Animaux de compagnie', 'Accessoires animaux', 'Alimentation animaux'], google: 'Animals & Pet Supplies' },
 ];
