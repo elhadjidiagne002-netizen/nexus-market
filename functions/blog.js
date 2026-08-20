@@ -50,6 +50,12 @@ export async function onRequest({ request, env }) {
     ['/blog/location-courte-vs-longue-duree-materiel', '⏱️ Location courte durée vs longue durée', 'Comment choisir selon votre besoin réel.'],
     ['/blog/acheter-meubles-senegal-neuf-occasion', '🛋️ Acheter des meubles au Sénégal : neuf vs occasion', 'Bien choisir et gérer la livraison des pièces volumineuses.'],
     ['/blog/bijoux-artisanat-senegalais-authentique', '💎 Bijoux et artisanat sénégalais : où acheter authentique', 'Reconnaître les pièces authentiques et bien choisir son vendeur.'],
+    ['/blog/ramadan-senegal-preparer-achats-budget', '🌙 Ramadan au Sénégal : préparer ses achats et son budget', 'Anticiper les hausses de prix et bien gérer son budget sur le mois.'],
+    ['/blog/korite-tenues-cadeaux-preparatifs', '🎊 Korité : tenues, cadeaux et préparatifs', 'Tissus, couturiers et budget cadeaux à anticiper.'],
+    ['/blog/fetes-fin-annee-senegal-cadeaux-bonnes-affaires', '🎄 Fêtes de fin d\'année : cadeaux et bonnes affaires', 'Bien anticiper son budget et ses achats de cadeaux.'],
+    ['/blog/reconnaitre-vrai-cosmetique-eviter-contrefacon', '💄 Reconnaître un vrai cosmétique importé', 'Éviter les contrefaçons de crèmes et parfums de marque.'],
+    ['/blog/pieces-detachees-auto-senegal-neuf-occasion', '🔩 Pièces détachées auto : neuves vs occasion', 'Quand privilégier le neuf et vérifier la compatibilité.'],
+    ['/blog/reparer-electromenager-trouver-reparateur', '🔨 Réparer plutôt que jeter son électroménager', 'Comment décider et où trouver un bon réparateur.'],
   ];
   const body = `
 <h1>Blog NEXUS Market</h1>
