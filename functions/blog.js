@@ -56,6 +56,10 @@ export async function onRequest({ request, env }) {
     ['/blog/reconnaitre-vrai-cosmetique-eviter-contrefacon', '💄 Reconnaître un vrai cosmétique importé', 'Éviter les contrefaçons de crèmes et parfums de marque.'],
     ['/blog/pieces-detachees-auto-senegal-neuf-occasion', '🔩 Pièces détachées auto : neuves vs occasion', 'Quand privilégier le neuf et vérifier la compatibilité.'],
     ['/blog/reparer-electromenager-trouver-reparateur', '🔨 Réparer plutôt que jeter son électroménager', 'Comment décider et où trouver un bon réparateur.'],
+    ['/blog/assurance-vehicule-senegal-ce-qu-il-faut-savoir', '🚗 Assurance véhicule au Sénégal : ce qu\'il faut savoir', 'Obligations, formules au tiers ou tous risques.'],
+    ['/blog/vendre-sa-voiture-rapidement-senegal', '🔑 Vendre sa voiture rapidement au Sénégal', 'Préparation, photos et prix pour une vente efficace.'],
+    ['/blog/cadeaux-entreprise-corporate-senegal', '🎁 Cadeaux d\'entreprise au Sénégal', 'Bien choisir pour ses clients et employés, à l\'unité ou en quantité.'],
+    ['/blog/tenues-traditionnelles-boubou-ou-acheter', '👗 Tenues traditionnelles : où acheter boubou et tissus', 'Wax, bazin, sur-mesure ou prêt-à-porter pour une fête.'],
   ];
   const body = `
 <h1>Blog NEXUS Market</h1>
