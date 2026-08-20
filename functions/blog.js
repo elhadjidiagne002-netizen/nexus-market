@@ -26,6 +26,21 @@ export async function onRequest({ request, env }) {
     ['/blog/louer-appartement-bureau-local-dakar', '🏢 Louer un appartement, un bureau ou un local à Dakar', 'Location résidentielle et professionnelle : prix, points à vérifier et où chercher.'],
     ['/blog/location-voiture-senegal-agences-prix', '🚙 Location de voiture au Sénégal : agences, prix et conseils', 'Avec ou sans chauffeur : comment bien choisir et ce qu\'il faut vérifier avant de partir.'],
     ['/blog/choisir-ligne-transport-bus-car-ferry-senegal', '🚌 Bus, car ou ferry : bien choisir sa ligne de transport', 'Comparer les compagnies, horaires et prix pour vos trajets interurbains au Sénégal.'],
+    ['/blog/louer-jetski-bateau-senegal', '🚤 Louer un jet-ski ou un bateau au Sénégal', 'Sécurité, prix et conseils avant de réserver votre activité nautique.'],
+    ['/blog/randonnee-quad-senegal', '🏍️ Randonnée en quad au Sénégal', 'Où et comment réserver une sortie, niveaux de circuits et équipement fourni.'],
+    ['/blog/anniversaire-enfant-dakar-materiel', '🎈 Organiser un anniversaire d\'enfant à Dakar', 'Château gonflable, animation, décoration : bien planifier et budgétiser.'],
+    ['/blog/louer-food-truck-evenement-senegal', '🚚 Louer un food truck pour un événement', 'Formules, prix et points à vérifier avant de réserver.'],
+    ['/blog/trouver-bon-plombier-electricien-dakar', '🔧 Trouver un bon plombier ou électricien à Dakar', 'Les questions à poser avant d\'engager un artisan.'],
+    ['/blog/devis-travaux-senegal-comparer-prix', '📋 Devis travaux : comment comparer sans se faire avoir', 'Ce qu\'il faut vérifier au-delà du simple prix total.'],
+    ['/blog/choisir-mouton-tabaski-criteres-prix', '🐏 Bien choisir son mouton de Tabaski', 'Critères, poids et fourchette de prix pour un bon choix.'],
+    ['/blog/elevage-senegal-vendre-legalement-en-ligne', '🐐 Élevage : vendre légalement ses animaux en ligne', 'Bien rédiger son annonce et fixer un prix juste.'],
+    ['/blog/ordinateur-portable-etudiant-senegal', '💻 Ordinateur portable pour étudiant : lequel choisir', 'Configuration adaptée, neuf ou occasion, sans se ruiner.'],
+    ['/blog/materiel-audiovisuel-location-evenement', '🎤 Matériel audiovisuel en location pour un événement', 'Sonorisation, vidéoprojecteur : bien dimensionner son besoin.'],
+    ['/blog/payer-carte-bancaire-en-ligne-securite-senegal', '💳 Payer par carte bancaire en ligne : est-ce sécurisé ?', 'Les signes d\'un paiement sécurisé et les précautions à prendre.'],
+    ['/blog/reperer-fausse-annonce-vendeur-non-fiable', '🚩 Repérer une fausse annonce ou un vendeur non fiable', 'Les signaux d\'alerte à connaître avant d\'acheter.'],
+    ['/blog/magal-touba-organisation-transport-hebergement', '🕌 Magal de Touba : comment bien s\'organiser', 'Transport, hébergement et budget à anticiper.'],
+    ['/blog/vivre-acheter-thies-saint-louis-ziguinchor', '🗺️ Vivre et acheter à Thiès, Saint-Louis, Ziguinchor', 'Ce qui distingue chaque ville sur NEXUS Market.'],
+    ['/blog/troc-senegal-comment-bien-echanger', '🔄 Le troc au Sénégal : comment bien échanger', 'Rédiger une bonne annonce et sécuriser l\'échange.'],
   ];
   const body = `
 <h1>Blog NEXUS Market</h1>
