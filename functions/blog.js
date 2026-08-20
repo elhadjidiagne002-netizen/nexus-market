@@ -41,6 +41,15 @@ export async function onRequest({ request, env }) {
     ['/blog/magal-touba-organisation-transport-hebergement', '🕌 Magal de Touba : comment bien s\'organiser', 'Transport, hébergement et budget à anticiper.'],
     ['/blog/vivre-acheter-thies-saint-louis-ziguinchor', '🗺️ Vivre et acheter à Thiès, Saint-Louis, Ziguinchor', 'Ce qui distingue chaque ville sur NEXUS Market.'],
     ['/blog/troc-senegal-comment-bien-echanger', '🔄 Le troc au Sénégal : comment bien échanger', 'Rédiger une bonne annonce et sécuriser l\'échange.'],
+    ['/blog/nexus-stories-decouvrir-publier-videos-vente', '🎬 NEXUS Stories : découvrir et publier des vidéos', 'Filmer une vidéo produit efficace, pourquoi ça inspire plus confiance.'],
+    ['/blog/programme-fidelite-nexus-points-paliers', '⭐ Programme de fidélité NEXUS : points et paliers', 'Bronze à Platine : comment gagner et utiliser vos points.'],
+    ['/blog/diaspora-senegalaise-acheter-a-distance-famille', '✈️ Diaspora : acheter à distance pour sa famille au Sénégal', 'Paiement depuis l\'étranger et livraison directe au pays.'],
+    ['/blog/assistant-ia-nexus-trouver-produit', '🤖 Assistant IA NEXUS : trouver ce que vous cherchez', 'Quand l\'utiliser plutôt que la recherche classique.'],
+    ['/blog/booster-ventes-vendeur-pro-nexus', '📈 Booster ses ventes sur NEXUS Market', 'Photos, prix, réactivité : les bonnes pratiques qui font la différence.'],
+    ['/blog/garantie-constructeur-vs-garantie-marketplace', '🛡️ Garantie constructeur vs garantie marketplace', 'Ce qu\'il faut savoir avant d\'acheter de l\'électronique.'],
+    ['/blog/location-courte-vs-longue-duree-materiel', '⏱️ Location courte durée vs longue durée', 'Comment choisir selon votre besoin réel.'],
+    ['/blog/acheter-meubles-senegal-neuf-occasion', '🛋️ Acheter des meubles au Sénégal : neuf vs occasion', 'Bien choisir et gérer la livraison des pièces volumineuses.'],
+    ['/blog/bijoux-artisanat-senegalais-authentique', '💎 Bijoux et artisanat sénégalais : où acheter authentique', 'Reconnaître les pièces authentiques et bien choisir son vendeur.'],
   ];
   const body = `
 <h1>Blog NEXUS Market</h1>
