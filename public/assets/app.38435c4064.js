@@ -20142,6 +20142,115 @@ const WhatsAppAdminPanel = ({ addToast }) => {
   );
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// BotsAdminPanel — Marche/arrêt + statut des bots WhatsApp/Telegram/Messenger
+// ════════════════════════════════════════════════════════════════════════════
+const BotsAdminPanel = ({ addToast }) => {
+  const WE2 = React.createElement;
+  const [_botsStatus, _setBotsStatus] = React.useState(null);
+  const [_botsLoading, _setBotsLoading] = React.useState(true);
+  const [_botsToggling, _setBotsToggling] = React.useState('');
+
+  const _getAdminToken = async () => {
+    let token = null;
+    try { const s = await (DataService._sb && DataService._sb.auth.getSession()); token = s && s.data && s.data.session && s.data.session.access_token; } catch (_) {}
+    if (!token) token = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+    return token;
+  };
+
+  const loadBotsStatus = React.useCallback(async () => {
+    _setBotsLoading(true);
+    const token = await _getAdminToken();
+    fetch('/api/admin/bots-status', { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+      .then(r => r.json())
+      .then(d => { _setBotsStatus(d); _setBotsLoading(false); })
+      .catch(() => { _setBotsLoading(false); });
+  }, []);
+
+  React.useEffect(() => { loadBotsStatus(); }, [loadBotsStatus]);
+
+  const toggleBot = async (bot, enabled) => {
+    _setBotsToggling(bot);
+    const token = await _getAdminToken();
+    fetch('/api/admin/bots-toggle', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}),
+      body: JSON.stringify({ bot, enabled }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.ok) {
+          addToast((enabled ? '🟢 Bot activé : ' : '⚫ Bot désactivé : ') + bot, enabled ? 'success' : 'info');
+          loadBotsStatus();
+        } else {
+          addToast('Erreur : ' + (d && d.error || 'inconnue'), 'error');
+        }
+      })
+      .catch(() => addToast('Erreur réseau', 'error'))
+      .finally(() => _setBotsToggling(''));
+  };
+
+  const BotRow = (key, label, icon, color, info) => {
+    const s = _botsStatus && _botsStatus[key];
+    if (!s) return null;
+    const configured = key === 'whatsapp' ? s.secretConfigured && s.providerConfigured
+      : key === 'telegram' ? s.tokenConfigured && s.secretConfigured
+      : s.tokenConfigured && s.appSecretConfigured && s.verifyTokenConfigured;
+    return WE2('div', { style: { padding: '1rem', borderRadius: 10, border: '1px solid var(--border,#e5e7eb)', display: 'flex', flexDirection: 'column', gap: '.6rem' } },
+      WE2('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '.5rem' } },
+        WE2('div', { style: { display: 'flex', alignItems: 'center', gap: '.6rem' } },
+          WE2('i', { className: icon, style: { color, fontSize: '1.2rem' } }),
+          WE2('strong', null, label),
+          WE2('span', { className: 'badge badge-' + (s.enabled ? 'success' : 'secondary') }, s.enabled ? '🟢 Actif' : '⚫ Coupé'),
+          !configured && WE2('span', { className: 'badge badge-warning' }, '⚠️ Config incomplète')
+        ),
+        WE2('button', {
+          className: 'btn btn-sm ' + (s.enabled ? 'btn-danger' : 'btn-success'),
+          disabled: _botsToggling === key,
+          onClick: () => toggleBot(key, !s.enabled),
+        }, _botsToggling === key ? '...' : (s.enabled ? 'Désactiver' : 'Activer'))
+      ),
+      info(s),
+      WE2('div', { style: { fontSize: '.72rem', color: 'var(--text-secondary,#6b7280)' } }, 'Webhook : ', WE2('code', null, s.webhookUrl))
+    );
+  };
+
+  return WE2('div', { className: 'card', style: { marginBottom: '1.5rem' } },
+    WE2('div', { className: 'card-header' },
+      WE2('h2', { className: 'card-title' },
+        WE2('i', { className: 'fas fa-robot', style: { marginRight: '.5rem' } }),
+        'Bots automatiques (WhatsApp / Telegram / Messenger)'
+      )
+    ),
+    WE2('div', { style: { padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' } },
+      WE2('div', { className: 'alert alert-info', style: { fontSize: '.82rem' } },
+        WE2('i', { className: 'fas fa-info-circle' }), ' ',
+        'Un bot désactivé ici continue d’accuser réception des messages (le fournisseur ne le recoupe pas), mais ne génère plus de réponse automatique.'
+      ),
+      _botsLoading ? WE2('div', { className: 'empty-state' }, WE2('i', { className: 'fas fa-spinner fa-spin' })) :
+      !_botsStatus ? WE2('div', { className: 'alert alert-danger' }, 'Impossible de charger le statut des bots.') :
+      WE2('div', { style: { display: 'grid', gap: '.9rem', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))' } },
+        BotRow('whatsapp', 'WhatsApp', 'fab fa-whatsapp', '#25D366', (s) => WE2('div', { style: { fontSize: '.8rem', display: 'flex', flexDirection: 'column', gap: '.2rem' } },
+          WE2('span', null, s.secretConfigured ? '✅ Secret webhook configuré' : '❌ WA_WEBHOOK_SECRET manquant'),
+          WE2('span', null, s.providerConfigured ? '✅ Fournisseur (Green API/WAHA) configuré' : '❌ Aucun fournisseur configuré')
+        )),
+        BotRow('telegram', 'Telegram', 'fab fa-telegram', '#26A5E4', (s) => WE2('div', { style: { fontSize: '.8rem', display: 'flex', flexDirection: 'column', gap: '.2rem' } },
+          WE2('span', null, s.tokenConfigured ? '✅ Token bot configuré' : '❌ TELEGRAM_BOT_TOKEN manquant'),
+          WE2('span', null, s.secretConfigured ? '✅ Secret webhook configuré' : '❌ TELEGRAM_WEBHOOK_SECRET manquant')
+        )),
+        BotRow('messenger', 'Messenger', 'fab fa-facebook-messenger', '#0084FF', (s) => WE2('div', { style: { fontSize: '.8rem', display: 'flex', flexDirection: 'column', gap: '.2rem' } },
+          WE2('span', null, s.tokenConfigured ? '✅ Page Access Token configuré' : '❌ FB_PAGE_ACCESS_TOKEN manquant'),
+          WE2('span', null, s.appSecretConfigured ? '✅ App Secret configuré' : '❌ FB_APP_SECRET manquant'),
+          s.subscription && Array.isArray(s.subscription) && s.subscription.length > 0
+            ? WE2('span', null, '✅ Abonnement Page actif')
+            : s.subscription && s.subscription.error
+              ? WE2('span', { style: { color: 'var(--danger,#dc2626)' } }, '⚠️ ' + s.subscription.error)
+              : null
+        ))
+      )
+    )
+  );
+};
 
 // ════════════════════════════════════════════════════════════════════════════
 // ServicesConfigPanel — Services système (Supabase, Stripe, EmailJS)
@@ -28066,7 +28175,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]

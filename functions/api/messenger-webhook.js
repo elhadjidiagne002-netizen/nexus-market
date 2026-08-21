@@ -15,6 +15,7 @@
  */
 import { generateBotReply } from './_lib/bot-brain.js';
 import { hmacSha256Hex, timingSafeEqual } from './_lib/webhook-utils.js';
+import { isBotEnabled } from './_lib/bots-config.js';
 
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
@@ -51,6 +52,8 @@ export async function onRequestPost({ request, env }) {
       }
     }
   }
+
+  if (events.length && !(await isBotEnabled(env, 'messenger'))) return new Response('EVENT_RECEIVED', { status: 200 });
 
   // Traitement séquentiel simple (volume attendu faible) — évite de complexifier
   // avec une queue pour un premier lancement.

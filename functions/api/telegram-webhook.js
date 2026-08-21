@@ -14,6 +14,7 @@
  *      requête, vérifié ci-dessous (protection native, pas de HMAC à recalculer).
  */
 import { generateBotReply } from './_lib/bot-brain.js';
+import { isBotEnabled } from './_lib/bots-config.js';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 
@@ -32,6 +33,8 @@ export async function onRequestPost({ request, env }) {
   const chatId = msg && msg.chat && msg.chat.id;
   const text = msg && msg.text;
   if (!chatId || !text) return new Response('OK', { status: 200 }); // événement non textuel (photo, sticker, join...)
+
+  if (!(await isBotEnabled(env, 'telegram'))) return new Response('OK', { status: 200 });
 
   const origin = env.SITE_URL || 'https://nexusmarket.sn';
   const reply = await generateBotReply(env, { text, origin });

@@ -18,6 +18,7 @@
  */
 import { generateBotReply } from './_lib/bot-brain.js';
 import { sendWhatsAppDirect } from './_lib/wa-send.js';
+import { isBotEnabled } from './_lib/bots-config.js';
 
 export async function onRequestPost({ request, env }) {
   const url = new URL(request.url);
@@ -31,6 +32,9 @@ export async function onRequestPost({ request, env }) {
 
   const { phone, text } = extractIncoming(body);
   if (!phone || !text) return new Response('OK', { status: 200 }); // événement non pertinent (accusé de réception, changement de statut...)
+
+  // Coupure admin : le webhook reste enregistré (accusé 200) mais ne répond plus.
+  if (!(await isBotEnabled(env, 'whatsapp'))) return new Response('OK', { status: 200 });
 
   const origin = env.SITE_URL || 'https://nexusmarket.sn';
   const reply = await generateBotReply(env, { text, origin });
