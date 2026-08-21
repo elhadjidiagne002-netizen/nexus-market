@@ -15,10 +15,10 @@ const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // Modèles autorisés (empêche d'utiliser le proxy comme relais Groq gratuit pour
 // des modèles coûteux). Défaut = celui utilisé partout dans le frontend.
 const ALLOWED_MODELS = new Set([
-  'llama-3.3-70b-versatile',
-  'llama-3.1-8b-instant',
+  'groq/compound-mini',
+  'groq/compound',
 ]);
-const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+const DEFAULT_MODEL = 'groq/compound-mini';
 const MAX_TOKENS_CAP = 1500;
 const MAX_MESSAGES = 24;
 const MAX_CONTENT_CHARS = 24000; // borne la taille d'un message (anti-abus payload)

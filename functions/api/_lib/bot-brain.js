@@ -7,7 +7,7 @@
 import { supabase } from './utils.js';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = 'groq/compound-mini';
 const MAX_REPLY_CHARS = 1500; // WhatsApp/Messenger tolèrent large, Telegram aussi — borne raisonnable
 
 const SYSTEM_PROMPT = `Tu es l'assistant NEXUS Market, une marketplace en ligne au Sénégal (nexusmarket.sn).
