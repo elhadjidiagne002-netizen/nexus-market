@@ -22,6 +22,7 @@ import { sendWhatsAppDirect } from './_lib/wa-send.js';
 export async function onRequestPost({ request, env }) {
   const url = new URL(request.url);
   const provided = url.searchParams.get('secret') || '';
+  console.log('[wa-webhook-debug]', { hasSecret: !!env.WA_WEBHOOK_SECRET, secretLen: (env.WA_WEBHOOK_SECRET || '').length, providedLen: provided.length, match: provided === env.WA_WEBHOOK_SECRET });
   if (!env.WA_WEBHOOK_SECRET || provided !== env.WA_WEBHOOK_SECRET) {
     return new Response('Non autorisé', { status: 401 });
   }
