@@ -163,6 +163,28 @@ Déploiement + API détaillée : **`docs/OSRM_VROOM.md`**.
   L'attribution effective reste la cascade SQL (`_activate_next_offer`) ou
   `admin_assign_delivery` — sinon deux sources de vérité de dispatch divergeraient.
 
+## Bots entrants (WhatsApp / Telegram / Messenger) — 2026-08-21
+Trois webhooks reçoivent les messages entrants et répondent automatiquement via un
+cerveau conversationnel PARTAGÉ (`functions/api/_lib/bot-brain.js`, Groq direct +
+recherche produit best-effort ILIKE sur `products.name`, jamais de prix/stock inventé) :
+- `functions/api/whatsapp-webhook.js` — Green API et WAHA (détection auto du format
+  de payload). Complète `functions/api/whatsapp.js` (sortant uniquement, préexistant).
+  Auth : `?secret=` en query, comparé à `WA_WEBHOOK_SECRET` (ni Green API ni WAHA ne
+  signent leurs webhooks — c'est la seule protection).
+- `functions/api/telegram-webhook.js` — Telegram Bot API. Auth : en-tête natif
+  `X-Telegram-Bot-Api-Secret-Token` (`TELEGRAM_WEBHOOK_SECRET`), fixé une fois via
+  `setWebhook?...&secret_token=...`.
+- `functions/api/messenger-webhook.js` — Facebook Messenger (Graph API `/me/messages`).
+  Auth : `X-Hub-Signature-256` (HMAC-SHA256 du corps brut avec `FB_APP_SECRET`,
+  `hmacSha256Hex` dans `_lib/webhook-utils.js`) + `hub.verify_token` au GET
+  d'enregistrement (`FB_VERIFY_TOKEN`). ⚠️ Sans App Review Meta, ne répond qu'aux
+  utilisateurs test/admin de l'App Facebook (mode développement).
+Variables d'env à ajouter côté Cloudflare (aucune valeur committée) :
+`WA_WEBHOOK_SECRET`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
+`FB_PAGE_ACCESS_TOKEN`, `FB_APP_SECRET`, `FB_VERIFY_TOKEN` (`GROQ_API_KEY` déjà
+existante, réutilisée). Sans `GROQ_API_KEY`, les 3 bots répondent quand même avec un
+message de repli statique plutôt que d'échouer silencieusement.
+
 ## Vérifications avant commit
 - `node --check <fichier.js>` sur les functions modifiées (runtime Workers, pas de test runner backend).
 - Tests E2E : `tests/checkout.spec.js` (Playwright, nécessite un serveur lancé).
