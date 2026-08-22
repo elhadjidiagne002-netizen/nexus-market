@@ -5,6 +5,7 @@ on:
     - cron: '0 * * * *'      # expire — horaire
     - cron: '0 3 * * 0'      # cleanup — dimanche 3h
     - cron: '*/5 * * * *'    # dispatch — toutes les 5 min (puis boucle interne → ~1/min)
+    - cron: '30 * * * *'     # abandoned-cart — horaire (décalé de 30 min pour ne pas cumuler avec expire)
   workflow_dispatch:
     inputs:
       job:
@@ -12,7 +13,7 @@ on:
         required: true
         default: 'both'
         type: choice
-        options: [expire, cleanup, dispatch, both]
+        options: [expire, cleanup, dispatch, abandoned-cart, both]
 
 env:
   SITE_URL: https://nexus-market-asb.pages.dev
@@ -21,7 +22,7 @@ jobs:
   cron-expire:
     name: Expiration annonces & boosts (horaire)
     # Schedule horaire uniquement (ou déclenchement manuel expire/both)
-    if: github.event.schedule == '0 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'cleanup' && github.event.inputs.job != 'dispatch')
+    if: github.event.schedule == '0 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'cleanup' && github.event.inputs.job != 'dispatch' && github.event.inputs.job != 'abandoned-cart')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/expire
@@ -36,7 +37,7 @@ jobs:
   cron-cleanup:
     name: Nettoyage base de données (hebdomadaire)
     # Schedule hebdomadaire uniquement (ou déclenchement manuel cleanup/both)
-    if: github.event.schedule == '0 3 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'expire' && github.event.inputs.job != 'dispatch')
+    if: github.event.schedule == '0 3 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'expire' && github.event.inputs.job != 'dispatch' && github.event.inputs.job != 'abandoned-cart')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/cleanup
@@ -69,3 +70,17 @@ jobs:
             if [ "$i" -lt 5 ]; then sleep 60; fi
           done
           echo "Cycle dispatch terminé."
+
+  cron-abandoned-cart:
+    name: Relance paniers abandonnés (horaire)
+    if: github.event.schedule == '30 * * * *' || (github.event_name == 'workflow_dispatch' && (github.event.inputs.job == 'abandoned-cart' || github.event.inputs.job == 'both'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /cron/abandoned-cart
+        run: |
+          BODY=$(curl -s -w "\n%{http_code}" \
+            "$SITE_URL/cron/abandoned-cart?token=${{ secrets.NEXUS_CRON_TOKEN }}")
+          STATUS=$(echo "$BODY" | tail -n1)
+          echo "$BODY" | sed '$d'
+          echo "HTTP Status: $STATUS"
+          test "$STATUS" = "200"
