@@ -112,6 +112,9 @@ const DEFAULTS = {
   price_drop: { subject: '📉 Baisse de prix : {{product_name}}',
     html: wrap('Le prix a baissé', '<p>Bonjour {{buyer_name}},</p><p>Le prix de <strong>{{product_name}}</strong> a baissé{{#if discount_pct}} de {{discount_pct}}%{{/if}} — désormais <strong>{{new_price}}</strong>.{{#if product_url}}<br><br><a href="{{product_url}}" style="color:#00853E;font-weight:700">En profiter →</a>{{/if}}</p>') },
 
+  abandoned_cart: { subject: '🛒 Votre panier vous attend sur NEXUS Market',
+    html: wrap('Votre panier vous attend', '<p>Bonjour {{buyer_name}},</p><p>Vous avez laissé <strong>{{item_count}}</strong> article(s) dans votre panier{{#if items_summary}} ({{items_summary}}){{/if}}. Ils sont toujours disponibles — finalisez votre commande quand vous voulez.</p>') },
+
   // ── NEXUS Dépannage Auto (SOS panne) — admin uniquement en email, le reste
   //    est WhatsApp-only (cf. WA_DEFAULTS, souvent des demandeurs invités) ────
   admin_new_rescuer: { subject: '🚨 Nouveau dépanneur : {{rescuer_name}}',
@@ -145,6 +148,8 @@ const WA_DEFAULTS = {
   vendor_rejected: 'NEXUS Market — Votre dossier vendeur n\'a pas été validé.{{#if reason}} Motif : {{reason}}.{{/if}}',
   low_stock: '📉 NEXUS Market — Stock faible : {{product_name}} ({{stock}} restant). Pensez à réapprovisionner.',
   product_moderated: 'NEXUS Market — Votre produit {{product_name}} a été modéré et n\'est plus visible.{{#if reason}} Motif : {{reason}}.{{/if}}',
+
+  abandoned_cart: '🛒 NEXUS Market — Bonjour {{buyer_name}}, vous avez {{item_count}} article(s) en attente dans votre panier{{#if items_summary}} ({{items_summary}}){{/if}}. Finalisez votre commande sur {{site_url}}',
 
   quote_request: '📨 NEXUS Market — {{buyer_name}} vous demande un devis. Répondez depuis votre tableau de bord.',
   quote_sent: '📄 NEXUS Market — Le vendeur vous a transmis un devis{{#if total}} de {{total}}{{/if}}.',
