@@ -115,6 +115,9 @@ const DEFAULTS = {
   abandoned_cart: { subject: '🛒 Votre panier vous attend sur NEXUS Market',
     html: wrap('Votre panier vous attend', '<p>Bonjour {{buyer_name}},</p><p>Vous avez laissé <strong>{{item_count}}</strong> article(s) dans votre panier{{#if items_summary}} ({{items_summary}}){{/if}}. Ils sont toujours disponibles — finalisez votre commande quand vous voulez.</p>') },
 
+  review_request: { subject: '⭐ Votre avis sur {{product_name}} — NEXUS Market',
+    html: wrap('Comment s\'est passée votre commande ?', '<p>Bonjour {{buyer_name}},</p><p>Votre commande <strong>#{{order_id}}</strong> a bien été livrée. Comment avez-vous trouvé <strong>{{product_name}}</strong> ?</p><p>Votre avis aide les autres acheteurs à choisir et permet aux bons vendeurs de se faire connaître. Cela prend moins d\'une minute.</p>{{#if product_url}}<p style="margin-top:14px"><a href="{{product_url}}" style="color:#00853E;font-weight:700">Donner mon avis →</a></p>{{/if}}<p style="margin-top:14px;color:#6b7280;font-size:13px">Retrouvez le bouton « Laisser un avis » dans « Mes commandes » sur NEXUS Market.</p>') },
+
   // ── NEXUS Dépannage Auto (SOS panne) — admin uniquement en email, le reste
   //    est WhatsApp-only (cf. WA_DEFAULTS, souvent des demandeurs invités) ────
   admin_new_rescuer: { subject: '🚨 Nouveau dépanneur : {{rescuer_name}}',
@@ -150,6 +153,8 @@ const WA_DEFAULTS = {
   product_moderated: 'NEXUS Market — Votre produit {{product_name}} a été modéré et n\'est plus visible.{{#if reason}} Motif : {{reason}}.{{/if}}',
 
   abandoned_cart: '🛒 NEXUS Market — Bonjour {{buyer_name}}, vous avez {{item_count}} article(s) en attente dans votre panier{{#if items_summary}} ({{items_summary}}){{/if}}. Finalisez votre commande sur {{site_url}}',
+
+  review_request: '⭐ NEXUS Market — Bonjour {{buyer_name}}, votre commande #{{order_id}} a bien été livrée. Comment avez-vous trouvé {{product_name}} ? Laissez un avis depuis « Mes commandes » sur {{site_url}} — ça aide les autres acheteurs et les bons vendeurs. Merci !',
 
   quote_request: '📨 NEXUS Market — {{buyer_name}} vous demande un devis. Répondez depuis votre tableau de bord.',
   quote_sent: '📄 NEXUS Market — Le vendeur vous a transmis un devis{{#if total}} de {{total}}{{/if}}.',
