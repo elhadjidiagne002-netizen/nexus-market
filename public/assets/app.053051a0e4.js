@@ -35552,6 +35552,31 @@ const BuyerDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   }, []);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  // [DEEPLINK AVIS] ?review=<order_id> — envoyé par le cron de sollicitation d'avis
+  // (functions/cron/review-request.js). Ouvre directement la modale d'avis sur la
+  // commande concernée au lieu de laisser l'acheteur chercher « Mes commandes ».
+  // Dépend de `orders` car le chargement est asynchrone : l'effet se rejoue à
+  // chaque mise à jour jusqu'à trouver la commande, puis le ref le neutralise.
+  const _reviewDeeplinkDone = React.useRef(false);
+  useEffect(() => {
+    if (_reviewDeeplinkDone.current) return;
+    let oid = null;
+    try { oid = new URLSearchParams(window.location.search).get('review'); } catch (_) { return; }
+    if (!oid) { _reviewDeeplinkDone.current = true; return; }
+    if (!orders || !orders.length) return; // commandes pas encore chargées → on retentera
+    const order = orders.find((o) => String(o.id) === String(oid));
+    _reviewDeeplinkDone.current = true;
+    if (!order) { addToast("Commande introuvable pour cet avis", "warning"); return; }
+    if (order.status !== 'delivered') { addToast("Vous pourrez laisser un avis une fois la commande livrée", "info"); setView('orders'); setSelectedOrder(order); return; }
+    setView('orders');
+    setSelectedOrder(order);
+    const prod = (order.products || [])[0];
+    if (!prod) { addToast("Aucun article à noter sur cette commande", "warning"); return; }
+    setReviewProduct(prod);
+    setShowReviewModal(true);
+    // Nettoie l'URL pour que le rafraîchissement ne réouvre pas la modale.
+    try { const u = new URL(window.location.href); u.searchParams.delete('review'); window.history.replaceState({}, '', u); } catch (_) {}
+  }, [orders]);
   const [orderStatusFilter, setOrderStatusFilter] = useState("all");
   const [orderSearch, setOrderSearch] = useState("");
   const [orderSort, setOrderSort] = useState("date-desc");

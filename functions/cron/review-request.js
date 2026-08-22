@@ -14,10 +14,11 @@
  *   2. Vérification dans `reviews` (UNIQUE product_id+user_id) → on ne relance
  *      pas un acheteur qui a DÉJÀ laissé son avis spontanément.
  *
- * Le lien envoyé pointe vers la page produit SEO (/produit/:id) ; le formulaire
- * d'avis lui-même vit dans la SPA (« Mes commandes » → « Laisser un avis »),
- * rappelé en clair dans le message — il n'existe pas d'URL directe vers ce
- * formulaire aujourd'hui, donc on ne prétend pas le contraire.
+ * Le lien envoyé (`review_url`) est un DEEPLINK `?review=<order_id>` géré par la
+ * SPA (BuyerDashboard, public/assets/app.*.js) : il ouvre directement la modale
+ * d'avis sur la bonne commande, sans obliger l'acheteur à retrouver « Mes
+ * commandes » → « Laisser un avis ». Si la commande n'est pas trouvée ou pas
+ * livrée, la SPA affiche un message clair plutôt qu'un écran vide.
  *
  * Déclencher par GET externe une fois par jour (voir .github/workflows/cron.yml) :
  *   GET https://nexusmarket.sn/cron/review-request?token=CRON_SECRET
@@ -110,6 +111,8 @@ async function run(env) {
           order_id: String(o.id).slice(0, 8),
           product_name: item ? item.name : 'votre commande',
           product_url: item && item.id ? `${origin}/produit/${item.id}` : '',
+          // Deeplink : ouvre la modale d'avis sur cette commande précise.
+          review_url: `${origin}/?review=${encodeURIComponent(o.id)}`,
           site_url: origin,
           _userId: o.buyer_id || null,
           _orderId: o.id,
