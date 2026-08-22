@@ -25,8 +25,35 @@ async function safe(fn) { try { return await fn(); } catch (_) { return []; } }
 
 export async function onRequestOptions() { return options(); }
 
+// Messages personnalisés injectés par l'admin (Admin → Gestion Page d'Accueil →
+// « Bandeau live ») + interrupteur maître, stockés dans app_config.nexus_ticker_cfg :
+//   { enabled: bool, items: [{ type, text }] }
+// type ∈ des clés TYPES du bandeau (courier/rescue/pro/elevage/rental/realestate/troc)
+// pour réutiliser exactement le même rendu (badge coloré + icône). Best-effort.
+async function adminTicker(env) {
+  try {
+    const sb = supabase(env);
+    const rows = await sb.from('app_config').select('value', `key=eq.nexus_ticker_cfg`);
+    const cfg = Array.isArray(rows) && rows[0] && rows[0].value;
+    if (!cfg || typeof cfg !== 'object') return { enabled: true, items: [] };
+    return { enabled: cfg.enabled !== false, items: Array.isArray(cfg.items) ? cfg.items : [] };
+  } catch (_) { return { enabled: true, items: [] }; }
+}
+
+const VALID_TYPES = new Set(['courier', 'rescue', 'pro', 'elevage', 'rental', 'realestate', 'troc']);
+
 export async function onRequestGet({ env }) {
   const sb = supabase(env);
+
+  const admin = await adminTicker(env);
+  // Interrupteur maître : l'admin peut couper tout le bandeau (renvoie liste vide
+  // → le script client masque le bandeau).
+  if (!admin.enabled) {
+    return new Response(JSON.stringify([]), {
+      status: 200,
+      headers: { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30' },
+    });
+  }
 
   const [courier, rescue, pro, elevage, rental, realestate, troc] = await Promise.all([
     safe(async () => {
@@ -85,7 +112,12 @@ export async function onRequestGet({ env }) {
     }),
   ]);
 
-  const items = [...courier, ...rescue, ...pro, ...elevage, ...rental, ...realestate, ...troc];
+  // Messages admin en TÊTE du bandeau (les plus visibles), filtrés/nettoyés.
+  const custom = (admin.items || [])
+    .filter((it) => it && VALID_TYPES.has(it.type) && it.text)
+    .map((it) => ({ type: it.type, text: String(it.text).slice(0, 120) }));
+
+  const items = [...custom, ...courier, ...rescue, ...pro, ...elevage, ...rental, ...realestate, ...troc];
 
   return new Response(JSON.stringify(items), {
     status: 200,

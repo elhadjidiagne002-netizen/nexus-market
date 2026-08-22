@@ -25230,12 +25230,14 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       NexusAdminConfig.get('nexus_admin_promos'),
       NexusAdminConfig.get('nexus_admin_categories'),
       NexusAdminConfig.get('nexus_widget_layout'),
-    ]).then(([b, p, c, w]) => {
+      NexusAdminConfig.get('nexus_ticker_cfg'),
+    ]).then(([b, p, c, w, tk]) => {
       if (cancel) return;
       if (Array.isArray(b) && b.length) { setAdminBanners(b); storage.set('nexus_admin_banners', b); }
       if (Array.isArray(p) && p.length) { setAdminPromos(p); storage.set('nexus_admin_promos', p); }
       if (Array.isArray(c) && c.length) { setAdminCategories(c); storage.set('nexus_admin_categories', c); }
       if (w && typeof w === 'object') { setAdminWidgets(w); storage.set('nexus_widget_layout', w); }
+      if (tk && typeof tk === 'object') { setAdminTicker(tk); storage.set('nexus_ticker_cfg', tk); }
     }).catch(() => {});
     return () => { cancel = true; };
   }, []);
@@ -25306,6 +25308,11 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   const [editTrust, setEditTrust] = React.useState(null);
   const [adminGlobalTexts, setAdminGlobalTexts] = React.useState(() => {
     try { return storage.get('nexus_admin_globals') || {}; } catch(e) { return {}; }
+  });
+  // [BANDEAU LIVE] Interrupteur + messages personnalisés du ticker « EN DIRECT ».
+  // Lu par /api/live-activity, injecté en tête du flux auto (mêmes badges).
+  const [adminTicker, setAdminTicker] = React.useState(() => {
+    try { return storage.get('nexus_ticker_cfg') || { enabled: true, items: [] }; } catch(e) { return { enabled: true, items: [] }; }
   });
   // [FIX #310] États hissés depuis l'IIFE "flash_sales_vendor"
   const [vFlashSales, setVFlashSales] = React.useState([]);
@@ -27625,6 +27632,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
 
       React.createElement("div", { className: "auth-tabs", style: { marginBottom: "1.5rem", flexWrap: "wrap" } },
         [
+          { id: "ticker",     icon: "bolt",         label: "Bandeau live" },
           { id: "banners",    icon: "images",       label: "Bannières" },
           { id: "categories", icon: "th-large",     label: "Catégories" },
           { id: "promos",     icon: "bullhorn",     label: "Promos" },
@@ -27639,6 +27647,69 @@ CREATE POLICY "Service role only" ON invoice_sequences
           onClick: () => setAdminHpTab(t.id)
         }, React.createElement("i", { className: "fas fa-" + t.icon, style: { marginRight: "0.35rem" } }), t.label))
       ),
+
+      adminHpTab === "ticker" && (() => {
+        const TK = adminTicker || { enabled: true, items: [] };
+        const items = Array.isArray(TK.items) ? TK.items : [];
+        // Mêmes types/couleurs/icônes que le bandeau live de index.html (rendu identique).
+        const TYPE_META = {
+          pro:        { icon: "🔧", color: "#006d40", label: "Service / artisan" },
+          rescue:     { icon: "🚨", color: "#b91c1c", label: "Dépannage / alerte" },
+          courier:    { icon: "🛵", color: "#006d40", label: "Livraison" },
+          rental:     { icon: "🔑", color: "#1d4ed8", label: "Location" },
+          realestate: { icon: "🏠", color: "#0d9488", label: "Immobilier" },
+          elevage:    { icon: "🐏", color: "#7c3f00", label: "Élevage / terroir" },
+          troc:       { icon: "🔄", color: "#e9c176", label: "Troc" },
+        };
+        const save = (next) => { setAdminTicker(next); saveS('nexus_ticker_cfg', next); };
+        const setItem = (i, patch) => { const arr = items.map((x, j) => j === i ? Object.assign({}, x, patch) : x); save(Object.assign({}, TK, { items: arr })); };
+        const addItem = () => save(Object.assign({}, TK, { items: [...items, { type: "pro", text: "" }] }));
+        const delItem = (i) => save(Object.assign({}, TK, { items: items.filter((_, j) => j !== i) }));
+        return React.createElement("div", { className: "card" },
+          React.createElement("div", { className: "card-header" },
+            React.createElement("h3", { className: "card-title" },
+              React.createElement("i", { className: "fas fa-bolt", style: { color: "#b91c1c", marginRight: "0.5rem" } }),
+              "Bandeau « EN DIRECT »",
+              React.createElement("span", { className: "badge badge-" + (TK.enabled !== false ? "success" : "secondary"), style: { marginLeft: "0.75rem" } }, TK.enabled !== false ? "🟢 Actif" : "⚫ Coupé")
+            )
+          ),
+          React.createElement("div", { style: { padding: "1.25rem", display: "flex", flexDirection: "column", gap: "1rem" } },
+            React.createElement("div", { className: "alert alert-info", style: { fontSize: "0.82rem" } },
+              React.createElement("i", { className: "fas fa-info-circle" }), " Le bandeau défilant en haut du site agrège automatiquement l'activité (livraisons, dépannages, artisans, locations…). Ajoutez ici vos PROPRES messages : ils s'affichent EN TÊTE, avec le même rendu. Rafraîchissement du site sous ~90 s après enregistrement."
+            ),
+            // Aperçu live (mêmes styles que le vrai bandeau)
+            React.createElement("div", { style: { display: "flex", alignItems: "stretch", height: 38, background: "#f9f9fc", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" } },
+              React.createElement("div", { style: { background: "#b91c1c", color: "#fff", fontWeight: 800, fontSize: "0.66rem", letterSpacing: "0.4px", padding: "0 12px", display: "flex", alignItems: "center" } }, "🔴 EN DIRECT"),
+              React.createElement("div", { style: { display: "flex", alignItems: "center", overflow: "hidden", flex: 1 } },
+                items.filter(it => it.text).length === 0
+                  ? React.createElement("span", { style: { padding: "0 14px", fontSize: "0.74rem", color: "var(--text-secondary)", fontStyle: "italic" } }, "Vos messages apparaîtront ici…")
+                  : items.filter(it => it.text).map((it, i) => { const m = TYPE_META[it.type] || TYPE_META.pro; return React.createElement("span", { key: i, style: { display: "inline-flex", alignItems: "center", gap: 6, padding: "0 16px", fontSize: "0.74rem", fontWeight: 700, color: "#006d40", whiteSpace: "nowrap", borderRight: "1px solid rgba(0,109,64,.18)" } }, React.createElement("span", { style: { width: 18, height: 18, borderRadius: 5, background: m.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 } }, m.icon), it.text); })
+              )
+            ),
+            // Interrupteur maître
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.6rem" } },
+              React.createElement("button", {
+                className: "btn btn-sm " + (TK.enabled !== false ? "btn-danger" : "btn-success"),
+                onClick: () => save(Object.assign({}, TK, { enabled: TK.enabled === false }))
+              }, TK.enabled !== false ? React.createElement(React.Fragment, null, React.createElement("i", { className: "fas fa-eye-slash" }), " Couper tout le bandeau") : React.createElement(React.Fragment, null, React.createElement("i", { className: "fas fa-eye" }), " Réactiver le bandeau")),
+              React.createElement("span", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, "Couper masque AUSSI l'activité automatique.")
+            ),
+            // Liste éditable des messages
+            React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.6rem" } },
+              items.map((it, i) => React.createElement("div", { key: i, style: { display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" } },
+                React.createElement("select", { className: "form-select", value: it.type || "pro", onChange: (e) => setItem(i, { type: e.target.value }), style: { width: "170px", flexShrink: 0 } },
+                  Object.keys(TYPE_META).map((k) => React.createElement("option", { key: k, value: k }, TYPE_META[k].icon + " " + TYPE_META[k].label))
+                ),
+                React.createElement("input", { className: "form-input", style: { flex: 1, minWidth: "180px" }, maxLength: 120, value: it.text || "", placeholder: "Ex. Promo Tabaski : -20% sur l'électroménager", onChange: (e) => setItem(i, { text: e.target.value }) }),
+                React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => delItem(i), title: "Supprimer" }, React.createElement("i", { className: "fas fa-trash" }))
+              ))
+            ),
+            React.createElement("button", { className: "btn btn-secondary btn-sm", style: { alignSelf: "flex-start" }, onClick: addItem },
+              React.createElement("i", { className: "fas fa-plus" }), " Ajouter un message"
+            )
+          )
+        );
+      })(),
 
       adminHpTab === "banners" && React.createElement(React.Fragment, null,
         React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" } },
