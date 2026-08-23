@@ -1,8 +1,11 @@
 // functions/confidentialite.js → /confidentialite
 // Politique de confidentialité server-rendered + divulgation cookies publicitaires
 // (Google AdSense) — EXIGENCE AdSense. Indexable.
+// [ADMIN-CFG 2026-08-23] Email de contact RGPD lu depuis app_config.nexus_org_cfg
+// (plus d'email personnel figé dans les CGU/confidentialité — voir functions/_lib/org-cfg.js).
 import { renderContentPage, contentResponse } from './_lib/contentpage.js';
 import { esc } from './_lib/seo.js';
+import { getOrgCfg } from './_lib/org-cfg.js';
 
 const SECTIONS = [
   ['Données collectées', "Nom, prénom, adresse email, numéro de téléphone, adresse de livraison. Données de transaction (montants, dates, produits). Données de navigation (pages visitées, actions). Nous ne collectons pas de données bancaires — celles-ci sont traitées directement par notre prestataire de paiement (Stripe) et les opérateurs Mobile Money (Orange Money, Wave)."],
@@ -10,15 +13,17 @@ const SECTIONS = [
   ['Base légale', "Exécution du contrat (commandes, livraisons). Intérêt légitime (sécurité, prévention de la fraude, mesure d’audience). Consentement (emails marketing, cookies publicitaires). Obligation légale (facturation, conformité fiscale sénégalaise)."],
   ['Conservation des données', "Données de compte : durée de la relation commerciale + 3 ans. Données de commandes : 10 ans (obligation comptable). Logs de connexion : 12 mois. Données marketing : 3 ans après le dernier contact."],
   ['Partage des données', "Nous ne vendons jamais vos données personnelles. Partage limité avec : les vendeurs pour l’exécution de vos commandes, nos prestataires de paiement (Stripe, Orange Money, Wave), nos services logistiques pour la livraison, nos prestataires techniques (hébergement, analytics, publicité) et les autorités sénégalaises sur demande légale."],
-  ['Vos droits', "Conformément à la loi sénégalaise n°2008-12, vous disposez des droits d’accès, de rectification, d’effacement, d’opposition et de portabilité de vos données. Pour exercer ces droits, écrivez à elhadjidiagne002@gmail.com. Délai de réponse : 30 jours."],
+  ['Vos droits', "Conformément à la loi sénégalaise n°2008-12, vous disposez des droits d’accès, de rectification, d’effacement, d’opposition et de portabilité de vos données. Pour exercer ces droits, écrivez à {{rgpd_email}}. Délai de réponse : 30 jours."],
 ];
 
 export async function onRequest({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
+  const cfg = await getOrgCfg(env);
+  const applyOrg = (s) => String(s || '').replaceAll('{{rgpd_email}}', esc(cfg.rgpd_email));
   const body = `
 <h1>Politique de Confidentialité</h1>
 <p class="lead">NEXUS Market accorde une grande importance à la protection de votre vie privée. Cette politique explique quelles données nous collectons, pourquoi, et comment vous gardez le contrôle. Conforme à la loi sénégalaise n°2008-12 sur la protection des données personnelles.</p>
-${SECTIONS.map(([t, x]) => `<h2>${esc(t)}</h2><p>${esc(x)}</p>`).join('\n')}
+${SECTIONS.map(([t, x]) => `<h2>${esc(t)}</h2><p>${applyOrg(x)}</p>`).join('\n')}
 
 <h2>Cookies</h2>
 <p>Nous utilisons des <strong>cookies fonctionnels</strong> (authentification, panier) indispensables au fonctionnement du site, ainsi que des <strong>cookies de mesure d’audience</strong> anonymisés pour améliorer nos services. Vous pouvez configurer votre navigateur pour refuser les cookies non essentiels ; certaines fonctionnalités pourraient alors être limitées.</p>
@@ -36,7 +41,7 @@ ${SECTIONS.map(([t, x]) => `<h2>${esc(t)}</h2><p>${esc(x)}</p>`).join('\n')}
 <h2>Sécurité</h2>
 <p>Les échanges avec le site sont chiffrés (TLS/HTTPS). Nous appliquons des mesures techniques et organisationnelles raisonnables pour protéger vos données contre tout accès non autorisé.</p>
 
-<div class="box"><strong>Contact — données personnelles :</strong> elhadjidiagne002@gmail.com — Dakar, Sénégal. Voir aussi nos <a href="${origin}/cgu">Conditions Générales d’Utilisation</a>.</div>`;
+<div class="box"><strong>Contact — données personnelles :</strong> ${esc(cfg.rgpd_email)} — ${esc(cfg.legal_address)}. Voir aussi nos <a href="${origin}/cgu">Conditions Générales d’Utilisation</a>.</div>`;
 
   return contentResponse(renderContentPage({
     origin, path: '/confidentialite',

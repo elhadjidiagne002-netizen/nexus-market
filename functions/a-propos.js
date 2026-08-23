@@ -1,17 +1,21 @@
 // functions/a-propos.js → /a-propos
+// [ADMIN-CFG 2026-08-23] Email de contact + liens sociaux (sameAs) lus depuis
+// app_config.nexus_org_cfg — plus d'URL Facebook/Instagram figée dans le code.
 import { renderContentPage, contentResponse } from './_lib/contentpage.js';
+import { getOrgCfg, sameAs } from './_lib/org-cfg.js';
 
 export async function onRequest({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
+  const cfg = await getOrgCfg(env);
   const org = {
     '@type': 'Organization',
-    name: 'NEXUS Market',
+    name: cfg.legal_name,
     url: origin,
     logo: `${origin}/icon-512.png`,
     description: 'Marketplace en ligne sécurisée au Sénégal : achat, vente, services et livraison, avec paiement Orange Money, Wave et carte bancaire.',
     areaServed: 'SN',
-    email: 'nx@nexusmarket.sn',
-    sameAs: [],
+    email: cfg.contact_email,
+    sameAs: sameAs(cfg),
   };
   const body = `
 <h1>À propos de NEXUS Market</h1>

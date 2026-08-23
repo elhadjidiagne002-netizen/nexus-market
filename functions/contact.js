@@ -1,9 +1,15 @@
 // functions/contact.js → /contact
+// [ADMIN-CFG 2026-08-23] Email de contact lu depuis app_config.nexus_org_cfg
+// (unifié avec CGU/Confidentialité/JSON-LD — voir functions/_lib/org-cfg.js).
+// Ancienne source `env.ADMIN_EMAIL` conservée comme repli si la clé Supabase
+// est vide (n'a jamais été renseignée en dashboard admin).
 import { renderContentPage, contentResponse } from './_lib/contentpage.js';
+import { getOrgCfg } from './_lib/org-cfg.js';
 
 export async function onRequest({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
-  const email = env.ADMIN_EMAIL || 'nx@nexusmarket.sn';
+  const cfg = await getOrgCfg(env);
+  const email = cfg.contact_email || env.ADMIN_EMAIL || 'nx@nexusmarket.sn';
   const contactPage = {
     '@type': 'ContactPage',
     name: 'Contact — NEXUS Market',

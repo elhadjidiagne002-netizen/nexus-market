@@ -20352,6 +20352,82 @@ const ServicesConfigPanel = ({ addToast }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
+// OrgCfgAdminPanel — Coordonnées légales + emails + réseaux sociaux (2026-08-23)
+// Une seule clé app_config.nexus_org_cfg, lue par CGU/Confidentialité/Contact/
+// À propos (SSR) + /api/org-cfg (bundle client, JSON-LD & bouton FB footer).
+// Remplace 6+ endroits où l'email/tél perso et les URLs sociales étaient figés.
+// ════════════════════════════════════════════════════════════════════════════
+const OrgCfgAdminPanel = ({ addToast }) => {
+  const E = React.createElement;
+  const [cfg, setCfg] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+  React.useEffect(() => {
+    try {
+      NexusAdminConfig.get('nexus_org_cfg').then((v) => {
+        setCfg(v && typeof v === 'object' ? v : {
+          legal_name: 'NEXUS Market', legal_email: 'nx@nexusmarket.sn', legal_phone: '',
+          legal_address: 'Dakar, Sénégal', contact_email: 'nx@nexusmarket.sn', rgpd_email: 'nx@nexusmarket.sn',
+          facebook_url: '', facebook_page_id: '', instagram_url: '', tiktok_url: '',
+          twitter_url: '', linkedin_url: '', youtube_url: '',
+        });
+      }).catch(() => setCfg({}));
+    } catch (_) { setCfg({}); }
+  }, []);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await NexusAdminConfig.set('nexus_org_cfg', cfg, DataService?._user?.id);
+      addToast('✅ Coordonnées enregistrées — visibles sous 1 min sur le site', 'success');
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+    setSaving(false);
+  };
+  if (!cfg) return E('div', { className: 'card', style: { padding: '1.5rem' } }, 'Chargement…');
+  const field = (key, label, ph, help) => E('div', { className: 'form-group', style: { marginBottom: '.9rem' } },
+    E('label', { className: 'form-label', style: { fontWeight: 700, fontSize: '.85rem' } }, label),
+    E('input', { type: 'text', className: 'form-input', value: cfg[key] || '', placeholder: ph || '',
+      onChange: (e) => setCfg(Object.assign({}, cfg, { [key]: e.target.value })) }),
+    help && E('div', { style: { fontSize: '.72rem', color: 'var(--text-secondary,#6b7280)', marginTop: '.3rem' } }, help)
+  );
+  return E('div', { className: 'card', style: { marginBottom: '1.5rem' } },
+    E('div', { className: 'card-header' },
+      E('h2', { className: 'card-title' },
+        E('i', { className: 'fas fa-building', style: { marginRight: '.5rem', color: 'var(--primary,#00853E)' } }),
+        'Coordonnées organisation (CGU, Confidentialité, JSON-LD, réseaux sociaux)'
+      )
+    ),
+    E('div', { style: { padding: '1.25rem' } },
+      E('div', { className: 'alert alert-info', style: { fontSize: '.82rem', marginBottom: '1rem' } },
+        E('i', { className: 'fas fa-info-circle' }), ' Ces valeurs sont lues par les pages CGU, Confidentialité, Contact, À propos et le JSON-LD SEO. ',
+        E('strong', null, 'Ne laissez PAS votre email personnel ou votre numéro personnel'),
+        ' — utilisez toujours des coordonnées professionnelles (email ',
+        E('code', null, 'xx@nexusmarket.sn'), ').'
+      ),
+      E('h3', { style: { fontSize: '.95rem', margin: '.5rem 0 .8rem', fontWeight: 700 } }, '📋 Identité légale'),
+      field('legal_name', 'Nom légal', 'NEXUS Market'),
+      field('legal_email', 'Email légal (CGU art. 2)', 'nx@nexusmarket.sn', 'Utilisé dans les CGU pour l\'opérateur de la plateforme.'),
+      field('legal_phone', 'Téléphone légal (optionnel)', '', '⚠️ N\'y saisissez PAS votre numéro personnel — laissez vide si vous n\'avez pas de ligne pro.'),
+      field('legal_address', 'Adresse', 'Dakar, Sénégal'),
+      E('h3', { style: { fontSize: '.95rem', margin: '1.2rem 0 .8rem', fontWeight: 700 } }, '📨 Emails de contact'),
+      field('contact_email', 'Email contact (page /contact)', 'nx@nexusmarket.sn'),
+      field('rgpd_email', 'Email RGPD (droits données personnelles)', 'nx@nexusmarket.sn', 'Utilisé par la page /confidentialite pour l\'exercice des droits (accès, rectification, suppression).'),
+      E('h3', { style: { fontSize: '.95rem', margin: '1.2rem 0 .8rem', fontWeight: 700 } }, '🌐 Réseaux sociaux'),
+      field('facebook_url', 'URL Facebook', 'https://www.facebook.com/…'),
+      field('facebook_page_id', 'ID Page Facebook (pour l\'iframe)', '1233022656551601', 'Numéro visible dans l\'URL de votre page Facebook — utilisé pour le widget iframe et sameAs.'),
+      field('instagram_url', 'URL Instagram', 'https://www.instagram.com/…'),
+      field('tiktok_url', 'URL TikTok', 'https://www.tiktok.com/@…'),
+      field('twitter_url', 'URL Twitter/X', ''),
+      field('linkedin_url', 'URL LinkedIn', ''),
+      field('youtube_url', 'URL YouTube', ''),
+      E('div', { style: { marginTop: '1.2rem' } },
+        E('button', { className: 'btn btn-primary', disabled: saving, onClick: save },
+          E('i', { className: 'fas fa-save' }), ' ', saving ? 'Enregistrement…' : 'Enregistrer'
+        )
+      )
+    )
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
 // BackendSetupPanel — Guide de configuration backend (Admin → Config)
 // ════════════════════════════════════════════════════════════════════════════
 const BackendSetupPanel = ({ addToast }) => {
@@ -28246,7 +28322,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(OrgCfgAdminPanel, { addToast }), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]

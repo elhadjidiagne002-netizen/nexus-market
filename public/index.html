@@ -463,7 +463,7 @@
       },
       "contactPoint": {
         "@type": "ContactPoint",
-        "email": "contact@nexus.sn",
+        "email": "nx@nexusmarket.sn",
         "contactType": "customer service",
         "availableLanguage": ["French", "Wolof", "English"]
       },
@@ -3077,7 +3077,7 @@
     })();
     </script>
 
-    <script src="/assets/app.65dc3e1968.js"></script>
+    <script src="/assets/app.4e23603c08.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -14204,6 +14204,39 @@ function initProto(){
   }
   try{ if(typeof NexusAdminConfig!=='undefined'&&NexusAdminConfig.get){ NexusAdminConfig.get('nexus_admin_banners').then(applyAdminBanners).catch(function(){}); } }catch(e){}
 
+  /* [ADMIN-CFG] Coordonnées organisation (email contact + liens sociaux) éditées
+     par l'admin via app_config.nexus_org_cfg — servies par /api/org-cfg. Remplace
+     les URL Facebook figées, le bouton footer et l'iframe FB. */
+  fetch('/api/org-cfg').then(function(r){return r.ok?r.json():null;}).then(function(cfg){
+    if(!cfg) return;
+    /* Bouton Facebook du footer (href hardcodé sur le page ID). */
+    document.querySelectorAll('a[href*="facebook.com/1233022656551601"]').forEach(function(a){
+      if(cfg.facebook_url) a.setAttribute('href', cfg.facebook_url);
+    });
+    /* Redirect click sur "facebook" dans les menus (var globale posée juste avant). */
+    if(cfg.facebook_url){ try{ window.__NEXUS_ORG_FB__ = cfg.facebook_url; }catch(_){} }
+    /* Iframe FB plugin — recharger sur la bonne page si l'ID a changé. */
+    if(cfg.facebook_page_id){
+      document.querySelectorAll('iframe[src*="facebook.com/plugins/page.php"]').forEach(function(f){
+        var want = 'https%3A%2F%2Fwww.facebook.com%2F' + cfg.facebook_page_id;
+        if(f.src.indexOf(want) === -1){
+          f.src = f.src.replace(/href=https%3A%2F%2Fwww\.facebook\.com%2F\d+/, 'href=' + want);
+        }
+      });
+    }
+    /* JSON-LD Organization : corriger l'email et enrichir sameAs.
+       On ne peut pas patcher un application/ld+json déjà servi ; on injecte un
+       second JSON-LD Organization qui prendra le pas (Google fusionne). */
+    var sameAs = [cfg.facebook_url,cfg.instagram_url,cfg.tiktok_url,cfg.twitter_url,cfg.linkedin_url,cfg.youtube_url].filter(Boolean);
+    if(cfg.contact_email || sameAs.length){
+      var extra = {"@context":"https://schema.org","@type":"Organization","name":cfg.legal_name||"NEXUS Market","url":location.origin};
+      if(cfg.contact_email) extra.contactPoint = {"@type":"ContactPoint","email":cfg.contact_email,"contactType":"customer service"};
+      if(sameAs.length) extra.sameAs = sameAs;
+      var s=document.createElement('script'); s.type='application/ld+json'; s.text=JSON.stringify(extra);
+      document.head.appendChild(s);
+    }
+  }).catch(function(){});
+
   /* Hamburger Drawer */
   var drawer=document.getElementById('nxp-drawer');
   var dbk=document.getElementById('nxp-drawerBackdrop');
@@ -14487,7 +14520,7 @@ function initProto(){
        les liens déjà traduits). Repli sur le texte français pour les liens non
        encore étiquetés (comportement historique, non traduits). */
     var t=a.getAttribute('data-route')||labelText(a);
-    if(t.indexOf('facebook')>=0){e.preventDefault();window.open('https://www.facebook.com/1233022656551601','_blank','noopener');return;}
+    if(t.indexOf('facebook')>=0){e.preventDefault();window.open((window.__NEXUS_ORG_FB__)||'https://www.facebook.com/1233022656551601','_blank','noopener');return;}
     var fn=ROUTES[t];
     if(fn){e.preventDefault();closeDrawerNow();fn();}
   });

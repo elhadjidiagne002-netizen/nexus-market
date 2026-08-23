@@ -1,10 +1,16 @@
 // functions/cgu.js → /cgu — Conditions Générales d'Utilisation (server-rendered, indexable).
+// [ADMIN-CFG 2026-08-23] Les coordonnées légales (email, tél, adresse) et le
+// contact RGPD sont désormais lus depuis app_config.nexus_org_cfg — plus
+// d'email/tél personnels figés dans le code (risque RGPD + doxxing).
 import { renderContentPage, contentResponse } from './_lib/contentpage.js';
 import { esc } from './_lib/seo.js';
+import { getOrgCfg } from './_lib/org-cfg.js';
 
+// Placeholders remplacés à chaque requête depuis nexus_org_cfg :
+//   {{legal_email}} {{legal_phone}} {{legal_address}} {{rgpd_email}}
 const SECTIONS = [
   ['1. Objet et champ d’application', "Les présentes Conditions Générales d’Utilisation (CGU) régissent l’utilisation de la plateforme NEXUS Market (nexusmarket.sn), place de marché B2B/B2C en ligne dédiée au commerce électronique au Sénégal et en Afrique de l’Ouest. En accédant au site ou en créant un compte, vous acceptez sans réserve les présentes CGU dans leur intégralité. Si vous n’acceptez pas ces conditions, vous devez cesser d’utiliser la plateforme."],
-  ['2. Opérateur de la plateforme', "NEXUS Market est exploité par NEXUS Market, entreprise en cours d’immatriculation au registre du commerce et du crédit mobilier (RCCM) de Dakar, Sénégal. Contact : elhadjidiagne002@gmail.com — Tél. : +221 77 625 48 95 — Adresse : Dakar, Sénégal."],
+  ['2. Opérateur de la plateforme', "NEXUS Market est exploité par NEXUS Market, entreprise en cours d’immatriculation au registre du commerce et du crédit mobilier (RCCM) de Dakar, Sénégal. Contact : {{legal_email}}{{legal_phone_sep}} — Adresse : {{legal_address}}."],
   ['3. Accès et inscription', "L’inscription est gratuite et ouverte à toute personne physique majeure (+18 ans) ou personne morale légalement constituée. Les Annonces Express sont accessibles sans inscription. Vous êtes entièrement responsable de la sécurité de vos identifiants et de tous les actes accomplis depuis votre compte. NEXUS Market se réserve le droit de suspendre ou supprimer tout compte en cas de violation des présentes CGU."],
   ['4. Vendeurs — Obligations et commissions', "Les vendeurs sont des tiers indépendants. Ils s’engagent à : (i) vendre uniquement des produits légaux, conformes aux normes en vigueur au Sénégal ; (ii) honorer leurs commandes dans les délais annoncés ; (iii) fournir des informations exactes sur leurs produits. Pendant la phase de lancement, NEXUS Market applique une commission de 0% sur les ventes ; elle évoluera ensuite progressivement, avec un taux réduit pour les vendeurs parrainés. Le taux applicable est toujours affiché dans le tableau de bord vendeur et déduit automatiquement du montant versé au vendeur."],
   ['5. Protection acheteur — Système Escrow', "NEXUS Market propose un système de protection acheteur (escrow) : le paiement est sécurisé et n’est versé au vendeur qu’après confirmation de la réception par l’acheteur, ou automatiquement après 48h sans litige. En cas de litige, l’acheteur dispose de 48h ouvrables après livraison pour ouvrir une réclamation. NEXUS Market agit comme médiateur neutre et rend une décision sous 72h ouvrables. Cette médiation est gratuite."],
@@ -13,7 +19,7 @@ const SECTIONS = [
   ['8. Contenus interdits', "Sont strictement interdits sur la plateforme : armes, drogues, médicaments sans ordonnance, contrefaçons, produits volés, matériel pornographique, contenus haineux ou discriminatoires, et tout produit ou service illégal au Sénégal. Tout manquement entraîne la suppression immédiate du compte et peut faire l’objet d’un signalement aux autorités compétentes."],
   ['9. Programme Ambassadeur', "Le programme ambassadeur est accessible à tout utilisateur inscrit. Les commissions (5 à 10% selon le niveau) sont calculées sur les ventes effectives des filleuls et versées mensuellement par Wave ou Orange Money. NEXUS Market se réserve le droit de modifier les taux avec un préavis de 30 jours. Les commissions ne sont pas acquises sur les commandes annulées ou remboursées."],
   ['10. Propriété intellectuelle', "La marque NEXUS Market, le code source, le design, les logos et l’ensemble des éléments graphiques de la plateforme sont la propriété exclusive de NEXUS Market et sont protégés par les lois sénégalaises et internationales. Toute reproduction, distribution ou utilisation commerciale sans autorisation écrite préalable est interdite."],
-  ['11. Protection des données personnelles (Loi 2008-12)', "NEXUS Market traite vos données personnelles conformément à la loi sénégalaise n°2008-12 sur la protection des données personnelles et aux règlements CEDEAO en vigueur. Voir notre Politique de confidentialité pour le détail. Vous disposez d’un droit d’accès, de rectification et de suppression en contactant elhadjidiagne002@gmail.com."],
+  ['11. Protection des données personnelles (Loi 2008-12)', "NEXUS Market traite vos données personnelles conformément à la loi sénégalaise n°2008-12 sur la protection des données personnelles et aux règlements CEDEAO en vigueur. Voir notre Politique de confidentialité pour le détail. Vous disposez d’un droit d’accès, de rectification et de suppression en contactant {{rgpd_email}}."],
   ['12. Responsabilité et limitation', "NEXUS Market est une plateforme intermédiaire entre acheteurs et vendeurs indépendants. NEXUS Market n’est pas responsable de la qualité des produits vendus par les tiers, ni des retards de livraison imputables aux transporteurs. Sa responsabilité est limitée au montant de la transaction concernée et ne saurait couvrir les dommages indirects ou consécutifs."],
   ['13. Modification des CGU', "NEXUS Market se réserve le droit de modifier les présentes CGU à tout moment. Les modifications prennent effet 30 jours après leur publication sur la plateforme. Les utilisateurs sont notifiés par email et notification in-app. La poursuite de l’utilisation après ce délai vaut acceptation des nouvelles CGU."],
   ['14. Loi applicable et juridiction', "Les présentes CGU sont régies par le droit sénégalais : Code des Obligations Civiles et Commerciales (COCC), Acte Uniforme OHADA sur le Droit Commercial Général, loi n°2008-08 sur les transactions électroniques et loi n°2008-12 sur la protection des données personnelles. Tout litige non résolu par médiation sera soumis à la compétence exclusive des tribunaux de Dakar, Sénégal."],
@@ -22,13 +28,25 @@ const SECTIONS = [
   ['17. Premier achat garanti (offre de lancement)', "En cas de fraude avérée d’un vendeur lors de votre toute première commande payée via la plateforme, NEXUS vous rembourse intégralement le montant payé, dans la limite du plafond en vigueur et sous réserve d’ouverture d’une réclamation dans les 48h suivant la livraison (ou la date prévue). Cette garantie s’applique exclusivement aux transactions réglées via le système de protection (escrow) ; les paiements hors plateforme en sont exclus."],
 ];
 
+function applyOrg(str, cfg) {
+  const phoneSep = cfg.legal_phone ? ` — Tél. : ${cfg.legal_phone}` : '';
+  return String(str || '')
+    .replaceAll('{{legal_email}}', esc(cfg.legal_email))
+    .replaceAll('{{legal_phone_sep}}', esc(phoneSep))
+    .replaceAll('{{legal_address}}', esc(cfg.legal_address))
+    .replaceAll('{{rgpd_email}}', esc(cfg.rgpd_email));
+}
+
 export async function onRequest({ request, env }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
+  const cfg = await getOrgCfg(env);
+  const contactLine = `${esc(cfg.legal_email)}${cfg.legal_phone ? ` — ${esc(cfg.legal_phone)}` : ''} — ${esc(cfg.legal_address)}`;
+
   const body = `
 <h1>Conditions Générales d’Utilisation</h1>
 <p class="lead">Dernière mise à jour : juin 2026 — NEXUS Market, marketplace en ligne au Sénégal. Les présentes CGU encadrent l’usage de la plateforme par les acheteurs, les vendeurs et les visiteurs.</p>
-${SECTIONS.map(([t, x]) => `<h2>${esc(t)}</h2><p>${esc(x)}</p>`).join('\n')}
-<div class="box"><strong>Contact réclamations :</strong> elhadjidiagne002@gmail.com — +221 77 625 48 95 — Dakar, Sénégal. Voir aussi notre <a href="${origin}/confidentialite">Politique de confidentialité</a>.</div>`;
+${SECTIONS.map(([t, x]) => `<h2>${esc(t)}</h2><p>${applyOrg(x, cfg)}</p>`).join('\n')}
+<div class="box"><strong>Contact réclamations :</strong> ${contactLine}. Voir aussi notre <a href="${origin}/confidentialite">Politique de confidentialité</a>.</div>`;
 
   return contentResponse(renderContentPage({
     origin, path: '/cgu',
