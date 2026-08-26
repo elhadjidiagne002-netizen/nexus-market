@@ -163,6 +163,23 @@ Déploiement + API détaillée : **`docs/OSRM_VROOM.md`**.
   L'attribution effective reste la cascade SQL (`_activate_next_offer`) ou
   `admin_assign_delivery` — sinon deux sources de vérité de dispatch divergeraient.
 
+## Bienvenue vendeur automatique (email + WhatsApp) — 2026-08-26
+Trigger DB `trg_vendor_approved_notify` (`sql/2026_08_26_vendor_approved_notification.sql`)
+sur `profiles` : dès que `status` passe à `'approved'` pour un `role='vendor'`
+(peu importe le chemin admin qui a fait l'UPDATE — RPC `admin_approve_user` ou
+fallback direct des deux panneaux admin existants), appelle en best-effort
+`POST /api/notify-user` (event `vendor_approved`, templates déjà existants
+dans `notify.js`) qui envoie email + WhatsApp. Même pattern que
+`trg_order_confirm_email` (vault secret `nexus_internal_push_secret` +
+`net.http_post` + `X-Internal-Secret`).
+- `functions/api/notify-user.js` accepte désormais **aussi** les appels
+  internes (`isInternalCall`, en plus du JWT utilisateur existant) — sans
+  changer le comportement pour les appels client existants.
+- Les deux anciens envois d'email **client-side** à l'approbation (un `fetch('/api/email')`
+  brut, un `EmailService.sendVendorApproval()`) ont été **retirés du bundle**
+  pour éviter un double email désormais que le trigger DB s'en charge (+ ajoute
+  le WhatsApp qu'aucun des deux ne faisait).
+
 ## Dashboard admin « Utilisation Plateformes » — 2026-08-25
 `GET /api/admin/platform-usage` (`functions/api/admin/platform-usage.js`, admin
 only) + panneau `PlatformUsagePanel` (bundle, nav « Utilisation Plateformes »)

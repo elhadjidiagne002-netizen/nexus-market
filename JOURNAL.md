@@ -6,6 +6,33 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-26 — Message de bienvenue auto (email + WhatsApp) après approbation vendeur
+
+**Demande** : envoyer automatiquement un message WhatsApp + email de bienvenue
+au nouveau vendeur dès que son compte est approuvé par l'admin.
+
+**Constat** : les templates `vendor_approved` (email + WhatsApp) existaient déjà
+dans `notify.js` et l'endpoint `/api/notify-user` les acceptait déjà — mais
+**rien ne les déclenchait réellement à l'approbation**. Les 2 écrans admin qui
+approuvent un vendeur envoyaient chacun un email différent en client-side
+(un `fetch('/api/email')` brut, un `EmailService.sendVendorApproval()`),
+sans jamais envoyer de WhatsApp.
+
+**Fait** : trigger DB `trg_vendor_approved_notify` sur `profiles` (AFTER UPDATE,
+transition vers `status='approved'` + `role='vendor'`) qui appelle
+`/api/notify-user` en interne (`X-Internal-Secret`) — source de vérité unique,
+fonctionne peu importe quel écran admin a fait l'approbation. Les 2 anciens
+envois d'email client-side ont été retirés (évite le double email, ajoute le
+WhatsApp qui manquait). `functions/api/notify-user.js` accepte maintenant les
+appels internes en plus du JWT existant, sans rien changer pour les appelants
+existants.
+
+**État final** : testé (mock fetch, appel interne accepté + email envoyé au
+bon destinataire ; appel non authentifié toujours rejeté). Migration SQL
+appliquée en prod. Reste à committer/pousser le code applicatif.
+
+---
+
 ## 2026-08-26 — Dashboard admin « Utilisation Plateformes » (Supabase, Cloudflare, services tiers)
 
 **Demande** : un endroit unique dans le tableau de bord admin pour surveiller la

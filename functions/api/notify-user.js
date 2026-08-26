@@ -2,7 +2,7 @@
 // POST /api/notify-user — envoie un email d'événement à un utilisateur identifié
 // par son UUID (profiles.id), dont l'adresse est résolue côté serveur.
 // Évite d'exposer les emails au frontend. Auth requise + whitelist + rate limit.
-import { options, json, err, requireAuth, supabase } from './_lib/utils.js';
+import { options, json, err, requireAuth, supabase, isInternalCall } from './_lib/utils.js';
 import { rateLimit, clientIp, tooManyRequests } from './_lib/ratelimit.js';
 import { sendEventNotification } from './_lib/notify.js';
 
@@ -20,8 +20,14 @@ export async function onRequest({ request, env }) {
   if (request.method === 'OPTIONS') return options();
   if (request.method !== 'POST') return err('POST requis', 405);
 
-  const [user, authError] = await requireAuth(request, env);
-  if (authError) return authError;
+  // Double mode d'authentification : session utilisateur (JWT, usage existant) OU
+  // appel interne serveur→serveur (X-Internal-Secret, ex. trigger DB profiles →
+  // notification "vendor_approved" après approbation, cf. sql/2026_08_26_...).
+  const internal = isInternalCall(request, env);
+  if (!internal) {
+    const [, authError] = await requireAuth(request, env);
+    if (authError) return authError;
+  }
   const emailConfigured = !!(env.RESEND_API_KEY || env.BREVO_API_KEY);
   const waConfigured = !!((env.GREEN_API_INSTANCE_ID && env.GREEN_API_TOKEN) || (env.WAHA_BASE_URL && env.WAHA_API_KEY));
   if (!emailConfigured && !waConfigured) return json({ ok: true, skipped: 'no_provider' });

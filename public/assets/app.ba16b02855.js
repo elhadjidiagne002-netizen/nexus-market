@@ -24033,13 +24033,9 @@ const AdminValidationPanel = ({ addToast }) => {
       // Fallback direct si RPC manque
       await sb.from('profiles').update({ status: user.role==='vendor'?'approved':'active', admin_approved: true, updated_at: new Date().toISOString() }).eq('id', user.id);
     }
-    fetch('/api/email', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ to: user.email,
-        subject: '\u2705 Votre compte NEXUS Market est activ\u00e9 !',
-        html: '<p>Bonjour <strong>' + (user.name||user.email) + '</strong>,</p>'
-          + '<p>Votre compte a \u00e9t\u00e9 valid\u00e9 par l\u2019\u00e9quipe NEXUS. <a href="' + NEXUS_CONFIG.siteUrl + '">Se connecter</a></p>'
-      })
-    }).catch(()=>{});
+    // Email + WhatsApp de bienvenue envoy\u00e9s automatiquement par le trigger DB
+    // trg_vendor_approved_notify (sql/2026_08_26_vendor_approved_notification.sql)
+    // d\u00e8s que profiles.status passe \u00e0 'approved' \u2014 plus besoin de le d\u00e9clencher ici.
     addToast('\u2705 ' + (user.name||user.email) + ' approuv\u00e9', 'success');
     load();
   };
@@ -25806,16 +25802,10 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     if (!ok) return;
     setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
     storage.set('pendingVendors_mem', (storage.get('pendingVendors_mem') || []).filter(v => v.id !== vendorId));
-    // Email de notification — template "vendor_approved" (Admin → Templates email)
-    if (vendor?.email) {
-      EmailService.sendVendorApproval(
-        vendor.email,
-        vendor.name || vendor.ownerName || vendor.email,
-        vendor.shop_name || vendor.name || '',
-        true,
-        ''
-      ).catch(() => {});
-    }
+    // Email + WhatsApp de bienvenue envoyés automatiquement par le trigger DB
+    // trg_vendor_approved_notify dès que profiles.status passe à 'approved'
+    // (sql/2026_08_26_vendor_approved_notification.sql) — plus besoin d'appeler
+    // EmailService ici (évitait aussi le double envoi email + absence de WhatsApp).
     loadData();
     addToast('\u2705 ' + (vendor?.name || 'Utilisateur') + ' approuv\u00e9 — compte activ\u00e9', 'success');
   };
