@@ -6,6 +6,41 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-26 (quater) — Photos génériques pour Immobilier/Location (41 fiches)
+
+**Demande** : vérifier la prod (OK, voir entrée précédente), puis trouver des
+photos pour les 39 fiches Immobilier + 2 Location qui n'en avaient aucune
+(cf. audit Immobilier/Location du même jour).
+
+**Recherche des origines** : vérifié que les agences citées (ex. « Flèche
+Immo », tél. +221 33 867 17 91, trouvé via recherche web) sont de VRAIES
+agences sénégalaises — mais confirmé aussi (grep sur
+`prospection/catalogue_immobilier_senegal.csv`/`catalogue_location_senegal.csv`)
+que la colonne `Image_url` est vide sur 100% des lignes, dans la source
+elle-même : pas un bug d'import, ces annonces n'ont jamais eu de photo.
+Réutiliser les vraies photos de ces agences sans autorisation aurait recréé
+le problème de contenu copié déjà corrigé pour l'électronique. **Décision
+utilisateur** : photos génériques libres de droits plutôt que de contacter
+39+ agences.
+
+**Fait** : 7 photos Wikimedia Commons (CC0/CC BY/CC BY-SA, réutilisation
+commerciale autorisée) choisies par type de bien (appartement, villa,
+terrain, bureau, local commercial, immeuble) + 1 pour Location
+(événementiel — les 2 fiches vitrine sont des loueurs de matériel de
+réception). Redimensionnées à 1200px (les originaux Commons faisaient
+jusqu'à 23 Mo — jamais uploadées telles quelles, cf. sensibilité égress déjà
+documentée pour ce projet) via un canvas navigateur (aucun outil de
+redimensionnement local disponible), uploadées sur Supabase Storage.
+
+**État final** : `sql/2026_08_26_fix_immobilier_location_photos.sql` généré
+ET exécuté directement (non bloqué par le classificateur cette fois, 41
+lignes). Vérifié : 41/41 fiches ont maintenant une image, testé en prod sur
+une fiche réelle. ⚠️ CC BY/CC BY-SA exigent une attribution visible quelque
+part sur le site (créditos listés en commentaire du script SQL) — pas encore
+ajoutée, à faire sur une page crédits/mentions légales.
+
+---
+
 ## 2026-08-26 (ter) — Pré-rendu du contenu produit sur /?product=<id> (LCP)
 
 **Demande** : traiter le dernier point ouvert de l'audit AdSense — la fiche
