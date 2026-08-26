@@ -127,11 +127,19 @@ async function tryInjectProductPreview(context, reqUrl) {
     const priceFcfa = p.price ? Math.round(Number(p.price) * EUR_TO_FCFA) : 0;
     const img = proxyImg(p.image_url, origin);
     const desc = String(p.description || "").replace(/\s+/g, " ").trim().slice(0, 500);
+    // [PHOTO GÉNÉRIQUE / AVERTISSEMENT IMMOBILIER] cf. functions/produit/[id].js —
+    // même détection, mêmes avertissements (CGU articles 19-20).
+    const isGenericPhoto = /\/generic-immobilier-location\//.test(p.image_url || "");
+    const safetyNotice = p.category === "Immobilier"
+      ? "NEXUS Market ne vérifie pas ce bien (titre, disponibilité, exactitude des informations) et n'est pas partie à la transaction. Vérifiez toujours directement avec l'agence ou le propriétaire avant tout versement."
+      : null;
 
     const snippet = `<div style="max-width:760px;margin:2rem auto;padding:0 20px;font-family:Arial,Helvetica,sans-serif;color:#1F2937">
       <h1 style="font-size:1.4rem;margin:.4rem 0">${esc(p.name)}</h1>
       ${p.category ? `<div style="color:#6B7280;font-size:.85rem;margin-bottom:.5rem">${esc(p.category)}</div>` : ""}
       ${img ? `<img src="${esc(img)}" alt="${esc(p.name)}" style="max-width:100%;height:auto;border-radius:12px">` : ""}
+      ${isGenericPhoto ? `<div style="display:flex;gap:.5rem;align-items:flex-start;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:.6rem .75rem;font-size:.8rem;line-height:1.4;margin-top:.4rem">ℹ️ Photo d’illustration générique — ce bien n’a pas encore de photo réelle. Contactez le vendeur pour des photos et informations à jour.</div>` : ""}
+      ${safetyNotice ? `<div style="display:flex;gap:.5rem;align-items:flex-start;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:.6rem .75rem;font-size:.8rem;line-height:1.4;margin-top:.4rem">⚠️ ${esc(safetyNotice)}</div>` : ""}
       ${priceFcfa ? `<div style="color:#00853E;font-size:1.6rem;font-weight:800;margin:.6rem 0">${priceFcfa.toLocaleString("fr-FR")} FCFA</div>` : ""}
       ${desc ? `<p style="line-height:1.6">${esc(desc)}</p>` : ""}
     </div>`;

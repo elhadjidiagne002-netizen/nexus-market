@@ -51,11 +51,25 @@ async function handle({ request, env, params }) {
   // [ADSENSE/SEO] Fiche de DÉMO (seed a0000001-… ou image placeholder) → noindex :
   // on n'indexe pas de contenu factice (« faible valeur » AdSense/Google).
   const isDemo = /^a0000001-/.test(String(p.id)) || /picsum\.photos|placehold\.co/i.test(p.image_url || '');
+  // [PHOTO GÉNÉRIQUE] Les fiches Immobilier + Location vitrine (sql/2026_08_26_
+  // fix_immobilier_location_photos.sql) portent une photo générique par type de
+  // bien, jamais la vraie photo de l'annonce (aucune de ces fiches n'en a
+  // jamais eu). Détecté par le chemin de stockage dédié — averti visiblement
+  // pour ne pas laisser croire à un visiteur que c'est le bien réel.
+  const isGenericPhoto = /\/generic-immobilier-location\//.test(p.image_url || '');
+  // [RENFORCEMENT JURIDIQUE 2026-08-26] Avertissement visible pour l'Immobilier —
+  // cf. CGU article 19 : NEXUS n'est ni agent immobilier ni partie à la
+  // transaction, ne vérifie pas les biens annoncés. Catégorie la plus exposée
+  // (fraude, vice caché, titre foncier) parmi les verticales de la plateforme.
+  const safetyNotice = p.category === 'Immobilier'
+    ? "NEXUS Market ne vérifie pas ce bien (titre, disponibilité, exactitude des informations) et n'est pas partie à la transaction. Vérifiez toujours directement avec l'agence ou le propriétaire avant tout versement."
+    : null;
   const html = renderListingPage({
     origin, kind: 'produit', id: p.id, title: p.name, description,
     image: p.image_url, priceFcfa, category: p.category,
     rating: p.rating, reviewsCount: p.reviews_count,
     inStock: (p.stock || 0) > 0, vendorName: p.vendor_name, noindex: isDemo,
+    genericPhoto: isGenericPhoto, safetyNotice,
   });
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=600' },

@@ -6,6 +6,54 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-26 (quinquies) — Attribution photos + renforcement juridique CGU
+
+**Demande** : ajouter l'attribution des photos Wikimedia (CC BY/CC BY-SA) sur
+une page légale, avertir les utilisateurs que ces photos sont génériques,
+identifier les situations nécessitant des avertissements/recommandations
+juridiques pour protéger NEXUS Market, et compléter les CGU sur les droits/
+devoirs des utilisateurs au regard du droit sénégalais.
+
+**Fait** :
+1. **Attribution** : section « Crédits photographiques » ajoutée en fin de
+   `/cgu` (pas de page « mentions légales » dédiée sur ce site — CGU en tient
+   lieu) — les 7 photos, leur auteur et leur licence, avec lien vers le texte
+   de chaque licence.
+2. **Avertissement photo générique** : ajouté sur les 3 surfaces où une fiche
+   produit peut s'afficher — page statique `/produit/:id`, aperçu LCP
+   (`/?product=` avant hydratation React), et la modale React elle-même
+   (détection par le chemin de stockage `generic-immobilier-location/`,
+   fonctionne quel que soit le champ `imageUrl`/`image_url` selon le chemin de
+   chargement — bug de normalisation pré-existant repéré au passage et
+   signalé séparément, hors périmètre de cette session).
+3. **8 nouvelles sections CGU (18-25)** couvrant les situations à risque
+   identifiées pour cette plateforme multi-verticales : rencontres en
+   personne (Troc/Annonces Express), Immobilier (NEXUS non-partie à la
+   transaction, vérifier le titre/l'agence), animaux vivants (santé non
+   vérifiée), Pros/Coursiers/Dépannage (prestataires indépendants, aucune
+   assurance fournie par NEXUS), catalogue agrégé/importé (exactitude non
+   garantie — en lien direct avec l'audit AdSense de la même journée),
+   contenus utilisateurs (avis/messages/Stories), contrefaçon (procédure de
+   signalement), force majeure.
+4. **Avertissement visible Immobilier** (CGU art. 19) répété sur les 3
+   mêmes surfaces que le point 2 : NEXUS ne vérifie pas le bien, vérifier
+   directement avec l'agence/propriétaire.
+
+**⚠️ Important, communiqué à l'utilisateur** : ce contenu est rédigé par IA à
+partir des cadres légaux déjà cités dans le fichier existant (COCC, Actes
+Uniformes OHADA, lois sénégalaises 2008-08/2008-12) — aucune nouvelle
+référence d'article de loi n'a été inventée, mais ce n'est PAS un avis
+juridique. À faire relire par un juriste sénégalais avant de s'y fier en cas
+de litige réel — particulièrement les clauses de limitation de responsabilité
+(art. 19-21), dont la validité/opposabilité dépend du droit sénégalais de la
+consommation et de la responsabilité civile, hors compétence de Claude.
+
+**État final** : lint propre, 35/35 tests passent, vérifié en local sur les
+3 surfaces (page statique, aperçu LCP, modale). Bundle renommé
+`app.3e971f6569.js`. Reste à committer/pousser.
+
+---
+
 ## 2026-08-26 (quater) — Photos génériques pour Immobilier/Location (41 fiches)
 
 **Demande** : vérifier la prod (OK, voir entrée précédente), puis trouver des
