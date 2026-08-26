@@ -6,6 +6,67 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-26 (bis) — Corrections des 4 points bloquants de l'audit AdSense + gestion produits admin
+
+**Demande** : corriger tous les points bloquants identifiés par l'audit AdSense
+(cf. entrée précédente), et ajouter au tableau de bord admin une vraie gestion
+du catalogue (recherche, édition, suppression) — l'existant ne faisait que de
+la modération (approuver/refuser), sans aucun CRUD.
+
+**Bloquants corrigés** :
+1. **73% des descriptions dupliquées** — déjà résolu par l'utilisateur (scripts
+   `sql/2026_08_26_fix_product_descriptions.sql`/`fix_product_images.sql` de la
+   session précédente, exécutés en prod) ; vérifié en base (0 mention "Prix
+   catalogue" restante, 2/632 images encore hotlinkées — 2 caméras Hikvision
+   sans photo locale correspondante, résiduel mineur non traité).
+2. **Images hébergées chez des concurrents** — idem, résolu (476/478 réhébergées
+   sur Supabase Storage).
+3. **Fiches de test indexées** (« beignet », « le coran ») — passées en
+   `active = false` directement en base (2 lignes, hors blocage du
+   classificateur cette fois).
+4. **Pages produit = coquilles quasi vides** — `functions/_lib/seo.js`
+   (`renderListingPage`) affichait la même variable tronquée à 300 caractères
+   à la fois en meta-description ET dans le corps visible de la page. Séparé
+   en `desc` (meta, 300 car.) et `bodyDesc` (corps visible, jusqu'à 4000 car.)
+   + ajout d'un bloc infos concrètes (stock/livraison/retour/paiement) visible
+   sans JS. N'implémente PAS un vrai tunnel d'achat sur cette page statique
+   SEO (hors périmètre raisonnable — le CTA continue de renvoyer vers la SPA),
+   mais corrige directement le signal "thin content" relevé par l'audit.
+
+**Bonus (« à corriger », rapides)** :
+- Script `adsbygoogle.js` se chargeait sans attendre le consentement cookies
+  (contrairement à GA4/Meta déjà conditionnés) → nouveau loader `loadAdsense()`
+  dans `app.js`, calqué exactement sur `loadGtag()`/`loadPixel()` (même pattern
+  `storage.get('cookie_consent')==='all'` + rechargement au changement de
+  consentement). Testé en local : script absent sans consentement, chargé après
+  clic "Tout accepter".
+- Aucun `<h1>` statique sur l'accueil (le carrousel héro est vide avant JS,
+  les `<h1>` vus côté client viennent de composants React internes) → `<h1>`
+  réel ajouté dans l'overlay statique, discret visuellement.
+- Descriptions minces Électroménager-Dakar : déjà résolu en même temps que le
+  point bloquant #1 (mêmes 478 descriptions régénérées).
+
+**Nouveau : panneau admin « Gestion produits »** (`ProductsManagePanel`,
+`view === "products_manage"`) — complète (ne remplace pas) la modération
+existante (`view === "products"`). Recherche par nom (débounce 300ms), filtres
+catégorie (liste dynamique) + statut (actif/inactif/en attente/modéré),
+édition inline (nom/catégorie/prix EUR avec équivalent FCFA affiché/stock/
+description/actif), suppression, actions groupées (case à cocher par ligne +
+activer/désactiver/supprimer en masse), lien direct "Voir sur le site",
+pagination. Suit exactement les conventions déjà en place (`ProsAdminPanel`
+pour la structure, classes `card`/`data-table`/`modal-overlay`/`form-input`
+déjà stylées ailleurs) — aucun nouveau composant générique inventé.
+
+**État final** : `functions/_lib/seo.js` testé (35/35 tests unitaires passent,
+lint propre) ; bundle renommé `app.0dcf4fbe09.js` (2 renommages successifs) ;
+vérifié en local (aucune erreur console, script AdSense correctement gaté).
+Panneau admin non vérifiable visuellement par Claude (nécessiterait la
+connexion admin — laissé à l'utilisateur). Reste à committer/pousser, et à
+traiter si besoin : les 2 caméras sans photo locale, les 39+2 fiches
+Immobilier/Location non auditées, le poids ~941 Ko du HTML d'accueil.
+
+---
+
 ## 2026-08-26 — Audit & correction : 423 comptes « vendeur » fantômes (prospection)
 
 **Demande** : l'utilisateur a remarqué des comptes immobilier inscrits comme

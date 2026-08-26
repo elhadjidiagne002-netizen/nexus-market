@@ -13236,6 +13236,256 @@ const ProsAdminPanel = ({ addToast }) => {
   );
 };
 
+// ── ProductsManagePanel — gestion complète du catalogue (recherche, édition,
+// suppression, activation en masse) ─────────────────────────────────────────
+// Complète (ne remplace pas) la modération existante (view === "products" :
+// approuver/refuser). Ici : gestion opérationnelle de TOUT le catalogue —
+// recherche par nom, filtre catégorie/statut, édition inline (prix/stock/
+// catégorie/description/actif), suppression, actions groupées.
+const ProductsManagePanel = ({ addToast }) => {
+  const E = React.createElement;
+  const ITEMS_PER_PAGE = 25;
+  const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const sb = () => DataService._sb;
+
+  const [items, setItems] = React.useState([]);
+  const [total, setTotal] = React.useState(0);
+  const [loading, setLoading] = React.useState(true);
+  const [busyId, setBusyId] = React.useState(null);
+  const [page, setPage] = React.useState(1);
+  const [search, setSearch] = React.useState('');
+  const [searchInput, setSearchInput] = React.useState('');
+  const [categoryFilter, setCategoryFilter] = React.useState('');
+  const [statusFilter, setStatusFilter] = React.useState('');
+  const [categories, setCategories] = React.useState([]);
+  const [selected, setSelected] = React.useState(() => new Set());
+  const [editing, setEditing] = React.useState(null);
+  const [savingEdit, setSavingEdit] = React.useState(false);
+  const EUR_TO_FCFA = 655.957;
+
+  // Recherche débouncée (300ms) — évite une requête par frappe.
+  React.useEffect(() => {
+    const t = setTimeout(() => { setSearch(searchInput.trim()); setPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  // Catégories distinctes (une fois) pour le filtre — pas de SELECT DISTINCT
+  // via PostgREST, on déduplique côté client sur un échantillon large.
+  React.useEffect(() => {
+    (async () => {
+      if (!sb()) return;
+      try {
+        const { data, error } = await sb().from('products').select('category').limit(3000);
+        if (!error && data) {
+          const uniq = [...new Set(data.map(r => r.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+          setCategories(uniq);
+        }
+      } catch (_) {}
+    })();
+  }, []);
+
+  const load = React.useCallback(async () => {
+    if (!sb()) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      let q = sb().from('products')
+        .select('id,name,category,price,stock,image_url,active,moderated,vendor_name,created_at', { count: 'exact' });
+      if (search) q = q.ilike('name', `%${search}%`);
+      if (categoryFilter) q = q.eq('category', categoryFilter);
+      if (statusFilter === 'active') q = q.eq('active', true);
+      else if (statusFilter === 'inactive') q = q.eq('active', false);
+      else if (statusFilter === 'pending') q = q.eq('moderated', false);
+      else if (statusFilter === 'approved') q = q.eq('moderated', true);
+      q = q.order('created_at', { ascending: false }).range((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE - 1);
+      const { data, error, count } = await q;
+      if (error) throw error;
+      setItems(data || []);
+      setTotal(count || 0);
+      setSelected(new Set());
+    } catch (e) { toast('Chargement des produits échoué : ' + (e.message || e), 'error'); }
+    setLoading(false);
+  }, [search, categoryFilter, statusFilter, page]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const toggleActive = async (p) => {
+    setBusyId(p.id);
+    try {
+      const { error } = await sb().from('products').update({ active: !p.active }).eq('id', p.id);
+      if (error) throw error;
+      setItems(xs => xs.map(x => x.id === p.id ? { ...x, active: !p.active } : x));
+      toast(!p.active ? 'Produit réactivé.' : 'Produit désactivé.', 'success');
+    } catch (e) { toast('Échec : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+
+  const del = async (p) => {
+    if (typeof confirm === 'function' && !confirm(`Supprimer définitivement « ${p.name} » ? Cette action est irréversible.`)) return;
+    setBusyId(p.id);
+    try {
+      const { error } = await sb().from('products').delete().eq('id', p.id);
+      if (error) throw error;
+      setItems(xs => xs.filter(x => x.id !== p.id));
+      setTotal(t => Math.max(0, t - 1));
+      toast('Produit supprimé.', 'success');
+    } catch (e) { toast('Échec suppression : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    const priceEur = parseFloat(editing.price);
+    const stockN = parseInt(editing.stock, 10);
+    if (!editing.name || !editing.name.trim()) return toast('Le nom est obligatoire.', 'error');
+    if (isNaN(priceEur) || priceEur < 0) return toast('Prix invalide.', 'error');
+    if (isNaN(stockN) || stockN < 0) return toast('Stock invalide.', 'error');
+    setSavingEdit(true);
+    try {
+      const patch = {
+        name: editing.name.trim(), category: editing.category, price: priceEur,
+        stock: stockN, description: editing.description || null, active: !!editing.active,
+      };
+      const { error } = await sb().from('products').update(patch).eq('id', editing.id);
+      if (error) throw error;
+      setItems(xs => xs.map(x => x.id === editing.id ? { ...x, ...patch } : x));
+      toast('Produit mis à jour.', 'success');
+      setEditing(null);
+    } catch (e) { toast('Échec de la sauvegarde : ' + (e.message || e), 'error'); } finally { setSavingEdit(false); }
+  };
+
+  const allOnPageSelected = items.length > 0 && items.every(it => selected.has(it.id));
+  const toggleSelectAll = () => {
+    setSelected(s => allOnPageSelected ? new Set() : new Set(items.map(it => it.id)));
+  };
+  const toggleSelectOne = (id) => {
+    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  };
+  const bulkSetActive = async (active) => {
+    if (selected.size === 0) return;
+    try {
+      const { error } = await sb().from('products').update({ active }).in('id', [...selected]);
+      if (error) throw error;
+      setItems(xs => xs.map(x => selected.has(x.id) ? { ...x, active } : x));
+      toast(`${selected.size} produit(s) ${active ? 'réactivé(s)' : 'désactivé(s)'}.`, 'success');
+      setSelected(new Set());
+    } catch (e) { toast('Échec de l’action groupée : ' + (e.message || e), 'error'); }
+  };
+  const bulkDelete = async () => {
+    if (selected.size === 0) return;
+    if (typeof confirm === 'function' && !confirm(`Supprimer définitivement ${selected.size} produit(s) ? Cette action est irréversible.`)) return;
+    try {
+      const { error } = await sb().from('products').delete().in('id', [...selected]);
+      if (error) throw error;
+      setItems(xs => xs.filter(x => !selected.has(x.id)));
+      setTotal(t => Math.max(0, t - selected.size));
+      toast(`${selected.size} produit(s) supprimé(s).`, 'success');
+      setSelected(new Set());
+    } catch (e) { toast('Échec de la suppression groupée : ' + (e.message || e), 'error'); }
+  };
+
+  const fmtFcfa = (eur) => Math.round(Number(eur || 0) * EUR_TO_FCFA).toLocaleString('fr-FR') + ' FCFA';
+  const totalPages = Math.max(1, Math.ceil(total / ITEMS_PER_PAGE));
+
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem' } },
+      E('h2', { className: 'card-title' }, `📦 Gestion des produits (${total})`),
+      E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir')
+    ),
+    E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '.6rem', padding: '0 1rem 1rem' } },
+      E('input', {
+        className: 'form-input', style: { flex: '2', minWidth: 220 },
+        placeholder: '🔎 Rechercher un produit par nom…',
+        value: searchInput, onChange: e => setSearchInput(e.target.value),
+      }),
+      E('select', {
+        className: 'form-input', style: { flex: '1', minWidth: 160 },
+        value: categoryFilter, onChange: e => { setCategoryFilter(e.target.value); setPage(1); },
+      }, E('option', { value: '' }, 'Toutes catégories'), categories.map(c => E('option', { key: c, value: c }, c))),
+      E('select', {
+        className: 'form-input', style: { flex: '1', minWidth: 160 },
+        value: statusFilter, onChange: e => { setStatusFilter(e.target.value); setPage(1); },
+      },
+        E('option', { value: '' }, 'Tous statuts'),
+        E('option', { value: 'active' }, 'Actifs'),
+        E('option', { value: 'inactive' }, 'Inactifs'),
+        E('option', { value: 'pending' }, 'En attente de modération'),
+        E('option', { value: 'approved' }, 'Modérés'),
+      )
+    ),
+    selected.size > 0 && E('div', { style: { display: 'flex', alignItems: 'center', gap: '.6rem', padding: '.6rem 1rem', background: 'var(--bg-light,#f3f4f6)', margin: '0 1rem 1rem', borderRadius: 8, flexWrap: 'wrap' } },
+      E('strong', null, `${selected.size} sélectionné(s)`),
+      E('button', { className: 'btn btn-sm btn-success', onClick: () => bulkSetActive(true) }, 'Activer'),
+      E('button', { className: 'btn btn-sm btn-secondary', onClick: () => bulkSetActive(false) }, 'Désactiver'),
+      E('button', { className: 'btn btn-sm btn-danger', onClick: bulkDelete }, 'Supprimer'),
+      E('button', { className: 'btn btn-sm btn-secondary', onClick: () => setSelected(new Set()) }, 'Annuler')
+    ),
+    loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : items.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-box-open' }), E('h3', null, 'Aucun produit ne correspond à ces critères'))
+        : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null,
+            [E('input', { key: 'all', type: 'checkbox', checked: allOnPageSelected, onChange: toggleSelectAll }), '', 'Nom', 'Catégorie', 'Prix', 'Stock', 'Vendeur', 'Statut', 'Actions']
+              .map((h, i) => E('th', { key: i }, h))
+          )),
+          E('tbody', null, items.map(it => E('tr', { key: it.id },
+            E('td', null, E('input', { type: 'checkbox', checked: selected.has(it.id), onChange: () => toggleSelectOne(it.id) })),
+            E('td', { 'data-label': '' }, it.image_url
+              ? E('img', { src: it.image_url, alt: '', loading: 'lazy', style: { width: 40, height: 40, objectFit: 'cover', borderRadius: 8 } })
+              : E('div', { style: { width: 40, height: 40, borderRadius: 8, background: '#eef2ff', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, '📦')),
+            E('td', { 'data-label': 'Nom' },
+              E('strong', null, it.name || '—'),
+              E('br'), E('a', { href: `/produit/${it.id}`, target: '_blank', rel: 'noopener', style: { fontSize: '.75rem' } }, 'Voir sur le site ↗')
+            ),
+            E('td', { 'data-label': 'Catégorie' }, it.category || '—'),
+            E('td', { 'data-label': 'Prix' }, fmtFcfa(it.price)),
+            E('td', { 'data-label': 'Stock' }, E('span', { style: { color: (it.stock || 0) <= 0 ? '#B91C1C' : undefined, fontWeight: (it.stock || 0) <= 0 ? 700 : undefined } }, it.stock ?? 0)),
+            E('td', { 'data-label': 'Vendeur' }, it.vendor_name || '—'),
+            E('td', { 'data-label': 'Statut' },
+              E('span', { className: `badge badge-${it.active ? 'success' : 'secondary'}` }, it.active ? 'Actif' : 'Inactif'),
+              ' ',
+              E('span', { className: `badge badge-${it.moderated ? 'success' : 'warning'}` }, it.moderated ? 'Modéré' : 'En attente')
+            ),
+            E('td', { 'data-label': 'Actions' }, E('div', { className: 'flex gap-1', style: { flexWrap: 'wrap' } },
+              E('button', { className: 'btn btn-sm btn-secondary', disabled: busyId === it.id, onClick: () => setEditing({ ...it }) }, 'Modifier'),
+              E('button', { className: 'btn btn-sm ' + (it.active ? 'btn-secondary' : 'btn-success'), disabled: busyId === it.id, onClick: () => toggleActive(it) }, it.active ? 'Désactiver' : 'Activer'),
+              E('button', { className: 'btn btn-sm btn-danger', disabled: busyId === it.id, onClick: () => del(it) }, 'Suppr.')
+            ))
+          )))
+        )),
+    E(Pagination, { currentPage: page, totalPages, onPageChange: setPage, totalItems: total, itemsPerPage: ITEMS_PER_PAGE }),
+
+    editing && E('div', { className: 'modal-overlay', onClick: () => !savingEdit && setEditing(null) },
+      E('div', { className: 'modal modal-wide', onClick: e => e.stopPropagation() },
+        E('div', { className: 'modal-header' },
+          E('h2', { className: 'modal-title' }, '✏️ Modifier le produit'),
+          E('button', { className: 'close-btn', onClick: () => !savingEdit && setEditing(null) }, E('i', { className: 'fas fa-times' }))
+        ),
+        E('div', { style: { padding: '0 1.25rem 1.25rem' } },
+          E('div', { className: 'form-group' }, E('label', { className: 'form-label' }, 'Nom *'),
+            E('input', { className: 'form-input', value: editing.name || '', onChange: e => setEditing(v => ({ ...v, name: e.target.value })) })),
+          E('div', { className: 'form-group' }, E('label', { className: 'form-label' }, 'Catégorie'),
+            E('input', { className: 'form-input', value: editing.category || '', onChange: e => setEditing(v => ({ ...v, category: e.target.value })), list: 'nx-pm-categories' }),
+            E('datalist', { id: 'nx-pm-categories' }, categories.map(c => E('option', { key: c, value: c })))),
+          E('div', { style: { display: 'flex', gap: '.75rem' } },
+            E('div', { className: 'form-group', style: { flex: 1 } }, E('label', { className: 'form-label' }, 'Prix (EUR — converti automatiquement en FCFA sur le site)'),
+              E('input', { className: 'form-input', type: 'number', step: '0.01', min: '0', value: editing.price, onChange: e => setEditing(v => ({ ...v, price: e.target.value })) }),
+              E('div', { style: { fontSize: '.78rem', color: '#6b7280', marginTop: '.2rem' } }, '≈ ' + fmtFcfa(editing.price))),
+            E('div', { className: 'form-group', style: { flex: 1 } }, E('label', { className: 'form-label' }, 'Stock'),
+              E('input', { className: 'form-input', type: 'number', step: '1', min: '0', value: editing.stock, onChange: e => setEditing(v => ({ ...v, stock: e.target.value })) }))
+          ),
+          E('div', { className: 'form-group' }, E('label', { className: 'form-label' }, 'Description'),
+            E('textarea', { className: 'form-input', rows: 5, value: editing.description || '', onChange: e => setEditing(v => ({ ...v, description: e.target.value })) })),
+          E('label', { style: { display: 'flex', alignItems: 'center', gap: '.5rem', fontSize: '.9rem', marginBottom: '1rem' } },
+            E('input', { type: 'checkbox', checked: !!editing.active, onChange: e => setEditing(v => ({ ...v, active: e.target.checked })) }),
+            'Produit actif (visible sur le site)'
+          ),
+          E('div', { style: { display: 'flex', gap: '.6rem', justifyContent: 'flex-end' } },
+            E('button', { className: 'btn btn-secondary', disabled: savingEdit, onClick: () => setEditing(null) }, 'Annuler'),
+            E('button', { className: 'btn btn-primary', disabled: savingEdit, onClick: saveEdit }, savingEdit ? 'Enregistrement…' : 'Enregistrer')
+          )
+        )
+      )
+    )
+  );
+};
+
 // ── ProspectsAdminPanel — promotion des prospects (table CRM `prospects`) ─────
 // Rendu dans AdminDashboard quand view === "prospects". Liste la table `prospects`
 // (RLS admin) et promeut en vrais comptes via le backend sécurisé
@@ -26089,6 +26339,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "returns",  icon: "undo",  label: "Retours",  badge: stats.pendingReturns ?? (storage.getArray("return_requests")).filter((r) => r.status === "pending").length },
     { id: "disputes", icon: "gavel", label: "Litiges",  badge: stats.openDisputes   ?? (storage.getArray("disputes")).filter((d) => d.status === "open").length },
     { id: "products", icon: "tags", label: "Produits" },
+    { id: "products_manage", icon: "boxes-stacked", label: "Gestion produits" },
     { id: "troc", icon: "exchange-alt", label: "🔄 Troc" },
     { id: "stories", icon: "video", label: "🎬 Stories" },
     { id: "pros", icon: "hard-hat", label: "🔧 Pros (artisans)" },
@@ -26232,7 +26483,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"),
       /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")
     )));
-  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "prospects" && /* @__PURE__ */ React.createElement(ProspectsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "chat_mod" && /* @__PURE__ */ React.createElement(ChatModerationPanel, { addToast }), view === "products" && (() => {
+  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "products_manage" && /* @__PURE__ */ React.createElement(ProductsManagePanel, { addToast }), view === "prospects" && /* @__PURE__ */ React.createElement(ProspectsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "chat_mod" && /* @__PURE__ */ React.createElement(ChatModerationPanel, { addToast }), view === "products" && (() => {
     const pending = products.filter((p) => !p.moderated);
     const approved = products.filter((p) => p.moderated);
     const moderateProduct = async (pid, approve) => {
@@ -38906,6 +39157,38 @@ window.addEventListener("beforeinstallprompt", (e) => {
   storage.set = function(key, value) {
     _origSetFb(key, value);
     if (key === 'cookie_consent' && value === 'all') loadPixel();
+  };
+})();
+
+// ══════════════════════════════════════════════════════════════════
+// GOOGLE ADSENSE — chargé sur consentement, calqué sur le loader GA4/Pixel
+// (audit AdSense 2026-08-26 : le script se chargeait avant tout choix cookies,
+// contrairement à GA4/Meta déjà conditionnés). Les blocs <ins class="adsbygoogle">
+// existent déjà statiquement dans index.html ; window.adsbygoogle.push({}) est
+// une file d'attente standard Google — les push() déjà présents ailleurs dans ce
+// fichier continuent de fonctionner sans changement, ils sont juste traités dès
+// que ce script charge (au lieu d'immédiatement).
+// ══════════════════════════════════════════════════════════════════
+(function() {
+  const ADS_CLIENT = 'ca-pub-2619517375287262';
+
+  function loadAdsense() {
+    if (storage.get('cookie_consent') !== 'all') return;  // RGPD : pub personnalisée = non-essentiel
+    if (window.__nexusAdsenseLoaded) return;
+    window.__nexusAdsenseLoaded = true;
+    const s = document.createElement('script');
+    s.async = true;
+    s.crossOrigin = 'anonymous';
+    s.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADS_CLIENT}`;
+    document.head.appendChild(s);
+    console.log('[Analytics] Google AdSense activé (' + ADS_CLIENT + ')');
+  }
+  loadAdsense();
+
+  const _origSetAds = storage.set.bind(storage);
+  storage.set = function(key, value) {
+    _origSetAds(key, value);
+    if (key === 'cookie_consent' && value === 'all') loadAdsense();
   };
 })();
 

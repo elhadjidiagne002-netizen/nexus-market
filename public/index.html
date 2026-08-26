@@ -2543,9 +2543,13 @@
      Obtenir un compte : adsense.google.com → Démarrer → nexus.sn
      Revenus estimés : 50k-100k FCFA/mois dès 200 visiteurs/jour
 ══════════════════════════════════════════════════════════════════════════ -->
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2619517375287262"
-     crossorigin="anonymous"></script>
-<!-- Vérification de propriété du compte AdSense (méthode balise meta) -->
+<!-- [AUDIT ADSENSE 2026-08-26] adsbygoogle.js se chargeait ici SANS attendre le
+     consentement cookies (contrairement à GA4/Meta Pixel, déjà conditionnés à
+     storage.get('cookie_consent')==='all' — cf. app.js, loadGtag()/loadPixel()).
+     Chargement déplacé dans app.js (loadAdsense(), même pattern exact) pour rester
+     cohérent avec la politique de consentement UE de Google et les 2 autres loaders. -->
+<!-- Vérification de propriété du compte AdSense (méthode balise meta — reste statique,
+     ne charge rien, ne dépend pas du consentement). -->
 <meta name="google-adsense-account" content="ca-pub-2619517375287262">
 
 <style>
@@ -3074,10 +3078,86 @@
         }
         downloadApk();
       };
+
+      // ────────────────────────────────────────────────────────────────────
+      // Bandeau "Installer l'appli" affiché à l'ouverture du site, UNIQUEMENT
+      // sur smartphone (les boutons du footer existent mais ne sont vus par
+      // quasi personne — la plupart des visiteurs ne scrollent jamais jusque
+      // là). Réutilise nexusDownloadApp() ci-dessus, ne duplique aucune logique
+      // d'installation. Attend que le bandeau cookies (z-index 9998, React,
+      // storage.get('cookie_consent') → localStorage 'nexus_cookie_consent')
+      // soit refermé pour ne pas empiler deux bandeaux en bas d'écran.
+      // ────────────────────────────────────────────────────────────────────
+      var BANNER_DISMISS_KEY = 'nexus_install_banner_dismissed_at';
+      var BANNER_SNOOZE_DAYS = 14; // redemande après 14 jours si fermé sans installer
+
+      function isMobileDevice() {
+        return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+      }
+      function cookieChoiceMade() {
+        try { return localStorage.getItem('nexus_cookie_consent') !== null; } catch (_) { return true; }
+      }
+      function bannerRecentlyDismissed() {
+        try {
+          var t = parseInt(localStorage.getItem(BANNER_DISMISS_KEY) || '0', 10);
+          return t && (Date.now() - t) < BANNER_SNOOZE_DAYS * 24 * 60 * 60 * 1000;
+        } catch (_) { return false; }
+      }
+      function showInstallBanner() {
+        if (document.getElementById('nexus-install-banner')) return;
+        var isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+        var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        var bar = document.createElement('div');
+        bar.id = 'nexus-install-banner';
+        bar.style.cssText =
+          'position:fixed;left:.6rem;right:.6rem;bottom:.6rem;z-index:9997;' +
+          'background:#0f1713;color:#fff;border-radius:14px;padding:.85rem .9rem;' +
+          'display:flex;align-items:center;gap:.7rem;box-shadow:0 8px 28px rgba(0,0,0,.35);' +
+          'font-family:inherit;' +
+          (reduceMotion ? '' : 'transform:translateY(140%);transition:transform .35s ease-out;');
+        bar.innerHTML =
+          '<div style="width:42px;height:42px;border-radius:11px;background:#006d40;display:flex;align-items:center;justify-content:center;font-size:1.35rem;flex-shrink:0">📲</div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<div style="font-weight:700;font-size:.9rem;line-height:1.25">Installez l’appli NEXUS Market</div>' +
+            '<div style="color:rgba(255,255,255,.68);font-size:.76rem;line-height:1.3;margin-top:.15rem">Achetez et suivez vos commandes plus vite, en un tap depuis votre écran d’accueil.</div>' +
+          '</div>' +
+          '<button id="nexus-install-banner-cta" style="background:#e9c176;color:#261900;font-weight:700;border:none;border-radius:9px;padding:.55rem .9rem;font-size:.82rem;white-space:nowrap;cursor:pointer;flex-shrink:0">Installer</button>' +
+          '<button id="nexus-install-banner-close" aria-label="Fermer" style="background:none;border:none;color:rgba(255,255,255,.55);font-size:1.15rem;line-height:1;cursor:pointer;padding:.25rem;flex-shrink:0">×</button>';
+
+        document.body.appendChild(bar);
+        if (!reduceMotion) requestAnimationFrame(function () { requestAnimationFrame(function () { bar.style.transform = 'translateY(0)'; }); });
+
+        function dismiss() {
+          try { localStorage.setItem(BANNER_DISMISS_KEY, String(Date.now())); } catch (_) {}
+          if (reduceMotion) { bar.remove(); return; }
+          bar.style.transform = 'translateY(140%)';
+          setTimeout(function () { bar.remove(); }, 350);
+        }
+        document.getElementById('nexus-install-banner-close').addEventListener('click', dismiss);
+        document.getElementById('nexus-install-banner-cta').addEventListener('click', function () {
+          window.nexusDownloadApp(isIos ? 'ios' : 'android');
+          dismiss();
+        });
+      }
+
+      function maybeShowInstallBanner() {
+        if (!isMobileDevice() || isStandalone() || bannerRecentlyDismissed()) return;
+        var waited = 0;
+        var poll = setInterval(function () {
+          waited += 500;
+          if (cookieChoiceMade() || waited >= 15000) {
+            clearInterval(poll);
+            setTimeout(showInstallBanner, 400);
+          }
+        }, 500);
+      }
+      if (document.readyState === 'complete') { setTimeout(maybeShowInstallBanner, 1200); }
+      else window.addEventListener('load', function () { setTimeout(maybeShowInstallBanner, 1200); });
     })();
     </script>
 
-    <script src="/assets/app.ba16b02855.js"></script>
+    <script src="/assets/app.0dcf4fbe09.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -13277,6 +13357,12 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
 
   <!-- Contenu Principal -->
   <div class="col-span-12 lg:col-span-9 space-y-xl">
+
+    <!-- [AUDIT ADSENSE 2026-08-26] Page d'accueil sans aucune vraie balise <h1> statique
+         (le carrousel héro ci-dessous est injecté par JS, donc vide dans le HTML brut ;
+         les <h1> vus côté client viennent de composants React internes, pas de l'accueil).
+         Titre réel, discret visuellement, cohérent avec <title>/meta description. -->
+    <h1 class="text-sm font-semibold mb-2" style="color:var(--md-sys-color-on-surface-variant,#6b7280)">NEXUS Market — Marketplace sécurisée du Sénégal · Orange Money, Wave, livraison partout</h1>
 
     <!-- Hero Carrousel -->
     <section id="nxp-hero" class="relative rounded-xl overflow-hidden shadow-lg" style="height:300px">

@@ -70,8 +70,16 @@ export function renderListingPage(o) {
     : `${o.origin}/?product=${encodeURIComponent(o.id)}`;
   const title = redactContact(o.title || 'Annonce NEXUS Market');
   const priceTxt = o.priceFcfa ? `${Number(o.priceFcfa).toLocaleString('fr-FR')} FCFA` : '';
-  const desc = redactContact(String(o.description || `${title} — ${o.category || ''} ${o.city || ''} sur NEXUS Market Sénégal.`)
-    .replace(/\s+/g, ' ').trim()).slice(0, 300);
+  const fullDesc = redactContact(String(o.description || `${title} — ${o.category || ''} ${o.city || ''} sur NEXUS Market Sénégal.`)
+    .replace(/\s+/g, ' ').trim());
+  // [AUDIT ADSENSE] meta description bornée à 300 car. (norme SEO/snippet), MAIS
+  // le corps visible de la page affiche désormais le texte COMPLET (bodyDesc,
+  // capé à 4000 pour rester raisonnable) — avant, les deux réutilisaient la même
+  // variable tronquée à 300 car., ce qui réduisait chaque fiche produit à une
+  // seule phrase. Corrige le signal "thin content"/"coquille vide" relevé par
+  // l'audit AdSense sur les ~3200 pages /produit, /pro, /vendeur, /ligne.
+  const desc = fullDesc.slice(0, 300);
+  const bodyDesc = fullDesc.slice(0, 4000);
   const img = proxyImg(o.image, o.origin) || `${o.origin}/og-image.png`;
 
   // ── Product ────────────────────────────────────────────────
@@ -155,16 +163,22 @@ ${o.priceFcfa ? `<meta property="product:price:amount" content="${Number(o.price
 <meta name="twitter:title" content="${esc(title)}">
 <meta name="twitter:image" content="${esc(img)}">
 ${graph}
-<style>body{font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:20px;color:#1F2937;line-height:1.6}img{max-width:100%;height:auto;border-radius:12px}h1{font-size:1.5rem;margin:.4rem 0}.price{color:#00853E;font-size:1.7rem;font-weight:800;margin:.6rem 0}.cat{color:#6B7280;font-size:.85rem;margin-bottom:.5rem}.crumb{font-size:.8rem;color:#6B7280;margin-bottom:1rem}.crumb a{color:#00853E;text-decoration:none}.crumb .sep{margin:0 4px}.cta{display:inline-block;background:#00853E;color:#fff;padding:13px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:1.2rem}.top{color:#00853E;text-decoration:none;font-weight:700}.rating{color:#F59E0B;font-weight:700}.foot{color:#9CA3AF;font-size:.8rem;margin-top:2.2rem}</style>
+<style>body{font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:20px;color:#1F2937;line-height:1.6}img{max-width:100%;height:auto;border-radius:12px}h1{font-size:1.5rem;margin:.4rem 0}.price{color:#00853E;font-size:1.7rem;font-weight:800;margin:.6rem 0}.cat{color:#6B7280;font-size:.85rem;margin-bottom:.5rem}.crumb{font-size:.8rem;color:#6B7280;margin-bottom:1rem}.crumb a{color:#00853E;text-decoration:none}.crumb .sep{margin:0 4px}.cta{display:inline-block;background:#00853E;color:#fff;padding:13px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:1.2rem}.top{color:#00853E;text-decoration:none;font-weight:700}.rating{color:#F59E0B;font-weight:700}.foot{color:#9CA3AF;font-size:.8rem;margin-top:2.2rem}.stock{font-weight:700}.stock.ok{color:#00853E}.stock.ko{color:#B91C1C}.facts{display:flex;flex-wrap:wrap;gap:.4rem .9rem;font-size:.82rem;color:#4B5563;margin:.7rem 0 0;padding:.8rem 1rem;background:#F9FAFB;border-radius:10px}.facts b{color:#1F2937}</style>
 </head><body>
 <nav class="crumb">${crumbHtml}</nav>
 <h1>${esc(title)}</h1>
-${o.category ? `<div class="cat">${esc(o.category)}${o.city ? ' · ' + esc(o.city) : ''}</div>` : ''}
+${o.category ? `<div class="cat">${esc(o.category)}${o.city ? ' · ' + esc(o.city) : ''}${o.vendorName ? ' · Vendu par ' + esc(o.vendorName) : ''}</div>` : ''}
 ${(rc > 0 && rv > 0) ? `<div class="rating">★ ${rv.toFixed(1)} <span style="color:#6B7280;font-weight:400">(${rc} avis)</span></div>` : ''}
 ${o.image ? `<p><img src="${esc(img)}" alt="${esc(title)}" loading="lazy"></p>` : ''}
 ${priceTxt ? `<div class="price">${esc(priceTxt)}</div>` : ''}
-<p>${esc(desc)}</p>
-<a class="cta" href="${esc(appUrl)}">${kind === 'troc' ? 'Proposer un échange' : 'Voir ' + (kind === 'annonce' ? "l'annonce" : 'le produit')} sur NEXUS Market →</a>
+<p>${esc(bodyDesc)}</p>
+${o.priceFcfa ? `<div class="facts">
+  <span class="stock ${o.inStock === false ? 'ko' : 'ok'}">${o.inStock === false ? '● Rupture de stock' : '● En stock'}</span>
+  <span><b>Livraison</b> 1 à 3 jours à Dakar, 3 à 7 jours en région</span>
+  <span><b>Retour</b> sous 30 jours</span>
+  <span><b>Paiement</b> Orange Money, Wave, carte ou à la livraison</span>
+</div>` : ''}
+<a class="cta" href="${esc(appUrl)}">${kind === 'troc' ? 'Proposer un échange' : 'Voir ' + (kind === 'annonce' ? "l'annonce" : 'le produit') + ' et commander'} sur NEXUS Market →</a>
 <p class="foot">NEXUS Market — Marketplace sécurisée au Sénégal · Orange Money · Wave · Livraison partout.</p>
 </body></html>`;
 }
