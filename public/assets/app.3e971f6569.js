@@ -10803,6 +10803,21 @@ const isContactOnlyListing = (product) => !!(product && (
   product.is_animal || product.isAnimal ||
   product.is_local || product.isLocal
 ));
+// [AUDIT ADSENSE 2026-08-26] Les fiches Immobilier + Location vitrine (sql/
+// 2026_08_26_fix_immobilier_location_photos.sql) portent désormais une photo
+// GÉNÉRIQUE par type de bien (aucune de ces annonces n'a jamais eu de vraie
+// photo, même dans la prospection d'origine) — pas la photo réelle du bien.
+// Détecté par le chemin de stockage dédié, pour ne pas dépendre d'un nouveau
+// champ DB. Sert à afficher un avertissement dans la fiche détaillée.
+// [FIX] product.imageUrl (camelCase, via normalizeProduct) OU product.image_url
+// (snake_case brut) — le deep-link ?product=ID pour un produit hors des 200
+// plus récents charge la fiche via un fetch Supabase direct qui NE PASSE PAS
+// par normalizeProduct (cf. l'event listener 'nexus:open-product'), donc
+// selectedProduct peut porter l'un ou l'autre selon le chemin de chargement.
+const isGenericStockPhoto = (product) => {
+  const url = product && (product.imageUrl || product.image_url);
+  return !!(url && /\/generic-immobilier-location\//.test(url));
+};
 const ToastContext = createContext();
 const ToastProvider = ({ children }) => {
   const [toasts, setToasts] = useState([]);
@@ -34560,7 +34575,21 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
         React.createElement('div', { className: 'product-detail-grid' },
           React.createElement('div', { style: { position: 'relative' } },
             React.createElement(ProductImg, { product: selectedProduct, height: 300 }),
-            React.createElement(WishlistHeart, { product: selectedProduct, currentUser: null, addToast })
+            React.createElement(WishlistHeart, { product: selectedProduct, currentUser: null, addToast }),
+            isGenericStockPhoto(selectedProduct) && React.createElement('div', {
+              style: { display: 'flex', alignItems: 'flex-start', gap: '.5rem', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: 8, padding: '.6rem .75rem', fontSize: '.8rem', lineHeight: 1.4, marginTop: '.6rem' }
+            },
+              React.createElement('i', { className: 'fas fa-circle-info', style: { marginTop: '.15rem', flexShrink: 0 } }),
+              React.createElement('span', null, 'Photo d’illustration générique — ce bien n’a pas encore de photo réelle. Contactez le vendeur pour des photos et informations à jour.')
+            ),
+            // [RENFORCEMENT JURIDIQUE 2026-08-26] cf. CGU article 19 — même
+            // avertissement que functions/produit/[id].js et _middleware.js.
+            selectedProduct.category === 'Immobilier' && React.createElement('div', {
+              style: { display: 'flex', alignItems: 'flex-start', gap: '.5rem', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: 8, padding: '.6rem .75rem', fontSize: '.8rem', lineHeight: 1.4, marginTop: '.6rem' }
+            },
+              React.createElement('i', { className: 'fas fa-triangle-exclamation', style: { marginTop: '.15rem', flexShrink: 0 } }),
+              React.createElement('span', null, 'NEXUS Market ne vérifie pas ce bien (titre, disponibilité, exactitude des informations) et n’est pas partie à la transaction. Vérifiez toujours directement avec l’agence ou le propriétaire avant tout versement.')
+            )
           ),
           React.createElement('div', null,
             React.createElement('div', { className: 'product-category mb-1' }, selectedProduct.category),
