@@ -6,6 +6,40 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-26 — Dashboard admin « Utilisation Plateformes » (Supabase, Cloudflare, services tiers)
+
+**Demande** : un endroit unique dans le tableau de bord admin pour surveiller la
+consommation sur toutes les plateformes utilisées pour faire tourner le site
+(Supabase, Cloudflare, etc.), afin de ne pas dépasser les limites gratuites.
+
+**Recherche préalable** : vérifié que l'API Management Supabase n'expose AUCUNE
+route usage/billing/stats (seulement `/billing/addons`) — l'égress n'est donc
+pas récupérable par API, seulement la taille DB/storage (calculable en SQL
+direct). Vérifié aussi que le token OAuth local de `wrangler` n'a pas le scope
+Cloudflare Analytics.
+
+**Fait** : `GET /api/admin/platform-usage` (admin only) agrège :
+- Supabase : taille DB + storage en temps réel via une RPC SQL
+  (`admin_supabase_usage()`, `sql/2026_08_25_admin_platform_usage.sql`) —
+  égress non disponible, lien direct vers le dashboard à la place.
+- Cloudflare : bande passante/requêtes de la zone nexusmarket.sn via GraphQL
+  Analytics — optionnel (`CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ZONE_ID`), grisé
+  si non configuré, rien ne casse.
+- Liens directs vers 11 autres dashboards (WhatsApp Green API/WAHA, Groq,
+  Resend/Brevo, Firecrawl, Brave Search, Apify, PayTech) qui n'ont pas d'API
+  usage uniforme.
+
+Nouveau panneau `PlatformUsagePanel` + entrée de nav « Utilisation
+Plateformes » dans le bundle admin (`app.2f225106de.js`).
+
+**État final** : déployé (bundle renommé + index.html mis à jour). Supabase
+fonctionne dès maintenant (aucune config supplémentaire requise). Cloudflare
+nécessite que l'utilisateur crée un token API dédié (scope Zone Analytics
+Read) et l'ajoute aux variables Cloudflare Pages — sinon la section reste
+grisée sans rien casser.
+
+---
+
 ## 2026-08-16 — Fix affichage annonces « vitrine » (prix placeholder + image cassée)
 
 **Demande** (avec capture d'écran) : une fiche « 2JR Location de Voitures » affichait

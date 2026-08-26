@@ -163,6 +163,30 @@ Déploiement + API détaillée : **`docs/OSRM_VROOM.md`**.
   L'attribution effective reste la cascade SQL (`_activate_next_offer`) ou
   `admin_assign_delivery` — sinon deux sources de vérité de dispatch divergeraient.
 
+## Dashboard admin « Utilisation Plateformes » — 2026-08-25
+`GET /api/admin/platform-usage` (`functions/api/admin/platform-usage.js`, admin
+only) + panneau `PlatformUsagePanel` (bundle, nav « Utilisation Plateformes »)
+donnent une vue globale de la consommation sur les services externes, pour
+repérer à temps une limite gratuite qui approche.
+- **Supabase** (DB size + Storage size) : calculé en **SQL direct**
+  (`pg_database_size`, `sum(storage.objects.metadata->>'size')`) via la RPC
+  `admin_supabase_usage()` (`sql/2026_08_25_admin_platform_usage.sql`,
+  SECURITY DEFINER, exécutable par `service_role` seulement). ⚠️ L'**égress**
+  n'est **PAS** récupérable par API — vérifié 2026-08-25 : l'OpenAPI de l'API
+  Management Supabase n'expose aucune route usage/billing/stats (seulement
+  `/billing/addons` pour changer d'offre). Lien direct vers le dashboard affiché
+  à la place plutôt que d'inventer un chiffre.
+- **Cloudflare** (zone nexusmarket.sn) : GraphQL Analytics API
+  (`httpRequests1dGroups`), nécessite `CLOUDFLARE_API_TOKEN` +
+  `CLOUDFLARE_ZONE_ID` (token scope "Zone > Analytics > Read"). Sans ces vars :
+  `configured:false`, section grisée — **rien ne casse** (même philosophie
+  fail-open que OSRM_BASE_URL/IMAGOR_BASE_URL). Le token OAuth local de
+  `wrangler` (déploiement) n'a PAS le scope Analytics — un token dédié est requis.
+- Le reste (Green API/WAHA, Groq, Resend/Brevo, Firecrawl, Brave Search, Apify,
+  PayTech) n'a pas d'API "usage" simple et uniforme entre fournisseurs : le
+  panneau donne des **liens directs** vers chaque dashboard plutôt qu'un
+  scraping fragile.
+
 ## Bots entrants (WhatsApp / Telegram / Messenger) — 2026-08-21
 Trois webhooks reçoivent les messages entrants et répondent automatiquement via un
 cerveau conversationnel PARTAGÉ (`functions/api/_lib/bot-brain.js`, Groq direct +

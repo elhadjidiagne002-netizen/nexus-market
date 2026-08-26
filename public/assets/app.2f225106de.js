@@ -20352,6 +20352,109 @@ const ServicesConfigPanel = ({ addToast }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
+// PlatformUsagePanel — Vue globale de la consommation sur les plateformes
+// externes (Supabase, Cloudflare, services tiers) pour repérer à temps une
+// limite gratuite qui approche. Appelle GET /api/admin/platform-usage (2026-08-25).
+// ════════════════════════════════════════════════════════════════════════════
+const PlatformUsagePanel = ({ addToast }) => {
+  const D = React.createElement;
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [loadErr, setLoadErr] = React.useState(null);
+
+  const load = async () => {
+    setLoading(true); setLoadErr(null);
+    try {
+      let token = null;
+      try { const s = await (DataService._sb && DataService._sb.auth.getSession()); token = s && s.data && s.data.session && s.data.session.access_token; } catch (_) {}
+      if (!token) token = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+      const res = await fetch('/api/admin/platform-usage', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      if (!res.ok) { setLoadErr('HTTP ' + res.status); setLoading(false); return; }
+      setData(await res.json());
+    } catch (e) { setLoadErr(e.message); }
+    setLoading(false);
+  };
+  React.useEffect(() => { load(); }, []);
+
+  const fmtBytes = (n) => {
+    if (n == null) return '—';
+    if (n < 1024) return n + ' o';
+    const units = ['Ko', 'Mo', 'Go', 'To'];
+    let u = -1;
+    do { n /= 1024; u++; } while (n >= 1024 && u < units.length - 1);
+    return n.toFixed(n < 10 ? 2 : 1) + ' ' + units[u];
+  };
+  const barColor = (p) => p == null ? 'var(--line)' : p >= 90 ? '#dc2626' : p >= 70 ? '#f59e0b' : '#16a34a';
+
+  const Gauge = (label, used, limit, pctVal, extra) => D('div', { key: label, style: { marginBottom: 14 } },
+    D('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 } },
+      D('span', null, label),
+      D('span', { className: 'muted' }, pctVal != null ? pctVal + '%' : '—')
+    ),
+    D('div', { style: { height: 8, background: 'var(--card2)', borderRadius: 4, overflow: 'hidden' } },
+      D('div', { style: { height: '100%', width: (pctVal || 0) + '%', background: barColor(pctVal), transition: 'width .3s' } })
+    ),
+    D('div', { className: 'muted', style: { fontSize: 11, marginTop: 3 } },
+      limit ? (fmtBytes(used) + ' / ' + fmtBytes(limit)) : fmtBytes(used)),
+    extra ? D('div', { className: 'muted', style: { fontSize: 11 } }, extra) : null
+  );
+
+  const sb = (data && data.supabase) || {};
+  const cf = (data && data.cloudflare) || {};
+
+  return D('div', { className: 'card' },
+    D('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+      D('h2', null, D('i', { className: 'fas fa-server' }), ' Utilisation Plateformes'),
+      D('button', { className: 'btn ghost sm', onClick: load, disabled: loading }, D('i', { className: 'fas fa-sync' + (loading ? ' fa-spin' : '') }), ' Actualiser')
+    ),
+    D('p', { className: 'muted', style: { fontSize: 12, marginBottom: 14 } },
+      "Vue globale de ta consommation sur les services externes, pour repérer à temps une limite gratuite qui approche."),
+    loadErr ? D('p', { className: 'log-err' }, '✗ ' + loadErr) : null,
+    !data ? D('p', { className: 'muted' }, loading ? 'Chargement…' : '—') : D('div', null,
+
+      D('div', { style: { border: '1px solid var(--line)', borderRadius: 10, padding: 14, marginBottom: 14 } },
+        D('h3', { style: { marginTop: 0 } }, 'Supabase'),
+        sb.ok ? D('div', null,
+          Gauge('Base de données', sb.db_size_bytes, sb.db_limit_bytes, sb.db_pct),
+          Gauge('Storage (fichiers)', sb.storage_size_bytes, sb.storage_limit_bytes, sb.storage_pct, sb.storage_object_count + ' fichier(s)'),
+          D('p', { className: 'muted', style: { fontSize: 11 } },
+            "⚠️ Égress non mesurable via l'API Supabase — ",
+            D('a', { href: 'https://supabase.com/dashboard/project/pqcqbstbdujzaclsiosv/settings/billing/usage', target: '_blank', rel: 'noopener' }, 'vérifier sur le dashboard')
+          )
+        ) : D('p', { className: 'muted' }, 'Non disponible : ' + (sb.error || 'inconnue'))
+      ),
+
+      D('div', { style: { border: '1px solid var(--line)', borderRadius: 10, padding: 14, marginBottom: 14 } },
+        D('h3', { style: { marginTop: 0 } }, 'Cloudflare (zone nexusmarket.sn)'),
+        !cf.configured ? D('p', { className: 'muted' },
+          "Non configuré. Ajoute CLOUDFLARE_API_TOKEN + CLOUDFLARE_ZONE_ID dans les variables Cloudflare Pages (token avec la permission « Zone > Analytics > Read »)."
+        ) : cf.ok ? D('div', { style: { display: 'flex', gap: 24, flexWrap: 'wrap' } },
+          D('div', null, D('div', { className: 'muted', style: { fontSize: 11 } }, 'Requêtes (30j)'), D('div', { style: { fontSize: 20, fontWeight: 700 } }, ((cf.last_30d && cf.last_30d.requests) || 0).toLocaleString('fr-FR'))),
+          D('div', null, D('div', { className: 'muted', style: { fontSize: 11 } }, 'Bande passante (30j)'), D('div', { style: { fontSize: 20, fontWeight: 700 } }, fmtBytes(cf.last_30d && cf.last_30d.bytes))),
+          D('div', null, D('div', { className: 'muted', style: { fontSize: 11 } }, "Requêtes (aujourd'hui)"), D('div', { style: { fontSize: 20, fontWeight: 700 } }, ((cf.today && cf.today.requests) || 0).toLocaleString('fr-FR'))),
+          D('div', null, D('div', { className: 'muted', style: { fontSize: 11 } }, 'Menaces bloquées (30j)'), D('div', { style: { fontSize: 20, fontWeight: 700 } }, ((cf.last_30d && cf.last_30d.threats) || 0).toLocaleString('fr-FR')))
+        ) : D('p', { className: 'log-err' }, 'Erreur : ' + cf.error)
+      ),
+
+      D('div', { style: { border: '1px solid var(--line)', borderRadius: 10, padding: 14 } },
+        D('h3', { style: { marginTop: 0 } }, 'Autres services (liens directs)'),
+        D('p', { className: 'muted', style: { fontSize: 12, marginBottom: 10 } },
+          "Pas d'API unifiée pour ces plateformes — un clic pour vérifier le quota."),
+        D('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 } },
+          ((data && data.external_links) || []).map((l) => D('a', {
+            key: l.key, href: l.url, target: '_blank', rel: 'noopener',
+            style: { display: 'block', padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 8, textDecoration: 'none', color: 'inherit' }
+          },
+            D('div', { style: { fontWeight: 600, fontSize: 13 } }, l.name),
+            D('div', { className: 'muted', style: { fontSize: 11 } }, l.note)
+          ))
+        )
+      )
+    )
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
 // OrgCfgAdminPanel — Coordonnées légales + emails + réseaux sociaux (2026-08-23)
 // Une seule clé app_config.nexus_org_cfg, lue par CGU/Confidentialité/Contact/
 // À propos (SSR) + /api/org-cfg (bundle client, JSON-LD & bouton FB footer).
@@ -26035,7 +26138,8 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "seo",              icon: "search",     label: "SEO & Sitemap" },
     { id: "vendor_referrals", icon: "handshake",  label: "Parrainage vendeurs" },
     { id: "invoice_sequences", icon: "hashtag",  label: "N° Factures (DGID)" },
-    { id: "config", icon: "cog", label: "Configuration" }
+    { id: "config", icon: "cog", label: "Configuration" },
+    { id: "platform_usage", icon: "server", label: "Utilisation Plateformes" }
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
     if (item.id !== 'orders') setOrdersPage(1);
     setView(item.id);
@@ -28322,7 +28426,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(OrgCfgAdminPanel, { addToast }), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(OrgCfgAdminPanel, { addToast }), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "platform_usage" && React.createElement(PlatformUsagePanel, { addToast }), view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
