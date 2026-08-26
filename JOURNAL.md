@@ -6,6 +6,44 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-26 — Audit & correction : 423 comptes « vendeur » fantômes (prospection)
+
+**Demande** : l'utilisateur a remarqué des comptes immobilier inscrits comme
+vendeurs et a demandé un audit complet du backup Supabase
+(`Nexus_Backup_2026-08-26T12-25-32`) comparé au dossier `prospection/`, pour
+identifier TOUS les comptes mal inscrits dans le mauvais secteur.
+
+**Constat** : 423 des 432 profils `role='vendor'` (98%) n'étaient PAS de vrais
+vendeurs — des contacts de prospection scrapés (agences immobilières 130,
+vente de carreaux 89, loueurs de matériel 64, garages/carreleurs dupliqués 49,
+transporteurs 12, pièces moto/pneus/batteries/verre auto/jantes/épicerie bio
+73) importés en masse le 2026-08-11/12 via `prospects.promoted_user_id`,
+jamais réellement inscrits (mot de passe vide, jamais connectés) et **zéro
+produit, zéro commande**. 294 avaient même `status='approved'` → visibles
+publiquement comme vendeurs actifs. Root cause : certaines entreprises
+scrapées deux fois (ex. carreleur ET vendeur de carreaux) — la promotion
+dédupliquée par téléphone laissait traîner `role='vendor'` sans vraie
+inscription derrière. Seuls 9/432 comptes vendeur étaient réels (produit,
+commande ou connexion réelle) — non touchés.
+
+**Fait** : `sql/2026_08_26_fix_ghost_vendor_accounts.sql` — repasse ces 423
+comptes en `role='buyer'` (rôle neutre par défaut), sans toucher `prospects`
+(historique gardé) ni `is_pro`/`is_courier`/`is_breeder`/`is_rescuer`
+(annuaires métiers légitimes). Piège rencontré à l'exécution : le trigger
+`trg_protect_profile` (`protect_profile_columns()`) bloque tout changement de
+`role` hors contexte `service_role`/admin — le bypass `set_config(...)` doit
+être dans le MÊME bloc PL/pgSQL (`DO $$ ... $$`) que l'UPDATE, sinon le
+pooler Supabase peut exécuter les deux dans des transactions séparées et
+perdre le bypass entre les deux (déjà documenté dans
+`sql/2026_08_12_depanneurs_insert_promote.sql`, reproduit ici).
+
+**État final** : exécuté et vérifié en prod par l'utilisateur — `role='vendor'`
+est passé de 432 à 9 comptes, exactement les 9 vrais vendeurs restants.
+Rapport détaillé livré : `comptes_vendeurs_fantomes_prospection.csv` (423
+lignes).
+
+---
+
 ## 2026-08-26 — Message de bienvenue auto (email + WhatsApp) après approbation vendeur
 
 **Demande** : envoyer automatiquement un message WhatsApp + email de bienvenue
