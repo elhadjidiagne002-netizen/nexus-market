@@ -6,6 +6,41 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-26 (ter) — Pré-rendu du contenu produit sur /?product=<id> (LCP)
+
+**Demande** : traiter le dernier point ouvert de l'audit AdSense — la fiche
+produit servie par la SPA (`/?product=<id>`) était un shell totalement vide
+avant exécution JS (~425 car. de HTML, juste l'écran de démarrage), contre
+seulement les métadonnées pré-rendues. Risque de LCP tardif, surtout mobile
+Sénégal.
+
+**Clarification importante** : `/produit/:id` (functions/produit/[id].js) —
+la page RÉELLEMENT indexée par Google (canonical, sitemap) — avait déjà été
+corrigée à la session précédente (description complète + bloc infos). Ce
+point-ci concerne uniquement l'expérience utilisateur réelle après clic sur
+« Voir le produit et commander », pas un blocage AdSense à proprement parler.
+
+**Fait** : `functions/_middleware.js` intercepte désormais `GET /` quand
+`?product=<id>` est présent, récupère le produit via `sbGetOne` (déjà utilisé
+par `functions/produit/[id].js`), récupère le `index.html` statique via le
+binding `env.ASSETS.fetch()`, et injecte un aperçu réel (titre/catégorie/
+image/prix/description) directement dans `<div id="root">` avant de renvoyer
+la réponse. React (`createRoot().render()`, pas `hydrateRoot`) remplace ce
+contenu proprement à l'hydratation — aucun risque de mismatch, juste un
+premier affichage visible plus rapide. Fail-open total : id invalide, produit
+introuvable, erreur Supabase ou `ASSETS` indisponible → retombe sur la page
+normale (`context.next()`), rien ne casse.
+
+**Vérifié en local** (`wrangler pages dev`, `.dev.vars` temporaire non
+committé) : contenu réel injecté et visible dans le HTML brut pour un id
+valide ; page normale servie pour id invalide/absent ; React remplace le
+contenu injecté sans erreur console ; `/produit/:id` et `/` (sans paramètre)
+non affectés.
+
+**État final** : lint propre, 35/35 tests passent. Reste à committer/pousser.
+
+---
+
 ## 2026-08-26 (bis) — Corrections des 4 points bloquants de l'audit AdSense + gestion produits admin
 
 **Demande** : corriger tous les points bloquants identifiés par l'audit AdSense

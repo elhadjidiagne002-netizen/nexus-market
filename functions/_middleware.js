@@ -2,6 +2,7 @@
  * functions/_middleware.js
  * Middleware global pour Cloudflare Pages – CORS & helpers
  */
+import { sbGetOne, proxyImg, esc } from "./_lib/seo.js";
 
 export async function onRequest(context) {
   // Redirection canonique : www.nexusmarket.sn → nexusmarket.sn (301 permanent)
@@ -9,6 +10,26 @@ export async function onRequest(context) {
   if (reqUrl.hostname === "www.nexusmarket.sn") {
     reqUrl.hostname = "nexusmarket.sn";
     return Response.redirect(reqUrl.toString(), 301);
+  }
+
+  // [PERF/LCP — audit AdSense 2026-08-26] La fiche produit servie par la SPA
+  // (index.html + ?product=<id>) est un shell TOTALEMENT vide avant hydratation
+  // React (~425 car. de HTML avant le premier <script>, juste l'écran de
+  // démarrage) : image, prix, description n'existent qu'après téléchargement du
+  // bundle + appel API. Risque de LCP tardif, surtout mobile/réseau lent au
+  // Sénégal. La page /produit/:id (functions/produit/[id].js) a déjà ce contenu
+  // pré-rendu — ELLE est indexée par Google (canonical, sitemap), donc ce
+  // point n'est pas un vrai blocage AdSense. Mais pour l'expérience utilisateur
+  // réelle (un visiteur qui clique "Voir le produit et commander" atterrit ici),
+  // on injecte le même type de contenu directement dans #root : la même page
+  // index.html, avec un aperçu produit visible AVANT que React ne s'exécute.
+  // React (createRoot().render(), PAS hydrateRoot) remplace ce contenu
+  // proprement dès l'hydratation — aucun risque de mismatch, juste un premier
+  // affichage plus rapide. Fail-open : toute erreur retombe sur context.next()
+  // (la page normale), rien ne casse si Supabase ou ASSETS.fetch échoue.
+  if (context.request.method === "GET" && reqUrl.pathname === "/" && reqUrl.searchParams.has("product")) {
+    const injected = await tryInjectProductPreview(context, reqUrl);
+    if (injected) return injected;
   }
 
   if (context.request.method === "OPTIONS") {
@@ -78,4 +99,45 @@ function corsHeaders(request, env) {
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Vary": "Origin",
   };
+}
+
+// [PERF/LCP] Injecte un aperçu produit (image, prix, description) dans #root
+// AVANT que React ne s'exécute, pour /?product=<id>. Voir le commentaire dans
+// onRequest() ci-dessus pour le contexte. Retourne null au moindre problème
+// (id invalide, produit introuvable, erreur réseau) → l'appelant retombe alors
+// sur le comportement normal (context.next(), page servie telle quelle).
+async function tryInjectProductPreview(context, reqUrl) {
+  const id = reqUrl.searchParams.get("product");
+  if (!id || !/^[0-9a-f-]{36}$/i.test(id)) return null;
+  try {
+    const p = await sbGetOne(
+      context.env,
+      `products?select=id,name,description,image_url,price,category,stock&id=eq.${encodeURIComponent(id)}&active=eq.true&limit=1`
+    );
+    if (!p) return null;
+
+    if (!context.env.ASSETS) return null;
+    const res = await context.env.ASSETS.fetch(context.request);
+    if (!res.ok) return null;
+    const html = await res.text();
+    if (!html.includes('<div id="root"></div>')) return null; // structure inattendue → ne rien casser
+
+    const origin = context.env.SITE_URL || reqUrl.origin;
+    const EUR_TO_FCFA = 655.957;
+    const priceFcfa = p.price ? Math.round(Number(p.price) * EUR_TO_FCFA) : 0;
+    const img = proxyImg(p.image_url, origin);
+    const desc = String(p.description || "").replace(/\s+/g, " ").trim().slice(0, 500);
+
+    const snippet = `<div style="max-width:760px;margin:2rem auto;padding:0 20px;font-family:Arial,Helvetica,sans-serif;color:#1F2937">
+      <h1 style="font-size:1.4rem;margin:.4rem 0">${esc(p.name)}</h1>
+      ${p.category ? `<div style="color:#6B7280;font-size:.85rem;margin-bottom:.5rem">${esc(p.category)}</div>` : ""}
+      ${img ? `<img src="${esc(img)}" alt="${esc(p.name)}" style="max-width:100%;height:auto;border-radius:12px">` : ""}
+      ${priceFcfa ? `<div style="color:#00853E;font-size:1.6rem;font-weight:800;margin:.6rem 0">${priceFcfa.toLocaleString("fr-FR")} FCFA</div>` : ""}
+      ${desc ? `<p style="line-height:1.6">${esc(desc)}</p>` : ""}
+    </div>`;
+
+    return new Response(html.replace('<div id="root"></div>', `<div id="root">${snippet}</div>`), {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  } catch (_) { return null; }
 }
