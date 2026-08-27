@@ -11,7 +11,7 @@ export async function onRequest(context) {
 async function handle({ request, env, params }) {
   const origin = env.SITE_URL || new URL(request.url).origin;
   const id = params.id;
-  const p = await sbGetOne(env, `products?select=id,name,description,image_url,price,category,stock,rating,reviews_count,vendor_name,rental_specs,animal_specs&id=eq.${encodeURIComponent(id)}&active=eq.true&limit=1`);
+  const p = await sbGetOne(env, `products?select=id,name,description,image_url,price,category,stock,rating,reviews_count,vendor_name,rental_specs,animal_specs,is_educational,educational_specs,file_url&id=eq.${encodeURIComponent(id)}&active=eq.true&limit=1`);
   // Produit inexistant/retiré → 404 (noindex) plutôt qu'une redirection 302 :
   // signal de désindexation propre pour les moteurs.
   if (!p) return render404(origin, "Ce produit n'est plus disponible.");
@@ -26,7 +26,8 @@ async function handle({ request, env, params }) {
 
   // [PRIX] products.price est stocké en EUR (le frontend l'affiche via ×EUR_TO_FCFA).
   const EUR_TO_FCFA = 655.957;
-  const priceFcfa = (p.price && !isVitrine) ? Math.round(Number(p.price) * EUR_TO_FCFA) : 0;
+  const isEducational = p.is_educational === true;
+  const priceFcfa = (p.price && !isVitrine && !isEducational) ? Math.round(Number(p.price) * EUR_TO_FCFA) : 0;
   // [CONTENU] Les 65 fiches vitrine importées ont toutes la même description
   // gabarit stockée en base ("Location — <Catégorie>. Contact : <X>. Tarif sur
   // devis.") — risque de contenu quasi-dupliqué à l'échelle (seuil Quality Gate
@@ -64,12 +65,16 @@ async function handle({ request, env, params }) {
   const safetyNotice = p.category === 'Immobilier'
     ? "NEXUS Market ne vérifie pas ce bien (titre, disponibilité, exactitude des informations) et n'est pas partie à la transaction. Vérifiez toujours directement avec l'agence ou le propriétaire avant tout versement."
     : null;
+  const edu = p.educational_specs || {};
   const html = renderListingPage({
     origin, kind: 'produit', id: p.id, title: p.name, description,
     image: p.image_url, priceFcfa, category: p.category,
     rating: p.rating, reviewsCount: p.reviews_count,
     inStock: (p.stock || 0) > 0, vendorName: p.vendor_name, noindex: isDemo,
     genericPhoto: isGenericPhoto, safetyNotice,
+    educational: isEducational, downloadUrl: p.file_url,
+    educationalLevel: edu.level, licenseUrl: edu.license_url, licenseName: edu.license,
+    sourceUrl: edu.source_url, sourceName: edu.source,
   });
   return new Response(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=600' },

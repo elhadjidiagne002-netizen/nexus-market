@@ -10801,8 +10801,14 @@ const isContactOnlyListing = (product) => !!(product && (
   product.is_rental || product.isRental ||
   product.is_realestate || product.isRealestate ||
   product.is_animal || product.isAnimal ||
-  product.is_local || product.isLocal
+  product.is_local || product.isLocal ||
+  product.is_educational || product.isEducational
 ));
+// [NEXUS ÉDUCATION 2026-08-27] Téléchargement gratuit (cours/exercices CC BY-SA
+// issus de Wikiversité, cf. sql/2026_08_27_educational_downloads.sql) — pas un
+// achat : bouton dédié plutôt que « Ajouter au panier » (au-dessus, replié dans
+// isContactOnlyListing pour masquer stock/quantité/livraison qui n'ont pas de sens).
+const isEducationalListing = (product) => !!(product && (product.is_educational === true || product.isEducational === true));
 // [AUDIT ADSENSE 2026-08-26] Les fiches Immobilier + Location vitrine (sql/
 // 2026_08_26_fix_immobilier_location_photos.sql) portent désormais une photo
 // GÉNÉRIQUE par type de bien (aucune de ces annonces n'a jamais eu de vraie
@@ -34613,11 +34619,27 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
             },
               React.createElement('i', { className: 'fas fa-triangle-exclamation', style: { marginTop: '.15rem', flexShrink: 0 } }),
               React.createElement('span', null, 'NEXUS Market ne vérifie pas ce bien (titre, disponibilité, exactitude des informations) et n’est pas partie à la transaction. Vérifiez toujours directement avec l’agence ou le propriétaire avant tout versement.')
+            ),
+            // [NEXUS ÉDUCATION 2026-08-27] Attribution de licence obligatoire
+            // (CC BY-SA 4.0, cf. CGU § Crédits) + avertissement conformité programme.
+            isEducationalListing(selectedProduct) && React.createElement('div', {
+              style: { display: 'flex', alignItems: 'flex-start', gap: '.5rem', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: 8, padding: '.6rem .75rem', fontSize: '.8rem', lineHeight: 1.4, marginTop: '.6rem' }
+            },
+              React.createElement('i', { className: 'fas fa-circle-info', style: { marginTop: '.15rem', flexShrink: 0 } }),
+              React.createElement('span', null,
+                'Contenu libre sous licence ',
+                React.createElement('a', { href: (selectedProduct.educational_specs || selectedProduct.educationalSpecs || {}).license_url || 'https://creativecommons.org/licenses/by-sa/4.0/deed.fr', target: '_blank', rel: 'noopener noreferrer', style: { color: 'inherit', textDecoration: 'underline' } }, (selectedProduct.educational_specs || selectedProduct.educationalSpecs || {}).license || 'CC BY-SA 4.0'),
+                ', issu de ',
+                React.createElement('a', { href: (selectedProduct.educational_specs || selectedProduct.educationalSpecs || {}).source_url || 'https://fr.wikiversity.org', target: '_blank', rel: 'noopener noreferrer', style: { color: 'inherit', textDecoration: 'underline' } }, (selectedProduct.educational_specs || selectedProduct.educationalSpecs || {}).source || 'Wikiversité'),
+                '. Document non affilié aux programmes scolaires officiels du Sénégal — vérifiez sa conformité au programme local avant usage en classe.'
+              )
             )
           ),
           React.createElement('div', null,
             React.createElement('div', { className: 'product-category mb-1' }, selectedProduct.category),
-            React.createElement(PriceDisplay, { product: selectedProduct, style: { fontSize: '2.2rem' }, className: 'product-price' }),
+            isEducationalListing(selectedProduct)
+              ? React.createElement('div', { className: 'product-price', style: { fontSize: '2.2rem', fontWeight: 800, color: '#16A34A' } }, 'Gratuit')
+              : React.createElement(PriceDisplay, { product: selectedProduct, style: { fontSize: '2.2rem' }, className: 'product-price' }),
             React.createElement('div', { className: 'product-rating mb-2' },
               React.createElement(Stars, { rating: selectedProduct.rating }),
               React.createElement('span', { style: { fontSize: '1.1rem' } }, selectedProduct.rating),
@@ -34657,7 +34679,14 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
               ),
               React.createElement('span', { style: { fontSize: '0.82rem', color: 'var(--text-secondary)' } }, `= ${formatPrice(selectedProduct.price * modalQty)}`)
             ),
-            isVitrineListing(selectedProduct)
+            isEducationalListing(selectedProduct)
+              ? React.createElement('div', { className: 'flex gap-2' },
+                  React.createElement('a', {
+                    className: 'btn btn-primary btn-lg flex-1', style: { textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' },
+                    href: selectedProduct.fileUrl || selectedProduct.file_url, target: '_blank', rel: 'noopener noreferrer', download: true
+                  }, React.createElement('i', { className: 'fas fa-download' }), ' Télécharger gratuitement')
+                )
+              : isVitrineListing(selectedProduct)
               ? React.createElement('div', { className: 'flex gap-2' },
                   React.createElement('a', {
                     className: 'btn btn-lg flex-1', style: { background: '#25D366', color: '#fff', border: 'none', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' },

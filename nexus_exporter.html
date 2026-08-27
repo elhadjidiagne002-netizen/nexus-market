@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXUS - Super Exporter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #12121e;
+            color: #e0e0e0;
+            max-width: 850px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        .card {
+            background: #1e1e2f;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid #2a2a40;
+        }
+        h1 { margin-top: 0; color: #4CAF50; border-bottom: 2px solid #2a2a40; padding-bottom: 10px;}
+        .form-group { margin-bottom: 20px; }
+        label { display: block; font-weight: bold; margin-bottom: 8px; color: #b3b3cc; }
+        input[type="text"], input[type="password"] {
+            width: 100%; padding: 12px;
+            background: #12121e; border: 1px solid #333; color: white;
+            border-radius: 6px; box-sizing: border-box; font-family: monospace;
+        }
+        input:focus { outline: none; border-color: #4CAF50; }
+        .options-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 15px;
+            background: #252538; padding: 15px; border-radius: 8px; margin-bottom: 20px;
+        }
+        .checkbox-label {
+            display: flex; align-items: center; font-weight: normal; margin: 0; cursor: pointer; color: #fff;
+        }
+        .checkbox-label input { margin-right: 10px; width: 18px; height: 18px; accent-color: #4CAF50;}
+        .btn {
+            background-color: #4CAF50; color: white; border: none;
+            padding: 12px 24px; border-radius: 6px; cursor: pointer;
+            font-size: 15px; font-weight: bold; margin-right: 10px; transition: 0.2s;
+        }
+        .btn:hover { background-color: #45a049; transform: translateY(-2px); }
+        .btn:disabled { background-color: #555; cursor: not-allowed; transform: none; }
+        .btn-blue { background-color: #2196F3; }
+        .btn-blue:hover { background-color: #1976D2; }
+        #logArea {
+            margin-top: 20px; background: #000; color: #00ff00;
+            padding: 15px; border-radius: 6px; height: 300px;
+            overflow-y: auto; font-family: 'Courier New', Courier, monospace;
+            white-space: pre-wrap; font-size: 13px; line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h1>📦 NEXUS Super Exporter</h1>
+
+        <div class="form-group">
+            <label>URL du Projet Supabase</label>
+            <input type="text" id="supabaseUrl" placeholder="https://xyz.supabase.co">
+        </div>
+
+        <div class="form-group">
+            <label>Service Role Key (Indispensable pour contourner le RLS)</label>
+            <input type="password" id="supabaseKey" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+        </div>
+
+        <label>Que souhaitez-vous inclure dans l'archive ZIP ?</label>
+        <div class="options-grid">
+            <label class="checkbox-label">
+                <input type="checkbox" id="optData" checked> Données des tables
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="optRls" checked> Politiques RLS (Sécurité)
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="optSchema" checked> Dictionnaire du Schéma (Colonnes)
+            </label>
+        </div>
+
+        <div class="form-group">
+            <label>Export de Vue Spécifique (Optionnel)</label>
+            <input type="text" id="customView" placeholder="Ex: ma_vue_statistiques">
+            <div style="font-size: 12px; color:#888; margin-top:5px;">Si vous avez créé une View SQL dans Supabase pour des requêtes spécifiques, tapez son nom ici pour l'inclure.</div>
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+            <button class="btn" id="btnExport" onclick="startGlobalExport('csv')">Générer ZIP (Format CSV)</button>
+            <button class="btn btn-blue" id="btnExportJson" onclick="startGlobalExport('json')">Générer ZIP (Format JSON)</button>
+        </div>
+
+        <div id="logArea">Prêt. Vérifiez que vous avez exécuté le script SQL fourni avant de lancer l'export.</div>
+    </div>
+
+    <script type="module">
+        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm'
+        
+        window.startGlobalExport = async function(format) {
+            const url = document.getElementById('supabaseUrl').value.trim();
+            const key = document.getElementById('supabaseKey').value.trim();
+            const optData = document.getElementById('optData').checked;
+            const optRls = document.getElementById('optRls').checked;
+            const optSchema = document.getElementById('optSchema').checked;
+            const customView = document.getElementById('customView').value.trim();
+            const logArea = document.getElementById('logArea');
+            const btns = document.querySelectorAll('.btn');
+
+            if (!url || !key) {
+                alert("Veuillez fournir l'URL et la Service Role Key.");
+                return;
+            }
+
+            btns.forEach(b => b.disabled = true);
+            logArea.innerHTML = "=== DÉMARRAGE DE L'EXPORT GLOBAL ===\nConnexion à Supabase...\n";
+
+            try {
+                const supabase = createClient(url, key);
+                const zip = new JSZip();
+                const folderName = `Nexus_Backup_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+                const folder = zip.folder(folderName);
+
+                // --- 1. EXPORT DU SCHEMA (Dictionnaire) ---
+                if (optSchema) {
+                    logArea.innerHTML += "\n[SCHEMA] Récupération de la structure des tables...\n";
+                    const { data: schemaData, error: schemaErr } = await supabase.rpc('get_schema_info');
+                    if (schemaErr) {
+                        logArea.innerHTML += `   ❌ Erreur Schéma: La fonction get_schema_info() existe-t-elle ? (${schemaErr.message})\n`;
+                    } else if (schemaData) {
+                        addFileToZip(folder, 'schema_dictionary', schemaData, format);
+                        logArea.innerHTML += `   ✅ Schéma exporté.\n`;
+                    }
+                }
+
+                // --- 2. EXPORT DES POLITIQUES RLS ---
+                if (optRls) {
+                    logArea.innerHTML += "\n[RLS] Récupération des politiques de sécurité...\n";
+                    const { data: rlsData, error: rlsErr } = await supabase.rpc('get_rls_policies');
+                    if (rlsErr) {
+                        logArea.innerHTML += `   ❌ Erreur RLS: La fonction get_rls_policies() existe-t-elle ? (${rlsErr.message})\n`;
+                    } else if (rlsData) {
+                        addFileToZip(folder, 'rls_policies', rlsData, format);
+                        logArea.innerHTML += `   ✅ RLS exporté.\n`;
+                    }
+                }
+
+                // --- 3. EXPORT DES DONNÉES DES TABLES ---
+                if (optData) {
+                    logArea.innerHTML += "\n[DATA] Recherche des tables disponibles...\n";
+                    const { data: tables, error: rpcError } = await supabase.rpc('get_all_tables');
+
+                    if (rpcError) throw new Error("Impossible de lister les tables. Fonction get_all_tables() manquante ? " + rpcError.message);
+                    if (!tables || tables.length === 0) throw new Error("Aucune table trouvée.");
+
+                    logArea.innerHTML += `   📋 ${tables.length} tables détectées.\n`;
+
+                    for (const table of tables) {
+                        logArea.innerHTML += `   -> Extraction: ${table}... `;
+                        const rows = await fetchAllRows(supabase, table);
+                        if (rows.length > 0) {
+                            addFileToZip(folder, `table_${table}`, rows, format);
+                            logArea.innerHTML += `✅ (${rows.length} lignes)\n`;
+                        } else {
+                            logArea.innerHTML += `⚠️ (Vide)\n`;
+                        }
+                    }
+                }
+
+                // --- 4. EXPORT VUE PERSONNALISÉE ---
+                if (customView) {
+                    logArea.innerHTML += `\n[VIEW] Extraction de la vue personnalisée: ${customView}... `;
+                    const rows = await fetchAllRows(supabase, customView);
+                    if (rows.length > 0) {
+                        addFileToZip(folder, `query_result_${customView}`, rows, format);
+                        logArea.innerHTML += `✅ (${rows.length} lignes)\n`;
+                    } else {
+                        logArea.innerHTML += `❌ Vide ou introuvable.\n`;
+                    }
+                }
+
+                // --- 5. TÉLÉCHARGEMENT DU ZIP ---
+                logArea.innerHTML += `\n📦 Compression de l'archive ZIP en cours...\n`;
+                const zipContent = await zip.generateAsync({ type: "blob" });
+                
+                const downloadUrl = URL.createObjectURL(zipContent);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = `${folderName}_${format.toUpperCase()}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(downloadUrl);
+
+                logArea.innerHTML += `\n🎉 EXPORTATION RÉUSSIE ! Vérifiez vos téléchargements.`;
+
+            } catch (error) {
+                logArea.innerHTML += `\n❌ ERREUR CRITIQUE: ${error.message}`;
+            } finally {
+                btns.forEach(b => b.disabled = false);
+            }
+        };
+
+        // Fonction générique pour paginer et récupérer toutes les lignes
+        async function fetchAllRows(supabaseClient, tableName) {
+            let allRows = [];
+            let hasMore = true;
+            let from = 0;
+            const limit = 1000;
+
+            while (hasMore) {
+                const { data, error } = await supabaseClient.from(tableName).select('*').range(from, from + limit - 1);
+                if (error) return []; // Ignore l'erreur et retourne un tableau vide pour ne pas bloquer le script
+                if (data && data.length > 0) {
+                    allRows = allRows.concat(data);
+                    from += limit;
+                }
+                if (!data || data.length < limit) {
+                    hasMore = false;
+                }
+            }
+            return allRows;
+        }
+
+        // Fonction pour ajouter un fichier au dossier ZIP selon le format
+        function addFileToZip(folder, filename, dataArray, format) {
+            if (format === 'json') {
+                folder.file(`${filename}.json`, JSON.stringify(dataArray, null, 2));
+            } else {
+                folder.file(`${filename}.csv`, convertToCSV(dataArray));
+            }
+        }
+
+        // Convertisseur JSON vers CSV
+        function convertToCSV(objArray) {
+            const array = typeof objArray !== 'object' ? JSON.parse(objArray) : objArray;
+            if (array.length === 0) return '';
+            const headers = Object.keys(array[0]);
+            let str = headers.join(',') + '\r\n';
+            for (let i = 0; i < array.length; i++) {
+                let line = '';
+                for (let index in array[i]) {
+                    if (line !== '') line += ',';
+                    let cell = array[i][index] === null ? '' : String(array[i][index]);
+                    
+                    // Gérer les JSON imbriqués (objets/arrays dans les colonnes Supabase)
+                    if (typeof array[i][index] === 'object' && array[i][index] !== null) {
+                        cell = JSON.stringify(array[i][index]);
+                    }
+
+                    if (cell.search(/("|,|\n)/g) >= 0) {
+                        cell = `"${cell.replace(/"/g, '""')}"`;
+                    }
+                    line += cell;
+                }
+                str += line + '\r\n';
+            }
+            return str;
+        }
+    </script>
+</body>
+</html>

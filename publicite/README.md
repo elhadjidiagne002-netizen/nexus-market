@@ -267,6 +267,42 @@ d'un format directement postable sur Facebook/Instagram.
 > 👉 nexusmarket.sn
 > #AnnoncesExpress #Gratuit #SansCompte #Sénégal
 
+### 44. 🔧 Mécaniciens & garagistes — « On crée ta fiche pro »
+**Titre :** Mécanicien, garagiste… les clients te cherchent !
+**Sous-titre :** Envoie ta spécialité, ta zone et tes tarifs — on crée ton profil NEXUS Pro gratuitement
+**Légende :**
+> 🔧 Révision, panne, diagnostic, pièces… Les clients de NEXUS cherchent un mécanicien **près de chez eux**. Envoie-nous ta spécialité, ta zone et tes tarifs par WhatsApp : **on crée ton profil** sur NEXUS Pro et tu reçois des demandes directement. Gratuit, sans complication 🇸🇳
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #Mécanicien #Garagiste #NexusPro #Auto #Moto #Sénégal
+
+### 45. 🛞 Vendeurs pièces détachées — « Vends tes pièces auto sur NEXUS »
+**Titre :** Pièces auto et moto : vends-les à tout le Sénégal
+**Sous-titre :** Filtre, plaquette, amortisseur, pneu, batterie… envoie tes photos et prix par WhatsApp
+**Légende :**
+> 🛞 Tu vends des pièces détachées auto ou moto ? Rejoins NEXUS Market et touche des milliers d'acheteurs partout au Sénégal. Envoie-nous quelques photos et tes prix par WhatsApp : **on publie ta boutique gratuitement** en moins de 24h ⚡
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #PiècesDétachées #Auto #Moto #NexusMarket #Sénégal #Dakar
+
+---
+
+### 46. ⚡ Électriciens auto — « On crée ton profil NEXUS Pro »
+**Titre :** Électricien auto ? Les clients te cherchent !
+**Sous-titre :** Diagnostic, clim, batterie, programmation — envoie ta spécialité et ta zone par WhatsApp
+**Légende :**
+> ⚡ Diagnostic OBD, climatisation, batterie, alarme, injection… Les clients de NEXUS cherchent un **électricien auto** près de chez eux. Envoie-nous ta spécialité et ta zone par WhatsApp : **on crée ton profil** sur NEXUS Pro gratuitement 🇸🇳
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #ÉlectricienAuto #DiagnosticAuto #Climatisation #NexusPro #Sénégal #Dakar
+
+### 47. 🛞 Vendeurs de pneus & jantes — « Vends tes pneus sur NEXUS »
+**Titre :** Pneus & jantes : touche tous les acheteurs du Sénégal
+**Sous-titre :** Neuf ou occasion · Tourisme, 4x4, moto, camion · Envoie photos et prix par WhatsApp
+**Légende :**
+> 🛞 Tu vends des pneus ou des jantes ? Rejoins NEXUS Market et atteins des milliers d'acheteurs partout au Sénégal. Envoie-nous tes photos, dimensions et prix par WhatsApp : **on publie ta boutique gratuitement** ⚡
+> 📱 WhatsApp : **+221 77 625 48 95**
+> #Pneus #Jantes #Pneumatique #NexusMarket #Sénégal #Auto
+
+---
+
 ## ✅ Checklist avant de poster
 - [ ] Logo NEXUS + `nexusmarket.sn` visibles sur l'affiche
 - [ ] Couleurs de la charte respectées

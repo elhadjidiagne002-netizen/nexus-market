@@ -13532,6 +13532,18 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       </div>
     </section>
 
+    <section id="nxp-educationSection">
+      <div class="flex items-center justify-between mb-lg">
+        <h2 class="font-bold text-xl uppercase tracking-tight flex items-center gap-2"><span class="material-symbols-outlined text-primary">school</span> NEXUS Éducation — Cours &amp; exercices gratuits</h2>
+        <a class="text-primary text-sm font-bold hover:underline" href="/?cat=%C3%89ducation">Voir tout</a>
+      </div>
+      <div class="relative">
+        <button class="carousel-arrow left-arr" data-target="nxp-education" data-dir="-1" aria-label="Précédent"><span class="material-symbols-outlined">chevron_left</span></button>
+        <div id="nxp-education" class="flex gap-md overflow-x-auto scrolling-wrapper scroll-smooth pb-2"></div>
+        <button class="carousel-arrow right-arr" data-target="nxp-education" data-dir="1" aria-label="Suivant"><span class="material-symbols-outlined">chevron_right</span></button>
+      </div>
+    </section>
+
     <section id="nxp-covoiturageSection">
       <div class="flex items-center justify-between mb-lg">
         <h2 class="font-bold text-xl uppercase tracking-tight flex items-center gap-2"><span class="material-symbols-outlined text-primary">directions_bus</span> Covoiturage & Transport</h2>
@@ -13837,12 +13849,15 @@ function card(p){
     +'<h4 class="text-sm font-semibold truncate mb-1">'+p.name+'</h4>'
     +'<div class="flex items-center gap-1 mb-1.5">'+starsHtml(p.rating)+'<span class="text-[11px] font-bold text-on-surface ml-0.5">'+ratingNum(p)+'</span><span class="text-[11px] text-on-surface-variant">('+reviewsOf(p)+')</span></div>'
     +'<p class="text-[11px] text-on-surface-variant mb-2 flex items-center gap-1"><span class="material-symbols-outlined text-[14px] text-primary">local_shipping</span>'+deliveryOf(p)+'</p>'
-    +'<div class="flex items-center justify-between mb-3"><p class="text-primary font-bold text-md">'+(p.vitrine?'Sur devis':(p.price+' F'))+'</p><span class="text-[10px] font-bold text-primary bg-primary-container px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Protection acheteur"><span class="material-symbols-outlined text-[12px]">shield</span>Protégé</span></div>'
+    +'<div class="flex items-center justify-between mb-3"><p class="text-primary font-bold text-md">'+(p.downloadOnly?'Gratuit':(p.vitrine?'Sur devis':(p.price+' F')))+'</p><span class="text-[10px] font-bold text-primary bg-primary-container px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Protection acheteur"><span class="material-symbols-outlined text-[12px]">shield</span>Protégé</span></div>'
     /* [ADAPTATION PAR TYPE] Location/Immobilier/Élevage/Terroir = verticales « mise en
        relation » par conception (MVP annonce + contact, pas de panier NEXUS) : vitrine
        (loueur/dépanneur importé, sans compte réel) → WhatsApp direct ; vrai compte
-       → « Voir l'annonce » (ouvre la fiche, où vit le vrai bouton de contact). */
-    +(p.vitrine
+       → « Voir l'annonce » (ouvre la fiche, où vit le vrai bouton de contact).
+       [NEXUS ÉDUCATION] downloadOnly → lien direct PDF, jamais de panier/contact. */
+    +(p.downloadOnly
+      ? '<a href="'+p.downloadUrl+'" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="mt-auto text-center py-2 rounded font-bold text-xs text-white transition-all" style="background:#00853E"><span class="material-symbols-outlined text-[14px] align-middle">download</span> Télécharger</a>'
+      : p.vitrine
       ? '<a href="'+p.waUrl+'" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" class="mt-auto text-center py-2 rounded font-bold text-xs text-white transition-all" style="background:#25D366"><span class="material-symbols-outlined text-[14px] align-middle">chat</span> Contacter</a>'
       : p.contactOnly
         ? '<button class="mt-auto bg-primary text-white py-2 rounded font-bold text-xs uppercase hover:brightness-110 transition-all shadow-sm" data-pid="'+p.id+'"><span class="material-symbols-outlined text-[14px] align-middle">visibility</span> Voir l\'annonce</button>'
@@ -13981,7 +13996,11 @@ function sbCard(p,fallbackImg){
   }
   /* Location/Immobilier/Élevage/Terroir = verticales « mise en relation », pas de panier. */
   var contactOnly=vitrine||!!(p.is_rental||p.is_realestate||p.is_animal||p.is_local);
-  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat,boosted:boosted,vitrine:vitrine,waUrl:waUrl,contactOnly:contactOnly};
+  /* [NEXUS ÉDUCATION 2026-08-27] Téléchargement gratuit (cf. sql/2026_08_27_educational_downloads.sql) :
+     price=0.01 en base (contrainte CHECK products_price_check interdit 0) — n'affiche
+     jamais ce prix symbolique, toujours "Gratuit" + lien direct vers le PDF. */
+  var downloadOnly=p.is_educational===true;
+  var pObj={id:String(p.id),name:p.name||'Produit',price:priceStr,img:img,rating:rat,boosted:boosted,vitrine:vitrine,waUrl:waUrl,contactOnly:contactOnly,downloadOnly:downloadOnly,downloadUrl:p.file_url||''};
   NXP_PRODS[pObj.id]=pObj;
   return card(pObj);
 }
@@ -14157,6 +14176,10 @@ function initProto(){
     mountSection('nxp-elevage',     'mod_elevage_enabled',    'products?'+PQ+'&or=(is_animal.eq.true,is_local.eq.true)', function(p){return sbCard(p,FB_ELEVAGE);});
     mountSection('nxp-location',    'rental_enabled',         'products?'+PQ+'&is_rental=eq.true', function(p){return sbCard(p,FB_LOCATION);});
     mountSection('nxp-immobilier',  'mod_realestate_enabled', 'products?'+PQ+'&is_realestate=eq.true', function(p){return sbCard(p,FB_IMMOBILIER);});
+    /* [NEXUS ÉDUCATION 2026-08-27] Cours/exercices gratuits CC BY-SA (Wikiversité,
+       cf. sql/2026_08_27_educational_downloads.sql) — select dédié (file_url,
+       educational_specs) : pas dans PQ, partagé avec les verticales panier/contact. */
+    mountSection('nxp-education',  'mod_educational_enabled', 'products?select=id,name,image_url,file_url,is_educational,educational_specs,rating&is_educational=eq.true&active=eq.true&order=created_at.desc&limit=12', function(p){return sbCard(p);});
     mountSection('nxp-covoiturage', 'mod_transport_enabled',  'transport_lines?select=id,operator,origin_city,destination_main,price_fcfa,vehicle_type,whatsapp,phone&active=eq.true&order=operator.asc&limit=12', transportCard);
     mountSection('nxp-troc',        'mod_troc_enabled',       'troc_listings?select=id,title,photo_url,category,city,want,est_value_fcfa,status&status=eq.active&order=created_at.desc&limit=12', trocCard);
   })();

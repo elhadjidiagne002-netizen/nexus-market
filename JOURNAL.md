@@ -6,6 +6,53 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (bis) — NEXUS Éducation : plateforme de téléchargement gratuit (cours/exercices)
+
+**Demande** : greffer une nouvelle « verticale » permettant à des élèves/
+étudiants de télécharger gratuitement des cours et exercices.
+
+**Décision sourcing** (arbitrage utilisateur après vérification) : APPRENDRE/
+AUF, qui semblait être une source « officielle » ouverte, s'est révélé
+`© Programme APPRENDRE — Tous droits réservés` (pas de licence ouverte) —
+écarté avant tout téléchargement. Seule source retenue : **Wikiversité/
+Wikilivres** (`fr.wikiversity.org`), 100% CC BY-SA 4.0, vérifiable. Approche
+choisie : héberger de vraies copies (pas de simples liens externes), mais
+strictement limité à du contenu CC/domaine public vérifié.
+
+**Fait** :
+- Nouvelle verticale `products.is_educational` / `educational_specs` jsonb
+  (même pattern que `is_rental`/`is_realestate`), migration
+  `sql/2026_08_27_educational_downloads.sql` : 20 cours PDF réels
+  (Mathématiques/Physique/Chimie/Histoire-Géo/Français/Philosophie/Anglais/
+  SVT, du collège à la prépa/université), exportés via l'API REST Wikimedia
+  (`/api/rest_v1/page/pdf/<titre>`), hébergés dans le bucket public existant
+  `nexus-images` (`products/educational/pdfs/*.pdf`) + 8 couvertures
+  génériques par matière (créées pour le site, SVG→JPG, aucune attribution
+  requise) dans `products/educational/covers/*.jpg`.
+  `price=0.01` (symbolique — `products_price_check` interdit 0), `stock=999999`,
+  `active=moderated=true`. Attribution CC BY-SA 4.0 + source dans
+  `educational_specs` (affichée par le front, pas seulement en base).
+- **Front React** (`public/assets/app.badfdcf788.js`) : bouton dédié
+  « Télécharger gratuitement » (au lieu d'Ajouter au panier), prix affiché
+  « Gratuit », notice de licence/attribution + avertissement « non affilié
+  aux programmes scolaires officiels du Sénégal » dans la fiche produit.
+- **Overlay statique** (`public/index.html`) : nouvelle section accueil
+  « NEXUS Éducation » (carrousel, lien « Voir tout » → `/?cat=Éducation`),
+  carte produit avec bouton téléchargement direct (`card()`/`sbCard()`
+  étendus avec un flag `downloadOnly`).
+- **SEO** (`functions/produit/[id].js`, `functions/_lib/seo.js`,
+  `functions/_middleware.js` pour le pré-rendu `?product=`) : JSON-LD
+  `LearningResource` (`isAccessibleForFree`, `license`) au lieu de `Product`/
+  `Offer` payant, CTA de téléchargement direct, même notice de licence.
+
+**État final** : vérifié en local (overlay statique servi en HTTP local,
+carte rendue avec prix "Gratuit" + lien PDF réel, 12/20 produits chargés,
+aucune erreur JS). `node --check` OK sur les 3 fichiers `functions/`
+modifiés + le bundle. 20 lignes DB insérées et vérifiées en prod (Supabase).
+Reste à committer/pousser (confirmation utilisateur en attente).
+
+---
+
 ## 2026-08-27 — Suppression totale des faux produits + limite admin + fermeture Stories
 
 **Demande** : supprimer tous les produits codés en dur du fichier (pas

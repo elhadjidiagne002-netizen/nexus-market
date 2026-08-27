@@ -259,8 +259,9 @@ reste dans ton navigateur (aucun envoi ailleurs que vers ton propre projet Supab
   </div>
 
   <!-- Fichiers -->
-  <div class="filebox" id="dropProd">📂 Dépose ici ton/tes CSV de produits (multi-sélection)
-    <input type="file" id="filesProd" accept=".csv" multiple class="hidden"></div>
+  <div class="filebox" id="dropProd">📂 Dépose ici ton/tes CSV de produits <b>et/ou tes photos</b> (multi-sélection)
+    <div class="muted" style="font-size:11px;margin-top:4px;">Les images sont appariées automatiquement au produit par nom de fichier (ex. <code>iPhone 15 128Go.jpg</code>, <code>samsung-galaxy-a06-1.jpg</code>). Uploadées vers Supabase Storage (bucket <code>products</code>) à l'export.</div>
+    <input type="file" id="filesProd" accept=".csv,image/*" multiple class="hidden"></div>
 
   <!-- Marge globale -->
   <div style="margin-top:16px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
@@ -1261,7 +1262,57 @@ dropProd.ondragleave=()=>dropProd.style.borderColor='';
 dropProd.ondrop=e=>{e.preventDefault();dropProd.style.borderColor='';handleProdFiles(e.dataTransfer.files);};
 filesProdInput.onchange=()=>handleProdFiles(filesProdInput.files);
 
+const PROD_BUCKET='products'; // bucket Supabase Storage des images produit (cf. nexus_studio_ai.py)
+
+// Normalisation pour l'appariement image↔produit (sans accents, sans extension,
+// sans numéro de suffixe type «-1»).
+function normKey(x){
+  return String(x||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/\.[a-z0-9]{2,4}$/,'')          // extension
+    .replace(/[_\-\s]*\d+$/,'')               // suffixe numérique (-1, _2…)
+    .replace(/[^a-z0-9]+/g,' ').trim();
+}
+function toks(x){ return normKey(x).split(' ').filter(Boolean); }
+// Score de recouvrement (0..1) entre un nom de fichier et un produit (nom+marque).
+function imgMatchScore(fileKey, r){
+  const ft=new Set(toks(fileKey)); const pt=toks((r.name||'')+' '+(r.brand||''));
+  if(!pt.length || !ft.size) return 0;
+  let inter=0; pt.forEach(t=>{ if(ft.has(t)) inter++; });
+  return inter/Math.max(pt.length, ft.size);
+}
+
+// Apparie une liste de fichiers image aux produits chargés (meilleur score ≥ 0.5).
+// Plusieurs images par produit possibles (accumulées dans _files). Les non appariés
+// sont signalés → attache manuelle possible par ligne.
+function attachImagesByName(files){
+  if(!prodRows.length){ log('Charge d\'abord le CSV produits, puis dépose les photos (appariées par nom).','warn'); return; }
+  let matched=0; const unmatched=[];
+  [...files].forEach(f=>{
+    const key=normKey(f.name);
+    let best=-1, bestScore=0;
+    prodRows.forEach((r,i)=>{ const sc=imgMatchScore(f.name,r); if(sc>bestScore){ bestScore=sc; best=i; } });
+    if(best>=0 && bestScore>=0.5){
+      (prodRows[best]._files=prodRows[best]._files||[]).push(f);
+      matched++;
+    } else unmatched.push(f.name);
+  });
+  renderProd();
+  log(`🖼️ ${matched} image(s) appariée(s)${unmatched.length?` · ${unmatched.length} non appariée(s) : ${unmatched.slice(0,8).join(', ')}${unmatched.length>8?'…':''} (utilise 📎 sur la ligne)`:''}.`, unmatched.length?'warn':'ok');
+}
+
+// Upload d'un fichier image vers Supabase Storage (bucket products) → URL publique.
+async function uploadProductImage(file, slug){
+  const ext=((file.name.split('.').pop()||'jpg').toLowerCase().replace(/[^a-z0-9]/g,''))||'jpg';
+  const path=`imports/${(slug||'produit').slice(0,40)}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}.${ext}`;
+  const { error }=await sb.storage.from(PROD_BUCKET).upload(path, file, { upsert:true, contentType:file.type||undefined, cacheControl:'31536000' });
+  if(error) throw new Error('upload storage: '+error.message);
+  const { data }=sb.storage.from(PROD_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
 function handleProdFiles(fl){
+  const imgs=[...fl].filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|webp|gif|avif)$/i.test(f.name));
+  if(imgs.length) attachImagesByName(imgs);
   [...fl].filter(f=>/\.csv$/i.test(f.name)).forEach(f=>{
     Papa.parse(f,{header:true,skipEmptyLines:true,complete:res=>{
       let n=0;
@@ -1312,8 +1363,12 @@ function renderProd(){
     if(r.category && opts.indexOf(r.category)<0) opts.unshift(r.category);
     const catSel=opts.map(c=>`<option ${c===r.category?'selected':''}>${esc(c)}</option>`).join('');
     const mg=marginPct(r);
-    const thumb = r.image_url
-      ? `<img src="${esc(r.image_url)}" style="width:34px;height:34px;object-fit:cover;border-radius:5px;" onerror="this.style.display='none';this.insertAdjacentText('afterend','—')">`
+    const nFiles = (r._files&&r._files.length)||0;
+    const previewSrc = nFiles ? URL.createObjectURL(r._files[0]) : r.image_url;
+    const thumb = previewSrc
+      ? `<img src="${esc(previewSrc)}" style="width:34px;height:34px;object-fit:cover;border-radius:5px;" onerror="this.style.display='none';this.insertAdjacentText('afterend','—')">`
+        + (nFiles>1?`<span class="muted" style="font-size:10px;"> +${nFiles-1}</span>`:'')
+        + (nFiles?`<div class="muted" style="font-size:9px;">📎 à uploader</div>`:'')
       : '<span class="muted">—</span>';
     const descLen=(r.description||'').length;
     const tr=document.createElement('tr');
@@ -1338,9 +1393,15 @@ function renderProd(){
         <span class="muted" id="pDescLen-${i}" style="font-weight:normal;">(${descLen} car.)</span></label>
       <textarea class="pDesc" data-i="${i}" rows="2" placeholder="Description affichée sur la fiche produit…"
         style="width:100%;font-family:inherit;font-size:12px;">${esc(r.description||'')}</textarea>
-      <label style="margin:6px 0 3px;font-size:11px;">🖼️ URL de la photo</label>
-      <input type="text" class="pImg" data-i="${i}" value="${esc(r.image_url||'')}"
-        placeholder="https://…/photo.jpg" style="font-size:12px;">
+      <label style="margin:6px 0 3px;font-size:11px;">🖼️ Photo — fichier local (uploadé vers Storage à l'export) ou URL</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <label class="btn ghost" style="font-size:11px;padding:4px 8px;cursor:pointer;margin:0;">📎 Ajouter un fichier
+          <input type="file" class="pFile" data-i="${i}" accept="image/*" multiple style="display:none;"></label>
+        <span class="muted" id="pFileInfo-${i}" style="font-size:11px;">${nFiles?nFiles+' fichier(s) attaché(s)':''}</span>
+        ${nFiles?`<button type="button" class="btn ghost pFileClr" data-i="${i}" style="font-size:11px;padding:4px 8px;">✕ Retirer</button>`:''}
+        <input type="text" class="pImg" data-i="${i}" value="${esc(r.image_url||'')}"
+          placeholder="… ou colle une URL https://…/photo.jpg" style="font-size:12px;flex:1;min-width:180px;">
+      </div>
     </td>`;
     b.appendChild(trD);
   });
@@ -1361,9 +1422,17 @@ function renderProd(){
   b.querySelectorAll('.pImg').forEach(inp=>inp.oninput=e=>{const i=e.target.dataset.i;
     const url=e.target.value.trim(); prodRows[i].image_url=url||null;
     prodRows[i].images=url?[url]:[];
-    const cell=$(`#pThumb-${i}`); if(cell) cell.innerHTML = url
-      ? `<img src="${esc(url)}" style="width:34px;height:34px;object-fit:cover;border-radius:5px;" onerror="this.style.display='none';this.insertAdjacentText('afterend','—')">`
-      : '<span class="muted">—</span>';});
+    if(!(prodRows[i]._files&&prodRows[i]._files.length)){
+      const cell=$(`#pThumb-${i}`); if(cell) cell.innerHTML = url
+        ? `<img src="${esc(url)}" style="width:34px;height:34px;object-fit:cover;border-radius:5px;" onerror="this.style.display='none';this.insertAdjacentText('afterend','—')">`
+        : '<span class="muted">—</span>';}});
+  // Attache de fichier(s) local(aux) par ligne (uploadé à l'export)
+  b.querySelectorAll('.pFile').forEach(inp=>inp.onchange=e=>{const i=e.target.dataset.i;
+    const fl=[...e.target.files].filter(f=>/^image\//.test(f.type)||/\.(jpe?g|png|webp|gif|avif)$/i.test(f.name));
+    if(!fl.length) return;
+    (prodRows[i]._files=prodRows[i]._files||[]).push(...fl); renderProd();});
+  b.querySelectorAll('.pFileClr').forEach(btn=>btn.onclick=e=>{const i=e.target.dataset.i;
+    prodRows[i]._files=[]; renderProd();});
   updProdSummary();
 }
 $('#prodChkAll').onchange=e=>{prodRows.forEach(r=>r._include=e.target.checked);renderProd();};
@@ -1406,19 +1475,28 @@ $('#btnExportProd').onclick = async () => {
         vName=r.vendorName||r.name;
       }
       if(v && v.created) vend++;
-      const images = r.images && r.images.length ? r.images : (r.image_url?[r.image_url]:[]);
+      const nLocal=(r._files&&r._files.length)||0;
+      let images = r.images && r.images.length ? r.images.slice() : (r.image_url?[r.image_url]:[]);
       const priceEur = r.sale/EUR_TO_XOF;
       const origEur = r.original>0 ? r.original/EUR_TO_XOF : null;
       const mg=marginPct(r);
       if(dry){
         log(`  • [dry] ${r.name} — ${r.sale.toLocaleString('fr-FR')} F (${fEur(r.sale)}${r.cost?`, achat ${r.cost} F, marge ${mg}%`:''})`
-          +` · ${r.category} · stock ${r.stock} · ${images.length} photo(s) → ${v?v.email:'?'}`,'info');
+          +` · ${r.category} · stock ${r.stock} · ${images.length+nLocal} photo(s)${nLocal?` (dont ${nLocal} à uploader)`:''} → ${v?v.email:'?'}`,'info');
         ok++; done++; prog.value=done; continue;
+      }
+      // Upload des fichiers locaux vers Supabase Storage → URLs publiques (photo principale en tête)
+      if(nLocal){
+        const slug=normKey(r.name).replace(/ /g,'-');
+        const uploaded=[];
+        for(const f of r._files){ try{ uploaded.push(await uploadProductImage(f, slug)); }
+          catch(ue){ log(`    ⚠️ upload photo « ${r.name} » : ${ue.message||ue}`,'warn'); } }
+        if(uploaded.length) images = uploaded.concat(images.filter(u=>uploaded.indexOf(u)<0));
       }
       const st=await upsertPlainProduct({
         name:r.name, category:r.category||'Autre',
         price:priceEur, original_price:origEur, stock:r.stock||1,
-        description:r.description||null, image_url:r.image_url||images[0]||null, images,
+        description:r.description||null, image_url:images[0]||r.image_url||null, images,
         vendor_id:v.uid, vendor_name:(v.shopName||vName||null),
         active:r.active!==false, is_rental:false, is_realestate:false
       });

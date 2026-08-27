@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Contacts Sync — vers Google Contacts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --bg: #F5F4EF;
+    --card: #FFFFFF;
+    --ink: #1B1F23;
+    --ink-soft: #5B6168;
+    --line: #E4E1D8;
+    --teal: #1B7A72;
+    --teal-deep:#145C56;
+    --teal-bg:#E4F2F0;
+    --amber: #C98A2C;
+    --amber-bg:#FBF0DD;
+    --rose: #B23B3B;
+    --rose-bg:#F8E6E4;
+    --grey-bg:#EFEDE5;
+    --shadow: 0 1px 0 rgba(27,31,35,0.04), 0 10px 26px -14px rgba(27,31,35,0.22);
+  }
+  body[data-theme="dark"]{
+    --bg:#14171A; --card:#1D2125; --ink:#EDEFF1; --ink-soft:#94A0A8; --line:#2A2F34;
+    --teal:#2FB3A3; --teal-deep:#4FD6C4; --teal-bg:#173430; --amber:#E0A94F; --amber-bg:#332711;
+    --rose:#E28080; --rose-bg:#3A2020; --grey-bg:#22262A;
+    --shadow: 0 1px 0 rgba(0,0,0,0.3), 0 10px 26px -14px rgba(0,0,0,0.6);
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Inter", sans-serif; -webkit-font-smoothing:antialiased;
+    transition: background .15s ease, color .15s ease;
+  }
+  .wrap{ max-width:1220px; margin:0 auto; padding:30px 24px 90px; }
+  .theme-toggle{
+    position:fixed; top:16px; right:16px; z-index:50;
+    border:1px solid var(--line); background:var(--card); border-radius:999px; padding:8px 14px;
+    font-family:"JetBrains Mono",monospace; font-size:11.5px; cursor:pointer; color:var(--ink-soft);
+    box-shadow:var(--shadow); display:flex; align-items:center; gap:6px;
+  }
+  .theme-toggle:hover{ border-color:var(--teal); color:var(--teal-deep); }
+  .pagination{ display:flex; align-items:center; justify-content:space-between; margin-top:14px; gap:10px; }
+
+  /* ---------- HEADER ---------- */
+  header{ margin-bottom:22px; }
+  .eyebrow{
+    font-family:"JetBrains Mono", monospace; font-size:11.5px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--teal-deep); display:flex; align-items:center; gap:8px; margin-bottom:10px;
+  }
+  .eyebrow::before{ content:""; width:20px; height:1px; background:var(--teal-deep); }
+  .headrow{ display:flex; justify-content:space-between; align-items:flex-start; gap:20px; flex-wrap:wrap; }
+  h1{
+    font-family:"Space Grotesk", sans-serif; font-weight:700; font-size:clamp(24px,3.4vw,34px);
+    margin:0 0 6px; letter-spacing:-0.01em;
+  }
+  .subhead{ color:var(--ink-soft); font-size:13.5px; max-width:520px; margin:0; line-height:1.5; }
+
+  /* connection pill */
+  .conn-card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow);
+    padding:14px 16px; min-width:280px;
+  }
+  .pipeline{ display:flex; align-items:center; gap:10px; }
+  .node{
+    flex:1; text-align:center; padding:8px 6px; border-radius:10px; background:var(--grey-bg);
+  }
+  .node .n{ font-family:"JetBrains Mono", monospace; font-weight:600; font-size:18px; }
+  .node .l{ font-size:10px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.06em; margin-top:2px;}
+  .node.google{ background:var(--teal-bg); }
+  .node.google .n{ color:var(--teal-deep); }
+  .track{ flex:1.3; height:2px; background:repeating-linear-gradient(90deg, var(--line) 0 6px, transparent 6px 10px); position:relative; }
+  .track.active{ background:repeating-linear-gradient(90deg, var(--teal) 0 6px, transparent 6px 10px); animation: flow 1s linear infinite; }
+  @keyframes flow{ from{ background-position:0 0; } to{ background-position:16px 0; } }
+  .conn-status{ display:flex; align-items:center; justify-content:space-between; margin-top:12px; gap:10px; }
+  .badge{
+    font-family:"JetBrains Mono", monospace; font-size:11px; padding:4px 9px; border-radius:999px;
+    display:inline-flex; align-items:center; gap:6px;
+  }
+  .badge.off{ background:var(--grey-bg); color:var(--ink-soft); }
+  .badge.on{ background:var(--teal-bg); color:var(--teal-deep); }
+  .badge i{ width:6px; height:6px; border-radius:50%; background:currentColor; display:inline-block; }
+
+  /* ---------- BUTTONS ---------- */
+  .btn{
+    font-family:"Inter", sans-serif; font-weight:600; font-size:12.5px;
+    padding:9px 14px; border-radius:9px; border:1px solid var(--line); background:var(--card);
+    color:var(--ink); cursor:pointer; display:inline-flex; align-items:center; gap:6px;
+    transition: all .12s ease;
+  }
+  .btn:hover{ border-color:var(--teal); color:var(--teal-deep); }
+  .btn.primary{ background:var(--teal); border-color:var(--teal); color:#fff; }
+  .btn.primary:hover{ background:var(--teal-deep); color:#fff; }
+  .btn.danger:hover{ border-color:var(--rose); color:var(--rose); }
+  .btn.small{ padding:6px 10px; font-size:11.5px; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  input[type=file]{ display:none; }
+
+  /* ---------- CONFIG PANEL ---------- */
+  details.config{
+    margin-top:18px; background:var(--card); border:1px solid var(--line); border-radius:14px;
+    box-shadow:var(--shadow); overflow:hidden;
+  }
+  details.config summary{
+    list-style:none; cursor:pointer; padding:14px 18px; display:flex; align-items:center; justify-content:space-between;
+    font-family:"Space Grotesk", sans-serif; font-weight:600; font-size:14.5px;
+  }
+  details.config summary::-webkit-details-marker{ display:none; }
+  summary .arrow{ color:var(--ink-soft); transition: transform .15s ease; }
+  details[open] summary .arrow{ transform:rotate(90deg); }
+  .config-body{ padding:0 18px 20px; border-top:1px solid var(--line); }
+  .config-grid{ display:flex; gap:24px; flex-wrap:wrap; margin-top:16px; }
+  .config-col{ flex:1; min-width:260px; }
+  .config-col h3{ font-family:"Space Grotesk",sans-serif; font-size:13px; margin:0 0 8px; }
+  .config-col ol{ margin:0; padding-left:18px; font-size:12.5px; color:var(--ink-soft); line-height:1.7; }
+  .config-col code{
+    background:var(--grey-bg); padding:1px 6px; border-radius:5px; font-family:"JetBrains Mono",monospace; font-size:11.5px;
+  }
+  .field{ margin-top:10px; }
+  .field label{ display:block; font-size:11.5px; color:var(--ink-soft); margin-bottom:5px; font-family:"JetBrains Mono",monospace; }
+  .field input, .field textarea{
+    width:100%; padding:9px 11px; border-radius:9px; border:1px solid var(--line); background:var(--bg);
+    font-family:"Inter",sans-serif; font-size:13px; color:var(--ink); outline:none;
+  }
+  .field input:focus, .field textarea:focus{ border-color:var(--teal); background:var(--card); }
+  .hint{ font-size:11.5px; color:var(--ink-soft); margin-top:6px; line-height:1.5; }
+  .hint a{ color:var(--teal-deep); }
+
+  /* ---------- TOOLBAR ---------- */
+  .toolbar{ margin-top:24px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .search{ position:relative; flex:1; min-width:200px; }
+  .search input{
+    width:100%; padding:9px 12px 9px 32px; border-radius:9px; border:1px solid var(--line);
+    background:var(--card); font-size:13px; outline:none;
+  }
+  .search input:focus{ border-color:var(--teal); }
+  .search::before{ content:"⌕"; position:absolute; left:11px; top:50%; transform:translateY(-50%); color:var(--ink-soft); }
+  .chips{ display:flex; gap:6px; flex-wrap:wrap; }
+  .chip{
+    font-family:"JetBrains Mono",monospace; font-size:11px; padding:6px 11px; border-radius:999px;
+    border:1px solid var(--line); background:var(--card); color:var(--ink-soft); cursor:pointer;
+  }
+  .chip.active{ background:var(--ink); border-color:var(--ink); color:#fff; }
+  .toggle-wrap{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-soft); }
+  .toggle{
+    width:34px; height:19px; border-radius:999px; background:var(--line); position:relative; cursor:pointer; flex:none;
+    transition: background .15s ease;
+  }
+  .toggle.on{ background:var(--teal); }
+  .toggle .knob{
+    width:15px; height:15px; border-radius:50%; background:#fff; position:absolute; top:2px; left:2px;
+    transition: left .15s ease; box-shadow:0 1px 2px rgba(0,0,0,.25);
+  }
+  .toggle.on .knob{ left:17px; }
+  .spacer{ flex:1; }
+
+  /* ---------- MAIN LAYOUT ---------- */
+  .layout{ margin-top:20px; display:grid; grid-template-columns: 340px 1fr; gap:20px; align-items:start; }
+  @media (max-width: 900px){ .layout{ grid-template-columns: 1fr; } }
+
+  .panel{
+    background:var(--card); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); padding:18px;
+  }
+  .panel h2{ font-family:"Space Grotesk",sans-serif; font-size:14.5px; margin:0 0 12px; }
+
+  .dropzone{
+    border:1.6px dashed var(--line); border-radius:12px; padding:20px 14px; text-align:center; margin-top:16px;
+    color:var(--ink-soft); font-size:12.5px; cursor:pointer; transition: all .12s ease;
+  }
+  .dropzone.drag{ border-color:var(--teal); background:var(--teal-bg); color:var(--teal-deep); }
+  .dropzone b{ color:var(--ink); display:block; margin-bottom:4px; font-size:13px; }
+
+  .import-summary{
+    margin-top:12px; font-size:12px; background:var(--grey-bg); border-radius:9px; padding:10px 12px; display:none;
+  }
+  .import-summary.show{ display:block; }
+
+  /* ---------- TABLE ---------- */
+  .table-wrap{ overflow-x:auto; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  thead th{
+    text-align:left; font-family:"JetBrains Mono",monospace; font-size:10.5px; text-transform:uppercase;
+    letter-spacing:.05em; color:var(--ink-soft); padding:8px 10px; border-bottom:1px solid var(--line);
+  }
+  tbody td{ padding:10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tbody tr:hover{ background:var(--bg); }
+  .c-name{ font-weight:600; }
+  .c-sub{ color:var(--ink-soft); font-size:11.5px; margin-top:2px; }
+  .status-badge{
+    font-family:"JetBrains Mono",monospace; font-size:10.5px; padding:3px 9px; border-radius:999px;
+    display:inline-flex; align-items:center; gap:5px; white-space:nowrap;
+  }
+  .status-badge.pending{ background:var(--amber-bg); color:var(--amber); }
+  .status-badge.synced{ background:var(--teal-bg); color:var(--teal-deep); }
+  .status-badge.error{ background:var(--rose-bg); color:var(--rose); }
+  .status-badge.offline{ background:var(--grey-bg); color:var(--ink-soft); }
+  .row-actions{ display:flex; gap:6px; flex-wrap:nowrap; }
+  .icon-btn{
+    border:1px solid var(--line); background:var(--card); border-radius:8px; width:28px; height:28px;
+    display:inline-flex; align-items:center; justify-content:center; cursor:pointer; color:var(--ink-soft); font-size:12.5px;
+  }
+  .icon-btn:hover{ border-color:var(--teal); color:var(--teal-deep); }
+  .icon-btn.del:hover{ border-color:var(--rose); color:var(--rose); }
+
+  .empty-row td{ text-align:center; color:var(--ink-soft); padding:40px 10px; }
+  .wa-link{ word-break:break-all; font-family:"JetBrains Mono",monospace; font-size:11.5px; color:var(--teal-deep); }
+  .wa-link.disabled{ color:var(--ink-soft); font-family:"Inter",sans-serif; font-style:italic; }
+
+  /* ---------- ADD FORM ---------- */
+  .add-form .field{ margin-top:10px; }
+  .add-form .field:first-child{ margin-top:0; }
+
+  /* ---------- FOOTER ---------- */
+  footer{
+    margin-top:30px; border-top:1px solid var(--line); padding-top:16px; display:flex; flex-wrap:wrap;
+    gap:16px; justify-content:space-between; align-items:center; font-size:11.5px; color:var(--ink-soft);
+  }
+  .legend{ display:flex; gap:14px; flex-wrap:wrap; }
+  .legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .legend i{ width:9px; height:9px; border-radius:50%; }
+  .legend i.pending{ background:var(--amber); }
+  .legend i.synced{ background:var(--teal); }
+  .legend i.error{ background:var(--rose); }
+  #logline{ font-family:"JetBrains Mono",monospace; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" id="themeToggleBtn" type="button">🌙 Sombre</button>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Gestion de contacts</div>
+    <div class="headrow">
+      <div>
+        <h1>Contacts → Google</h1>
+        <p class="subhead">Centralisez vos contacts (Facebook, saisie manuelle, import) et synchronisez-les
+        automatiquement vers votre compte Google Contacts.</p>
+      </div>
+      <div class="conn-card">
+        <div class="pipeline">
+          <div class="node"><div class="n" id="pipeLocal">0</div><div class="l">Locaux</div></div>
+          <div class="track" id="pipeTrack"></div>
+          <div class="node google"><div class="n" id="pipeSynced">0</div><div class="l">Sur Google</div></div>
+        </div>
+        <div class="conn-status">
+          <span class="badge off" id="connBadge"><i></i> Non connecté</span>
+          <button class="btn small primary" id="connectBtn">Connecter Google</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <details class="config" id="configPanel">
+    <summary>
+      <span>⚙️ Configuration de la synchronisation Google (à faire une seule fois)</span>
+      <span class="arrow">›</span>
+    </summary>
+    <div class="config-body">
+      <div class="config-grid">
+        <div class="config-col">
+          <h3>Étapes dans Google Cloud Console</h3>
+          <ol>
+            <li>Allez sur <code>console.cloud.google.com</code> et créez un projet.</li>
+            <li>Menu <em>API et services → Bibliothèque</em> : activez <b>People API</b>.</li>
+            <li><em>Écran de consentement OAuth</em> : type "Externe", ajoutez votre propre email comme utilisateur test.</li>
+            <li><em>Identifiants → Créer des identifiants → ID client OAuth</em>, type <b>Application Web</b>.</li>
+            <li>Dans <b>Origines JavaScript autorisées</b>, ajoutez l'adresse depuis laquelle vous ouvrirez ce fichier
+            (ex. <code>http://localhost:8080</code>).</li>
+            <li>Copiez l'ID client généré (il se termine par <code>.apps.googleusercontent.com</code>) et collez-le ci-dessous.</li>
+          </ol>
+        </div>
+        <div class="config-col">
+          <h3>Identifiant &amp; connexion</h3>
+          <div class="field">
+            <label>ID client OAuth Google</label>
+            <input type="text" id="clientIdInput" placeholder="xxxxxxxxxx.apps.googleusercontent.com">
+          </div>
+          <div class="hint">
+            ⚠️ Ce fichier doit être ouvert via une adresse <code>http://</code> ou <code>https://</code>, pas en
+            double-clic direct (<code>file://</code>) — Google bloque l'authentification sur ce protocole.
+            Le plus simple : ouvrez un terminal dans le dossier du fichier puis lancez
+            <code>python3 -m http.server 8080</code>, et allez sur
+            <code>http://localhost:8080</code> dans votre navigateur.
+          </div>
+          <div class="hint">
+            L'ID client n'est pas une donnée secrète (il est conçu pour être visible côté navigateur) — vous pouvez
+            l'inclure sans risque dans vos sauvegardes exportées.
+          </div>
+        </div>
+      </div>
+    </div>
+  </details>
+
+  <div class="toolbar">
+    <div class="search">
+      <input type="text" id="searchInput" placeholder="Rechercher un contact…">
+    </div>
+    <div class="chips" id="statusChips">
+      <div class="chip active" data-filter="all">Tous</div>
+      <div class="chip" data-filter="pending">En attente</div>
+      <div class="chip" data-filter="synced">Synchronisés</div>
+      <div class="chip" data-filter="error">Erreurs</div>
+    </div>
+    <div class="toggle-wrap">
+      <div class="toggle on" id="autoSyncToggle"><div class="knob"></div></div>
+      Synchro automatique
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="syncAllBtn">Synchroniser tout</button>
+    <button class="btn" id="waLinksBtn">💬 Liens wa.me</button>
+    <button class="btn" id="exportCsvBtn">Exporter CSV</button>
+    <button class="btn" id="exportBtn">Exporter sauvegarde</button>
+    <button class="btn" id="importBackupBtn">Restaurer sauvegarde</button>
+    <input type="file" id="importBackupFile" accept="application/json">
+  </div>
+
+  <section class="panel" id="waPanel" style="display:none; margin-top:20px;">
+    <h2>💬 Liens wa.me — démarrer une discussion</h2>
+    <div class="field">
+      <label>Message pré-rempli (optionnel — {{nom}} est remplacé par le nom du contact)</label>
+      <textarea id="waTemplate" rows="2" placeholder="Bonjour {{nom}}, je fais du déstockage en ce moment, ça t'intéresse ?"></textarea>
+    </div>
+    <div class="hint" id="waSummary" style="margin-top:8px;"></div>
+    <div class="table-wrap" style="margin-top:12px;">
+      <table>
+        <thead><tr><th>Nom</th><th>Téléphone</th><th>Lien wa.me</th><th>Actions</th></tr></thead>
+        <tbody id="waTableBody"></tbody>
+      </table>
+    </div>
+    <div style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="btn primary" id="waCopyAllBtn">Copier tous les liens</button>
+      <button class="btn" id="waExportBtn">Exporter en CSV</button>
+    </div>
+  </section>
+
+  <div class="layout">
+    <aside class="panel">
+      <h2 id="formTitle">Ajouter un contact</h2>
+      <div class="add-form">
+        <div class="field"><label>Nom *</label><input type="text" id="fName" placeholder="Awa Diop"></div>
+        <div class="field"><label>Email</label><input type="text" id="fEmail" placeholder="awa@example.com"></div>
+        <div class="field"><label>Téléphone</label><input type="text" id="fPhone" placeholder="+221 77 000 00 00"></div>
+        <div class="field"><label>Lien profil Facebook</label><input type="text" id="fFb" placeholder="facebook.com/awa.diop"></div>
+        <div class="field"><label>Notes</label><textarea id="fNotes" rows="2" placeholder="Contexte, provenance…"></textarea></div>
+        <button class="btn primary" id="addBtn" style="margin-top:12px; width:100%; justify-content:center;">+ Ajouter le contact</button>
+        <button class="btn" id="cancelEditBtn" style="display:none; margin-top:8px; width:100%; justify-content:center;">Annuler la modification</button>
+      </div>
+
+      <h2 style="margin-top:22px;">Importer des contacts</h2>
+      <div class="dropzone" id="dropzone">
+        <b>Déposez un fichier ici</b>
+        Export Facebook (friends.json), fichier CSV ou JSON générique
+        <div style="margin-top:8px;"><button class="btn small" id="browseBtn" type="button">Parcourir…</button></div>
+        <input type="file" id="importDataFile" accept=".json,.csv,application/json,text/csv">
+      </div>
+      <div class="import-summary" id="importSummary"></div>
+      <div class="hint" style="margin-top:10px;">
+        Astuce : Facebook (Paramètres → Vos informations Facebook → Télécharger) n'exporte que le <b>nom</b> de vos
+        amis, jamais leur email ou téléphone. Complétez ces champs manuellement après import si besoin.
+      </div>
+    </aside>
+
+    <section class="panel">
+      <h2>Contacts (<span id="tableCount">0</span>)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Coordonnées</th>
+              <th>Statut</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pagination" style="display:none;">
+        <button class="btn small" id="prevPageBtn">‹ Précédent</button>
+        <span class="hint" id="pageInfo"></span>
+        <button class="btn small" id="nextPageBtn">Suivant ›</button>
+      </div>
+    </section>
+  </div>
+
+  <footer>
+    <div class="legend">
+      <span><i class="pending"></i> En attente</span>
+      <span><i class="synced"></i> Synchronisé</span>
+      <span><i class="error"></i> Erreur</span>
+    </div>
+    <div id="logline">Aucune action effectuée cette session</div>
+  </footer>
+</div>
+
+<script>
+/* ============================================================
+   STATE — persisté automatiquement dans localStorage (voir saveState/loadState).
+   Exporter/Restaurer reste disponible pour une sauvegarde portable (fichier).
+   ============================================================ */
+let contacts = [];
+let filter = { status: "all", query: "" };
+let autoSync = true;
+let editingContactId = null;
+let page = 1;
+const PAGE_SIZE = 50;
+let google = { clientId: "", tokenClient: null, accessToken: null, tokenExpiry: 0, connected: false };
+
+function uid(){ return 'c_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+
+/* ============================================================
+   PERSISTANCE LOCALE (localStorage) — jamais le token d'accès Google
+   (court, sensible) : seuls contacts/clientId/préférences sont sauvegardés.
+   ============================================================ */
+const STORAGE_KEY = 'nexus-contacts-sync-state-v1';
+
+function saveState(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ contacts, clientId: google.clientId, autoSync }));
+  }catch(err){ console.warn('Sauvegarde locale impossible :', err); }
+}
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return false;
+    const data = JSON.parse(raw);
+    if(Array.isArray(data.contacts)) contacts = data.contacts;
+    if(data.clientId){
+      google.clientId = data.clientId;
+      document.getElementById('clientIdInput').value = data.clientId;
+    }
+    if(typeof data.autoSync === 'boolean') autoSync = data.autoSync;
+    return contacts.length > 0;
+  }catch(err){
+    console.warn('Lecture de la sauvegarde locale impossible :', err);
+    return false;
+  }
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+const tableBody = document.getElementById('tableBody');
+
+function matches(c){
+  if(filter.status !== "all" && c.syncStatus !== filter.status) return false;
+  if(filter.query){
+    const q = filter.query;
+    return [c.name, c.email, c.phone, c.notes].some(v => (v||"").toLowerCase().includes(q));
+  }
+  return true;
+}
+
+function render(){
+  const list = contacts.filter(matches);
+  const totalPages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+  if(page > totalPages) page = totalPages;
+  if(page < 1) page = 1;
+  const pageList = list.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE);
+
+  tableBody.innerHTML = "";
+  if(pageList.length === 0){
+    tableBody.innerHTML = `<tr class="empty-row"><td colspan="4">Aucun contact${filter.query || filter.status!=="all" ? " ne correspond à ce filtre" : " — ajoutez-en un ou importez un fichier"}.</td></tr>`;
+  } else {
+    pageList.forEach(c => tableBody.appendChild(rowEl(c)));
+  }
+  document.getElementById('tableCount').textContent = contacts.length;
+  renderPagination(list.length, totalPages);
+  renderPipeline();
+  const waPanel = document.getElementById('waPanel');
+  if(waPanel && waPanel.style.display !== 'none') renderWaPanel();
+}
+
+function renderPagination(filteredCount, totalPages){
+  const el = document.getElementById('pagination');
+  if(filteredCount <= PAGE_SIZE){ el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  document.getElementById('pageInfo').textContent = `Page ${page} / ${totalPages} (${filteredCount} contact(s))`;
+  document.getElementById('prevPageBtn').disabled = page <= 1;
+  document.getElementById('nextPageBtn').disabled = page >= totalPages;
+}
+
+function statusLabel(s){
+  return { pending:"En attente", synced:"Synchronisé", error:"Erreur", offline:"Hors ligne" }[s] || s;
+}
+
+function rowEl(c){
+  const tr = document.createElement('tr');
+  tr.dataset.id = c.id;
+  const coord = [c.email, c.phone, c.facebookUrl].filter(Boolean).join(' · ') || '<span style="color:var(--ink-soft)">—</span>';
+  tr.innerHTML = `
+    <td>
+      <div class="c-name">${escapeHtml(c.name)}</div>
+      ${c.notes ? `<div class="c-sub">${escapeHtml(c.notes)}</div>` : ""}
+    </td>
+    <td>${coord}</td>
+    <td>
+      <span class="status-badge ${c.syncStatus}">${statusLabel(c.syncStatus)}</span>
+      ${c.lastError ? `<div class="c-sub" style="color:var(--rose)">${escapeHtml(c.lastError)}</div>` : ""}
+    </td>
+    <td>
+      <div class="row-actions">
+        <button class="icon-btn" data-action="sync" title="Synchroniser maintenant">⟳</button>
+        ${phoneDigits(c.phone) ? `<button class="icon-btn" data-action="wa" title="Ouvrir sur WhatsApp">💬</button>` : ""}
+        <button class="icon-btn" data-action="edit" title="Modifier">✎</button>
+        <button class="icon-btn del" data-action="delete" title="Supprimer">✕</button>
+      </div>
+    </td>
+  `;
+  return tr;
+}
+
+function escapeHtml(s){
+  return (s||"").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function renderPipeline(){
+  document.getElementById('pipeLocal').textContent = contacts.length;
+  document.getElementById('pipeSynced').textContent = contacts.filter(c=>c.syncStatus==="synced").length;
+  document.getElementById('pipeTrack').classList.toggle('active', google.connected && contacts.some(c=>c.syncStatus==="pending"));
+}
+
+/* ============================================================
+   CONTACT CRUD
+   ============================================================ */
+function addContact(data){
+  const c = {
+    id: uid(),
+    name: data.name.trim(),
+    email: (data.email||"").trim(),
+    phone: (data.phone||"").trim(),
+    facebookUrl: (data.facebookUrl||"").trim(),
+    notes: (data.notes||"").trim(),
+    source: data.source || "manual",
+    syncStatus: google.connected ? "pending" : "offline",
+    googleResourceName: null,
+    googleEtag: null,
+    lastError: null
+  };
+  contacts.push(c);
+  return c;
+}
+
+function deleteContact(id){
+  contacts = contacts.filter(c => c.id !== id);
+  if(editingContactId === id) cancelEdit();
+  render();
+  saveState();
+  log("Contact supprimé");
+}
+
+function normName(n){ return String(n||"").trim().toLowerCase().replace(/\s+/g,' '); }
+
+/** Doublon = même nom normalisé, et même téléphone si les deux en ont un. */
+function findDuplicate(candidate, excludeId){
+  const nName = normName(candidate.name);
+  const nPhone = phoneDigits(candidate.phone);
+  return contacts.find(c => {
+    if(c.id === excludeId) return false;
+    if(normName(c.name) !== nName) return false;
+    const cPhone = phoneDigits(c.phone);
+    if(nPhone && cPhone) return nPhone === cPhone;
+    return true;
+  });
+}
+
+function startEdit(id){
+  const c = contacts.find(x => x.id === id);
+  if(!c) return;
+  editingContactId = id;
+  document.getElementById('fName').value = c.name;
+  document.getElementById('fEmail').value = c.email;
+  document.getElementById('fPhone').value = c.phone;
+  document.getElementById('fFb').value = c.facebookUrl;
+  document.getElementById('fNotes').value = c.notes;
+  document.getElementById('formTitle').textContent = `Modifier : ${c.name}`;
+  document.getElementById('addBtn').textContent = '✓ Enregistrer les modifications';
+  document.getElementById('cancelEditBtn').style.display = 'block';
+  document.getElementById('fName').closest('aside').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function cancelEdit(){
+  editingContactId = null;
+  ['fName','fEmail','fPhone','fFb','fNotes'].forEach(id => document.getElementById(id).value = "");
+  document.getElementById('formTitle').textContent = 'Ajouter un contact';
+  document.getElementById('addBtn').textContent = '+ Ajouter le contact';
+  document.getElementById('cancelEditBtn').style.display = 'none';
+}
+document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
+
+tableBody.addEventListener('click', (e) => {
+  const btn = e.target.closest('.icon-btn');
+  if(!btn) return;
+  const id = btn.closest('tr').dataset.id;
+  const action = btn.dataset.action;
+  if(action === "delete") {
+    if(confirm("Supprimer ce contact localement ? (Il restera sur Google Contacts si déjà synchronisé)")) deleteContact(id);
+  }
+  else if(action === "edit") startEdit(id);
+  else if(action === "sync"){
+    const c = contacts.find(x=>x.id===id);
+    if(!google.connected){ alert("Connectez-vous d'abord à Google."); return; }
+    syncContact(c);
+  }
+  else if(action === "wa"){
+    const c = contacts.find(x=>x.id===id);
+    const link = buildWaLink(c, document.getElementById('waTemplate').value);
+    if(link) window.open(link, '_blank', 'noopener');
+  }
+});
+
+/* ============================================================
+   ADD FORM
+   ============================================================ */
+document.getElementById('addBtn').addEventListener('click', () => {
+  const name = document.getElementById('fName').value.trim();
+  if(!name){ alert("Le nom est obligatoire."); return; }
+  const data = {
+    name,
+    email: document.getElementById('fEmail').value,
+    phone: document.getElementById('fPhone').value,
+    facebookUrl: document.getElementById('fFb').value,
+    notes: document.getElementById('fNotes').value,
+  };
+
+  if(editingContactId){
+    const c = contacts.find(x => x.id === editingContactId);
+    if(!c){ cancelEdit(); return; }
+    const dup = findDuplicate(data, c.id);
+    if(dup && !confirm(`« ${dup.name} » existe déjà avec des coordonnées similaires. Enregistrer quand même ?`)) return;
+    c.name = data.name;
+    c.email = data.email.trim();
+    c.phone = data.phone.trim();
+    c.facebookUrl = data.facebookUrl.trim();
+    c.notes = data.notes.trim();
+    if(google.connected) c.syncStatus = "pending";
+    cancelEdit();
+    render();
+    saveState();
+    log(`Contact modifié : ${c.name}`);
+    if(google.connected && autoSync) syncContact(c);
+    return;
+  }
+
+  const dup = findDuplicate(data);
+  if(dup && !confirm(`« ${dup.name} » existe déjà avec des coordonnées similaires. Ajouter quand même ?`)) return;
+  const c = addContact({ ...data, source: "manual" });
+  ['fName','fEmail','fPhone','fFb','fNotes'].forEach(id => document.getElementById(id).value = "");
+  render();
+  saveState();
+  log(`Contact ajouté : ${c.name}`);
+  if(google.connected && autoSync) syncContact(c);
+});
+
+/* ============================================================
+   IMPORT — Facebook JSON / CSV / JSON générique
+   ============================================================ */
+const dropzone = document.getElementById('dropzone');
+const importDataFile = document.getElementById('importDataFile');
+document.getElementById('browseBtn').addEventListener('click', () => importDataFile.click());
+dropzone.addEventListener('click', (e) => { if(e.target.id !== 'browseBtn') importDataFile.click(); });
+['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', e => {
+  const file = e.dataTransfer.files[0];
+  if(file) handleImportFile(file);
+});
+importDataFile.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if(file) handleImportFile(file);
+  e.target.value = "";
+});
+
+function handleImportFile(file){
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const text = ev.target.result;
+    let parsed = [];
+    try{
+      if(file.name.toLowerCase().endsWith('.csv')){
+        parsed = parseCSV(text);
+      } else {
+        const json = JSON.parse(text);
+        parsed = parseJSONImport(json);
+      }
+    }catch(err){
+      alert("Impossible de lire ce fichier : " + err.message);
+      return;
+    }
+    if(parsed.length === 0){
+      alert("Aucun contact reconnu dans ce fichier.");
+      return;
+    }
+    let added = 0, skipped = 0;
+    const seenInBatch = new Set();
+    parsed.forEach(p => {
+      if(!p.name) return;
+      const batchKey = normName(p.name) + '|' + phoneDigits(p.phone);
+      if(seenInBatch.has(batchKey)){ skipped++; return; } // doublon dans le fichier lui-même
+      if(findDuplicate(p)){ skipped++; return; } // doublon avec un contact déjà présent
+      seenInBatch.add(batchKey);
+      addContact({ ...p, source: "import" });
+      added++;
+    });
+    render();
+    saveState();
+    const summary = document.getElementById('importSummary');
+    summary.classList.add('show');
+    summary.textContent = `${added} contact(s) importé(s)` + (skipped > 0 ? ` · ${skipped} doublon(s) ignoré(s)` : "") + ` depuis ${file.name}.`;
+    log(`${added} importés, ${skipped} doublon(s) ignoré(s) depuis ${file.name}`);
+    if(google.connected && autoSync) syncAllPending();
+  };
+  reader.readAsText(file);
+}
+
+function parseJSONImport(json){
+  // Format export Facebook (friends.json)
+  if(json && Array.isArray(json.friends_v2)){
+    return json.friends_v2.map(f => ({ name: f.name, notes: f.timestamp ? "Ami Facebook depuis " + new Date(f.timestamp*1000).toLocaleDateString('fr-FR') : "" }));
+  }
+  // Format tableau générique [{name, email, phone, notes, facebookUrl}]
+  if(Array.isArray(json)){
+    return json.map(o => ({
+      name: o.name || o.Name || o.nom || "",
+      email: o.email || o.Email || "",
+      phone: o.phone || o.Phone || o.telephone || o.téléphone || "",
+      facebookUrl: o.facebookUrl || o.facebook || o.profile || "",
+      notes: o.notes || o.note || ""
+    }));
+  }
+  return [];
+}
+
+function parseCSV(text){
+  const lines = text.replace(/\r/g,"").split("\n").filter(l => l.trim().length);
+  if(lines.length < 2) return [];
+  const headers = splitCSVLine(lines[0]).map(h => h.trim().toLowerCase());
+  const idx = {
+    name: headers.findIndex(h => ["name","nom"].includes(h)),
+    email: headers.findIndex(h => ["email","e-mail"].includes(h)),
+    phone: headers.findIndex(h => ["phone","telephone","téléphone","tel"].includes(h)),
+    facebookUrl: headers.findIndex(h => ["facebook","facebookurl","profile"].includes(h)),
+    notes: headers.findIndex(h => ["notes","note"].includes(h)),
+  };
+  return lines.slice(1).map(line => {
+    const cols = splitCSVLine(line);
+    return {
+      name: idx.name>-1 ? cols[idx.name] : "",
+      email: idx.email>-1 ? cols[idx.email] : "",
+      phone: idx.phone>-1 ? cols[idx.phone] : "",
+      facebookUrl: idx.facebookUrl>-1 ? cols[idx.facebookUrl] : "",
+      notes: idx.notes>-1 ? cols[idx.notes] : "",
+    };
+  });
+}
+
+function splitCSVLine(line){
+  const out = []; let cur = ""; let inQuotes = false;
+  for(let i=0;i<line.length;i++){
+    const ch = line[i];
+    if(ch === '"'){ inQuotes = !inQuotes; }
+    else if(ch === ',' && !inQuotes){ out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out.map(s => s.trim().replace(/^"|"$/g,""));
+}
+
+/* ============================================================
+   FILTERS / TOOLBAR
+   ============================================================ */
+document.getElementById('searchInput').addEventListener('input', e => {
+  filter.query = e.target.value.trim().toLowerCase();
+  page = 1;
+  render();
+});
+document.getElementById('statusChips').addEventListener('click', e => {
+  const chip = e.target.closest('.chip');
+  if(!chip) return;
+  document.querySelectorAll('#statusChips .chip').forEach(c => c.classList.remove('active'));
+  chip.classList.add('active');
+  filter.status = chip.dataset.filter;
+  page = 1;
+  render();
+});
+document.getElementById('prevPageBtn').addEventListener('click', () => { page--; render(); });
+document.getElementById('nextPageBtn').addEventListener('click', () => { page++; render(); });
+document.getElementById('autoSyncToggle').addEventListener('click', function(){
+  autoSync = !autoSync;
+  this.classList.toggle('on', autoSync);
+  saveState();
+  log(autoSync ? "Synchro automatique activée" : "Synchro automatique désactivée");
+});
+
+/* ============================================================
+   BACKUP EXPORT / IMPORT (sauvegarde complète de l'app)
+   ============================================================ */
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const payload = { appExport: true, exportedAt: new Date().toISOString(), clientId: google.clientId, contacts };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `contacts-sync-backup-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  log("Sauvegarde exportée");
+});
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  if(contacts.length === 0){ alert("Aucun contact à exporter."); return; }
+  const header = ["Nom","Email","Téléphone","Facebook","Notes","Statut"];
+  const rows = contacts.map(c => [c.name, c.email, c.phone, c.facebookUrl, c.notes, statusLabel(c.syncStatus)]);
+  const csv = [header.join(","), ...rows.map(r => r.map(csvCell).join(","))].join("\n");
+  const blob = new Blob(["﻿" + csv], { type:"text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `contacts-nexus-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  log(`${contacts.length} contact(s) exportés en CSV`);
+});
+document.getElementById('importBackupBtn').addEventListener('click', () => document.getElementById('importBackupFile').click());
+document.getElementById('importBackupFile').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try{
+      const payload = JSON.parse(ev.target.result);
+      if(payload && payload.appExport && Array.isArray(payload.contacts)){
+        contacts = payload.contacts;
+        if(payload.clientId){
+          google.clientId = payload.clientId;
+          document.getElementById('clientIdInput').value = payload.clientId;
+        }
+        render();
+        saveState();
+        log(`Sauvegarde restaurée (export du ${new Date(payload.exportedAt).toLocaleString('fr-FR')})`);
+      } else {
+        alert("Fichier de sauvegarde invalide.");
+      }
+    }catch(err){ alert("Impossible de lire ce fichier."); }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+
+/* ============================================================
+   GOOGLE OAUTH (Google Identity Services — flux 100% côté client)
+   ============================================================ */
+document.getElementById('clientIdInput').addEventListener('change', e => {
+  google.clientId = e.target.value.trim();
+  saveState();
+});
+
+document.getElementById('connectBtn').addEventListener('click', () => {
+  if(google.connected){
+    disconnectGoogle();
+    return;
+  }
+  const clientId = document.getElementById('clientIdInput').value.trim();
+  if(!clientId){
+    alert("Renseignez d'abord votre ID client OAuth Google dans le panneau de configuration ci-dessus.");
+    document.getElementById('configPanel').open = true;
+    return;
+  }
+  google.clientId = clientId;
+
+  if(typeof window.google === 'undefined' || !window.google.accounts){
+    alert("La librairie Google n'a pas pu se charger. Vérifiez votre connexion internet et que le fichier est bien servi via http(s) et non file://.");
+    return;
+  }
+
+  try{
+    google.tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: "https://www.googleapis.com/auth/contacts",
+      callback: (resp) => {
+        if(resp.error){
+          alert("Échec de connexion Google : " + resp.error);
+          return;
+        }
+        google.accessToken = resp.access_token;
+        google.tokenExpiry = Date.now() + (resp.expires_in*1000);
+        google.connected = true;
+        updateConnBadge();
+        log("Connecté à Google Contacts");
+        if(autoSync) syncAllPending();
+      }
+    });
+    google.tokenClient.requestAccessToken();
+  }catch(err){
+    alert("Erreur d'initialisation OAuth : " + err.message);
+  }
+});
+
+function disconnectGoogle(){
+  if(google.accessToken && window.google && window.google.accounts){
+    window.google.accounts.oauth2.revoke(google.accessToken, () => {});
+  }
+  google.accessToken = null;
+  google.connected = false;
+  contacts.forEach(c => { if(c.syncStatus !== "synced") c.syncStatus = "offline"; });
+  updateConnBadge();
+  render();
+  saveState();
+  log("Déconnecté de Google");
+}
+
+function updateConnBadge(){
+  const badge = document.getElementById('connBadge');
+  const btn = document.getElementById('connectBtn');
+  if(google.connected){
+    badge.className = "badge on"; badge.innerHTML = "<i></i> Connecté";
+    btn.textContent = "Déconnecter";
+  } else {
+    badge.className = "badge off"; badge.innerHTML = "<i></i> Non connecté";
+    btn.textContent = "Connecter Google";
+  }
+  renderPipeline();
+}
+
+function ensureFreshToken(){
+  return new Promise((resolve, reject) => {
+    if(google.accessToken && Date.now() < google.tokenExpiry - 30000){
+      resolve(google.accessToken);
+      return;
+    }
+    if(!google.tokenClient){ reject(new Error("Non connecté")); return; }
+    google.tokenClient.callback = (resp) => {
+      if(resp.error){ reject(new Error(resp.error)); return; }
+      google.accessToken = resp.access_token;
+      google.tokenExpiry = Date.now() + (resp.expires_in*1000);
+      resolve(google.accessToken);
+    };
+    google.tokenClient.requestAccessToken({ prompt: '' });
+  });
+}
+
+/* ============================================================
+   SYNC — People API (createContact / updateContact)
+   ============================================================ */
+function personPayload(c){
+  const parts = c.name.trim().split(/\s+/);
+  const givenName = parts.shift() || c.name;
+  const familyName = parts.join(' ');
+  const person = { names: [{ givenName, familyName }] };
+  if(c.email) person.emailAddresses = [{ value: c.email }];
+  if(c.phone) person.phoneNumbers = [{ value: c.phone }];
+  if(c.facebookUrl) person.urls = [{ value: c.facebookUrl, type: "other" }];
+  if(c.notes) person.biographies = [{ value: c.notes, contentType: "TEXT" }];
+  return person;
+}
+
+async function syncContact(c){
+  if(!google.connected){ return; }
+  c.syncStatus = "pending";
+  c.lastError = null;
+  render();
+  try{
+    const token = await ensureFreshToken();
+    let res, body;
+    if(c.googleResourceName){
+      res = await fetch(`https://people.googleapis.com/v1/${c.googleResourceName}:updateContact?updatePersonFields=names,emailAddresses,phoneNumbers,biographies,urls`, {
+        method: "PATCH",
+        headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ ...personPayload(c), etag: c.googleEtag, resourceName: c.googleResourceName })
+      });
+    } else {
+      res = await fetch(`https://people.googleapis.com/v1/people:createContact`, {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify(personPayload(c))
+      });
+    }
+    body = await res.json();
+    if(!res.ok){
+      throw new Error(body.error && body.error.message ? body.error.message : ("Erreur HTTP " + res.status));
+    }
+    c.googleResourceName = body.resourceName;
+    c.googleEtag = body.etag;
+    c.syncStatus = "synced";
+    c.lastError = null;
+    log(`Synchronisé : ${c.name}`);
+  }catch(err){
+    c.syncStatus = "error";
+    c.lastError = err.message;
+    log(`Erreur de synchro pour ${c.name} : ${err.message}`);
+  }
+  render();
+  saveState();
+}
+
+async function syncAllPending(){
+  if(!google.connected) return;
+  const queue = contacts.filter(c => c.syncStatus === "pending" || c.syncStatus === "offline" || c.syncStatus === "error");
+  for(const c of queue){
+    await syncContact(c);
+    await new Promise(r => setTimeout(r, 250)); // ménage le quota API
+  }
+}
+document.getElementById('syncAllBtn').addEventListener('click', () => {
+  if(!google.connected){ alert("Connectez-vous d'abord à Google."); return; }
+  syncAllPending();
+});
+
+/* ============================================================
+   WA.ME — liens clic-to-chat WhatsApp (pas d'envoi automatisé :
+   c'est le contact qui ouvre la discussion en cliquant)
+   ============================================================ */
+function phoneDigits(phone){
+  const raw = String(phone||"").replace(/\D/g,"");
+  if(!raw) return "";
+  if(raw.startsWith("221")) return raw; // déjà au format international Sénégal
+  if(raw.length === 9) return "221" + raw; // numéro local sans indicatif
+  return raw;
+}
+
+function buildWaLink(c, template){
+  const digits = phoneDigits(c.phone);
+  if(!digits) return null;
+  const msg = (template||"").trim().replace(/\{\{\s*nom\s*\}\}/gi, c.name);
+  return `https://wa.me/${digits}${msg ? "?text=" + encodeURIComponent(msg) : ""}`;
+}
+
+function renderWaPanel(){
+  const template = document.getElementById('waTemplate').value;
+  const withPhone = contacts.filter(c => phoneDigits(c.phone));
+  const withoutPhone = contacts.length - withPhone.length;
+  document.getElementById('waSummary').textContent =
+    `${withPhone.length} lien(s) généré(s)` +
+    (withoutPhone > 0 ? ` · ${withoutPhone} contact(s) sans numéro exclu(s) (complétez leur téléphone via ✎)` : "");
+
+  const tbody = document.getElementById('waTableBody');
+  tbody.innerHTML = "";
+  if(withPhone.length === 0){
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="4">Aucun contact avec un numéro de téléphone pour l'instant.</td></tr>`;
+    return;
+  }
+  withPhone.forEach(c => {
+    const link = buildWaLink(c, template);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="c-name">${escapeHtml(c.name)}</td>
+      <td>${escapeHtml(c.phone)}</td>
+      <td><a class="wa-link" href="${link}" target="_blank" rel="noopener">${link}</a></td>
+      <td>
+        <div class="row-actions">
+          <button class="icon-btn" data-wa-copy="${escapeHtml(link)}" title="Copier le lien">⧉</button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('waLinksBtn').addEventListener('click', () => {
+  const panel = document.getElementById('waPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if(panel.style.display === 'block'){
+    renderWaPanel();
+    panel.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+});
+document.getElementById('waTemplate').addEventListener('input', renderWaPanel);
+document.getElementById('waTableBody').addEventListener('click', e => {
+  const btn = e.target.closest('[data-wa-copy]');
+  if(!btn) return;
+  navigator.clipboard.writeText(btn.dataset.waCopy).then(() => log("Lien wa.me copié")).catch(() => alert("Impossible de copier automatiquement, copiez le lien manuellement."));
+});
+document.getElementById('waCopyAllBtn').addEventListener('click', () => {
+  const template = document.getElementById('waTemplate').value;
+  const lines = contacts.filter(c => phoneDigits(c.phone)).map(c => `${c.name} : ${buildWaLink(c, template)}`);
+  if(lines.length === 0){ alert("Aucun lien à copier."); return; }
+  navigator.clipboard.writeText(lines.join("\n")).then(() => log(`${lines.length} lien(s) wa.me copié(s)`)).catch(() => alert("Impossible de copier automatiquement."));
+});
+document.getElementById('waExportBtn').addEventListener('click', () => {
+  const template = document.getElementById('waTemplate').value;
+  const rows = contacts.filter(c => phoneDigits(c.phone)).map(c => [c.name, c.phone, buildWaLink(c, template)]);
+  if(rows.length === 0){ alert("Aucun lien à exporter."); return; }
+  const csv = ["Nom,Téléphone,Lien wa.me", ...rows.map(r => r.map(csvCell).join(","))].join("\n");
+  const blob = new Blob(["﻿" + csv], { type:"text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `liens-wa-me-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  log(`${rows.length} lien(s) wa.me exportés en CSV`);
+});
+function csvCell(v){
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+
+/* ============================================================
+   LOG
+   ============================================================ */
+function log(msg){
+  document.getElementById('logline').textContent = `${msg} · ${new Date().toLocaleTimeString('fr-FR')}`;
+}
+
+/* ============================================================
+   THÈME SOMBRE / CLAIR
+   ============================================================ */
+const THEME_KEY = 'nexus-contacts-theme';
+
+function applyTheme(theme){
+  document.body.dataset.theme = theme;
+  document.getElementById('themeToggleBtn').textContent = theme === 'dark' ? '☀️ Clair' : '🌙 Sombre';
+  try{ localStorage.setItem(THEME_KEY, theme); }catch(err){ /* localStorage indisponible, tant pis pour la persistance du thème */ }
+}
+
+document.getElementById('themeToggleBtn').addEventListener('click', () => {
+  applyTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
+});
+
+/* ============================================================
+   INIT
+   ============================================================ */
+let savedTheme = null;
+try{ savedTheme = localStorage.getItem(THEME_KEY); }catch(err){ /* pas de localStorage */ }
+const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+applyTheme(savedTheme || (prefersDark ? 'dark' : 'light'));
+
+const restored = loadState();
+// Le token Google n'est jamais persisté (courte durée de vie) : après un
+// rechargement il faut se reconnecter, donc tout contact non "synced" repasse "offline".
+contacts.forEach(c => { if(c.syncStatus !== "synced") c.syncStatus = "offline"; });
+document.getElementById('autoSyncToggle').classList.toggle('on', autoSync);
+render();
+updateConnBadge();
+if(restored) log(`Sauvegarde locale restaurée (${contacts.length} contact(s)) — reconnectez-vous à Google pour reprendre la synchro`);
+window.addEventListener('beforeunload', saveState);
+</script>
+</body>
+</html>

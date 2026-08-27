@@ -112,7 +112,7 @@ async function tryInjectProductPreview(context, reqUrl) {
   try {
     const p = await sbGetOne(
       context.env,
-      `products?select=id,name,description,image_url,price,category,stock&id=eq.${encodeURIComponent(id)}&active=eq.true&limit=1`
+      `products?select=id,name,description,image_url,price,category,stock,is_educational,educational_specs,file_url&id=eq.${encodeURIComponent(id)}&active=eq.true&limit=1`
     );
     if (!p) return null;
 
@@ -124,7 +124,9 @@ async function tryInjectProductPreview(context, reqUrl) {
 
     const origin = context.env.SITE_URL || reqUrl.origin;
     const EUR_TO_FCFA = 655.957;
-    const priceFcfa = p.price ? Math.round(Number(p.price) * EUR_TO_FCFA) : 0;
+    const isEducational = p.is_educational === true;
+    const edu = p.educational_specs || {};
+    const priceFcfa = (p.price && !isEducational) ? Math.round(Number(p.price) * EUR_TO_FCFA) : 0;
     const img = proxyImg(p.image_url, origin);
     const desc = String(p.description || "").replace(/\s+/g, " ").trim().slice(0, 500);
     // [PHOTO GÉNÉRIQUE / AVERTISSEMENT IMMOBILIER] cf. functions/produit/[id].js —
@@ -140,8 +142,10 @@ async function tryInjectProductPreview(context, reqUrl) {
       ${img ? `<img src="${esc(img)}" alt="${esc(p.name)}" style="max-width:100%;height:auto;border-radius:12px">` : ""}
       ${isGenericPhoto ? `<div style="display:flex;gap:.5rem;align-items:flex-start;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:.6rem .75rem;font-size:.8rem;line-height:1.4;margin-top:.4rem">ℹ️ Photo d’illustration générique — ce bien n’a pas encore de photo réelle. Contactez le vendeur pour des photos et informations à jour.</div>` : ""}
       ${safetyNotice ? `<div style="display:flex;gap:.5rem;align-items:flex-start;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:.6rem .75rem;font-size:.8rem;line-height:1.4;margin-top:.4rem">⚠️ ${esc(safetyNotice)}</div>` : ""}
-      ${priceFcfa ? `<div style="color:#00853E;font-size:1.6rem;font-weight:800;margin:.6rem 0">${priceFcfa.toLocaleString("fr-FR")} FCFA</div>` : ""}
+      ${isEducational ? `<div style="display:flex;gap:.5rem;align-items:flex-start;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:8px;padding:.6rem .75rem;font-size:.8rem;line-height:1.4;margin-top:.4rem">ℹ️ Contenu libre sous licence ${esc(edu.license || 'CC BY-SA 4.0')}, issu de ${esc(edu.source || 'Wikiversité')}. Document non affilié aux programmes scolaires officiels du Sénégal.</div>` : ""}
+      ${isEducational ? `<div style="color:#16A34A;font-size:1.6rem;font-weight:800;margin:.6rem 0">Gratuit</div>` : (priceFcfa ? `<div style="color:#00853E;font-size:1.6rem;font-weight:800;margin:.6rem 0">${priceFcfa.toLocaleString("fr-FR")} FCFA</div>` : "")}
       ${desc ? `<p style="line-height:1.6">${esc(desc)}</p>` : ""}
+      ${isEducational && p.file_url ? `<p><a href="${esc(p.file_url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#00853E;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:700">Télécharger gratuitement (PDF) →</a></p>` : ""}
     </div>`;
 
     return new Response(html.replace('<div id="root"></div>', `<div id="root">${snippet}</div>`), {

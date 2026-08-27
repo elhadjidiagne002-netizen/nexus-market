@@ -69,7 +69,12 @@ export function renderListingPage(o) {
     ? `${o.origin}/?troc=${encodeURIComponent(o.id)}`
     : `${o.origin}/?product=${encodeURIComponent(o.id)}`;
   const title = redactContact(o.title || 'Annonce NEXUS Market');
-  const priceTxt = o.priceFcfa ? `${Number(o.priceFcfa).toLocaleString('fr-FR')} FCFA` : '';
+  // [NEXUS ÉDUCATION 2026-08-27] Téléchargement gratuit (CC BY-SA, Wikiversité) —
+  // pas un vrai prix (price=0.01 en base, contrainte CHECK products_price_check
+  // n'autorise pas 0) : n'afficher ni Offer/JSON-LD payant ni "7 FCFA", et
+  // rediriger le CTA vers le PDF plutôt que vers l'app de commande.
+  const isEdu = !!o.educational;
+  const priceTxt = isEdu ? 'Gratuit' : (o.priceFcfa ? `${Number(o.priceFcfa).toLocaleString('fr-FR')} FCFA` : '');
   const fullDesc = redactContact(String(o.description || `${title} — ${o.category || ''} ${o.city || ''} sur NEXUS Market Sénégal.`)
     .replace(/\s+/g, ' ').trim());
   // [AUDIT ADSENSE] meta description bornée à 300 car. (norme SEO/snippet), MAIS
@@ -82,13 +87,18 @@ export function renderListingPage(o) {
   const bodyDesc = fullDesc.slice(0, 4000);
   const img = proxyImg(o.image, o.origin) || `${o.origin}/og-image.png`;
 
-  // ── Product ────────────────────────────────────────────────
-  const product = {
-    '@type': 'Product', name: title, image: [img], description: desc,
-  };
+  // ── Product / LearningResource ────────────────────────────────
+  const product = isEdu
+    ? {
+        '@type': 'LearningResource', name: title, image: [img], description: desc,
+        learningResourceType: 'Cours', isAccessibleForFree: true,
+        educationalLevel: o.educationalLevel || undefined,
+        license: o.licenseUrl || undefined,
+      }
+    : { '@type': 'Product', name: title, image: [img], description: desc };
   if (o.category) product.category = o.category;
   if (o.brand) product.brand = { '@type': 'Brand', name: o.brand };
-  if (o.priceFcfa) {
+  if (!isEdu && o.priceFcfa) {
     const offer = {
       '@type': 'Offer', price: Number(o.priceFcfa), priceCurrency: 'XOF',
       availability: o.inStock === false ? 'https://schema.org/OutOfStock' : 'https://schema.org/InStock',
@@ -158,7 +168,7 @@ ${hreflangTags(url)}
 <meta property="og:url" content="${esc(url)}">
 <meta property="og:site_name" content="NEXUS Market Sénégal">
 <meta property="og:locale" content="fr_SN">
-${o.priceFcfa ? `<meta property="product:price:amount" content="${Number(o.priceFcfa)}"><meta property="product:price:currency" content="XOF">` : ''}
+${(!isEdu && o.priceFcfa) ? `<meta property="product:price:amount" content="${Number(o.priceFcfa)}"><meta property="product:price:currency" content="XOF">` : ''}
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${esc(title)}">
 <meta name="twitter:image" content="${esc(img)}">
@@ -172,15 +182,16 @@ ${(rc > 0 && rv > 0) ? `<div class="rating">★ ${rv.toFixed(1)} <span style="co
 ${o.image ? `<p><img src="${esc(img)}" alt="${esc(title)}" loading="lazy"></p>` : ''}
 ${o.genericPhoto ? `<div class="notice">ℹ️ Photo d’illustration générique — ce bien n’a pas encore de photo réelle. Contactez le vendeur pour des photos et informations à jour.</div>` : ''}
 ${o.safetyNotice ? `<div class="notice">⚠️ ${esc(o.safetyNotice)}</div>` : ''}
+${isEdu ? `<div class="notice">ℹ️ Contenu libre sous licence <a href="${esc(o.licenseUrl || 'https://creativecommons.org/licenses/by-sa/4.0/deed.fr')}" target="_blank" rel="noopener noreferrer" style="color:inherit">${esc(o.licenseName || 'CC BY-SA 4.0')}</a>, issu de <a href="${esc(o.sourceUrl || 'https://fr.wikiversity.org')}" target="_blank" rel="noopener noreferrer" style="color:inherit">${esc(o.sourceName || 'Wikiversité')}</a>. Document non affilié aux programmes scolaires officiels du Sénégal — vérifiez sa conformité au programme local avant usage en classe.</div>` : ''}
 ${priceTxt ? `<div class="price">${esc(priceTxt)}</div>` : ''}
 <p>${esc(bodyDesc)}</p>
-${o.priceFcfa ? `<div class="facts">
+${(!isEdu && o.priceFcfa) ? `<div class="facts">
   <span class="stock ${o.inStock === false ? 'ko' : 'ok'}">${o.inStock === false ? '● Rupture de stock' : '● En stock'}</span>
   <span><b>Livraison</b> 1 à 3 jours à Dakar, 3 à 7 jours en région</span>
   <span><b>Retour</b> sous 30 jours</span>
   <span><b>Paiement</b> Orange Money, Wave, carte ou à la livraison</span>
 </div>` : ''}
-<a class="cta" href="${esc(appUrl)}">${kind === 'troc' ? 'Proposer un échange' : 'Voir ' + (kind === 'annonce' ? "l'annonce" : 'le produit') + ' et commander'} sur NEXUS Market →</a>
+<a class="cta" href="${esc(isEdu ? (o.downloadUrl || appUrl) : appUrl)}"${isEdu ? ' target="_blank" rel="noopener noreferrer"' : ''}>${isEdu ? 'Télécharger gratuitement (PDF) →' : (kind === 'troc' ? 'Proposer un échange' : 'Voir ' + (kind === 'annonce' ? "l'annonce" : 'le produit') + ' et commander') + ' sur NEXUS Market →'}</a>
 <p class="foot">NEXUS Market — Marketplace sécurisée au Sénégal · Orange Money · Wave · Livraison partout.</p>
 </body></html>`;
 }
