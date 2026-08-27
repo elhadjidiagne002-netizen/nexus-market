@@ -6,6 +6,87 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (quater) — NEXUS Éducation : espace dédié séparé du catalogue marchand
+
+**Demande** : les fiches Éducation (téléchargements gratuits) ne doivent pas se
+mélanger visuellement/fonctionnellement avec les produits en vente, dans un
+espace au design du site qui ne surcharge pas la home page ; certains cours
+affichaient encore un faux prix "7 FCFA".
+
+**Constat** : le carrousel accueil ajouté en (bis) réutilisait le composant
+carte boutique (`card()`/`nx-prodcard`, badge "Protégé", cœur favoris…) —
+visuellement indiscernable d'un produit en vente. Pire : ces fiches
+(`is_educational=true`, `price=0.01`, actives) n'étaient exclues d'AUCUNE
+des surfaces générales — catalogue "Tous les produits" + recherche + Flash/
+Top/Nouveautés/Moins cher React (tous dérivés du même pool `allItems`),
+grille "Tous les produits"/recherche de l'overlay statique (`nxpShowAll`),
+ET les sections accueil "Meilleures Ventes/Nouveaux Arrivages/Recommandé"
+(`QP`) — remontaient avec leur prix symbolique converti en "7 FCFA".
+
+**Fait** :
+- **Exclusion à la source, partout** : `allItems` (React, alimente catalogue/
+  recherche/Flash/Top rated/Nouveautés/Moins cher), `Qall` (`nxpShowAll`),
+  `QP` (Meilleures Ventes/Nouveaux Arrivages/Recommandé) filtrent désormais
+  `is_educational`. Plus aucune fiche Éducation dans un flux marchand.
+- **`PriceDisplay` (React)** : garde `isEducationalListing()` ajoutée AVANT
+  toute conversion de prix (même niveau que le garde-fou `isVitrineListing`
+  existant) → "Gratuit" partout où ce composant est réutilisé (cartes,
+  favoris, produits liés, vus récemment…), plus jamais "7 FCFA" nulle part
+  dans un contexte boutique.
+- **Carrousel accueil retiré**, remplacé par un bandeau discret
+  (`#nxp-educationBanner`, une ligne, couleur primaire du site) → bouton
+  "Découvrir" qui ouvre un **module dédié autonome** `__NEXUS_EDUCATION__`
+  (même pattern que NEXUS Pro/Immobilier : overlay plein écran, chips
+  matière/niveau, grille de tuiles avec sa PROPRE identité visuelle —
+  bleu/indigo, pas de badge "Protégé" ni cœur favoris, attribution CC BY-SA
+  visible sur chaque tuile, bouton "Télécharger gratuitement" direct sans
+  compte ni panier). Entrées : bandeau accueil + menu + stack de widgets.
+- Prix `0.01€` (contournement de la contrainte `products_price_check`)
+  documenté comme jamais destiné à l'affichage — seul `PriceDisplay`/le
+  module dédié décident du texte montré ("Gratuit").
+
+**État final** : vérifié en local (module s'ouvre, 20 fiches, filtres
+matière/niveau fonctionnels, téléchargement direct OK) ; confirmé qu'aucune
+fiche Éducation ne réapparaît dans Meilleures Ventes/Nouveaux Arrivages/
+Recommandé/Tous les produits/recherche. Bundle renommé `app.c1f2fac9bc.js`
+(règle cache-busting). Reste à committer/pousser (confirmation attendue).
+
+---
+
+## 2026-08-27 (ter) — Deux bugs prod post-déploiement : bundle jamais rebusté + CSP worker-src absent
+
+**Demande** : vérifier l'affichage en prod après le déploiement NEXUS
+Éducation (bis) ; puis corriger une erreur console CSP trouvée pendant cette
+vérification.
+
+**Bug n°1 — bundle React édité en place, jamais rebusté** : le commit
+précédent avait modifié `app.badfdcf788.js` (ajout `is_educational` au modal
+produit) SANS renommer le fichier selon son nouveau hash. `/assets/*` étant
+servi en `Cache-Control` immutable 1 an, Cloudflare/les navigateurs
+continuaient de servir l'ancien contenu malgré le nouveau code poussé — la
+fiche produit affichait encore "7 FCFA"/stock/livraison au lieu de
+"Gratuit"/téléchargement. Détecté en comparant le contenu réellement livré
+en prod au code source. Fix : renommé en `app.87e1af40bf.js` (sha256 du
+contenu réel), `index.html` mis à jour, redéployé — confirmé correct après
+purge SW/cache du navigateur de test.
+**Rappel process** : TOUJOURS recalculer le hash et renommer après CHAQUE
+édition du bundle, jamais l'éditer en place (cf. CLAUDE.md, déjà su mais
+oublié une fois ce jour-là).
+
+**Bug n°2 — CSP `worker-src` absent** : `public/_headers` ne déclarait pas
+`worker-src`, qui retombe alors sur `script-src` (lequel n'autorise pas le
+schéma `blob:`). Une lib tierce (Sentry/Analytics — non identifiée
+précisément, sans impact car le fix est indépendant de la source) créait un
+Worker depuis un blob sur chaque page → bloqué en boucle par la CSP,
+visible en erreur console sur toutes les pages. Fix : ajout de
+`worker-src 'self' blob:;` (sur-ensemble strict, rien retiré). Vérifié en
+prod dans un onglet neuf : zéro erreur console après déploiement.
+
+**État final** : les deux fixes déployés et vérifiés en prod (35/35 tests
+unitaires passent, lint clean hors warnings préexistants).
+
+---
+
 ## 2026-08-27 (bis) — NEXUS Éducation : plateforme de téléchargement gratuit (cours/exercices)
 
 **Demande** : greffer une nouvelle « verticale » permettant à des élèves/

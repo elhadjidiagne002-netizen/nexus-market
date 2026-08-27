@@ -10628,6 +10628,12 @@ const PriceDisplay = ({ product, style = {}, className = "product-price", curren
   if (isVitrineListing(product)) {
     return React.createElement("div", { className, style }, "Sur devis");
   }
+  // [NEXUS ÉDUCATION 2026-08-27] price=0.01 en base (symbolique — products_price_check
+  // interdit 0) : partout où PriceDisplay est utilisé (cartes, favoris, produits liés,
+  // vus récemment, admin…), ne JAMAIS convertir/afficher ce prix factice ("7 FCFA").
+  if (isEducationalListing(product)) {
+    return React.createElement("div", { className, style: { ...style, color: "#16A34A" } }, "Gratuit");
+  }
   // [FIX #4] B2B: afficher le prix pro sur les cartes produit pour buyer_pro
   const _b2bRate = (currentUser && currentUser.role === "buyer_pro" && currentUser._b2bDiscount > 0) ? currentUser._b2bDiscount : 0;
   const _proPrice = _b2bRate > 0 ? product.price * (1 - _b2bRate / 100) : null;
@@ -34093,7 +34099,12 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   // ── Catalogue unifié : Produits vendeurs + Annonces Express ──────────────
   const allItems = React.useMemo(() => {
     // Fusionner produits en stock + annonces express actives
-    const vendorProds = products.filter(p => p.stock == null || p.stock > 0);
+    // [NEXUS ÉDUCATION 2026-08-27] Contenu gratuit téléchargeable — n'est PAS un
+    // produit en vente : exclu de tout le catalogue général/recherche/tri (flash,
+    // top rated, nouveautés, moins cher…), qui dérivent tous de allItems. A son
+    // propre espace dédié (cf. window nexus:open-education) plutôt que mélangé
+    // aux produits marchands.
+    const vendorProds = products.filter(p => (p.stock == null || p.stock > 0) && !p.is_educational && !p.isEducational);
     // Dédupliquer les annonces express (éviter doublons si rechargement)
     const axById = {};
     axAnnonces.forEach(a => { axById[a.id] = a; });
