@@ -6,6 +6,37 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (novies) — Collection NEXUS Éducation étoffée : 20 → 35 cours, 6 nouvelles matières
+
+**Demande** : trouver plus de livres/cours de ce genre pour étoffer la
+collection NEXUS Éducation.
+
+**Fait** :
+- 15 nouveaux cours PDF réels sourcés sur Wikiversité (CC BY-SA 4.0),
+  vérifiés (octets magiques `%PDF`) puis hébergés dans le même bucket
+  (`sql/2026_08_27_educational_downloads_batch2.sql`, idempotent, même
+  schéma que le premier lot) : Économie (systèmes économiques),
+  Informatique (algorithmique, structures de données), Droit (obligations),
+  Espagnol (conjugaison), Allemand (grammaire), Latin (cinquième), +
+  approfondissements Mathématiques (6e, 4e, probabilités/combinatoire,
+  probabilités conditionnelles), Physique (mécanique des fluides, seconde),
+  Histoire-Géo (seconde, première générale).
+- 6 nouvelles couvertures génériques par matière (mêmes SVG→JPG créés pour
+  le site, aucune attribution requise) : Économie, Informatique, Droit,
+  Espagnol, Allemand, Latin.
+- `SUBJECTS` (module `__NEXUS_EDUCATION__`) et `SUBJECT_COVER_RULES`
+  (`functions/api/education-contribute.js`) étendus aux 6 nouvelles matières,
+  pour que les filtres et la couverture auto des contributions futures les
+  couvrent aussi.
+
+**État final** : vérifié en local — 35 tuiles chargées (20+15), 15 chips
+matière (dont les 6 nouvelles), filtre "Droit" isole bien "Droit des
+obligations" avec un lien de téléchargement valide. Aucun changement au
+bundle React (seulement `index.html` + la fonction serveur + 2 fichiers SQL
+déjà appliqués en base). Reste à committer/pousser.
+
+---
+
 ## 2026-08-27 (octies) — Contribution de cours (utilisateurs + admin) dans NEXUS Éducation
 
 **Demande** : permettre à un contributeur connecté ou à l'admin d'ajouter de

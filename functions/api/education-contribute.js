@@ -27,6 +27,12 @@ const SUBJECT_COVER_RULES = [
   [/philo/i, 'philosophie.jpg'],
   [/anglais|english/i, 'anglais.jpg'],
   [/bio|svt/i, 'svt-biologie.jpg'],
+  [/[ée]conomie/i, 'economie.jpg'],
+  [/informatique|algo/i, 'informatique.jpg'],
+  [/droit/i, 'droit.jpg'],
+  [/espagnol/i, 'espagnol.jpg'],
+  [/allemand/i, 'allemand.jpg'],
+  [/latin/i, 'latin.jpg'],
 ];
 function coverFor(subject) {
   const s = String(subject || '');
