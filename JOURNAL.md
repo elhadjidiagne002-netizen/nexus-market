@@ -6,6 +6,37 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (septies) — La pile de « Widgets » bas-gauche fuitait dans TOUS les tableaux de bord
+
+**Demande** : après le retrait du bouton/lien Éducation, l'utilisateur signale
+que la pile de widgets bas-gauche (Coursier, Dépannage, NEXUS Pro, Élevage,
+Location, Immobilier, Covoiturage, Troc, Chat, Assistant IA, Déposer une
+annonce) continue de s'afficher dans les tableaux de bord admin/vendeur/
+acheteur — « je ne veux pas de widget dans les tableaux de bord utilisateur ».
+Puis, inquiétude : ne pas supprimer par erreur le bouton d'accessibilité au
+passage.
+
+**Constat confirmé** : le conteneur de toute la pile (`<div class="fixed
+left-6...">` contenant `#nxp-widgetStack` + `#nxp-widgetToggle`) est placé
+APRÈS `</footer>` dans `index.html` → HORS de `#nx-proto-overlay`, donc
+jamais masqué par `hideProto()` à la connexion. Vérifié séparément : le
+bouton d'accessibilité (`#nx-vox-fab`, module NexusVox) est un module
+totalement indépendant, monté directement sur `document.body`, PAS dans ce
+conteneur — non affecté, volontairement laissé visible partout (légitime).
+
+**Fait** : conteneur identifié par un id dédié (`#nxp-widgetStackWrap`) +
+une règle CSS `body:not(.nx-on-home) #nxp-widgetStackWrap{display:none}` —
+même classe `nx-on-home` déjà posée/retirée par `showProto()`/`hideProto()`
+pour l'overlay lui-même, donc zéro nouvelle logique JS, juste un scope CSS
+cohérent avec le mécanisme existant.
+
+**État final** : vérifié en local — sur la home (`nx-on-home` présent) la
+pile reste visible ; en simulant l'état tableau de bord (classe retirée),
+la pile disparaît et `#nx-vox-fab` (accessibilité) reste inchangé. Aucun
+changement au bundle React (seulement `index.html`). Reste à committer/pousser.
+
+---
+
 ## 2026-08-27 (sexies) — Sous-catégories + recherche plus rapide + hauteur bannière héro
 
 **Demande** : enrichir le filtrage produits avec plus de sous-catégories,
