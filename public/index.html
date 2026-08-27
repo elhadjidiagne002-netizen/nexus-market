@@ -10905,6 +10905,18 @@ window.addEventListener('unhandledrejection', function(event) {
   .nx-edu-foot{font-size:.7rem;color:#888;text-align:center;margin-top:1rem;line-height:1.5}
   .nx-edu-skel{border-radius:14px;background:#f1f5f9;height:190px;animation:nx-edu-pulse 1.4s ease-in-out infinite}
   @keyframes nx-edu-pulse{0%,100%{opacity:1}50%{opacity:.55}}
+  .nx-edu-contrib-btn{margin-left:auto;background:rgba(255,255,255,.18);border:none;color:#fff;padding:.4rem .8rem;border-radius:8px;font-size:.76rem;font-weight:700;cursor:pointer;white-space:nowrap}
+  .nx-edu-contrib-form{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:.9rem 1rem;margin-bottom:1rem}
+  .nx-edu-contrib-form label{display:block;font-size:.74rem;font-weight:700;color:#444;margin:.55rem 0 .2rem}
+  .nx-edu-contrib-form label:first-child{margin-top:0}
+  .nx-edu-contrib-form input[type=text],.nx-edu-contrib-form select,.nx-edu-contrib-form textarea{width:100%;padding:.5rem .6rem;border:1px solid #d4d4d8;border-radius:8px;font-size:.82rem;box-sizing:border-box;font-family:inherit}
+  .nx-edu-contrib-form textarea{resize:vertical;min-height:60px}
+  .nx-edu-contrib-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
+  .nx-edu-contrib-submit{margin-top:.9rem;width:100%;padding:.65rem;border:none;border-radius:8px;background:#1d4ed8;color:#fff;font-weight:700;font-size:.85rem;cursor:pointer}
+  .nx-edu-contrib-submit:disabled{opacity:.6;cursor:not-allowed}
+  .nx-edu-contrib-msg{margin-top:.6rem;font-size:.78rem;padding:.5rem .7rem;border-radius:8px}
+  .nx-edu-contrib-msg.ok{background:#dcfce7;color:#166534}
+  .nx-edu-contrib-msg.err{background:#fee2e2;color:#991b1b}
 </style>
 <script>
 (function () {
@@ -10967,8 +10979,22 @@ window.addEventListener('unhandledrejection', function(event) {
     var levelChips = LEVELS.map(function (l) { return '<span class="nx-edu-chip" data-lvl="' + esc(l.v) + '">' + esc(l.l) + '</span>'; }).join('');
     ov.innerHTML =
       '<div class="nx-edu-card">'
-      + '<div class="nx-edu-head"><span style="font-size:1.6rem" aria-hidden="true">🎓</span><div><h3>NEXUS Éducation</h3><p>Cours &amp; exercices scolaires gratuits — à télécharger sans inscription</p></div><button class="nx-edu-x" id="nx-edu-x" aria-label="Fermer">✕</button></div>'
+      + '<div class="nx-edu-head"><span style="font-size:1.6rem" aria-hidden="true">🎓</span><div><h3>NEXUS Éducation</h3><p>Cours &amp; exercices scolaires gratuits — à télécharger sans inscription</p></div><button class="nx-edu-contrib-btn" id="nx-edu-contrib-toggle">➕ Proposer un cours</button><button class="nx-edu-x" id="nx-edu-x" aria-label="Fermer">✕</button></div>'
       + '<div class="nx-edu-body">'
+      + '<div class="nx-edu-contrib-form" id="nx-edu-contrib-form" style="display:none">'
+      + '<label>Titre du cours *</label><input type="text" id="nx-edu-f-title" maxlength="140" placeholder="Ex. Cours de SVT — troisième">'
+      + '<div class="nx-edu-contrib-row"><div><label>Matière *</label><select id="nx-edu-f-subject">' + SUBJECTS.map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('') + '<option>Autre</option></select></div>'
+      + '<div><label>Niveau *</label><select id="nx-edu-f-level">' + LEVELS.map(function (l) { return '<option value="' + esc(l.v) + '">' + esc(l.l) + '</option>'; }).join('') + '</select></div></div>'
+      + '<label>Description *</label><textarea id="nx-edu-f-desc" maxlength="1000" placeholder="Contenu du cours, programme couvert…"></textarea>'
+      + '<div class="nx-edu-contrib-row"><div><label>Licence *</label><input type="text" id="nx-edu-f-license" value="CC BY-SA 4.0"></div>'
+      + '<div><label>Lien de la licence *</label><input type="text" id="nx-edu-f-license-url" value="https://creativecommons.org/licenses/by-sa/4.0/deed.fr"></div></div>'
+      + '<div class="nx-edu-contrib-row"><div><label>Source (nom) *</label><input type="text" id="nx-edu-f-source" placeholder="Ex. Wikiversité"></div>'
+      + '<div><label>Lien de la source *</label><input type="text" id="nx-edu-f-source-url" placeholder="https://…"></div></div>'
+      + '<label>Fichier PDF * (max 12 Mo)</label><input type="file" id="nx-edu-f-file" accept="application/pdf">'
+      + '<label style="display:flex;align-items:flex-start;gap:.4rem;font-weight:400"><input type="checkbox" id="nx-edu-f-certify" style="width:auto;margin-top:.2rem">Je certifie que ce document est libre de droits (domaine public) ou sous licence Creative Commons, et que la source/licence indiquée ci-dessus est exacte.</label>'
+      + '<button class="nx-edu-contrib-submit" id="nx-edu-f-submit">Envoyer pour validation</button>'
+      + '<div id="nx-edu-f-msg"></div>'
+      + '</div>'
       + '<div class="nx-edu-chips" id="nx-edu-subj-chips"><span class="nx-edu-chip on" data-subj="">Toutes les matières</span>' + subjectChips + '</div>'
       + '<div class="nx-edu-chips" id="nx-edu-lvl-chips"><span class="nx-edu-chip on" data-lvl="">Tous niveaux</span>' + levelChips + '</div>'
       + '<div class="nx-edu-grid" id="nx-edu-grid"></div>'
@@ -10977,6 +11003,11 @@ window.addEventListener('unhandledrejection', function(event) {
     document.body.appendChild(ov);
     ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
     ov.querySelector('#nx-edu-x').addEventListener('click', close);
+    ov.querySelector('#nx-edu-contrib-toggle').addEventListener('click', function () {
+      var f = ov.querySelector('#nx-edu-contrib-form');
+      f.style.display = f.style.display === 'none' ? '' : 'none';
+    });
+    ov.querySelector('#nx-edu-f-submit').addEventListener('click', submitContribution);
     Array.prototype.forEach.call(ov.querySelectorAll('#nx-edu-subj-chips .nx-edu-chip'), function (ch) {
       ch.addEventListener('click', function () {
         curSubject = ch.dataset.subj || '';
@@ -11002,6 +11033,72 @@ window.addEventListener('unhandledrejection', function(event) {
     }
   }
   function close() { if (ov) ov.classList.remove('open'); }
+
+  function fileToBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(String(r.result)); };
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  }
+  function showMsg(text, ok) {
+    var el = ov.querySelector('#nx-edu-f-msg');
+    el.className = 'nx-edu-contrib-msg ' + (ok ? 'ok' : 'err');
+    el.textContent = text;
+  }
+  function submitContribution() {
+    var user = window.__nexusCurrentUser;
+    if (!user || !user.id) {
+      try { window.dispatchEvent(new CustomEvent('nexus:open-auth', { detail: { tab: 'login' } })); } catch (e) {}
+      showMsg('Connectez-vous pour proposer un cours.', false);
+      return;
+    }
+    var title = ov.querySelector('#nx-edu-f-title').value.trim();
+    var subject = ov.querySelector('#nx-edu-f-subject').value;
+    var level = ov.querySelector('#nx-edu-f-level').value;
+    var desc = ov.querySelector('#nx-edu-f-desc').value.trim();
+    var license = ov.querySelector('#nx-edu-f-license').value.trim();
+    var licenseUrl = ov.querySelector('#nx-edu-f-license-url').value.trim();
+    var source = ov.querySelector('#nx-edu-f-source').value.trim();
+    var sourceUrl = ov.querySelector('#nx-edu-f-source-url').value.trim();
+    var certify = ov.querySelector('#nx-edu-f-certify').checked;
+    var fileInput = ov.querySelector('#nx-edu-f-file');
+    var file = fileInput.files && fileInput.files[0];
+
+    if (!title || !desc || !license || !licenseUrl || !source || !sourceUrl) { showMsg('Merci de remplir tous les champs obligatoires (*).', false); return; }
+    if (!file) { showMsg('Merci de sélectionner un fichier PDF.', false); return; }
+    if (file.type !== 'application/pdf') { showMsg('Seuls les fichiers PDF sont acceptés.', false); return; }
+    if (file.size > 12 * 1024 * 1024) { showMsg('Fichier trop volumineux (max 12 Mo).', false); return; }
+    if (!certify) { showMsg('Merci de cocher la certification de licence.', false); return; }
+
+    var submitBtn = ov.querySelector('#nx-edu-f-submit');
+    submitBtn.disabled = true; submitBtn.textContent = 'Envoi en cours…';
+    var c = sb();
+    (c ? c.auth.getSession() : Promise.resolve({ data: { session: null } }))
+      .then(function (r) {
+        var token = r && r.data && r.data.session && r.data.session.access_token;
+        if (!token) throw new Error('Session expirée — reconnectez-vous.');
+        return fileToBase64(file).then(function (b64) {
+          return fetch('/api/education-contribute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify({ title: title, subject: subject, level: level, description: desc, license: license, licenseUrl: licenseUrl, source: source, sourceUrl: sourceUrl, fileBase64: b64 }),
+          });
+        });
+      })
+      .then(function (res) { return res.json().then(function (j) { return { ok: res.ok, j: j }; }); })
+      .then(function (r) {
+        if (!r.ok) { showMsg(r.j.error || 'Erreur lors de l\'envoi.', false); return; }
+        showMsg(r.j.pending ? '✅ Merci ! Votre cours a été envoyé et sera visible après validation par l\'équipe NEXUS.' : '✅ Cours publié !', true);
+        ['#nx-edu-f-title', '#nx-edu-f-desc', '#nx-edu-f-source', '#nx-edu-f-source-url'].forEach(function (sel) { ov.querySelector(sel).value = ''; });
+        ov.querySelector('#nx-edu-f-file').value = '';
+        ov.querySelector('#nx-edu-f-certify').checked = false;
+        ALL = null; // force le rechargement (utile si un admin vient de publier)
+      })
+      .catch(function (e) { showMsg(e.message || 'Erreur réseau.', false); })
+      .then(function () { submitBtn.disabled = false; submitBtn.textContent = 'Envoyer pour validation'; });
+  }
 
   window.addEventListener('nexus:open-education', open);
   console.info('[NEXUS] Module Éducation 🎓 chargé ✅');

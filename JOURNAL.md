@@ -6,6 +6,45 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (octies) — Contribution de cours (utilisateurs + admin) dans NEXUS Éducation
+
+**Demande** : permettre à un contributeur connecté ou à l'admin d'ajouter de
+nouveaux cours au module NEXUS Éducation.
+
+**Fait** :
+- `functions/api/education-contribute.js` (nouveau) : POST authentifié
+  (Bearer token obligatoire — pas de contribution anonyme). Accepte titre/
+  matière/niveau/description/licence+lien/source+lien + un fichier PDF en
+  base64 (jamais un simple lien externe, cohérent avec la décision "héberger
+  des copies, uniquement CC/domaine public"). Vérifie les octets magiques
+  (`%PDF`), plafonne à 12 Mo, upload vers `nexus-images/products/educational/
+  contributions/<uuid>.pdf` avec la clé de service (AUCUNE policy Storage
+  n'autorise l'upload direct côté client sur ce bucket — seul `nexus-stories`
+  en a une — d'où un endpoint serveur plutôt qu'un upload direct Supabase-js).
+  Insère dans `products` (`is_educational=true`, `price=0.01`, couverture
+  générique choisie par mots-clés sur la matière). Non-admin →
+  `active=false/moderated=false` (réutilise le panneau admin "Produits"
+  existant pour la revue, pas de nouvelle UI admin) ; admin → publié direct.
+- Module `__NEXUS_EDUCATION__` (index.html) : bouton "➕ Proposer un cours"
+  dans l'en-tête, ouvre un formulaire (matière/niveau en select, licence et
+  source pré-remplies avec CC BY-SA 4.0/à adapter, upload PDF, case de
+  certification de licence obligatoire). Bloque si non connecté (ouvre
+  `nexus:open-auth`). Après succès, invalide le cache local (`ALL=null`) pour
+  que la contribution d'un admin apparaisse immédiatement.
+
+**Vérifié** : `wrangler pages dev` local avec vraies variables d'env — les
+deux cas de rejet (sans token → 401 "Non authentifié", token invalide → 401
+"Token invalide") fonctionnent contre la vraie API Supabase (confirme aussi
+que la base est bien remontée après l'incident Disk IO du jour). Le
+chemin complet (upload réel + insertion) n'a PAS été testé de bout en bout
+(nécessiterait un vrai compte utilisateur connecté — hors de portée sans se
+connecter moi-même à un compte, ce qui est exclu). Formulaire vérifié en
+local : bouton ouvre/ferme le formulaire, tous les champs présents, blocage
+"non connecté" fonctionnel. À confirmer par l'utilisateur en conditions
+réelles (connecté) après déploiement.
+
+---
+
 ## 2026-08-27 (septies) — La pile de « Widgets » bas-gauche fuitait dans TOUS les tableaux de bord
 
 **Demande** : après le retrait du bouton/lien Éducation, l'utilisateur signale
