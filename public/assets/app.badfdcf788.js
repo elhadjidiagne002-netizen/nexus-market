@@ -12662,6 +12662,14 @@ const NexusStoriesWidget = ({ user }) => {
   };
   React.useEffect(() => { if (open) load(); }, [open]);
   React.useEffect(() => { const h = (e) => { try { wantIdRef.current = (e && e.detail && e.detail.id) || null; } catch (_) { wantIdRef.current = null; } setOpen(true); }; window.addEventListener('nexus:open-stories', h); return () => window.removeEventListener('nexus:open-stories', h); }, []);
+  // [RACCOURCI 2026-08-27] Échap pour fermer une story en cours de lecture —
+  // jusqu'ici seul le petit "×" en haut à droite le permettait.
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
   React.useEffect(() => { try { const q = new URLSearchParams(location.search); const _sid = q.get('story') || q.get('stories'); if (_sid) { if (_sid !== '1' && _sid !== 'true' && String(_sid).length > 3) wantIdRef.current = _sid; setOpen(true); } } catch (_) {} }, []);
   // [URL PARTAGEABLE — STORY] Reflète la story courante dans l'URL (?story=<id>) sans
   // rechargement + canonical vers la vraie page /stories/<id>. replaceState seul (pas
@@ -12824,10 +12832,23 @@ const NexusStoriesWidget = ({ user }) => {
 
   const cur = items[idx];
   const navBtn = (txt, on, pos) => E('button', { onClick: on, style: { position: 'absolute', right: 12, ...pos, background: 'rgba(0,0,0,.5)', color: '#fff', border: 'none', borderRadius: 999, width: 44, height: 44, fontSize: 18, cursor: 'pointer' } }, txt);
+  // [RACCOURCI 2026-08-27] Glisser horizontalement (gauche ou droite) pour fermer —
+  // la navigation existante (▲/▼) est verticale, donc un balayage horizontal ne
+  // rentre en conflit avec rien. Seuil 60px, et seulement si le mouvement est
+  // plus horizontal que vertical (évite de fermer par erreur en swipant ▲/▼).
+  const touchRef = React.useRef(null);
+  const onTouchStart = (e) => { const t = e.touches && e.touches[0]; if (t) touchRef.current = { x: t.clientX, y: t.clientY }; };
+  const onTouchEnd = (e) => {
+    const start = touchRef.current; touchRef.current = null;
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!start || !t) return;
+    const dx = t.clientX - start.x, dy = t.clientY - start.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) setOpen(false);
+  };
 
   return E(React.Fragment, null,
     // [UI] Accès via le méga-menu (☰ Tout) — plus de bouton flottant (anti-chevauchement)
-    open && E('div', { style: { position: 'fixed', inset: 0, background: '#000', zIndex: 9997, display: 'flex', flexDirection: 'column' } },
+    open && E('div', { onTouchStart, onTouchEnd, style: { position: 'fixed', inset: 0, background: '#000', zIndex: 9997, display: 'flex', flexDirection: 'column' } },
       E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', color: '#fff' } },
         E('strong', null, '🎬 ' + t('stories.title')),
         E('div', { style: { display: 'flex', gap: 8 } },
@@ -25863,9 +25884,12 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   };
   const _loadDataImmediate = async () => {
     // Produits depuis Supabase en priorité
+    // [FIX 2026-08-26] DataService.getProducts({}) applique la limite par défaut
+    // (20) — l'admin (sélecteur Ventes Flash, etc.) doit voir tout le catalogue,
+    // pas juste les 20 premiers produits.
     const productsData = storage.getArray("products");
     setProducts(productsData);
-    DataService.getProducts && DataService.getProducts({}).then(data => {
+    DataService.getProducts && DataService.getProducts({ limit: 1000 }).then(data => {
       const fetched = Array.isArray(data) ? data : (data && data.products ? data.products : null);
       if (fetched && fetched.length > 0) { setProducts(fetched); storage.set("products", fetched); }
     }).catch(() => {});

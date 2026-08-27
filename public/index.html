@@ -3157,7 +3157,7 @@
     })();
     </script>
 
-    <script src="/assets/app.3e971f6569.js"></script>
+    <script src="/assets/app.badfdcf788.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -13925,22 +13925,27 @@ function flashCard(name,price,oldPrice,disc,img){
 /* ─── Supabase REST (clé publique anon) ─── */
 var SB_URL='https://pqcqbstbdujzaclsiosv.supabase.co';
 var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxY3Fic3RiZHVqemFjbHNpb3N2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MTM0OTIsImV4cCI6MjA5MDM4OTQ5Mn0.NlQewwx2vI-KxS_0VSP-hbtpyt4y-F3eyJ5qUb5S9DE';
-// [RESILIENCE] Retry avec backoff : Supabase renvoie parfois des 503/504 transitoires
+// [RESILIENCE] Retry avec backoff : Supabase renvoie parfois des 5xx transitoires
 // (budget Disk IO / pool de connexions saturés quelques secondes) — un seul essai
 // faisait alors échouer silencieusement le chargement produits/annonces/promos.
+// [FIX 2026-08-26] Ne retentait qu'sur 503/504 — un 500 transitoire observé en
+// prod (log navigateur fourni par l'utilisateur) faisait échouer la requête
+// "Meilleures Ventes" dès le premier essai, qui retombait alors sur le tableau
+// de secours codé en dur (faux produits "Machine Hespresso", "Nike Air Jordan"…
+// jamais vendus sur NEXUS Market) au lieu du vrai catalogue. Élargi à tout 5xx.
 function sbFetch(path, _attempt){
   var attempt = _attempt || 0;
   return fetch(SB_URL+'/rest/v1/'+path,{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Accept':'application/json'}})
     .then(function(r){
       if (r.ok) return r.json();
-      if ((r.status === 503 || r.status === 504) && attempt < 2) {
+      if (r.status >= 500 && r.status < 600 && attempt < 3) {
         return new Promise(function(resolve){ setTimeout(resolve, 400 * Math.pow(2, attempt)); })
           .then(function(){ return sbFetch(path, attempt + 1); });
       }
       return null;
     })
     .catch(function(){
-      if (attempt < 2) {
+      if (attempt < 3) {
         return new Promise(function(resolve){ setTimeout(resolve, 400 * Math.pow(2, attempt)); })
           .then(function(){ return sbFetch(path, attempt + 1); });
       }
@@ -13983,6 +13988,11 @@ function skeletonCards(n){
   var s='';
   for(var i=0;i<n;i++) s+='<div class="min-w-[210px] w-[210px] shrink-0 bg-white rounded-xl border border-outline-variant p-3 animate-pulse"><div class="h-36 bg-surface-container rounded-lg mb-2"></div><div class="h-3 bg-surface-container rounded w-2/3 mb-2"></div><div class="h-3 bg-surface-container rounded w-full mb-2"></div><div class="h-6 bg-surface-container rounded w-1/2"></div></div>';
   return s;
+}
+/* [FIX 2026-08-26] Remplace skeletonCards() quand le fetch échoue/ne renvoie rien —
+   message honnête au lieu des anciens faux produits codés en dur. */
+function emptyStateCards(){
+  return '<div class="w-full text-center py-6 text-on-surface-variant text-sm">Aucun produit à afficher pour le moment.</div>';
 }
 
 /* Sync état auth dans le header overlay */
@@ -14055,10 +14065,11 @@ function syncCartCount(){
 }
 
 function initProto(){
-  /* Produits démo (fallback immédiat pendant le fetch Supabase) */
-  var best=[P('nxp-hespresso','Machine Hespresso','85 000',4,0),P('nxp-sony','Sony WH-1000XM5','225 000',5,1),P('nxp-jordan','Nike Air Jordan 1','145 000',4,2),P('nxp-levis','Levi\'s 501','48 000',3,3),P('nxp-dyson','Aspirateur Dyson V15','320 000',5,4),P('nxp-mac','MacBook Air M3','850 000',4,5),P('nxp-qled','Samsung QLED 65"','540 000',4,6),P('nxp-montre','Montre de Luxe','200 000',5,7)];
-  var arrivals=[P('nxp-arr1','Dyson V15 Detect','320 000',4,4),P('nxp-arr2','MacBook Air M3','850 000',5,5),P('nxp-arr3','Samsung Neo QLED','540 000',4,6),P('nxp-arr4','Machine Hespresso','85 000',4,0),P('nxp-arr5','Sony WH-1000XM5','225 000',5,1),P('nxp-arr6','Nike Air Jordan 1','145 000',4,2),P('nxp-arr7','Levi\'s 501','48 000',3,3),P('nxp-arr8','Sac en Cuir Premium','101 000',5,7)];
-  var recommended=[P('nxp-r1','Casque Gaming Pro','75 000',4,1),P('nxp-r2','Sneakers Urbaines','62 000',5,2),P('nxp-r3','Cafetière Italienne','29 000',4,0),P('nxp-r4','TV LED 50"','310 000',4,6),P('nxp-r5','Sac à Dos Voyage','45 000',5,7),P('nxp-r6','Jean Slim Premium','39 000',3,3),P('nxp-r7','Enceinte Bluetooth','55 000',4,5),P('nxp-r8','Montre Connectée','120 000',5,4)];
+  /* [FIX 2026-08-26] Les anciens tableaux de secours "best"/"arrivals"/"recommended"
+     (produits factices codés en dur : "Machine Hespresso", "Nike Air Jordan 1"…
+     jamais vendus sur NEXUS Market) sont supprimés. Si le fetch Supabase échoue
+     ou ne renvoie rien, on affiche désormais un message vide honnête plutôt que
+     du faux contenu — voir emptyStateCards() ci-dessous. */
 
   /* Squelettes immédiats */
   var bsEl=document.getElementById('nxp-bestSellers');if(bsEl)bsEl.innerHTML=skeletonCards(6);
@@ -14079,14 +14090,30 @@ function initProto(){
      doublon et les CTA/prix inadaptés (« Sur devis », « Voir l'annonce ») dans des
      sections pensées pour un panier produit normal. */
   var QP=Q+'&is_rental=not.is.true&is_realestate=not.is.true&is_animal=not.is.true&is_local=not.is.true';
-  sbFetch('products?'+QP+'&order=is_boosted.desc.nullslast,rating.desc.nullslast').then(function(data){
-    if(bsEl) bsEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):best.map(card).join('');
+  /* [FIX 2026-08-26] "Meilleures Ventes" doit changer à chaque rafraîchissement —
+     toutes les fiches ayant rating=0 (aucun avis pour l'instant), un simple
+     "order by rating desc" renvoie toujours le même lot de 12 (tri stable côté
+     Postgres). On pioche donc un pool plus large (48) et on mélange côté client,
+     en gardant les produits boostés (payants) toujours en tête — jamais noyés
+     dans le mélange. */
+  var QPbest = QP.replace('&limit=12', '&limit=48');
+  sbFetch('products?'+QPbest+'&order=is_boosted.desc.nullslast,rating.desc.nullslast').then(function(data){
+    if (!bsEl) return;
+    if (!data || !data.length) { bsEl.innerHTML = emptyStateCards(); return; }
+    var boosted = data.filter(function(p){ return p.is_boosted && (!p.boost_ends_at || new Date(p.boost_ends_at).getTime() > Date.now()); });
+    var rest = data.filter(function(p){ return boosted.indexOf(p) === -1; });
+    for (var i = rest.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = rest[i]; rest[i] = rest[j]; rest[j] = tmp;
+    }
+    var picked = boosted.concat(rest).slice(0, 12);
+    bsEl.innerHTML = picked.map(sbCard).join('');
   });
   sbFetch('products?'+QP+'&order=is_boosted.desc.nullslast,created_at.desc').then(function(data){
-    if(naEl) naEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):arrivals.map(card).join('');
+    if(naEl) naEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):emptyStateCards();
   });
   sbFetch('products?'+QP+'&order=is_boosted.desc.nullslast,rating.desc.nullslast,created_at.desc').then(function(data){
-    if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):recommended.map(card).join('');
+    if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):emptyStateCards();
     /* Annonces Express : affichées EN TÊTE des « Recommandés » (l'overlay ne les
        chargeait pas → invisibles sur l'accueil). Cartes WhatsApp dédiées. */
     sbFetch('annonces_express?select=id,photo_url,price_fcfa,category,description,phone,city,status,expires_at&status=eq.active&order=created_at.desc&limit=12').then(function(ax){

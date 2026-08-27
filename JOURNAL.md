@@ -6,6 +6,81 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 — Suppression totale des faux produits + limite admin + fermeture Stories
+
+**Demande** : supprimer tous les produits codés en dur du fichier (pas
+seulement le fallback déjà corrigé) ; le sélecteur produit du panneau
+« Ventes Flash » (admin) n'affichait pas tout le catalogue ; ajouter des
+raccourcis pour sortir d'une vidéo Story une fois lancée.
+
+**Fait** :
+- Suppression complète des tableaux `best`/`arrivals`/`recommended` (et leurs
+  8 `P(...)` chacun) dans `public/index.html` — plus aucune trace de "Machine
+  Hespresso"/"Nike Air Jordan"/etc. Remplacés par `emptyStateCards()` (message
+  neutre) en cas d'échec réseau, plutôt que du faux contenu. `card()`/`P()`/
+  `NXP_PRODS` conservés (utilisés aussi pour du vrai contenu : recherche,
+  Ventes Flash normales — `_freshProds()` excluait déjà les id `nxp-*`).
+- **Cause du panneau Ventes Flash incomplet** : `AdminDashboard` charge son
+  état `products` via `DataService.getProducts({})` — objet vide = la limite
+  PAR DÉFAUT de 20 s'applique (même fonction que le fix précédent de
+  `?product=`). Passé à `{ limit: 1000 }` : l'admin voit tout le catalogue
+  pour choisir quel produit booster/mettre en vente flash.
+- **Stories — raccourcis de sortie** : touche **Échap** (aucune avant, seul
+  le petit "×" existait) + **balayage horizontal** (gauche ou droite, seuil
+  60px) pour fermer. La navigation existante (▲/▼) est verticale et
+  bouton-only (aucun swipe déjà lié) → aucun conflit possible.
+
+**État final** : syntaxe validée, 35/35 tests passent, aucune erreur console
+en local. Bundle renommé `app.badfdcf788.js`. Reste à committer/pousser.
+
+---
+
+## 2026-08-26 (sexies) — Faux "Meilleures Ventes" (500 non retenté) + réactivation catalogue
+
+**Demande** : l'accueil affichait des produits fictifs ("Machine Hespresso",
+"Nike Air Jordan"…) dans « Meilleures Ventes », en boucle sur le même lot à
+chaque rafraîchissement ; la plupart des produits apparaissaient inactifs/en
+attente côté admin.
+
+**Diagnostic** : log navigateur fourni par l'utilisateur → la requête
+Supabase de « Meilleures Ventes » recevait un **500 transitoire** (budget
+Disk IO, cf. `supabase-io-budget-dispatch-cron` en mémoire projet) ;
+`sbFetch()` ne retentait que sur 503/504, donc un simple 500 faisait tomber
+directement sur le tableau de secours codé en dur (faux produits jamais
+vendus sur NEXUS Market). Reproduit : la même requête relancée manuellement
+juste après renvoyait 200 avec de vraies données — confirme le caractère
+transitoire.
+
+**Fait** :
+- `sbFetch()` retente désormais sur **tout 5xx** (pas seulement 503/504),
+  jusqu'à 3 tentatives.
+- « Meilleures Ventes » pioche un pool de 48 produits (au lieu de 12) et
+  mélange côté client à chaque chargement — nécessaire car tous les produits
+  ont `rating=0` (aucun avis), donc un tri stable renvoyait toujours le même
+  lot. Les produits boostés (payants) restent toujours en tête, jamais noyés
+  dans le mélange.
+- `sql/2026_08_26_reactivate_and_approve_all_products.sql` : réactive 5
+  produits électroniques légitimes désactivés sans raison apparente (Tondeuse
+  Nova, 2x Dell Latitude, Lenovo ThinkPad, câble Tecno), et approuve
+  (`moderated=true`) les 604 produits encore en attente — la modération
+  n'affecte pas la visibilité réelle du site (filtrée sur `active`
+  uniquement) mais encombrait le panneau admin. « beignet » et « le coran »
+  restent volontairement désactivés (test factice / PDF protégé par le droit
+  d'auteur, cf. plus bas).
+
+**⚠️ Point en attente** : le produit « le coran » a un vrai fichier PDF
+attaché (`file_url`) — une traduction du Coran par Muhammad Hamidullah dont
+le nom de fichier référence explicitement "Z-Library" (site de piratage de
+livres). Distribuer ce fichier constitue une contrefaçon. Reste désactivé ;
+pas d'image de couverture ajoutée tant que l'utilisateur n'a pas tranché.
+
+**État final** : vérifié en local (pas de faux produits, variété confirmée
+sur 2 rechargements). Script SQL prêt, non exécuté (bloqué par le
+classificateur, à exécuter par l'utilisateur). Reste à committer/pousser
+`public/index.html`.
+
+---
+
 ## 2026-08-26 (quinquies) — Attribution photos + renforcement juridique CGU
 
 **Demande** : ajouter l'attribution des photos Wikimedia (CC BY/CC BY-SA) sur
