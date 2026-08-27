@@ -6,6 +6,28 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (undecies) — Raccourci Éducation remis dans la pile de widgets (désormais home-only)
+
+**Demande** : le raccourci Éducation avait été retiré de la pile de widgets
+(cf. entrée « quinquies ») ; l'utilisateur le veut de retour comme raccourci
+sur la page d'accueil.
+
+**Contexte** : il avait été retiré parce que la pile entière fuitait dans
+les tableaux de bord (entrée « septies », corrigé depuis en scopant tout le
+conteneur `#nxp-widgetStackWrap` à `body.nx-on-home`). Ce fix rend
+maintenant le retrait de l'entrée Éducation inutile — le bouton peut revenir
+sans réintroduire la fuite, puisque toute la pile est déjà home-only.
+
+**Fait** : bouton "🎓 Éducation" (même style que les autres pilules) réajouté
+dans `#nxp-widgetStack`, juste après Covoiturage.
+
+**État final** : vérifié en local — bouton présent sur la home, disparaît
+bien avec le reste de la pile en simulant l'état tableau de bord
+(`nx-on-home` retiré). Aucun changement au bundle React. Reste à
+committer/pousser.
+
+---
+
 ## 2026-08-27 (decies) — Modération admin étendue à tous les modules (Annonces Express, Lignes de Transport, Prospects)
 
 **Demande** : donner à l'admin la possibilité de gérer n'importe quelle
