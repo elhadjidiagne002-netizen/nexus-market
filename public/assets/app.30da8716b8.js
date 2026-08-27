@@ -33408,12 +33408,49 @@ function normalizeExpressToProduct(ax) {
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// CategoryGridPanel — Grille catégories collapsible (extrait hors IIFE)
-// Évite React error #300 (useState dans IIFE pendant le rendu)
+// [RECHERCHE 2026-08-27] Taxonomie a 2 niveaux (parent -> sous-categories) --
+// jusqu'ici les 66 categories detaillees de products.category s'affichaient
+// en UNE SEULE liste plate dans "Explorer par categorie" (CategoryGridPanel),
+// difficile a parcourir. Regroupees ici sous 12 familles (memes piliers que
+// functions/_lib/categories.js, gardes synchronises) + ~20 nouvelles
+// sous-categories ajoutees pour affiner le filtrage. Chaque sous-categorie
+// reste une correspondance EXACTE sur products.category (aucun changement de
+// schema/donnees) -- seule l'organisation de l'UI change.
+const NEXUS_CAT_TREE = {
+  'Électronique':      { icon: '📱', subs: ['Téléphones & Accessoires','Ordinateurs & Tablettes','Électronique & Hi-Fi','Appareils photo & Vidéo','Jeux vidéo & Consoles','Montres connectées','Éclairage','Écouteurs & Audio','Accessoires informatiques'] },
+  'Mode & Vêtements':  { icon: '👗', subs: ['Mode Femme','Mode Homme','Mode Enfant','Chaussures','Sacs & Maroquinerie','Bijoux & Accessoires','Tissus & Wax','Lingerie & Sous-vêtements','Sportswear'] },
+  'Beauté & Santé':    { icon: '💄', subs: ['Beauté & Cosmétiques','Parfums','Santé & Bien-être','Soins capillaires','Hygiène & Bébé'] },
+  'Maison & Déco':     { icon: '🏠', subs: ['Meubles & Décoration','Électroménager','Cuisine & Art de la table','Linge de maison','Jardinage & Extérieur','Bricolage & Outillage','Literie & Matelas','Climatisation & Chauffage','Décoration murale'] },
+  'Alimentation':      { icon: '🍎', subs: ['Alimentation générale','Produits bio & locaux','Boissons','Épices & Condiments','Céréales & Légumineuses','Produits laitiers','Boulangerie & Pâtisserie','Épicerie fine','Snacking'] },
+  'Auto & Moto':       { icon: '🚗', subs: ['Voitures','Motos & Scooters','Vélos & Trottinettes','Pièces & Accessoires auto','Accessoires vélo','Pneus & Batteries'] },
+  'Sport & Loisirs':   { icon: '⚽', subs: ['Sport & Fitness','Jouets & Jeux','Musique & Instruments','Voyages & Tourisme','Arts & Artisanat','Collections & Antiquités','Jeux de société','Camping & Randonnée'] },
+  'Livres & Presses':  { icon: '📚', subs: ['Livres & Presses','Livres papier','eBooks & PDF','Livres audio','BD & Mangas','Manuels scolaires','Presse & Magazines','Livres anciens & Rares','Papeterie & Fournitures scolaires'] },
+  'Informatique':      { icon: '💻', subs: ['Informatique & Tech (services)','Logiciels & Licences'] },
+  'Animaux & Élevage': { icon: '🐾', subs: ['Animaux de compagnie','Accessoires animaux','Alimentation animaux','Agriculture & Élevage'] },
+  'Immobilier':        { icon: '🏘️', subs: ['Location appartement','Vente immobilier','Terrains & Parcelles','Bureaux & Locaux commerciaux'] },
+  'Services & Pro':    { icon: '🛠️', subs: ['Services à domicile','Formation & Cours','Événementiel','Transport & Logistique','BTP & Construction','Matériel professionnel','Fournitures de bureau','Textile & Couture (pro)','Dons & Trocs','Produits locaux','Autre'] },
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// CategoryGridPanel — Grille catégories collapsible à 2 niveaux (extrait hors
+// IIFE, évite React error #300 : useState dans IIFE pendant le rendu).
+// [RECHERCHE 2026-08-27] Familles cliquables → révèlent leurs sous-catégories,
+// + champ de recherche instantané qui filtre familles ET sous-catégories en
+// tapant (pas d'appel réseau, NEXUS_CAT_TREE déjà en mémoire).
 // ════════════════════════════════════════════════════════════════════════════
 const CategoryGridPanel = ({ allCats, filterCategory, setFilterCategory, setCurrentPage, products, getCatIcon }) => {
   const [open, setOpen] = React.useState(false);
+  const [expandedGroup, setExpandedGroup] = React.useState(null);
+  const [catQuery, setCatQuery] = React.useState('');
   const visible = allCats.filter(c => c !== 'all');
+  const countOf = (cat) => products.filter(p => p.category === cat).length;
+  const q = catQuery.trim().toLowerCase();
+  const groups = Object.entries(NEXUS_CAT_TREE)
+    .map(([name, g]) => ({ name, icon: g.icon, subs: g.subs.filter(s => visible.includes(s)) }))
+    .filter(g => g.subs.length > 0);
+  const filteredGroups = !q ? groups : groups
+    .map(g => ({ ...g, subs: g.name.toLowerCase().includes(q) ? g.subs : g.subs.filter(s => s.toLowerCase().includes(q)) }))
+    .filter(g => g.subs.length > 0);
   return React.createElement('div', { className: 'home-section' },
     React.createElement('div', { style: { background:'white', borderRadius:'12px', padding:'.6rem 1rem' } },
       React.createElement('div', {
@@ -33421,25 +33458,52 @@ const CategoryGridPanel = ({ allCats, filterCategory, setFilterCategory, setCurr
         onClick: () => setOpen(o => !o)
       },
         React.createElement('div', { className:'section-title', style:{ margin:0, fontSize:'.88rem' } },
-          React.createElement('span', { className:'title-icon', style:{ fontSize:'1rem' } }, '\uD83D\uDDC2\uFE0F'),
-          'Explorer par cat\u00E9gorie ',
+          React.createElement('span', { className:'title-icon', style:{ fontSize:'1rem' } }, '🗂️'),
+          'Explorer par catégorie ',
           React.createElement('span', { style:{ fontSize:'.72rem', color:'var(--text-secondary)', fontWeight:400 } }, `(${visible.length})`)
         ),
         React.createElement('span', { style:{ fontSize:'.75rem', fontWeight:700, color:'var(--primary)', padding:'.15rem .6rem', border:'1px solid var(--border)', borderRadius:99, userSelect:'none' } },
-          open ? '\u25B2 R\u00E9duire' : '\u25BC Afficher'
+          open ? '▲ Réduire' : '▼ Afficher'
         )
       ),
-      open && React.createElement('div', { className:'category-grid', style:{ marginTop:'.6rem' } },
-        visible.map(cat => React.createElement('div', {
-          key: cat,
-          className: `category-card ${filterCategory === cat ? 'active' : ''}`,
-          onClick: () => { setFilterCategory(cat); setCurrentPage(1); setOpen(false); document.getElementById('all-products-anchor')?.scrollIntoView({ behavior:'smooth' }); }
-        },
-          React.createElement('span', { className:'cat-icon' }, getCatIcon(cat)),
-          React.createElement('span', { className:'cat-name' }, cat),
-          products.filter(p => p.category === cat).length > 0 &&
-            React.createElement('span', { className:'cat-count' }, `(${products.filter(p => p.category === cat).length})`)
-        ))
+      open && React.createElement('div', { style:{ marginTop:'.6rem' } },
+        React.createElement('input', {
+          type: 'text', value: catQuery, placeholder: 'Rechercher une catégorie ou sous-catégorie…',
+          onClick: e => e.stopPropagation(),
+          onChange: e => { setCatQuery(e.target.value); if (e.target.value.trim()) setExpandedGroup(null); },
+          style: { width:'100%', padding:'.5rem .75rem', borderRadius:8, border:'1px solid var(--border)', fontSize:'.82rem', marginBottom:'.7rem', boxSizing:'border-box' }
+        }),
+        filteredGroups.map(g => React.createElement('div', { key: g.name, style:{ marginBottom:'.5rem' } },
+          React.createElement('div', {
+            className: `category-card ${filterCategory === g.name ? 'active' : ''}`,
+            style: { cursor:'pointer', display:'flex', alignItems:'center', gap:'.5rem' },
+            onClick: (e) => { e.stopPropagation(); setExpandedGroup(x => x === g.name ? null : g.name); }
+          },
+            React.createElement('span', { className:'cat-icon' }, g.icon),
+            React.createElement('span', { className:'cat-name', style:{ fontWeight:700 } }, g.name),
+            React.createElement('span', { style:{ marginLeft:'auto', fontSize:'.7rem', color:'var(--text-secondary)' } },
+              `${g.subs.length} sous-cat.`, ' ', (expandedGroup === g.name || q) ? '▲' : '▼'
+            )
+          ),
+          (expandedGroup === g.name || q) && React.createElement('div', {
+            style: { display:'flex', flexWrap:'wrap', gap:'.4rem', padding:'.5rem 0 .3rem 1.8rem' }
+          },
+            g.subs.map(cat => React.createElement('button', {
+              key: cat,
+              className: `chip ${filterCategory === cat ? 'active' : ''}`,
+              style: {
+                padding:'.35rem .75rem', borderRadius:99, fontSize:'.76rem', fontWeight:600, cursor:'pointer',
+                border: filterCategory === cat ? '1px solid var(--primary)' : '1px solid var(--border)',
+                background: filterCategory === cat ? 'var(--primary)' : 'white',
+                color: filterCategory === cat ? '#fff' : 'var(--text-primary)',
+              },
+              onClick: () => { setFilterCategory(cat); setCurrentPage(1); setOpen(false); document.getElementById('all-products-anchor')?.scrollIntoView({ behavior:'smooth' }); }
+            },
+              cat, countOf(cat) > 0 ? ` (${countOf(cat)})` : ''
+            ))
+          )
+        )),
+        filteredGroups.length === 0 && React.createElement('div', { style:{ textAlign:'center', color:'var(--text-secondary)', fontSize:'.82rem', padding:'1rem 0' } }, 'Aucune catégorie ne correspond.')
       )
     )
   );
@@ -34092,7 +34156,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   }, [showVendorPagePub && showVendorPagePub.id]);
   // [UX #5] Réinitialiser la quantité modale à chaque nouveau produit sélectionné
   useEffect(() => { setModalQty(1); }, [selectedProduct?.id]);
-  const NEXUS_ALL_CATS = ["Téléphones & Accessoires","Ordinateurs & Tablettes","Électronique & Hi-Fi","Appareils photo & Vidéo","Jeux vidéo & Consoles","Montres connectées","Mode Femme","Mode Homme","Mode Enfant","Chaussures","Sacs & Maroquinerie","Bijoux & Accessoires","Beauté & Cosmétiques","Parfums","Tissus & Wax","Meubles & Décoration","Électroménager","Cuisine & Art de la table","Linge de maison","Jardinage & Extérieur","Bricolage & Outillage","Éclairage","Alimentation générale","Produits bio & locaux","Boissons","Épices & Condiments","Céréales & Légumineuses","Produits laitiers","Boulangerie & Pâtisserie","Voitures","Motos & Scooters","Vélos & Trottinettes","Pièces & Accessoires auto","Transport & Logistique","Location appartement","Vente immobilier","Terrains & Parcelles","Bureaux & Locaux commerciaux","Animaux de compagnie","Accessoires animaux","Alimentation animaux","Livres & Presses","Livres papier","eBooks & PDF","Livres audio","BD & Mangas","Manuels scolaires","Presse & Magazines","Livres anciens & Rares","Musique & Instruments","Jouets & Jeux","Sport & Fitness","Voyages & Tourisme","Arts & Artisanat","Services à domicile","Formation & Cours","Santé & Bien-être","Informatique & Tech (services)","Événementiel","BTP & Construction","Matériel professionnel","Agriculture & Élevage","Fournitures de bureau","Textile & Couture (pro)","Collections & Antiquités","Dons & Trocs","Produits locaux","Autre"];
+  // [RECHERCHE 2026-08-27] Dérivé de NEXUS_CAT_TREE (source unique — voir sa
+  // définition plus haut) : la liste plate historique + ~17 nouvelles sous-catégories.
+  const NEXUS_ALL_CATS = Object.values(NEXUS_CAT_TREE).flatMap(g => g.subs);
   // Fusionner catégories NEXUS fixes + catégories des produits existants (sans doublons)
   const allCats = ['all', ...new Set([...NEXUS_ALL_CATS, ...products.map(p => p.category).filter(Boolean)])].filter(Boolean);
 

@@ -1564,7 +1564,7 @@
             .main-layout { padding: 0.5rem; gap: 0; }
 
             /* ── Hero banner ────────────────────────────────────────────────── */
-            .hero-banner-slide { height: 180px; padding: 1rem; }
+            .hero-banner-slide { height: 220px; padding: 1rem; }
             .banner-title { font-size: 1.3rem; }
             .banner-price-tag { display: none; }
 
@@ -1945,7 +1945,7 @@
         .hero-banner-wrap { position: relative; width: 100%; overflow: hidden; background: #1a1a2e; }
         .hero-banner-track { display: flex; transition: transform 0.6s cubic-bezier(.4,0,.2,1); }
         .hero-banner-slide {
-            min-width: 100%; height: 320px; display: flex; align-items: center;
+            min-width: 100%; height: 400px; display: flex; align-items: center;
             padding: 2.5rem 3rem; position: relative; overflow: hidden;
         }
         .hero-banner-slide.slide-0 { background: linear-gradient(135deg, #006d40 0%, #00a84e 50%, #005f2b 100%); }
@@ -2249,7 +2249,7 @@
 
         /* Responsive */
         @media (max-width: 768px) {
-            .hero-banner-slide { height: 180px; padding: 1rem; }
+            .hero-banner-slide { height: 220px; padding: 1rem; }
             .banner-title { font-size: 1.3rem; }
             .banner-price-tag { display: none; }
             .promo-banners { grid-template-columns: 1fr 1fr; gap: 0.5rem; }
@@ -3157,7 +3157,7 @@
     })();
     </script>
 
-    <script src="/assets/app.c1f2fac9bc.js"></script>
+    <script src="/assets/app.30da8716b8.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -14626,13 +14626,45 @@ function initProto(){
     else{var cats=CATS.filter(function(c){return c.toLowerCase().indexOf(q)>=0;});var prods=prodsOverride||nxpFuzzy(ALL_PRODS.filter(function(p){return String(p.id).indexOf('nxp-')!==0;}),q,['name']).slice(0,6);if(cats.length){html+='<div class="p-2"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Catégories</p>'+cats.map(function(c){return'<button data-sq="'+c+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">category</span>'+c+'</button>';}).join('')+'</div>';}if(prods.length){html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Produits</p>'+prods.map(function(p){return'<button data-sp-prod="'+p.id+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-3"><img src="'+p.img+'" alt="'+_esc(p.name)+'" loading="lazy" class="w-9 h-9 object-contain rounded bg-surface-container-low"/><span class="flex-1">'+p.name+'</span><span class="text-primary font-bold text-xs">'+p.price+' F</span></button>';}).join('')+'</div>';}if(!cats.length&&!prods.length){html='<div class="p-3 text-sm text-on-surface-variant text-center">Aucun produit pour « '+q+' »</div>';}var _pros=(window.NexusPro&&window.NexusPro.metiers?window.NexusPro.metiers():[]).filter(function(m){return String(m.id).toLowerCase().indexOf(q)>=0;}).slice(0,4);html+='<div class="p-2 border-t border-surface-container"><p class="text-[11px] font-bold uppercase text-on-surface-variant px-2 py-1">Professionnels 🔧</p>';_pros.forEach(function(m){html+='<button data-pro="'+_esc(m.id)+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span style="font-size:16px">'+m.e+'</span><span class="flex-1">'+_esc(m.id)+'</span><span class="material-symbols-outlined text-[16px] text-on-surface-variant">chevron_right</span></button>';});html+='<button data-pro-search="'+_esc(q)+'" class="w-full text-left px-3 py-2 rounded hover:bg-surface-container text-sm flex items-center gap-2"><span class="material-symbols-outlined text-[18px] text-primary">handyman</span><span class="flex-1">Chercher un pro « '+_esc(q)+' »</span></button></div>';}
     if(sp)sp.innerHTML=html;
   }
+  /* [RECHERCHE 2026-08-27] La recherche instantanée (Fuse/Orama) ne connaît que les
+     ~80 produits déjà chargés côté client (mountSection des sections accueil) — un
+     produit hors de ce lot était introuvable dans le panneau de suggestions, même
+     s'il existe bien dans le catalogue (~700 produits). Complète avec une recherche
+     Supabase live (ilike sur le nom, catalogue COMPLET), débounce 300ms pour ne pas
+     lancer une requête réseau à chaque frappe. */
+  var _liveSearchTimer=null;
+  function sbSearchProducts(q){
+    if(!q||q.length<2)return Promise.resolve([]);
+    return sbFetch('products?select=id,name,price,image_url,images&active=not.is.false&is_educational=not.is.true&name=ilike.*'+encodeURIComponent(q)+'*&limit=6').then(function(rows){
+      return (rows||[]).map(function(p){
+        var imgs=p.images;if(typeof imgs==='string'){try{imgs=JSON.parse(imgs);}catch(e){imgs=[];}}
+        var img=p.image_url||(Array.isArray(imgs)&&imgs[0])||IMGS[hash(String(p.id))%IMGS.length];
+        img=(typeof img==='string')?img.replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\/nexus-images\//,'/img/'):img;
+        var fcfa=Math.round((parseFloat(p.price)||0)*655.957).toLocaleString('fr-FR');
+        return {id:String(p.id),name:p.name||'Produit',img:img,price:fcfa};
+      });
+    }).catch(function(){return [];});
+  }
   function renderSearch(q){
     var raw=(q||'').trim();var seq=++_searchSeq;
     _renderSearchPanel(q);                        // rendu instantané (Fuse/substring)
     if(!raw)return;
+    var localP=nxpFuzzy(ALL_PRODS.filter(function(p){return String(p.id).indexOf('nxp-')!==0;}),raw,['name']).slice(0,6);
     oramaSearch(raw).then(function(op){           // affine avec Orama si dispo ET requête toujours courante
-      if(op&&op.length&&seq===_searchSeq)_renderSearchPanel(q,op);
+      if(seq!==_searchSeq)return;
+      if(op&&op.length)_renderSearchPanel(q,op);
     });
+    clearTimeout(_liveSearchTimer);
+    _liveSearchTimer=setTimeout(function(){
+      if(seq!==_searchSeq)return;
+      sbSearchProducts(raw).then(function(liveP){
+        if(seq!==_searchSeq||!liveP.length)return;
+        var known={};localP.forEach(function(p){known[p.id]=true;});
+        var extra=liveP.filter(function(p){return !known[p.id];});
+        if(!extra.length)return;
+        _renderSearchPanel(q,localP.concat(extra).slice(0,8));
+      });
+    },300);
   }
   function doSearch(v){ v=(v||'').trim(); if(!v) return; pushRecentSearch(v); if(sp)sp.classList.add('hidden'); nxpShowAll({q:v}); }
   if(si){
@@ -14691,6 +14723,23 @@ function initProto(){
   /* « Voir tout » : affiche TOUS les produits + annonces DANS l'overlay (nouveau
      design), au lieu de basculer vers l'ancien catalogue React (hideProto). */
   var _allLoaded=false;
+  /* [RECHERCHE 2026-08-27] Les 8 raccourcis de la barre de catégories (#nxp-catBar)
+     appellent CAT('Électronique') etc. — un nom de FAMILLE, alors que products.category
+     stocke des sous-catégories détaillées ("Téléphones & Accessoires"…). Un simple
+     `category=eq.Électronique` ne matchait donc quasiment AUCUN produit réel (0/quelques
+     résultats). Table famille → sous-catégories (même regroupement que NEXUS_CAT_TREE
+     du catalogue React, dupliquée ici faute de module partagé entre les deux fichiers) :
+     nxpShowAll résout désormais un nom de famille en `or=(category.eq.A,category.eq.B,…)`. */
+  var NEXUS_CAT_TREE={
+    'Électronique':['Téléphones & Accessoires','Ordinateurs & Tablettes','Électronique & Hi-Fi','Appareils photo & Vidéo','Jeux vidéo & Consoles','Montres connectées','Éclairage','Écouteurs & Audio','Accessoires informatiques'],
+    'Mode & Vêtements':['Mode Femme','Mode Homme','Mode Enfant','Chaussures','Sacs & Maroquinerie','Bijoux & Accessoires','Tissus & Wax','Lingerie & Sous-vêtements','Sportswear'],
+    'Beauté & Santé':['Beauté & Cosmétiques','Parfums','Santé & Bien-être','Soins capillaires','Hygiène & Bébé'],
+    'Maison & Déco':['Meubles & Décoration','Électroménager','Cuisine & Art de la table','Linge de maison','Jardinage & Extérieur','Bricolage & Outillage','Literie & Matelas','Climatisation & Chauffage','Décoration murale'],
+    'Alimentation':['Alimentation générale','Produits bio & locaux','Boissons','Épices & Condiments','Céréales & Légumineuses','Produits laitiers','Boulangerie & Pâtisserie','Épicerie fine','Snacking'],
+    'Auto & Moto':['Voitures','Motos & Scooters','Vélos & Trottinettes','Pièces & Accessoires auto','Accessoires vélo','Pneus & Batteries'],
+    'Informatique':['Informatique & Tech (services)','Logiciels & Licences'],
+    'Produits locaux':['Produits locaux']
+  };
   /* opts (optionnel) = { cat:'<catégorie base>', q:'<recherche>', pminEur:Number, pmaxEur:Number }.
      Sans opts → tous les produits (cache). Avec opts → filtre + re-fetch à chaque appel.
      Tout se passe DANS l'overlay (nouveau design) → aucun rechargement vers le catalogue React. */
@@ -14714,7 +14763,15 @@ function initProto(){
        vente, ici non plus (grille "Tous les produits"/recherche générale). Son propre
        espace : slide du carrousel héro + module __NEXUS_EDUCATION__. */
     var Qall='select=id,name,price,images,image_url,rating,category,stock&active=not.is.false&is_educational=not.is.true&order=created_at.desc&limit=100';
-    if(opts.cat)Qall+='&category=eq.'+encodeURIComponent(opts.cat);
+    if(opts.cat){
+      var famSubs=NEXUS_CAT_TREE[opts.cat];
+      if(famSubs){
+        var ors=famSubs.concat([opts.cat]).map(function(c){return 'category.eq.'+encodeURIComponent(c);}).join(',');
+        Qall+='&or=('+ors+')';
+      } else {
+        Qall+='&category=eq.'+encodeURIComponent(opts.cat);
+      }
+    }
     Promise.all([
       sbFetch('products?'+Qall),
       sbFetch('annonces_express?select=id,photo_url,price_fcfa,category,description,phone,city,status,expires_at&status=eq.active&order=created_at.desc&limit=50')

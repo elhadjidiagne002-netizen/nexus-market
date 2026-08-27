@@ -6,6 +6,52 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (sexies) — Sous-catégories + recherche plus rapide + hauteur bannière héro
+
+**Demande** : enrichir le filtrage produits avec plus de sous-catégories,
+améliorer substantiellement les outils de recherche, et harmoniser la
+hauteur de la bannière héro avec le reste du site.
+
+**Fait** :
+- **Taxonomie à 2 niveaux** (`NEXUS_CAT_TREE`, React + repli statique) :
+  les 66 catégories détaillées de `products.category` (jusqu'ici une seule
+  liste plate dans « Explorer par catégorie ») sont regroupées sous 12
+  familles, + 17 nouvelles sous-catégories ajoutées (Écouteurs & Audio,
+  Lingerie & Sous-vêtements, Literie & Matelas, Épicerie fine, Jeux de
+  société, Papeterie & Fournitures scolaires…). Panneau `CategoryGridPanel`
+  réécrit : familles cliquables → révèlent leurs sous-catégories, + champ de
+  recherche instantané qui filtre familles ET sous-catégories en tapant.
+  Correspondance EXACTE sur `products.category` inchangée (aucune migration
+  de données) — uniquement l'organisation de l'UI qui change.
+- **Bug corrigé (barre de catégories accueil)** : les 8 raccourcis
+  (« Électronique », « Mode »…) filtraient par correspondance EXACTE sur un
+  nom de FAMILLE, alors que `products.category` stocke des sous-catégories
+  détaillées → ces liens ne remontaient quasiment aucun résultat réel.
+  `nxpShowAll` résout désormais un nom de famille en `or=(category.eq.A,
+  category.eq.B,…)` sur toutes ses sous-catégories.
+- **Recherche instantanée élargie au catalogue complet** : le panneau de
+  suggestions (overlay statique) ne connaissait que les ~80 produits déjà
+  chargés côté client (issus des sections accueil) — un produit hors de ce
+  lot était introuvable. Complété par une recherche Supabase live (`ilike`
+  sur le nom), débounce 300ms, fusionnée avec les résultats locaux instantanés.
+- **Hauteur bannière héro** : 320px→400px (desktop), 180px→220px (mobile,
+  2 media queries) — jugée trop courte, texte/flèches de nav trop serrés.
+
+**État final** : vérifié en local — panneau catégories 2 niveaux
+fonctionnel (12 groupes, recherche instantanée, clic sous-catégorie filtre
+bien), hauteur bannière confirmée par `getComputedStyle` (220px mobile/400px
+desktop). Bundle renommé `app.30da8716b8.js`. Reste à committer/pousser.
+
+**Reste à faire (annoncé par l'utilisateur, pas encore commencé)** :
+possibilité pour un contributeur/l'admin d'ajouter de nouveaux livres au
+module NEXUS Éducation ; élargir la collection de cours CC ; panneau admin
+unifié pour gérer TOUTES les annonces de tous les modules (produits,
+location, immobilier, élevage, troc, annonces express, pros, transport…) ;
+solution de téléchargement d'app pour les utilisateurs iOS (Android déjà
+couvert par le flux PWA existant).
+
+---
+
 ## 2026-08-27 (quinquies) — Bandeau Éducation → slide carrousel + retrait des 2 entrées qui fuitaient dans les tableaux de bord
 
 **Demande** : retirer le bandeau NEXUS Éducation de la home et le remplacer
