@@ -13564,25 +13564,22 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       </div>
       <div class="mb-lg">
         <h3 class="text-xs font-bold text-on-surface-variant uppercase mb-md" data-i18n="nav.categories">Catégories</h3>
-        <div class="space-y-1">
-          <label data-cat="Produits locaux" class="flex items-center justify-between p-2 rounded bg-primary-container text-primary cursor-pointer text-sm font-bold"><span class="flex items-center gap-2"><input checked class="rounded border-primary text-primary focus:ring-primary" type="checkbox"/> <span data-i18n="service.elevage">Élevage &amp; Terroir</span></span><span class="text-xs">(45)</span></label>
-          <label data-cat="Électronique" class="flex items-center justify-between p-2 rounded hover:bg-surface-container cursor-pointer text-sm"><span class="flex items-center gap-2"><input class="rounded border-outline-variant text-primary focus:ring-primary" type="checkbox"/> <span data-i18n="category.electronics">Électronique</span></span><span class="text-xs text-on-surface-variant">(124)</span></label>
-          <label data-cat="Mode & Vêtements" class="flex items-center justify-between p-2 rounded hover:bg-surface-container cursor-pointer text-sm"><span class="flex items-center gap-2"><input class="rounded border-outline-variant text-primary focus:ring-primary" type="checkbox"/> <span data-i18n="category.fashion">Mode</span></span><span class="text-xs text-on-surface-variant">(85)</span></label>
-          <label data-cat="Alimentation" class="flex items-center justify-between p-2 rounded hover:bg-surface-container cursor-pointer text-sm"><span class="flex items-center gap-2"><input class="rounded border-outline-variant text-primary focus:ring-primary" type="checkbox"/> <span data-i18n="category.food">Alimentation</span></span><span class="text-xs text-on-surface-variant">(210)</span></label>
+        <div id="nxp-catList" class="space-y-0.5">
+          <p class="text-xs text-on-surface-variant py-2">Chargement…</p>
         </div>
       </div>
       <div class="mb-lg">
         <h3 class="text-xs font-bold text-on-surface-variant uppercase mb-md" data-i18n="filter.price">Prix (FCFA)</h3>
         <div class="px-2">
-          <div class="h-1 bg-outline-variant rounded-full relative mb-4">
-            <div class="absolute left-0 right-0 h-full bg-primary rounded-full"></div>
-            <div class="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-primary rounded-full shadow-sm"></div>
-            <div class="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-primary rounded-full shadow-sm"></div>
+          <div id="nxp-priceTrack" class="h-1 bg-outline-variant rounded-full relative mb-4" style="cursor:pointer">
+            <div id="nxp-priceTrackFill" class="absolute left-0 right-0 h-full bg-primary rounded-full"></div>
+            <div id="nxp-priceThumbMin" class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-primary rounded-full shadow-sm" style="cursor:grab;touch-action:none"></div>
+            <div id="nxp-priceThumbMax" class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-primary rounded-full shadow-sm" style="cursor:grab;touch-action:none"></div>
           </div>
           <div class="flex justify-between items-center text-xs font-bold">
-            <input class="w-16 border-outline-variant rounded p-1 text-center bg-surface-container-low" type="text" value="0"/>
+            <input id="nxp-priceMinInput" class="w-16 border-outline-variant rounded p-1 text-center bg-surface-container-low" type="text" value="0" inputmode="numeric"/>
             <span data-i18n="filter.to">à</span>
-            <input class="w-20 border-outline-variant rounded p-1 text-center bg-surface-container-low" type="text" value="500,000+"/>
+            <input id="nxp-priceMaxInput" class="w-20 border-outline-variant rounded p-1 text-center bg-surface-container-low" type="text" value="500,000+" inputmode="numeric"/>
           </div>
         </div>
       </div>
@@ -14858,16 +14855,25 @@ function initProto(){
     sec.classList.remove('hidden');
     /* Titre dynamique selon le filtre */
     var h2=sec.querySelector('h2');
-    var titre=opts.q?('Résultats : « '+opts.q+' »'):(opts.cat?opts.cat:'Tous les produits');
+    var titre=opts.q?('Résultats : « '+opts.q+' »'):((opts.catLabel||opts.cat)?(opts.catLabel||opts.cat):'Tous les produits');
     if(h2)h2.innerHTML='<span class="material-symbols-outlined text-primary">grid_view</span> '+titre;
     setTimeout(function(){sec.scrollIntoView({behavior:'smooth',block:'start'});},80);
+    filtered=filtered||!!(opts.catList&&opts.catList.length);
     if(_allLoaded&&!filtered)return; /* liste complète déjà chargée : pas de re-fetch */
     if(load)load.classList.remove('hidden');
     /* [NEXUS ÉDUCATION 2026-08-27] Contenu gratuit — jamais mélangé aux produits en
        vente, ici non plus (grille "Tous les produits"/recherche générale). Son propre
        espace : slide du carrousel héro + module __NEXUS_EDUCATION__. */
     var Qall='select=id,name,price,images,image_url,rating,category,stock&active=not.is.false&is_educational=not.is.true&order=created_at.desc&limit=100';
-    if(opts.cat){
+    /* [FILTRES SIDEBAR 2026-08-27] catList = liste explicite de catégories réelles
+       (groupe choisi dans la sidebar, comptages issus de la vue category_counts —
+       fiable, contrairement à NEXUS_CAT_TREE dont les libellés ne correspondent pas
+       toujours aux valeurs `category` réellement en base). cat = filtre historique
+       (nav pillars, panneaux admin) : famille NEXUS_CAT_TREE ou catégorie exacte. */
+    if(opts.catList&&opts.catList.length){
+      var orsL=opts.catList.map(function(c){return 'category.eq.'+encodeURIComponent(c);}).join(',');
+      Qall+='&or=('+orsL+')';
+    } else if(opts.cat){
       var famSubs=NEXUS_CAT_TREE[opts.cat];
       if(famSubs){
         var ors=famSubs.concat([opts.cat]).map(function(c){return 'category.eq.'+encodeURIComponent(c);}).join(',');
@@ -14887,7 +14893,8 @@ function initProto(){
       if(opts.pminEur!=null){prods=prods.filter(function(p){return parseFloat(p.price)>=opts.pminEur;});ax=ax.filter(function(a){return (a.price_fcfa||0)/655.957>=opts.pminEur;});}
       if(opts.pmaxEur!=null){prods=prods.filter(function(p){return parseFloat(p.price)<=opts.pmaxEur;});ax=ax.filter(function(a){return (a.price_fcfa||0)/655.957<=opts.pmaxEur;});}
       /* Filtre catégorie pour les annonces (les produits sont déjà filtrés côté serveur) */
-      if(opts.cat)ax=ax.filter(function(a){return (a.category||'')===opts.cat;});
+      if(opts.catList&&opts.catList.length){var _cl=opts.catList;ax=ax.filter(function(a){return _cl.indexOf(a.category||'')>=0;});}
+      else if(opts.cat)ax=ax.filter(function(a){return (a.category||'')===opts.cat;});
       /* Recherche texte FLOUE (Fuse.js, tolérante aux fautes) : nom+catégorie pour
          les produits, description+catégorie pour les annonces. */
       if(opts.q){
@@ -14992,48 +14999,199 @@ function initProto(){
     }
   })();
 
-  /* Filtres : Appliquer (catégorie + prix) / Réinitialiser */
+  /* [FILTRES SIDEBAR 2026-08-27] Refonte : familles + sous-catégories réelles,
+     comptages en direct (vue Supabase `category_counts`, jamais de chiffres codés
+     en dur) + curseur de prix réellement glissable. Auparavant : 4 catégories
+     figées avec des comptes inventés (ex. "Alimentation (210)" alors que 0 produit
+     n'existe dans cette catégorie) et un curseur purement décoratif (2 poignées
+     sans aucun listener de drag). */
   (function(){
     var aside=ov?ov.querySelector('aside'):null;if(!aside)return;
-    var catLabels=[].slice.call(aside.querySelectorAll('label[data-cat]'));
-    /* Sélection UNIQUE (radio) + surbrillance qui suit le choix. Sans ça,
-       « Élevage » restait coché en 1er et le filtre prenait toujours sa valeur. */
-    function setActive(lbl){
-      catLabels.forEach(function(l){
-        var cb=l.querySelector('input[type=checkbox]'); var on=(l===lbl);
-        if(cb)cb.checked=on;
-        l.classList.toggle('bg-primary-container',on);
-        l.classList.toggle('text-primary',on);
-        l.classList.toggle('font-bold',on);
+    var listEl=document.getElementById('nxp-catList');if(!listEl)return;
+
+    /* Regroupement curatif des valeurs `category` réellement utilisées en base en
+       familles lisibles. Toute catégorie non répertoriée tombe automatiquement
+       dans "Autres" (jamais invisible, jamais fabriquée). À étendre au fil de
+       l'ajout de nouveaux univers de produits (mode, alimentation…). */
+    var CATEGORY_GROUPS=[
+      {label:'Électronique & High-Tech', icon:'devices', match:['Électronique','Téléphones','Téléphones & Accessoires','Informatique','Ordinateurs & Tablettes','Tablettes','Téléviseurs','High-Tech','Sonorisation','Accessoires','Électroménager','Audiovisuel/IT','Éclairage','Écouteurs & Audio','Accessoires informatiques','Montres connectées','Jeux vidéo & Consoles','Appareils photo & Vidéo']},
+      {label:'Immobilier', icon:'home_work', match:['Immobilier']},
+      {label:'Location de matériel', icon:'vpn_key', match:['Voiture','Événementiel','Nautique','BTP/Énergie','Mode/Mariage','Moto/Scooter','Quad/Aventure','Espace/Bureau','Animation enfants','Hébergement','Bien-être','Sport nautique','Pêche/Bateau','Location','Food truck','Bâche/Structure','Karting','Loisirs']},
+      {label:'Mode & Vêtements', icon:'apparel', match:['Mode & Vêtements','Mode Femme','Mode Homme','Mode Enfant','Chaussures','Sacs & Maroquinerie','Bijoux & Accessoires','Tissus & Wax','Lingerie & Sous-vêtements','Sportswear']},
+      {label:'Alimentation', icon:'restaurant', match:['Alimentation','Alimentation générale','Produits bio & locaux','Boissons','Épices & Condiments','Céréales & Légumineuses','Produits laitiers','Boulangerie & Pâtisserie','Épicerie fine','Snacking']},
+      {label:'Maison & Déco', icon:'chair', match:['Maison & Déco','Meubles & Décoration','Cuisine & Art de la table','Linge de maison','Jardinage & Extérieur','Bricolage & Outillage','Literie & Matelas','Climatisation & Chauffage','Décoration murale']},
+      {label:'Beauté & Santé', icon:'spa', match:['Beauté & Santé','Beauté & Cosmétiques','Parfums','Santé & Bien-être','Soins capillaires','Hygiène & Bébé']},
+      {label:'Élevage & Terroir', icon:'agriculture', match:['Produits locaux']}
+    ];
+
+    var chosen=null; /* {catList:[...], cat:null, label:''} (groupe) OU {catList:null, cat:'X', label:'X'} (sous-catégorie) */
+
+    function renderGroups(counts){
+      var used={}; /* catégories déjà rattachées à une famille — le reste ira dans "Autres" */
+      var groups=CATEGORY_GROUPS.map(function(g){
+        var subs=g.match.filter(function(c){return counts[c]>0;}).map(function(c){used[c]=true;return {name:c,cnt:counts[c]};});
+        subs.sort(function(a,b){return b.cnt-a.cnt;});
+        var total=subs.reduce(function(s,x){return s+x.cnt;},0);
+        return {label:g.label,icon:g.icon,subs:subs,total:total};
+      }).filter(function(g){return g.total>0;});
+      var autresSubs=Object.keys(counts).filter(function(c){return !used[c]&&counts[c]>0;}).map(function(c){return {name:c,cnt:counts[c]};});
+      autresSubs.sort(function(a,b){return b.cnt-a.cnt;});
+      if(autresSubs.length){
+        groups.push({label:'Autres',icon:'category',subs:autresSubs,total:autresSubs.reduce(function(s,x){return s+x.cnt;},0)});
+      }
+      groups.sort(function(a,b){return b.total-a.total;});
+      if(!groups.length){ listEl.innerHTML='<p class="text-xs text-on-surface-variant py-2">Aucune catégorie disponible.</p>'; return; }
+      var html='';
+      groups.forEach(function(g,gi){
+        var multi=g.subs.length>1;
+        html+='<div class="nxp-catGroup" data-gi="'+gi+'">'
+          +'<div class="nxp-catRow flex items-center justify-between p-2 rounded hover:bg-surface-container cursor-pointer text-sm" data-role="group" data-label="'+g.label.replace(/"/g,'&quot;')+'">'
+            +'<span class="flex items-center gap-2"><span class="material-symbols-outlined text-[16px] text-primary">'+g.icon+'</span> <span class="font-semibold">'+g.label+'</span></span>'
+            +'<span class="flex items-center gap-1"><span class="text-xs text-on-surface-variant">('+g.total+')</span>'
+            +(multi?'<span class="nxp-catChevron material-symbols-outlined text-[16px] text-on-surface-variant transition-transform" style="transform:rotate(0deg)">expand_more</span>':'')
+            +'</span></div>'
+          +(multi?('<div class="nxp-catSubs pl-6 space-y-0.5" style="display:none">'
+            +g.subs.map(function(s){
+              return '<div class="nxp-catRow flex items-center justify-between px-2 py-1.5 rounded hover:bg-surface-container cursor-pointer text-xs" data-role="sub" data-cat="'+s.name.replace(/"/g,'&quot;')+'">'
+                +'<span>'+s.name+'</span><span class="text-on-surface-variant">('+s.cnt+')</span></div>';
+            }).join('')
+            +'</div>'):'')
+          +'</div>';
+      });
+      listEl.innerHTML=html;
+
+      var allRows=[].slice.call(listEl.querySelectorAll('.nxp-catRow'));
+      function paintActive(){
+        allRows.forEach(function(r){
+          var on=false;
+          if(chosen){
+            if(r.getAttribute('data-role')==='group'&&!chosen.cat&&r.getAttribute('data-label')===chosen.label)on=true;
+            if(r.getAttribute('data-role')==='sub'&&chosen.cat&&r.getAttribute('data-cat')===chosen.cat)on=true;
+          }
+          r.classList.toggle('bg-primary-container',on);
+          r.classList.toggle('text-primary',on);
+          r.classList.toggle('font-bold',on);
+        });
+      }
+      groups.forEach(function(g,gi){
+        var wrap=listEl.querySelector('.nxp-catGroup[data-gi="'+gi+'"]');if(!wrap)return;
+        var groupRow=wrap.querySelector('.nxp-catRow[data-role="group"]');
+        var chevron=wrap.querySelector('.nxp-catChevron');
+        var subsWrap=wrap.querySelector('.nxp-catSubs');
+        if(groupRow)groupRow.addEventListener('click',function(e){
+          if(e.target.closest('.nxp-catChevron')){
+            if(!subsWrap)return;
+            var open=subsWrap.style.display!=='none';
+            subsWrap.style.display=open?'none':'';
+            chevron.style.transform=open?'rotate(0deg)':'rotate(180deg)';
+            return;
+          }
+          chosen={catList:g.subs.map(function(s){return s.name;}),cat:null,label:g.label};
+          paintActive();
+        });
+        if(subsWrap)[].slice.call(subsWrap.querySelectorAll('.nxp-catRow[data-role="sub"]')).forEach(function(sr){
+          sr.addEventListener('click',function(){
+            chosen={catList:null,cat:sr.getAttribute('data-cat'),label:sr.getAttribute('data-cat')};
+            paintActive();
+          });
+        });
+      });
+      paintActive();
+    }
+
+    function loadCounts(){
+      sbFetch('category_counts?select=category,cnt').then(function(rows){
+        var counts={};
+        (rows||[]).forEach(function(r){counts[r.category]=r.cnt;});
+        renderGroups(counts);
+      }).catch(function(){
+        listEl.innerHTML='<p class="text-xs text-on-surface-variant py-2">Catégories indisponibles pour le moment.</p>';
       });
     }
-    catLabels.forEach(function(l){
-      l.addEventListener('click',function(){ setTimeout(function(){ setActive(l); },0); });
-    });
-    function chosenCat(){
-      var chosen=null;
-      catLabels.forEach(function(l){var cb=l.querySelector('input[type=checkbox]');if(cb&&cb.checked&&!chosen){chosen=l.getAttribute('data-cat')||null;}});
-      return chosen;
+    loadCounts();
+
+    /* ── Curseur de prix : réellement glissable (avant : décoratif, aucun listener) ── */
+    var PRICE_MAX=500000; /* au-delà : "500 000+" = pas de plafond */
+    var track=document.getElementById('nxp-priceTrack');
+    var fill=document.getElementById('nxp-priceTrackFill');
+    var thumbMin=document.getElementById('nxp-priceThumbMin');
+    var thumbMax=document.getElementById('nxp-priceThumbMax');
+    var inMin=document.getElementById('nxp-priceMinInput');
+    var inMax=document.getElementById('nxp-priceMaxInput');
+    var pMin=0, pMax=PRICE_MAX;
+    function fmtFCFA(v){return v.toLocaleString('fr-FR');}
+    function paintSlider(){
+      var pctMin=(pMin/PRICE_MAX)*100, pctMax=(pMax/PRICE_MAX)*100;
+      thumbMin.style.left=pctMin+'%';
+      thumbMax.style.left=pctMax+'%';
+      fill.style.left=pctMin+'%';
+      fill.style.right=(100-pctMax)+'%';
+      inMin.value=fmtFCFA(pMin);
+      inMax.value=pMax>=PRICE_MAX?PRICE_MAX.toLocaleString('fr-FR')+'+':fmtFCFA(pMax);
     }
+    paintSlider();
+    function posToVal(clientX){
+      if(!track)return 0;
+      var r=track.getBoundingClientRect();
+      var pct=Math.max(0,Math.min(1,(clientX-r.left)/r.width));
+      return Math.round(pct*PRICE_MAX/1000)*1000;
+    }
+    function bindDrag(thumb,isMin){
+      thumb.addEventListener('pointerdown',function(e){
+        e.preventDefault();
+        thumb.setPointerCapture&&thumb.setPointerCapture(e.pointerId);
+        thumb.style.cursor='grabbing';
+        function onMove(ev){
+          var v=posToVal(ev.clientX);
+          if(isMin){ pMin=Math.min(v,pMax); } else { pMax=Math.max(v,pMin); }
+          paintSlider();
+        }
+        function onUp(){
+          thumb.style.cursor='grab';
+          window.removeEventListener('pointermove',onMove);
+          window.removeEventListener('pointerup',onUp);
+        }
+        window.addEventListener('pointermove',onMove);
+        window.addEventListener('pointerup',onUp);
+      });
+    }
+    bindDrag(thumbMin,true);
+    bindDrag(thumbMax,false);
+    if(track)track.addEventListener('click',function(e){
+      if(e.target===thumbMin||e.target===thumbMax)return;
+      var v=posToVal(e.clientX);
+      if(Math.abs(v-pMin)<=Math.abs(v-pMax)){pMin=Math.min(v,pMax);}else{pMax=Math.max(v,pMin);}
+      paintSlider();
+    });
+    inMin.addEventListener('change',function(){
+      var v=parseInt((inMin.value||'').replace(/\D/g,''),10)||0;
+      pMin=Math.max(0,Math.min(v,pMax));
+      paintSlider();
+    });
+    inMax.addEventListener('change',function(){
+      var raw=(inMax.value||'').replace(/\D/g,'');
+      var v=raw?parseInt(raw,10):PRICE_MAX;
+      pMax=v>=PRICE_MAX?PRICE_MAX:Math.max(v,pMin);
+      paintSlider();
+    });
+
     var applyBtn=document.getElementById('nxp-filterApplyBtn');
-    if(applyBtn){applyBtn.addEventListener('click',function(){
-        var chosen=chosenCat();
-        var pin=aside.querySelectorAll('input[type=text]');
-        var fmin=pin[0]?parseInt((pin[0].value||'').replace(/\D/g,''),10):0;
-        var fmax=pin[1]?parseInt((pin[1].value||'').replace(/\D/g,''),10):0;
-        /* Filtre DANS l'overlay (nouveau design) au lieu de naviguer vers l'ancien
-           catalogue React. */
-        nxpShowAll({
-          cat: chosen||null,
-          pminEur: fmin>0?(fmin/655.957):null,
-          pmaxEur: (fmax>0&&fmax<500000)?(fmax/655.957):null
-        });
-      });}
+    if(applyBtn)applyBtn.addEventListener('click',function(){
+      var opts={pminEur: pMin>0?(pMin/655.957):null, pmaxEur: pMax<PRICE_MAX?(pMax/655.957):null};
+      if(chosen){
+        if(chosen.catList)opts.catList=chosen.catList; else if(chosen.cat)opts.cat=chosen.cat;
+        opts.catLabel=chosen.label;
+      }
+      /* Filtre DANS l'overlay (nouveau design) au lieu de naviguer vers l'ancien
+         catalogue React. */
+      nxpShowAll(opts);
+    });
     var resetBtn=document.getElementById('nxp-filterResetBtn');
-    if(resetBtn){resetBtn.addEventListener('click',function(){
-        catLabels.forEach(function(l){var cb=l.querySelector('input[type=checkbox]');if(cb)cb.checked=false;l.classList.remove('bg-primary-container','text-primary','font-bold');});
-        var pin=aside.querySelectorAll('input[type=text]');if(pin[0])pin[0].value='0';if(pin[1])pin[1].value='500,000+';
-      });}
+    if(resetBtn)resetBtn.addEventListener('click',function(){
+      chosen=null;
+      [].slice.call(listEl.querySelectorAll('.nxp-catRow')).forEach(function(r){r.classList.remove('bg-primary-container','text-primary','font-bold');});
+      pMin=0; pMax=PRICE_MAX; paintSlider();
+    });
   })();
 
   /* Louma : afficher la bannière le vendredi uniquement (réglage commerçant).

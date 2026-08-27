@@ -6,6 +6,73 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (treizième) — Sidebar "Filtres" de l'accueil refaite (chiffres réels + sous-catégories)
+
+**Demande** : l'outil de filtres (sidebar gauche desktop, `public/index.html`)
+affichait des catégories figées avec des comptes inventés (ex. "Alimentation
+(210)" alors qu'aucun produit n'existe dans cette catégorie) et un curseur de
+prix purement décoratif (aucun listener de drag). Demande : le rendre plus
+pro, corriger les chiffres faux, et ajouter des sous-catégories (ex. Électronique).
+
+**Fait** :
+- Nouvelle vue Supabase `public.category_counts` (`sql/2026_08_27_category_counts_view.sql`)
+  = comptage réel par `category` sur les produits actifs non-éducatifs. GRANT
+  SELECT anon/authenticated (données agrégées non sensibles).
+- Sidebar reconstruite en accordéon : familles curées (`CATEGORY_GROUPS` dans
+  `index.html`) regroupant les valeurs `category` réelles de la base (ex.
+  "Électronique & High-Tech" = Téléphones/Informatique/Téléviseurs/Tablettes/
+  Sonorisation/Accessoires/Électroménager/…) ; toute catégorie non répertoriée
+  tombe dans "Autres" (jamais invisible, jamais inventée). Clic sur la famille
+  = filtre OR sur tous ses membres ; clic sur une sous-catégorie = filtre exact.
+  `nxpShowAll()` étendu avec `opts.catList`/`opts.catLabel` pour ce cas (le
+  filtre historique `opts.cat` — nav pillars, panneaux admin — inchangé).
+- Curseur de prix rendu réellement glissable (pointer events, drag min/max,
+  clic sur la piste, synchro bidirectionnelle avec les champs texte) — avant :
+  2 poignées visuelles sans aucun JS de drag.
+- Réalité découverte en creusant : le catalogue actuel ne contient QUE de
+  l'électronique (478 produits) + immobilier (61) + location matériel (147) +
+  éducation (35) — aucun produit Mode/Alimentation/Maison/Beauté n'existe
+  encore malgré les catégories déjà prévues dans `NEXUS_CAT_TREE`. Les groupes
+  correspondants dans la sidebar restent prêts (`CATEGORY_GROUPS`) et
+  apparaîtront automatiquement dès que des produits y seront ajoutés.
+
+**État final** : vérifié en local (comptages vue = comptages réels, clic
+famille/sous-catégorie → bon nombre de résultats, drag du curseur → bons
+champs). Reste à committer/pousser (React bundle non touché, uniquement
+`index.html` + nouvelle vue SQL).
+
+---
+
+## 2026-08-27 (duodecies) — Nouvelle prospection Immobilier + Location matériel importée en base
+
+**Demande** : nouvelle prospection web (Expat-Dakar, CoinAfrique, recherche
+`site:facebook.com`/`site:instagram.com`) sur Immobilier (annonces individuelles
+appartements/terrains, PAS des agences — correction explicite en cours de tâche)
+et Location matériel, croisée avec `prospection/` existant pour éviter les doublons,
+puis import en base.
+
+**Fait** :
+- `prospection/catalogue_immobilier_senegal.csv` : +25 lignes (39→64).
+- `prospection/catalogue_location_senegal.csv` : +16 lignes (66→82).
+- `sql/2026_08_27_prospection_immobilier_location_batch2.sql` (pattern
+  `_annonces_b2` temp table → `INSERT ... WHERE NOT EXISTS`, attribution au
+  compte admin, déjà éprouvé sur les lots précédents) exécuté en prod.
+- 22 annonces Immobilier (`is_realestate=true`) + 16 annonces Location
+  (`is_rental=true`) insérées dans `products`, dédupliquées, vérifiées
+  (`count(*) filter` post-import = 22/16 conforme).
+- 3 lignes Immobilier exclues de l'import (prix non vérifiable — Villa Saly,
+  Terrain Saly Carrefour, Appartement meublé Liberté 6 Extension) : restent
+  dans le CSV pour complément manuel plutôt que d'inventer un prix ou
+  d'utiliser `is_vitrine` (non supporté par `isVitrineListing()` côté
+  `realestate_specs`, seulement `rental_specs`/`animal_specs`).
+- 10 lignes Location sans prix vérifiable importées en mode vitrine
+  (`rental_specs.is_vitrine:true`, `price=1€` placeholder jamais affiché).
+
+**État final** : importé et vérifié en base prod. Rien à committer côté code
+(uniquement CSV gitignorés + fichier SQL déjà trackable si souhaité).
+
+---
+
 ## 2026-08-27 (undecies) — Raccourci Éducation remis dans la pile de widgets (désormais home-only)
 
 **Demande** : le raccourci Éducation avait été retiré de la pile de widgets
