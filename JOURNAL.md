@@ -6,6 +6,47 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (quinquies) — Bandeau Éducation → slide carrousel + retrait des 2 entrées qui fuitaient dans les tableaux de bord
+
+**Demande** : retirer le bandeau NEXUS Éducation de la home et le remplacer
+par une bannière dans le carrousel héro déjà existant ; retirer aussi les
+deux widgets Éducation visibles dans les tableaux de bord (capture d'écran
+admin fournie — toggle vert "Widgets" bas-gauche + lien menu, tous deux
+visibles même en étant connecté).
+
+**Constat** : le lien menu et le bouton de la pile de widgets (`#nxp-
+widgetStack`) sont placés APRÈS `</footer>` dans `index.html`, donc HORS de
+`#nx-proto-overlay` (l'overlay public masqué par `hideProto()` à la
+connexion) — contrairement au carrousel héro qui, lui, vit BIEN dans
+l'overlay. Ces deux éléments restent donc visibles/fonctionnels même dans
+les tableaux de bord admin/vendeur/acheteur, d'où la fuite constatée.
+Second constat, plus important : `public/index.html` contient un tableau
+`SLIDES` codé en dur, mais `app_config.nexus_admin_banners` (Supabase,
+13 bannières déjà configurées) le REMPLACE entièrement dès qu'il existe
+(`applyAdminBanners()` écrase `slides`, ne fusionne jamais) — ajouter une
+bannière SEULEMENT au tableau codé en dur n'aurait eu AUCUN effet visible
+en prod.
+
+**Fait** :
+- Bandeau `#nxp-educationBanner` supprimé ; nouvelle bannière "🎓 NEXUS
+  Éducation" ajoutée au carrousel héro — à la fois dans `SLIDES` (repli JS)
+  ET dans `app_config.nexus_admin_banners` en base (`sql/2026_08_27_
+  nexus_education_hero_banner.sql`, idempotent).
+- Lien menu "NEXUS Éducation" et bouton "Éducation" de la pile de widgets
+  supprimés — plus aucune entrée Éducation ne fuit dans les tableaux de bord.
+  Le carrousel héro reste la SEULE entrée (proprement scopée à la home
+  publique via `#nx-proto-overlay`).
+- Commentaire ajouté dans `index.html` documentant ce piège (fallback JS vs
+  config admin) pour la prochaine bannière à ajouter.
+
+**État final** : vérifié en local — bandeau disparu, slide "NEXUS Éducation"
+présente dans le carrousel (13→14 bannières), clic → ouvre bien le module
+`__NEXUS_EDUCATION__`, aucune trace du lien menu/bouton widget. Pas de
+changement au bundle JS ce coup-ci (seulement `index.html` + `app_config`
+en base). Reste à committer/pousser (confirmation attendue).
+
+---
+
 ## 2026-08-27 (quater) — NEXUS Éducation : espace dédié séparé du catalogue marchand
 
 **Demande** : les fiches Éducation (téléchargements gratuits) ne doivent pas se
