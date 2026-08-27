@@ -13133,6 +13133,163 @@ const TrocAdminPanel = ({ addToast }) => {
   );
 };
 
+// [ADMIN 2026-08-27] Modération des Annonces Express (annonces_express) — classifieds
+// sans inscription (public/index.html, module AxModal). Jusqu'ici AUCUNE UI admin
+// n'existait pour ce module (seule la DDL brute était visible dans SqlScriptsPanel) :
+// un vecteur de spam sans connexion requise, sans aucune modération possible.
+// RLS déjà correcte en base (ae_admin_all, is_admin() FOR ALL) — seule l'UI manquait.
+const AnnoncesExpressAdminPanel = ({ addToast }) => {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [busyId, setBusyId] = React.useState(null);
+  const [notReady, setNotReady] = React.useState(false);
+  const E = React.createElement;
+  const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const TABLE_MISSING = /could not find the table|pgrst205|does not exist|schema cache/i;
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await DataService._sb.from('annonces_express').select('*').order('created_at', { ascending: false }).limit(300);
+      if (error) {
+        if (TABLE_MISSING.test((error.message || '') + ' ' + (error.code || ''))) { setNotReady(true); setItems([]); }
+        else throw error;
+      } else { setNotReady(false); setItems(data || []); }
+    } catch (e) { toast('Lecture des annonces échouée : ' + (e.message || e), 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { if (DataService._sb) load(); else setLoading(false); }, []);
+  const setStatus = async (it, status) => {
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('annonces_express').update({ status }).eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.map(x => x.id === it.id ? { ...x, status } : x));
+      toast('Statut mis à jour.', 'success');
+    } catch (e) { toast('Échec : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  const del = async (it) => {
+    if (typeof confirm === 'function' && !confirm('Supprimer définitivement cette annonce ?')) return;
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('annonces_express').delete().eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.filter(x => x.id !== it.id));
+      toast('Annonce supprimée.', 'success');
+    } catch (e) { toast('Échec suppression : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  const statusBadge = (s) => s === 'active' ? 'success' : s === 'expired' ? 'warning' : s === 'deleted' ? 'danger' : 'secondary';
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+      E('h2', { className: 'card-title' }, '⚡ Modération Annonces Express (' + items.length + ')'),
+      E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir')
+    ),
+    loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : notReady ? E('div', { style: { padding: '1.2rem', margin: '1rem', background: '#FEF9C3', border: '1px solid #F59E0B', borderRadius: 10, color: '#78350F' } },
+          E('div', { style: { fontWeight: 800, marginBottom: 6 } }, '⚠️ Table `annonces_express` absente'),
+          E('div', { style: { fontSize: '.9rem' } }, 'Exécutez la migration de création de la table dans Supabase, puis rafraîchissez.'))
+      : items.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-bolt' }), E('h3', null, 'Aucune annonce express'))
+        : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null, ['Photo', 'Description', 'Prix', 'Catégorie', 'Ville', 'Contact', 'Statut', 'Date', 'Actions'].map(h => E('th', { key: h }, h)))),
+          E('tbody', null, items.map(it => E('tr', { key: it.id },
+            E('td', { 'data-label': 'Photo' }, it.photo_url ? E('img', { src: it.photo_url, style: { width: 40, height: 40, objectFit: 'cover', borderRadius: 6 } }) : '—'),
+            E('td', { 'data-label': 'Description' }, E('span', { style: { maxWidth: 220, display: 'inline-block' } }, (it.description || '').slice(0, 80))),
+            E('td', { 'data-label': 'Prix' }, (it.price_fcfa || 0).toLocaleString('fr-FR') + ' F'),
+            E('td', { 'data-label': 'Catégorie' }, it.category || '—'),
+            E('td', { 'data-label': 'Ville' }, it.city || '—'),
+            E('td', { 'data-label': 'Contact' }, it.phone || it.email || '—'),
+            E('td', { 'data-label': 'Statut' }, E('span', { className: 'badge badge-' + statusBadge(it.status) }, it.status)),
+            E('td', { 'data-label': 'Date' }, it.created_at ? new Date(it.created_at).toLocaleDateString('fr-FR') : '—'),
+            E('td', { 'data-label': 'Actions' }, E('div', { className: 'flex gap-1' },
+              it.status === 'active'
+                ? E('button', { className: 'btn btn-sm btn-secondary', disabled: busyId === it.id, onClick: () => setStatus(it, 'deleted') }, 'Masquer')
+                : E('button', { className: 'btn btn-sm btn-success', disabled: busyId === it.id, onClick: () => setStatus(it, 'active') }, 'Réactiver'),
+              E('button', { className: 'btn btn-sm btn-danger', disabled: busyId === it.id, onClick: () => del(it) }, 'Supprimer')
+            ))
+          )))
+        ))
+  );
+};
+
+// [ADMIN 2026-08-27] Gestion des Lignes de Transport (transport_lines — annuaire
+// import de transporteurs inter-villes, distinct des tables transporters/
+// transport_trips/transport_reservations déjà gérées par AdminTransportPanel).
+// Jusqu'ici AUCUNE UI n'existait : activer/désactiver/supprimer une ligne
+// importée n'était possible qu'en SQL direct.
+const TransportLinesAdminPanel = ({ addToast }) => {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [busyId, setBusyId] = React.useState(null);
+  const [notReady, setNotReady] = React.useState(false);
+  const [q, setQ] = React.useState('');
+  const E = React.createElement;
+  const toast = (m, t) => (addToast || window.__nexusToast || function () {})(m, t || 'info');
+  const TABLE_MISSING = /could not find the table|pgrst205|does not exist|schema cache/i;
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await DataService._sb.from('transport_lines').select('*').order('created_at', { ascending: false }).limit(300);
+      if (error) {
+        if (TABLE_MISSING.test((error.message || '') + ' ' + (error.code || ''))) { setNotReady(true); setItems([]); }
+        else throw error;
+      } else { setNotReady(false); setItems(data || []); }
+    } catch (e) { toast('Lecture des lignes échouée : ' + (e.message || e), 'error'); }
+    setLoading(false);
+  };
+  React.useEffect(() => { if (DataService._sb) load(); else setLoading(false); }, []);
+  const setActive = async (it, active) => {
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('transport_lines').update({ active }).eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.map(x => x.id === it.id ? { ...x, active } : x));
+      toast('Ligne mise à jour.', 'success');
+    } catch (e) { toast('Échec : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  const del = async (it) => {
+    if (typeof confirm === 'function' && !confirm('Supprimer définitivement cette ligne de transport ?')) return;
+    setBusyId(it.id);
+    try {
+      const { error } = await DataService._sb.from('transport_lines').delete().eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.filter(x => x.id !== it.id));
+      toast('Ligne supprimée.', 'success');
+    } catch (e) { toast('Échec suppression : ' + (e.message || e), 'error'); } finally { setBusyId(null); }
+  };
+  const filtered = !q.trim() ? items : items.filter(it => {
+    const hay = ((it.operator || '') + ' ' + (it.origin_city || '') + ' ' + (it.destination_main || '')).toLowerCase();
+    return hay.includes(q.trim().toLowerCase());
+  });
+  return E('div', { className: 'card' },
+    E('div', { className: 'card-header', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem' } },
+      E('h2', { className: 'card-title' }, '🚌 Lignes de Transport (' + filtered.length + ')'),
+      E('div', { className: 'flex gap-1' },
+        E('input', { className: 'form-input', placeholder: 'Rechercher opérateur/ville…', value: q, onChange: e => setQ(e.target.value), style: { width: 220 } }),
+        E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir'))
+    ),
+    loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
+      : notReady ? E('div', { style: { padding: '1.2rem', margin: '1rem', background: '#FEF9C3', border: '1px solid #F59E0B', borderRadius: 10, color: '#78350F' } },
+          E('div', { style: { fontWeight: 800, marginBottom: 6 } }, '⚠️ Table `transport_lines` absente'),
+          E('div', { style: { fontSize: '.9rem' } }, 'Exécutez ', E('code', null, 'sql/2026_07_05_transport_covoiturage.sql'), ' (ou la migration transport_lines correspondante), puis rafraîchissez.'))
+      : filtered.length === 0 ? E('div', { className: 'empty-state' }, E('i', { className: 'fas fa-bus' }), E('h3', null, 'Aucune ligne pour ce filtre'))
+        : E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
+          E('thead', null, E('tr', null, ['Opérateur', 'Trajet', 'Prix', 'Téléphone', 'Statut', 'Actions'].map(h => E('th', { key: h }, h)))),
+          E('tbody', null, filtered.map(it => E('tr', { key: it.id },
+            E('td', { 'data-label': 'Opérateur' }, E('strong', null, it.operator || '—')),
+            E('td', { 'data-label': 'Trajet' }, (it.origin_city || '—') + ' → ' + (it.destination_main || '—')),
+            E('td', { 'data-label': 'Prix' }, it.price_fcfa ? (it.price_fcfa).toLocaleString('fr-FR') + ' F' : '—'),
+            E('td', { 'data-label': 'Téléphone' }, it.phone || it.whatsapp || '—'),
+            E('td', { 'data-label': 'Statut' }, E('span', { className: 'badge badge-' + (it.active ? 'success' : 'secondary') }, it.active ? 'Active' : 'Inactive')),
+            E('td', { 'data-label': 'Actions' }, E('div', { className: 'flex gap-1' },
+              it.active
+                ? E('button', { className: 'btn btn-sm btn-secondary', disabled: busyId === it.id, onClick: () => setActive(it, false) }, 'Désactiver')
+                : E('button', { className: 'btn btn-sm btn-success', disabled: busyId === it.id, onClick: () => setActive(it, true) }, 'Activer'),
+              E('button', { className: 'btn btn-sm btn-danger', disabled: busyId === it.id, onClick: () => del(it) }, 'Supprimer')
+            ))
+          )))
+        ))
+  );
+};
+
 // [NEXUS STORIES] Panneau de modération admin : liste toutes les vidéos (RLS admin),
 // masquer (status=closed) / réactiver / supprimer.
 const StoriesAdminPanel = ({ addToast }) => {
@@ -13605,6 +13762,33 @@ const ProspectsAdminPanel = ({ addToast }) => {
     setBusy(false);
   };
 
+  // [ADMIN 2026-08-27] Rejeter (garde la trace, status='rejected') ou supprimer
+  // définitivement un prospect — jusqu'ici seule la promotion était possible,
+  // un prospect non pertinent (doublon, faux numéro…) ne pouvait ni être écarté
+  // de la file "new" ni être retiré de la base.
+  const reject = async (ids) => {
+    if (!ids.length) return;
+    setBusy(true);
+    try {
+      const { error } = await DataService._sb.from('prospects').update({ status: 'rejected' }).in('id', ids);
+      if (error) throw error;
+      toast(ids.length + ' prospect(s) rejeté(s).', 'success');
+      await load();
+    } catch (e) { toast('Échec du rejet : ' + (e.message || e), 'error'); }
+    setBusy(false);
+  };
+  const del = async (it) => {
+    if (typeof confirm === 'function' && !confirm('Supprimer définitivement ce prospect ?')) return;
+    setBusy(true);
+    try {
+      const { error } = await DataService._sb.from('prospects').delete().eq('id', it.id);
+      if (error) throw error;
+      setItems(xs => xs.filter(x => x.id !== it.id));
+      toast('Prospect supprimé.', 'success');
+    } catch (e) { toast('Échec suppression : ' + (e.message || e), 'error'); }
+    setBusy(false);
+  };
+
   const toggle = (id) => setSel(s => ({ ...s, [id]: !s[id] }));
   const selectedIds = items.filter(p => sel[p.id]).map(p => p.id);
   const allChecked = items.length > 0 && items.every(p => sel[p.id]);
@@ -13622,7 +13806,8 @@ const ProspectsAdminPanel = ({ addToast }) => {
           E('option', { value: 'new' }, 'new (non promus)'),
           E('option', { value: '' }, 'tous statuts'),
           E('option', { value: 'promoted' }, 'promoted'),
-          E('option', { value: 'contacted' }, 'contacted')),
+          E('option', { value: 'contacted' }, 'contacted'),
+          E('option', { value: 'rejected' }, 'rejected')),
         E('button', { className: 'btn btn-sm btn-secondary', onClick: load }, '↻ Rafraîchir'))
     ),
     loading ? E('p', { style: { padding: '1rem', color: '#6b7280' } }, 'Chargement…')
@@ -13634,6 +13819,8 @@ const ProspectsAdminPanel = ({ addToast }) => {
           E('div', { style: { padding: '.6rem 1rem', display: 'flex', gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } },
             E('button', { className: 'btn btn-sm btn-primary', disabled: busy || !selectedIds.length, onClick: () => promote(selectedIds) },
               busy ? '⏳ Promotion…' : '🚀 Promouvoir la sélection (' + selectedIds.length + ')'),
+            E('button', { className: 'btn btn-sm btn-secondary', disabled: busy || !selectedIds.length, onClick: () => reject(selectedIds) },
+              '🚫 Rejeter la sélection (' + selectedIds.length + ')'),
             E('span', { style: { fontSize: '.8rem', color: '#6b7280' } }, 'Pro → « Modération NEXUS Pro » · Vendeur → « Vendeurs en attente » (à activer ensuite)')),
           E('div', { className: 'table-wrapper' }, E('table', { className: 'data-table' },
             E('thead', null, E('tr', null,
@@ -13647,9 +13834,15 @@ const ProspectsAdminPanel = ({ addToast }) => {
               E('td', { 'data-label': 'Téléphone' }, p.phone ? E('a', { href: 'tel:' + p.phone }, p.phone) : '—'),
               E('td', { 'data-label': 'Ville' }, p.city || '—'),
               E('td', { 'data-label': 'Statut' }, E('span', { className: 'badge badge-' + badgeClass(p.status) }, p.status)),
-              E('td', { 'data-label': 'Action' }, p.status === 'promoted'
-                ? E('span', { style: { color: '#16a34a', fontWeight: 700, fontSize: '.8rem' } }, '✓ promu')
-                : E('button', { className: 'btn btn-sm btn-success', disabled: busy, onClick: () => promote([p.id]) }, 'Promouvoir'))
+              E('td', { 'data-label': 'Action' }, E('div', { className: 'flex gap-1' },
+                p.status === 'promoted'
+                  ? E('span', { style: { color: '#16a34a', fontWeight: 700, fontSize: '.8rem' } }, '✓ promu')
+                  : E(React.Fragment, null,
+                      E('button', { className: 'btn btn-sm btn-success', disabled: busy, onClick: () => promote([p.id]) }, 'Promouvoir'),
+                      p.status !== 'rejected' && E('button', { className: 'btn btn-sm btn-secondary', disabled: busy, onClick: () => reject([p.id]) }, 'Rejeter')
+                    ),
+                E('button', { className: 'btn btn-sm btn-danger', disabled: busy, onClick: () => del(p) }, 'Supprimer')
+              ))
             )))
           )))
   );
@@ -26392,6 +26585,8 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "products", icon: "tags", label: "Produits" },
     { id: "products_manage", icon: "boxes-stacked", label: "Gestion produits" },
     { id: "troc", icon: "exchange-alt", label: "🔄 Troc" },
+    { id: "annonces_express", icon: "bolt", label: "⚡ Annonces Express" },
+    { id: "transport_lines", icon: "bus", label: "🚌 Lignes de Transport" },
     { id: "stories", icon: "video", label: "🎬 Stories" },
     { id: "pros", icon: "hard-hat", label: "🔧 Pros (artisans)" },
     { id: "prospects", icon: "address-book", label: "📇 Prospects" },
@@ -26534,7 +26729,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       /* @__PURE__ */ React.createElement("option", { value: "delivered" }, "Livr\xE9"),
       /* @__PURE__ */ React.createElement("option", { value: "cancelled" }, "Annul\xE9")
     )));
-  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "products_manage" && /* @__PURE__ */ React.createElement(ProductsManagePanel, { addToast }), view === "prospects" && /* @__PURE__ */ React.createElement(ProspectsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "chat_mod" && /* @__PURE__ */ React.createElement(ChatModerationPanel, { addToast }), view === "products" && (() => {
+  })))), /* @__PURE__ */ React.createElement(Pagination, { currentPage: ordersPage, totalPages: Math.ceil(orders.length / ITEMS_PER_PAGE), onPageChange: setOrdersPage, totalItems: orders.length, itemsPerPage: ITEMS_PER_PAGE })), view === "troc" && /* @__PURE__ */ React.createElement(TrocAdminPanel, { addToast }), view === "annonces_express" && /* @__PURE__ */ React.createElement(AnnoncesExpressAdminPanel, { addToast }), view === "transport_lines" && /* @__PURE__ */ React.createElement(TransportLinesAdminPanel, { addToast }), view === "stories" && /* @__PURE__ */ React.createElement(StoriesAdminPanel, { addToast }), view === "pros" && /* @__PURE__ */ React.createElement(ProsAdminPanel, { addToast }), view === "products_manage" && /* @__PURE__ */ React.createElement(ProductsManagePanel, { addToast }), view === "prospects" && /* @__PURE__ */ React.createElement(ProspectsAdminPanel, { addToast }), view === "breeders" && /* @__PURE__ */ React.createElement(BreedersAdminPanel, { addToast }), view === "chat_mod" && /* @__PURE__ */ React.createElement(ChatModerationPanel, { addToast }), view === "products" && (() => {
     const pending = products.filter((p) => !p.moderated);
     const approved = products.filter((p) => p.moderated);
     const moderateProduct = async (pid, approve) => {

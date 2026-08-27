@@ -6,6 +6,53 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (decies) — Modération admin étendue à tous les modules (Annonces Express, Lignes de Transport, Prospects)
+
+**Demande** : donner à l'admin la possibilité de gérer n'importe quelle
+annonce faite sur la plateforme, dans tous les modules du site.
+
+**Audit préalable** (agent Explore) : la plupart des verticales avaient déjà
+un panneau admin complet (Produits ×2, Troc, Stories, Pros, Dépannage Auto) —
+seuls 3 modules avaient une vraie lacune :
+- **`annonces_express`** (classifieds sans inscription) : AUCUNE UI admin,
+  seule la DDL brute était visible ailleurs (outil dev `SqlScriptsPanel`).
+- **`transport_lines`** (annuaire transporteurs importé) : AUCUNE UI ; à ne
+  pas confondre avec `transporters`/`transport_trips`/`transport_reservations`
+  déjà gérés par `AdminTransportPanel` (fonctionnalité différente).
+- **`prospects`** : UI existante mais seule la promotion en compte était
+  possible (pas de rejet ni de suppression).
+- Vérifié en base (au lieu de faire confiance à la lecture statique des
+  fichiers SQL) : RLS (`is_admin()` FOR ALL) et GRANTs sont déjà corrects en
+  prod sur les 3 tables — la lacune était PUREMENT côté UI, aucune migration
+  SQL nécessaire.
+
+**Fait** :
+- `AnnoncesExpressAdminPanel` (nouveau) : liste, masquer/réactiver
+  (`status`), suppression définitive.
+- `TransportLinesAdminPanel` (nouveau) : liste + recherche opérateur/ville,
+  activer/désactiver, suppression définitive.
+- `ProspectsAdminPanel` étendu : actions "Rejeter" (unitaire + en masse) et
+  "Supprimer" ajoutées à côté de "Promouvoir" déjà existant.
+- 2 nouvelles entrées dans le menu admin : "⚡ Annonces Express", "🚌 Lignes
+  de Transport".
+
+**Limite connue (hors périmètre cette fois)** : `ProductsManagePanel` (déjà
+existant) permet de gérer tout produit, y compris les 5 verticales portées
+par `products` (location/immobilier/élevage/local/éducation), mais n'expose
+pas encore l'édition des colonnes `*_specs` (jsonb) propres à chaque
+verticale — seulement les champs produit standards (prix/stock/catégorie/
+description) + activation/suppression. Amélioration possible plus tard si
+besoin.
+
+**État final** : vérifié en local — les deux nouveaux composants se
+chargent sans erreur (`typeof ... !== 'undefined'`), bundle syntaxiquement
+valide, aucune régression console. Test fonctionnel complet (connexion admin
+réelle) non effectué — exclu par la règle de ne jamais se connecter au
+panneau admin en production. Bundle renommé `app.d1f7b5e052.js`. Reste à
+committer/pousser.
+
+---
+
 ## 2026-08-27 (novies) — Collection NEXUS Éducation étoffée : 20 → 35 cours, 6 nouvelles matières
 
 **Demande** : trouver plus de livres/cours de ce genre pour étoffer la
