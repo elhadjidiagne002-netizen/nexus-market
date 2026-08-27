@@ -6,6 +6,37 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (quinzième) — Filtre catalogue mobile aligné sur le desktop
+
+**Demande** : le tiroir de filtres mobile (bottom sheet) restait "rudimentaire
+et démodé" — 7 catégories figées en checkboxes + deux `<input type=number>`
+bruts pour le prix — pendant que la sidebar desktop avait déjà été refaite
+(accordéon + comptages réels + curseur glissable). L'utilisateur a aussi
+confirmé (après vérification en direct sur nexusmarket.sn, captures à
+l'appui) que les filtres Pro/Covoiturage/Éducation de la session précédente
+étaient bien en ligne — la confusion venait du fait que ce sont des filtres
+internes à chaque module (pas dans le catalogue principal), pas d'un défaut
+de déploiement.
+
+**Fait** :
+- Extrait la logique du filtre desktop (`CATEGORY_GROUPS`, comptages,
+  accordéon, curseur de prix glissable) en une fonction réutilisable
+  `buildCatalogFilterPanel(ids)`, appelée deux fois (desktop `#nxp-catList`
+  + mobile `#nxp-catListM`, ids paramétrés).
+- Comptages `category_counts` désormais fetchés UNE seule fois et partagés
+  entre les deux panneaux (`getCategoryCounts()`, promesse mise en cache).
+- Tiroir mobile (`#nxp-filterDrawer`) : mêmes familles/sous-catégories
+  accordéon + même curseur de prix glissable que le desktop (nouveaux ids
+  suffixés `M`). Le bouton "Appliquer" mobile referme aussi le tiroir après
+  application du filtre (`onApply` callback).
+
+**État final** : vérifié en local en viewport mobile (375×812) — accordéon
+fonctionnel, comptages réels identiques au desktop, drag tactile du curseur
+de prix opérationnel, clic "Appliquer" ferme le tiroir et affiche bien les
+74 résultats "Téléphones" attendus. Reste à committer/pousser.
+
+---
+
 ## 2026-08-27 (quatorzième) — Filtres avec comptages réels : NEXUS Pro, Covoiturage (lignes), Éducation
 
 **Demande** : pouvoir filtrer les pros, les lignes régulières de covoiturage,

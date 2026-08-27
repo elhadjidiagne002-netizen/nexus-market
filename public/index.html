@@ -14064,20 +14064,22 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
       <button id="nxp-filterClose" aria-label="Fermer" class="text-2xl leading-none text-on-surface-variant w-9 h-9 rounded-full hover:bg-surface-container">&times;</button>
     </div>
     <h3 class="text-xs font-bold text-on-surface-variant uppercase mb-2">Catégories</h3>
-    <div class="space-y-1 mb-lg">
-      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Électronique" class="rounded border-outline-variant text-primary focus:ring-primary"/> Électronique</label>
-      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Mode &amp; Vêtements" class="rounded border-outline-variant text-primary focus:ring-primary"/> Mode &amp; Vêtements</label>
-      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Maison &amp; Déco" class="rounded border-outline-variant text-primary focus:ring-primary"/> Maison &amp; Déco</label>
-      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Beauté &amp; Santé" class="rounded border-outline-variant text-primary focus:ring-primary"/> Beauté &amp; Santé</label>
-      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Alimentation" class="rounded border-outline-variant text-primary focus:ring-primary"/> Alimentation</label>
-      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Informatique" class="rounded border-outline-variant text-primary focus:ring-primary"/> Informatique</label>
-      <label class="flex items-center gap-2 p-2.5 rounded-lg hover:bg-surface-container cursor-pointer text-sm"><input type="checkbox" data-cat="Produits locaux" class="rounded border-outline-variant text-primary focus:ring-primary"/> Produits locaux</label>
-    </div>
+    <!-- [FILTRES MOBILE 2026-08-27] Même moteur que la sidebar desktop (familles +
+         sous-catégories réelles, comptages en direct) — avant : 7 catégories figées
+         sans aucun rapport avec la base. -->
+    <div id="nxp-catListM" class="space-y-0.5 mb-lg"><p class="text-xs text-on-surface-variant py-2">Chargement…</p></div>
     <h3 class="text-xs font-bold text-on-surface-variant uppercase mb-2">Prix (FCFA)</h3>
-    <div class="flex items-center gap-2 mb-lg">
-      <input id="nxp-fMin" type="number" inputmode="numeric" placeholder="Min" class="w-full border border-outline-variant rounded-lg p-2.5 text-sm bg-surface-container-low"/>
-      <span class="text-on-surface-variant">à</span>
-      <input id="nxp-fMax" type="number" inputmode="numeric" placeholder="Max" class="w-full border border-outline-variant rounded-lg p-2.5 text-sm bg-surface-container-low"/>
+    <div class="px-1 mb-lg">
+      <div id="nxp-priceTrackM" class="h-1 bg-outline-variant rounded-full relative mb-4" style="cursor:pointer">
+        <div id="nxp-priceTrackFillM" class="absolute left-0 right-0 h-full bg-primary rounded-full"></div>
+        <div id="nxp-priceThumbMinM" class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 bg-white border-2 border-primary rounded-full shadow-sm" style="cursor:grab;touch-action:none"></div>
+        <div id="nxp-priceThumbMaxM" class="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 bg-white border-2 border-primary rounded-full shadow-sm" style="cursor:grab;touch-action:none"></div>
+      </div>
+      <div class="flex justify-between items-center text-xs font-bold">
+        <input id="nxp-priceMinInputM" class="w-20 border-outline-variant rounded p-1.5 text-center bg-surface-container-low" type="text" value="0" inputmode="numeric"/>
+        <span class="text-on-surface-variant">à</span>
+        <input id="nxp-priceMaxInputM" class="w-24 border-outline-variant rounded p-1.5 text-center bg-surface-container-low" type="text" value="500,000+" inputmode="numeric"/>
+      </div>
     </div>
     <div class="flex gap-2 pb-2">
       <button id="nxp-filterReset" class="flex-1 border border-outline-variant rounded-lg py-3 font-bold text-sm">Réinitialiser</button>
@@ -15064,34 +15066,37 @@ function initProto(){
     }
   })();
 
-  /* [FILTRES SIDEBAR 2026-08-27] Refonte : familles + sous-catégories réelles,
-     comptages en direct (vue Supabase `category_counts`, jamais de chiffres codés
-     en dur) + curseur de prix réellement glissable. Auparavant : 4 catégories
-     figées avec des comptes inventés (ex. "Alimentation (210)" alors que 0 produit
-     n'existe dans cette catégorie) et un curseur purement décoratif (2 poignées
-     sans aucun listener de drag). */
-  (function(){
-    var aside=ov?ov.querySelector('aside'):null;if(!aside)return;
-    var listEl=document.getElementById('nxp-catList');if(!listEl)return;
+  /* [FILTRES 2026-08-27] Refonte commune desktop (sidebar) + mobile (tiroir bottom
+     sheet, avant : 7 catégories figées + inputs nombre bruts, "rudimentaire et
+     démodé") : familles + sous-catégories réelles, comptages en direct (vue
+     Supabase `category_counts`, jamais de chiffres codés en dur) + curseur de
+     prix réellement glissable. Une seule fonction `buildCatalogFilterPanel`
+     instanciée deux fois (desktop puis mobile) pour ne jamais diverger. */
+  var CATEGORY_GROUPS=[
+    {label:'Électronique & High-Tech', icon:'devices', match:['Électronique','Téléphones','Téléphones & Accessoires','Informatique','Ordinateurs & Tablettes','Tablettes','Téléviseurs','High-Tech','Sonorisation','Accessoires','Électroménager','Audiovisuel/IT','Éclairage','Écouteurs & Audio','Accessoires informatiques','Montres connectées','Jeux vidéo & Consoles','Appareils photo & Vidéo']},
+    {label:'Immobilier', icon:'home_work', match:['Immobilier']},
+    {label:'Location de matériel', icon:'vpn_key', match:['Voiture','Événementiel','Nautique','BTP/Énergie','Mode/Mariage','Moto/Scooter','Quad/Aventure','Espace/Bureau','Animation enfants','Hébergement','Bien-être','Sport nautique','Pêche/Bateau','Location','Food truck','Bâche/Structure','Karting','Loisirs']},
+    {label:'Mode & Vêtements', icon:'apparel', match:['Mode & Vêtements','Mode Femme','Mode Homme','Mode Enfant','Chaussures','Sacs & Maroquinerie','Bijoux & Accessoires','Tissus & Wax','Lingerie & Sous-vêtements','Sportswear']},
+    {label:'Alimentation', icon:'restaurant', match:['Alimentation','Alimentation générale','Produits bio & locaux','Boissons','Épices & Condiments','Céréales & Légumineuses','Produits laitiers','Boulangerie & Pâtisserie','Épicerie fine','Snacking']},
+    {label:'Maison & Déco', icon:'chair', match:['Maison & Déco','Meubles & Décoration','Cuisine & Art de la table','Linge de maison','Jardinage & Extérieur','Bricolage & Outillage','Literie & Matelas','Climatisation & Chauffage','Décoration murale']},
+    {label:'Beauté & Santé', icon:'spa', match:['Beauté & Santé','Beauté & Cosmétiques','Parfums','Santé & Bien-être','Soins capillaires','Hygiène & Bébé']},
+    {label:'Élevage & Terroir', icon:'agriculture', match:['Produits locaux']}
+  ];
+  /* Comptages partagés desktop+mobile : un seul appel réseau pour les 2 panneaux. */
+  var _catCountsPromise=null;
+  function getCategoryCounts(){
+    if(!_catCountsPromise)_catCountsPromise=sbFetch('category_counts?select=category,cnt').then(function(rows){
+      var counts={}; (rows||[]).forEach(function(r){counts[r.category]=r.cnt;}); return counts;
+    }).catch(function(){ return null; });
+    return _catCountsPromise;
+  }
 
-    /* Regroupement curatif des valeurs `category` réellement utilisées en base en
-       familles lisibles. Toute catégorie non répertoriée tombe automatiquement
-       dans "Autres" (jamais invisible, jamais fabriquée). À étendre au fil de
-       l'ajout de nouveaux univers de produits (mode, alimentation…). */
-    var CATEGORY_GROUPS=[
-      {label:'Électronique & High-Tech', icon:'devices', match:['Électronique','Téléphones','Téléphones & Accessoires','Informatique','Ordinateurs & Tablettes','Tablettes','Téléviseurs','High-Tech','Sonorisation','Accessoires','Électroménager','Audiovisuel/IT','Éclairage','Écouteurs & Audio','Accessoires informatiques','Montres connectées','Jeux vidéo & Consoles','Appareils photo & Vidéo']},
-      {label:'Immobilier', icon:'home_work', match:['Immobilier']},
-      {label:'Location de matériel', icon:'vpn_key', match:['Voiture','Événementiel','Nautique','BTP/Énergie','Mode/Mariage','Moto/Scooter','Quad/Aventure','Espace/Bureau','Animation enfants','Hébergement','Bien-être','Sport nautique','Pêche/Bateau','Location','Food truck','Bâche/Structure','Karting','Loisirs']},
-      {label:'Mode & Vêtements', icon:'apparel', match:['Mode & Vêtements','Mode Femme','Mode Homme','Mode Enfant','Chaussures','Sacs & Maroquinerie','Bijoux & Accessoires','Tissus & Wax','Lingerie & Sous-vêtements','Sportswear']},
-      {label:'Alimentation', icon:'restaurant', match:['Alimentation','Alimentation générale','Produits bio & locaux','Boissons','Épices & Condiments','Céréales & Légumineuses','Produits laitiers','Boulangerie & Pâtisserie','Épicerie fine','Snacking']},
-      {label:'Maison & Déco', icon:'chair', match:['Maison & Déco','Meubles & Décoration','Cuisine & Art de la table','Linge de maison','Jardinage & Extérieur','Bricolage & Outillage','Literie & Matelas','Climatisation & Chauffage','Décoration murale']},
-      {label:'Beauté & Santé', icon:'spa', match:['Beauté & Santé','Beauté & Cosmétiques','Parfums','Santé & Bien-être','Soins capillaires','Hygiène & Bébé']},
-      {label:'Élevage & Terroir', icon:'agriculture', match:['Produits locaux']}
-    ];
-
+  function buildCatalogFilterPanel(ids){
+    var listEl=document.getElementById(ids.list);if(!listEl)return;
     var chosen=null; /* {catList:[...], cat:null, label:''} (groupe) OU {catList:null, cat:'X', label:'X'} (sous-catégorie) */
 
     function renderGroups(counts){
+      if(!counts){ listEl.innerHTML='<p class="text-xs text-on-surface-variant py-2">Catégories indisponibles pour le moment.</p>'; return; }
       var used={}; /* catégories déjà rattachées à une famille — le reste ira dans "Autres" */
       var groups=CATEGORY_GROUPS.map(function(g){
         var subs=g.match.filter(function(c){return counts[c]>0;}).map(function(c){used[c]=true;return {name:c,cnt:counts[c]};});
@@ -15164,25 +15169,17 @@ function initProto(){
       paintActive();
     }
 
-    function loadCounts(){
-      sbFetch('category_counts?select=category,cnt').then(function(rows){
-        var counts={};
-        (rows||[]).forEach(function(r){counts[r.category]=r.cnt;});
-        renderGroups(counts);
-      }).catch(function(){
-        listEl.innerHTML='<p class="text-xs text-on-surface-variant py-2">Catégories indisponibles pour le moment.</p>';
-      });
-    }
-    loadCounts();
+    getCategoryCounts().then(renderGroups);
 
     /* ── Curseur de prix : réellement glissable (avant : décoratif, aucun listener) ── */
     var PRICE_MAX=500000; /* au-delà : "500 000+" = pas de plafond */
-    var track=document.getElementById('nxp-priceTrack');
-    var fill=document.getElementById('nxp-priceTrackFill');
-    var thumbMin=document.getElementById('nxp-priceThumbMin');
-    var thumbMax=document.getElementById('nxp-priceThumbMax');
-    var inMin=document.getElementById('nxp-priceMinInput');
-    var inMax=document.getElementById('nxp-priceMaxInput');
+    var track=document.getElementById(ids.track);
+    var fill=document.getElementById(ids.fill);
+    var thumbMin=document.getElementById(ids.thumbMin);
+    var thumbMax=document.getElementById(ids.thumbMax);
+    var inMin=document.getElementById(ids.inMin);
+    var inMax=document.getElementById(ids.inMax);
+    if(!track||!fill||!thumbMin||!thumbMax||!inMin||!inMax)return;
     var pMin=0, pMax=PRICE_MAX;
     function fmtFCFA(v){return v.toLocaleString('fr-FR');}
     function paintSlider(){
@@ -15240,7 +15237,7 @@ function initProto(){
       paintSlider();
     });
 
-    var applyBtn=document.getElementById('nxp-filterApplyBtn');
+    var applyBtn=document.getElementById(ids.apply);
     if(applyBtn)applyBtn.addEventListener('click',function(){
       var opts={pminEur: pMin>0?(pMin/655.957):null, pmaxEur: pMax<PRICE_MAX?(pMax/655.957):null};
       if(chosen){
@@ -15250,14 +15247,22 @@ function initProto(){
       /* Filtre DANS l'overlay (nouveau design) au lieu de naviguer vers l'ancien
          catalogue React. */
       nxpShowAll(opts);
+      if(ids.onApply)ids.onApply();
     });
-    var resetBtn=document.getElementById('nxp-filterResetBtn');
+    var resetBtn=document.getElementById(ids.reset);
     if(resetBtn)resetBtn.addEventListener('click',function(){
       chosen=null;
       [].slice.call(listEl.querySelectorAll('.nxp-catRow')).forEach(function(r){r.classList.remove('bg-primary-container','text-primary','font-bold');});
       pMin=0; pMax=PRICE_MAX; paintSlider();
     });
-  })();
+  }
+
+  buildCatalogFilterPanel({ list:'nxp-catList', track:'nxp-priceTrack', fill:'nxp-priceTrackFill', thumbMin:'nxp-priceThumbMin', thumbMax:'nxp-priceThumbMax', inMin:'nxp-priceMinInput', inMax:'nxp-priceMaxInput', apply:'nxp-filterApplyBtn', reset:'nxp-filterResetBtn' });
+  buildCatalogFilterPanel({ list:'nxp-catListM', track:'nxp-priceTrackM', fill:'nxp-priceTrackFillM', thumbMin:'nxp-priceThumbMinM', thumbMax:'nxp-priceThumbMaxM', inMin:'nxp-priceMinInputM', inMax:'nxp-priceMaxInputM', apply:'nxp-filterApply', reset:'nxp-filterReset', onApply: function(){
+    var dr=document.getElementById('nxp-filterDrawer'), panel=document.getElementById('nxp-filterPanel');
+    if(panel)panel.style.transform='translateY(100%)';
+    if(dr)setTimeout(function(){ dr.classList.add('hidden'); },300);
+  } });
 
   /* Louma : afficher la bannière le vendredi uniquement (réglage commerçant).
      Le bouton « J'EN PROFITE » est déjà relié via ROUTES → nexus:open-louma. */
@@ -15285,7 +15290,8 @@ function initProto(){
     email.addEventListener('keydown',function(e){ if(e.key==='Enter')subscribe(); });
   })();
 
-  /* Tiroir de filtres mobile (bottom sheet) → navigue vers le catalogue filtré */
+  /* Tiroir de filtres mobile (bottom sheet) — ouverture/fermeture uniquement ;
+     le contenu (catégories + prix) est câblé par buildCatalogFilterPanel ci-dessus. */
   (function(){
     var fab=document.getElementById('nxp-filterFab');
     var dr=document.getElementById('nxp-filterDrawer');
@@ -15297,26 +15303,6 @@ function initProto(){
     fab.addEventListener('click',openFD);
     var fc=document.getElementById('nxp-filterClose'); if(fc)fc.addEventListener('click',closeFD);
     if(bk)bk.addEventListener('click',closeFD);
-    var fr=document.getElementById('nxp-filterReset');
-    if(fr)fr.addEventListener('click',function(){
-      dr.querySelectorAll('input[type=checkbox]').forEach(function(c){c.checked=false;});
-      var mn=document.getElementById('nxp-fMin'),mx=document.getElementById('nxp-fMax'); if(mn)mn.value=''; if(mx)mx.value='';
-    });
-    var fa=document.getElementById('nxp-filterApply');
-    if(fa)fa.addEventListener('click',function(){
-      var chosen=null;
-      dr.querySelectorAll('input[type=checkbox]:checked').forEach(function(c){ if(!chosen)chosen=c.getAttribute('data-cat'); });
-      var mn=document.getElementById('nxp-fMin'),mx=document.getElementById('nxp-fMax');
-      var fmin=mn?parseInt((mn.value||'').replace(/\D/g,''),10):0;
-      var fmax=mx?parseInt((mx.value||'').replace(/\D/g,''),10):0;
-      closeFD();
-      /* Filtre DANS l'overlay (nouveau design), comme le filtre desktop. */
-      nxpShowAll({
-        cat: chosen||null,
-        pminEur: fmin>0?(fmin/655.957):null,
-        pmaxEur: fmax>0?(fmax/655.957):null
-      });
-    });
   })();
 
   /* Logo → retour accueil (scroll haut, ou recharge l'accueil si on est filtré) */
