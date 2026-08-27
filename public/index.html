@@ -5838,7 +5838,7 @@ window.addEventListener('unhandledrejection', function(event) {
     // inter-villes : DDD, Salam, ferry, 7-places…). Lecture publique, RLS
     // transport_lines_public_read. Dégrade gracieusement si la migration
     // sql/2026_08_10_transport_lines.sql n'a pas encore été exécutée.
-    async searchLines({ originCity, destination } = {}) {
+    async searchLines({ originCity, destination, vehicleType } = {}) {
       if (!this._sb) return [];
       try {
         var q = this._sb.from('transport_lines')
@@ -5847,10 +5847,23 @@ window.addEventListener('unhandledrejection', function(event) {
           .order('operator', { ascending: true }).limit(120);
         if (originCity) q = q.ilike('origin_city', '%' + originCity + '%');
         if (destination) q = q.ilike('destinations', '%' + destination + '%');
+        if (vehicleType) q = q.eq('vehicle_type', vehicleType);
         var r = await q;
         if (r.error) { console.warn('[Transport] searchLines:', r.error.message); return []; }
         return r.data || [];
       } catch (e) { console.warn('[Transport] searchLines:', e.message); return []; }
+    },
+
+    // Comptage réel par type de véhicule (chips de filtre "Lignes régulières") —
+    // léger : ~70 lignes actives, une seule colonne.
+    async lineVehicleCounts() {
+      if (!this._sb) return {};
+      try {
+        var r = await this._sb.from('transport_lines').select('vehicle_type').eq('active', true);
+        var counts = {};
+        ((r && r.data) || []).forEach(function (row) { var v = row.vehicle_type || 'autre'; counts[v] = (counts[v] || 0) + 1; });
+        return counts;
+      } catch (e) { return {}; }
     },
 
     async getTrip(tripId) {
@@ -6018,7 +6031,8 @@ window.addEventListener('unhandledrejection', function(event) {
       var _pub = React.useState({ origin_city: 'Dakar', destination_city: 'Thiès', departure_at: '', vehicle_type: 'voiture', seats_total: 3, price_per_seat_fcfa: 2000, allows_packages: true }), pub = _pub[0], setPub = _pub[1];
       var _lines = React.useState([]), lines = _lines[0], setLines = _lines[1];
       var _linesSearched = React.useState(false), linesSearched = _linesSearched[0], setLinesSearched = _linesSearched[1];
-      var _lineFilter = React.useState({ originCity: '', destination: '' }), lineFilter = _lineFilter[0], setLineFilter = _lineFilter[1];
+      var _lineFilter = React.useState({ originCity: '', destination: '', vehicleType: '' }), lineFilter = _lineFilter[0], setLineFilter = _lineFilter[1];
+      var _vTypeCounts = React.useState(null), vTypeCounts = _vTypeCounts[0], setVTypeCounts = _vTypeCounts[1];
 
       var FCFA = function (n) { return Math.round(n || 0).toLocaleString('fr-FR') + ' F'; };
 
@@ -6049,10 +6063,17 @@ window.addEventListener('unhandledrejection', function(event) {
         else if (line.url_facebook) { window.open(line.url_facebook, '_blank'); }
         else { window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank'); }
       };
-      var doSearchLines = function () {
+      var doSearchLines = function (overrideFilter) {
+        var f = overrideFilter || lineFilter;
         setBusy(true); setLinesSearched(true);
-        DataService.searchLines({ originCity: lineFilter.originCity || undefined, destination: lineFilter.destination || undefined })
+        if (!vTypeCounts) DataService.lineVehicleCounts().then(setVTypeCounts);
+        DataService.searchLines({ originCity: f.originCity || undefined, destination: f.destination || undefined, vehicleType: f.vehicleType || undefined })
           .then(function (data) { setLines(data || []); setBusy(false); });
+      };
+      var VTYPE_LABELS = { bus: '🚌 Bus', '7_places': '🚙 7 places', voiture: '🚗 Voiture', ferry: '⛴️ Ferry', minibus: '🚐 Minibus', van: '🚐 Van', autre: '🚍 Autre' };
+      var pickVehicleType = function (v) {
+        var nf = Object.assign({}, lineFilter, { vehicleType: v });
+        setLineFilter(nf); doSearchLines(nf);
       };
 
       var doSearch = function () {
@@ -6197,7 +6218,19 @@ window.addEventListener('unhandledrejection', function(event) {
               E('input', { style: Object.assign({}, inp, { marginBottom: 0 }), placeholder: 'Départ (ex. Dakar)', value: lineFilter.originCity, onChange: function (e) { setLineFilter(function (f) { return Object.assign({}, f, { originCity: e.target.value }); }); } }),
               E('input', { style: Object.assign({}, inp, { marginBottom: 0 }), placeholder: 'Destination (ex. Ziguinchor)', value: lineFilter.destination, onChange: function (e) { setLineFilter(function (f) { return Object.assign({}, f, { destination: e.target.value }); }); } })
             ),
-            E('button', { onClick: doSearchLines, disabled: busy, style: { width: '100%', padding: '.65rem', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: 'pointer', marginBottom: '1rem' } }, busy ? 'Recherche…' : '🔎 Rechercher une ligne'),
+            // Filtre par type de véhicule : comptages réels (DataService.lineVehicleCounts,
+            // ~70 lignes actives) — avant : aucun moyen de filtrer par type de véhicule.
+            E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: '.7rem' } },
+              [['', 'Tous']].concat(Object.keys(VTYPE_LABELS).filter(function (v) { return !vTypeCounts || vTypeCounts[v]; }).map(function (v) { return [v, VTYPE_LABELS[v]]; })).map(function (pair) {
+                var v = pair[0], label = pair[1]; var on = lineFilter.vehicleType === v;
+                var n = v ? (vTypeCounts && vTypeCounts[v]) : (vTypeCounts && Object.keys(vTypeCounts).reduce(function (s, k) { return s + vTypeCounts[k]; }, 0));
+                return E('span', {
+                  key: v || 'all', onClick: function () { pickVehicleType(v); },
+                  style: { padding: '.3rem .65rem', borderRadius: 999, fontSize: '.74rem', fontWeight: 700, cursor: 'pointer', border: on ? '2px solid #006d40' : '1.5px solid #e5e7eb', background: on ? 'rgba(0,109,64,.08)' : '#fff', color: on ? '#006d40' : '#555' }
+                }, label + (n ? ' (' + n + ')' : ''));
+              })
+            ),
+            E('button', { onClick: function () { doSearchLines(); }, disabled: busy, style: { width: '100%', padding: '.65rem', background: '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: 'pointer', marginBottom: '1rem' } }, busy ? 'Recherche…' : '🔎 Rechercher une ligne'),
 
             !linesSearched ? null : lines.length === 0 ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucune ligne trouvée. Ajustez la recherche.') :
             E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
@@ -10959,9 +10992,25 @@ window.addEventListener('unhandledrejection', function(event) {
       + '</div>';
   }
 
+  // Comptage réel de cours par matière (calculé sur ALL, déjà chargé en entier —
+  // 100 = plus que le nombre total de cours actuel, donc aucune sous-estimation).
+  // Avant : chips de matière sans aucun indice du nombre de cours disponibles.
+  function paintSubjectCounts() {
+    if (!ov || !ALL) return;
+    var counts = {}; var total = 0;
+    ALL.forEach(function (p) { var s = (p.educational_specs || {}).subject; if (s) { counts[s] = (counts[s] || 0) + 1; } total++; });
+    Array.prototype.forEach.call(ov.querySelectorAll('#nx-edu-subj-chips .nx-edu-chip'), function (ch) {
+      var s = ch.dataset.subj || '';
+      if (!s) { ch.textContent = 'Toutes les matières' + (total ? ' (' + total + ')' : ''); return; }
+      var n = counts[s] || 0;
+      ch.textContent = s + (n ? ' (' + n + ')' : ' (0)');
+    });
+  }
+
   function paint() {
     var grid = ov.querySelector('#nx-edu-grid'); if (!grid) return;
     if (!ALL) { grid.innerHTML = '<div class="nx-edu-skel"></div><div class="nx-edu-skel"></div><div class="nx-edu-skel"></div><div class="nx-edu-skel"></div>'; return; }
+    paintSubjectCounts();
     var list = ALL;
     if (curSubject) list = list.filter(function (p) { return (p.educational_specs || {}).subject === curSubject; });
     if (curLevel) list = list.filter(function (p) { return (p.educational_specs || {}).level === curLevel; });
@@ -11573,13 +11622,15 @@ window.addEventListener('unhandledrejection', function(event) {
       });
     });
 
-    // Chips métiers (filtre)
+    // Chips métiers (filtre). Comptages réels (vue pro_profession_counts) affichés
+    // sur chaque chip dès qu'ils sont connus — avant : chips sans aucun indice du
+    // nombre de pros disponibles par métier.
     var chipHost = ov.querySelector('#nx-pro-chips'); var cur = '';
     var allChip = document.createElement('span'); allChip.className = 'nx-pro-chip on'; allChip.textContent = 'Tous'; chipHost.appendChild(allChip);
-    var chipEls = [allChip];
+    var chipEls = [allChip]; var chipRefs = [];
     allChip.addEventListener('click', function () { cur = ''; chipEls.forEach(function (x) { x.classList.remove('on'); }); allChip.classList.add('on'); });
     function addChip(m) {
-      var ch = document.createElement('span'); ch.className = 'nx-pro-chip'; ch.textContent = m.e + ' ' + m.id; chipHost.appendChild(ch); chipEls.push(ch);
+      var ch = document.createElement('span'); ch.className = 'nx-pro-chip'; ch.textContent = m.e + ' ' + m.id; chipHost.appendChild(ch); chipEls.push(ch); chipRefs.push({ id: m.id, el: ch, label: m.e + ' ' + m.id });
       ch.addEventListener('click', function () { cur = m.id; chipEls.forEach(function (x) { x.classList.remove('on'); }); ch.classList.add('on'); });
     }
     METIERS.forEach(addChip);
@@ -11591,7 +11642,21 @@ window.addEventListener('unhandledrejection', function(event) {
         var sel = ov.querySelector('select[name="profession"]');
         if (sel) added.forEach(function (m) { var o = document.createElement('option'); o.value = m.id; o.textContent = m.e + ' ' + m.id; sel.appendChild(o); });
       }
+      paintChipCounts();
     });
+    function paintChipCounts() {
+      var c = sb(); if (!c) return;
+      Promise.resolve(c.from('pro_profession_counts').select('profession,cnt')).then(function (r) {
+        var counts = {}; ((r && r.data) || []).forEach(function (row) { counts[row.profession] = row.cnt; });
+        var total = 0;
+        chipRefs.forEach(function (ref) {
+          var n = counts[ref.id] || 0; total += n;
+          ref.el.textContent = ref.label + (n ? ' (' + n + ')' : '');
+        });
+        if (total) allChip.textContent = 'Tous (' + total + ')';
+      }).catch(function () {});
+    }
+    paintChipCounts();
 
     ov.querySelector('#nx-pro-search-btn').addEventListener('click', function () { showNearby(ov.querySelector('#nx-pro-results'), cur); });
     ov.querySelector('#nx-pro-form').addEventListener('submit', function (e) {

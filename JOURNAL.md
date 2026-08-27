@@ -6,6 +6,33 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-27 (quatorzième) — Filtres avec comptages réels : NEXUS Pro, Covoiturage (lignes), Éducation
+
+**Demande** : pouvoir filtrer les pros, les lignes régulières de covoiturage,
+et les matières du module Éducation — avec le nombre de cours par matière.
+
+**Fait** :
+- **NEXUS Pro** : les chips de métier existaient déjà (filtre fonctionnel)
+  mais sans aucun compte. Nouvelle vue `public.pro_profession_counts`
+  (`sql/2026_08_27_pro_profession_counts_view.sql`, évite de télécharger les
+  ~2500 lignes de `pros` juste pour un chiffre) → chaque chip affiche
+  maintenant "🧱 Maçon (518)", "Tous (2162)"... vérifié en local.
+- **Covoiturage — Lignes régulières** : n'avait qu'une recherche texte
+  départ/destination. Ajout de chips de filtre par type de véhicule (Bus 44,
+  7 places 18, Voiture 5, Ferry 3, Minibus 2 — comptage réel via
+  `DataService.lineVehicleCounts()`, ~70 lignes actives, pas besoin de vue
+  dédiée). `DataService.searchLines()` accepte désormais `vehicleType`.
+- **Éducation** : chips de matière déjà présents (filtre fonctionnel) mais
+  sans compte. Calculé côté client sur `ALL` (déjà chargé en entier, 35
+  cours au total < limite 100) → "Mathématiques (9)", "Physique (5)"...
+  jusqu'à "Latin (1)". Aucune requête supplémentaire nécessaire.
+
+**État final** : vérifié en local (comptages = réalité DB, clic sur un chip
+filtre bien côté serveur pour Pro/Covoiturage, côté client pour Éducation).
+Reste à committer/pousser.
+
+---
+
 ## 2026-08-27 (treizième) — Sidebar "Filtres" de l'accueil refaite (chiffres réels + sous-catégories)
 
 **Demande** : l'outil de filtres (sidebar gauche desktop, `public/index.html`)
