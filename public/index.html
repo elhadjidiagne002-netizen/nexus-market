@@ -6019,7 +6019,10 @@ window.addEventListener('unhandledrejection', function(event) {
 
     function CovoiturageModal(props) {
       var user = props.user;
-      var _tab = React.useState('search'), tab = _tab[0], setTab = _tab[1];
+      /* [FILTRE SIDEBAR 2026-08-28] Ouverture directe sur l'onglet "Lignes" avec un
+         type de véhicule pré-sélectionné, depuis le groupe "Covoiturage" du filtre
+         catalogue (sidebar desktop + tiroir mobile). */
+      var _tab = React.useState(props.initialTab || 'search'), tab = _tab[0], setTab = _tab[1];
       var _sf = React.useState({ originCity: '', destinationCity: '' }), searchForm = _sf[0], setSearchForm = _sf[1];
       var _trips = React.useState([]), trips = _trips[0], setTrips = _trips[1];
       var _searched = React.useState(false), searched = _searched[0], setSearched = _searched[1];
@@ -6031,7 +6034,7 @@ window.addEventListener('unhandledrejection', function(event) {
       var _pub = React.useState({ origin_city: 'Dakar', destination_city: 'Thiès', departure_at: '', vehicle_type: 'voiture', seats_total: 3, price_per_seat_fcfa: 2000, allows_packages: true }), pub = _pub[0], setPub = _pub[1];
       var _lines = React.useState([]), lines = _lines[0], setLines = _lines[1];
       var _linesSearched = React.useState(false), linesSearched = _linesSearched[0], setLinesSearched = _linesSearched[1];
-      var _lineFilter = React.useState({ originCity: '', destination: '', vehicleType: '' }), lineFilter = _lineFilter[0], setLineFilter = _lineFilter[1];
+      var _lineFilter = React.useState({ originCity: '', destination: '', vehicleType: props.initialVehicleType || '' }), lineFilter = _lineFilter[0], setLineFilter = _lineFilter[1];
       var _vTypeCounts = React.useState(null), vTypeCounts = _vTypeCounts[0], setVTypeCounts = _vTypeCounts[1];
 
       var FCFA = function (n) { return Math.round(n || 0).toLocaleString('fr-FR') + ' F'; };
@@ -6081,7 +6084,10 @@ window.addEventListener('unhandledrejection', function(event) {
         DataService.searchTrips({ originCity: searchForm.originCity || undefined, destinationCity: searchForm.destinationCity || undefined })
           .then(function (data) { setTrips(data); setBusy(false); });
       };
-      React.useEffect(function () { doSearch(); }, []); // charge les prochains trajets au premier affichage
+      React.useEffect(function () {
+        if (props.initialTab === 'lines') doSearchLines({ originCity: '', destination: '', vehicleType: props.initialVehicleType || '' });
+        else doSearch();
+      }, []); // charge les prochains trajets (ou lignes, si ouvert depuis le filtre) au premier affichage
 
       var confirmSeats = function () {
         if (!requireLogin(user)) return;
@@ -6289,13 +6295,13 @@ window.addEventListener('unhandledrejection', function(event) {
       if (!root && window.ReactDOM) root = ReactDOM.createRoot ? ReactDOM.createRoot(mountEl) : null;
       return root;
     }
-    function openModal() {
+    function openModal(opts) {
       var r = getMount();
       var close = function () { if (r) r.render(null); else ReactDOM.unmountComponentAtNode(mountEl); };
-      var el = E(CovoiturageModal, { onClose: close, user: currentUser });
+      var el = E(CovoiturageModal, { onClose: close, user: currentUser, initialTab: opts && opts.tab, initialVehicleType: opts && opts.vehicleType });
       if (r) r.render(el); else ReactDOM.render(el, mountEl);
     }
-    window.addEventListener('nexus:open-covoiturage', function () { openModal(); });
+    window.addEventListener('nexus:open-covoiturage', function (e) { openModal(e && e.detail); });
   })();
 
   // ── Notification WhatsApp coursier (réutilise NexusWA.send) ──────────────
@@ -11082,6 +11088,16 @@ window.addEventListener('unhandledrejection', function(event) {
     }
   }
   function close() { if (ov) ov.classList.remove('open'); }
+  // [FILTRE SIDEBAR 2026-08-28] Ouverture directe sur une matière, depuis le
+  // groupe "Éducation" du filtre catalogue (sidebar desktop + tiroir mobile).
+  function openSubject(subject) {
+    open();
+    function selectChip() {
+      var ch = ov.querySelector('#nx-edu-subj-chips .nx-edu-chip[data-subj="' + subject.replace(/"/g, '\\"') + '"]');
+      if (ch) ch.click();
+    }
+    if (ALL) selectChip(); else setTimeout(selectChip, 400);
+  }
 
   function fileToBase64(file) {
     return new Promise(function (resolve, reject) {
@@ -11149,7 +11165,11 @@ window.addEventListener('unhandledrejection', function(event) {
       .then(function () { submitBtn.disabled = false; submitBtn.textContent = 'Envoyer pour validation'; });
   }
 
-  window.addEventListener('nexus:open-education', open);
+  window.addEventListener('nexus:open-education', function (e) {
+    var subject = e && e.detail && e.detail.subject;
+    if (subject) openSubject(subject); else open();
+  });
+  window.NexusEducation = { open: open, openSubject: openSubject };
   console.info('[NEXUS] Module Éducation 🎓 chargé ✅');
 })();
 </script>
@@ -15093,9 +15113,17 @@ function initProto(){
 
   function buildCatalogFilterPanel(ids){
     var listEl=document.getElementById(ids.list);if(!listEl)return;
+    /* [FILTRE MODULES 2026-08-28] Deux conteneurs séparés dans le même panneau :
+       produits (categories réelles) + modules NEXUS (Pro/Covoiturage/Éducation,
+       autres tables, jamais des "produits") — pour que le rendu (async, réseau)
+       de l'un n'écrase jamais l'autre. */
+    listEl.innerHTML='<div class="nxp-catProducts"><p class="text-xs text-on-surface-variant py-2">Chargement…</p></div><div class="nxp-catModules"></div>';
+    var prodEl=listEl.querySelector('.nxp-catProducts');
+    var modEl=listEl.querySelector('.nxp-catModules');
     var chosen=null; /* {catList:[...], cat:null, label:''} (groupe) OU {catList:null, cat:'X', label:'X'} (sous-catégorie) */
 
     function renderGroups(counts){
+      var listEl=prodEl;
       if(!counts){ listEl.innerHTML='<p class="text-xs text-on-surface-variant py-2">Catégories indisponibles pour le moment.</p>'; return; }
       var used={}; /* catégories déjà rattachées à une famille — le reste ira dans "Autres" */
       var groups=CATEGORY_GROUPS.map(function(g){
@@ -15170,6 +15198,88 @@ function initProto(){
     }
 
     getCategoryCounts().then(renderGroups);
+
+    /* [FILTRE MODULES 2026-08-28] Pros, lignes de covoiturage, matières Éducation —
+       ce sont d'autres tables (pros/transport_lines/products is_educational), pas
+       le catalogue produits : chaque sous-élément OUVRE directement le module
+       correspondant au lieu d'alimenter nxpShowAll(). Comptages réels (mêmes
+       sources que les chips internes de chaque module). */
+    function renderModuleGroup(mod,gi,counts){
+      var subs=Object.keys(counts||{}).map(function(k){return {key:k,label:(mod.subLabel?mod.subLabel(k):k),cnt:counts[k]};});
+      subs.sort(function(a,b){return b.cnt-a.cnt;});
+      var total=subs.reduce(function(s,x){return s+x.cnt;},0);
+      var multi=subs.length>1;
+      var html='<div class="nxp-catGroup" data-mgi="'+gi+'">'
+        +'<div class="nxp-catRow flex items-center justify-between p-2 rounded hover:bg-surface-container cursor-pointer text-sm" data-role="module-group">'
+          +'<span class="flex items-center gap-2"><span class="material-symbols-outlined text-[16px] text-primary">'+mod.icon+'</span> <span class="font-semibold">'+mod.label+'</span></span>'
+          +'<span class="flex items-center gap-1"><span class="text-xs text-on-surface-variant">('+total+')</span>'
+          +(multi?'<span class="nxp-catChevron material-symbols-outlined text-[16px] text-on-surface-variant transition-transform" style="transform:rotate(0deg)">expand_more</span>':'')
+          +'</span></div>'
+        +(multi?('<div class="nxp-catSubs pl-6 space-y-0.5" style="display:none">'
+          +subs.map(function(s){
+            return '<div class="nxp-catRow flex items-center justify-between px-2 py-1.5 rounded hover:bg-surface-container cursor-pointer text-xs" data-role="module-sub" data-key="'+String(s.key).replace(/"/g,'&quot;')+'">'
+              +'<span>'+s.label+'</span><span class="text-on-surface-variant">('+s.cnt+')</span></div>';
+          }).join('')
+          +'</div>'):'')
+        +'</div>';
+      return html;
+    }
+    var EXTERNAL_MODULES=[
+      { label:'NEXUS Pro — Ouvriers & artisans', icon:'engineering',
+        getCounts:function(){ return sbFetch('pro_profession_counts?select=profession,cnt').then(function(rows){
+          var m={}; (rows||[]).forEach(function(r){m[r.profession]=r.cnt;}); return m;
+        }).catch(function(){ return {}; }); },
+        openAll:function(){ if(window.NexusPro)window.NexusPro.openTab('find'); },
+        openSub:function(key){ if(window.NexusPro)window.NexusPro.openFor(key); }
+      },
+      { label:'Covoiturage — Lignes régulières', icon:'directions_bus',
+        subLabel:function(k){ return { bus:'🚌 Bus', '7_places':'🚙 7 places', voiture:'🚗 Voiture', ferry:'⛴️ Ferry', minibus:'🚐 Minibus', van:'🚐 Van' }[k] || ('🚍 '+k); },
+        /* Appel REST direct (comme category_counts/pro_profession_counts) plutôt que
+           DataService.lineVehicleCounts() : cette dernière dépend du client
+           Supabase-js (this._sb), pas encore initialisé à ce stade précoce du
+           chargement de page → renvoyait toujours {} (chips "Covoiturage (0)"). */
+        getCounts:function(){ return sbFetch('transport_lines?select=vehicle_type&active=eq.true').then(function(rows){
+          var m={}; (rows||[]).forEach(function(r){ var v=r.vehicle_type||'autre'; m[v]=(m[v]||0)+1; }); return m;
+        }).catch(function(){ return {}; }); },
+        openAll:function(){ window.dispatchEvent(new CustomEvent('nexus:open-covoiturage',{detail:{tab:'lines'}})); },
+        openSub:function(key){ window.dispatchEvent(new CustomEvent('nexus:open-covoiturage',{detail:{tab:'lines',vehicleType:key}})); }
+      },
+      { label:'NEXUS Éducation — Matières', icon:'school',
+        getCounts:function(){ return sbFetch('products?select=educational_specs&is_educational=eq.true&active=eq.true&limit=200').then(function(rows){
+          var m={}; (rows||[]).forEach(function(r){ var s=r.educational_specs&&r.educational_specs.subject; if(s)m[s]=(m[s]||0)+1; }); return m;
+        }).catch(function(){ return {}; }); },
+        openAll:function(){ window.dispatchEvent(new CustomEvent('nexus:open-education')); },
+        openSub:function(key){ window.dispatchEvent(new CustomEvent('nexus:open-education',{detail:{subject:key}})); }
+      }
+    ];
+    Promise.all(EXTERNAL_MODULES.map(function(m){ return m.getCounts(); })).then(function(allCounts){
+      var html='<div class="text-xs font-bold text-on-surface-variant uppercase mt-md mb-1 pt-2" style="border-top:1px solid #eee">Autres services NEXUS</div>';
+      EXTERNAL_MODULES.forEach(function(m,gi){ html+=renderModuleGroup(m,gi,allCounts[gi]); });
+      modEl.innerHTML=html;
+      EXTERNAL_MODULES.forEach(function(m,gi){
+        var wrap=modEl.querySelector('.nxp-catGroup[data-mgi="'+gi+'"]');if(!wrap)return;
+        var groupRow=wrap.querySelector('.nxp-catRow[data-role="module-group"]');
+        var chevron=wrap.querySelector('.nxp-catChevron');
+        var subsWrap=wrap.querySelector('.nxp-catSubs');
+        if(groupRow)groupRow.addEventListener('click',function(e){
+          if(e.target.closest('.nxp-catChevron')){
+            if(!subsWrap)return;
+            var open=subsWrap.style.display!=='none';
+            subsWrap.style.display=open?'none':'';
+            chevron.style.transform=open?'rotate(0deg)':'rotate(180deg)';
+            return;
+          }
+          m.openAll();
+          if(ids.onApply)ids.onApply();
+        });
+        if(subsWrap)[].slice.call(subsWrap.querySelectorAll('.nxp-catRow[data-role="module-sub"]')).forEach(function(sr){
+          sr.addEventListener('click',function(){
+            m.openSub(sr.getAttribute('data-key'));
+            if(ids.onApply)ids.onApply();
+          });
+        });
+      });
+    });
 
     /* ── Curseur de prix : réellement glissable (avant : décoratif, aucun listener) ── */
     var PRICE_MAX=500000; /* au-delà : "500 000+" = pas de plafond */

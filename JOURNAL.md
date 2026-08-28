@@ -6,6 +6,43 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-28 (seizième) — Pro/Covoiturage/Éducation intégrés DANS le filtre catalogue (pas juste dans leur propre modale)
+
+**Demande** : après vérification que les filtres internes (Pro/Covoiturage/
+Éducation) étaient bien en ligne, l'utilisateur a précisé le vrai besoin :
+il voulait ces trois univers accessibles **depuis le même filtre catalogue**
+(sidebar desktop + tiroir mobile) qui affiche déjà "Électronique & High-Tech",
+"Location de matériel", "Immobilier" — pas seulement en ouvrant chaque module
+séparément.
+
+**Fait** :
+- Nouveau bloc "Autres services NEXUS" ajouté en bas de `buildCatalogFilterPanel`
+  (donc desktop ET mobile automatiquement) : 3 groupes accordéon — "NEXUS Pro"
+  (2497, sous-métiers), "Covoiturage — Lignes régulières" (72, par type de
+  véhicule), "NEXUS Éducation — Matières" (35, par matière). Comptages réels,
+  mêmes sources que les chips internes de chaque module.
+- Contrairement aux catégories produits, cliquer un sous-élément ici **ouvre
+  directement le module concerné pré-filtré** au lieu d'appeler `nxpShowAll()`
+  (ce sont d'autres tables, pas des produits) :
+  - `window.NexusPro.openFor(metier)` (déjà existant, réutilisé)
+  - `nexus:open-covoiturage` étendu avec `detail:{tab:'lines', vehicleType}` →
+    `CovoiturageModal` accepte désormais `initialTab`/`initialVehicleType`
+  - `nexus:open-education` étendu avec `detail:{subject}` → nouvelle fonction
+    `openSubject()` + export `window.NexusEducation`
+- Piège rencontré et corrigé : le premier jet utilisait
+  `DataService.lineVehicleCounts()` (client Supabase-js) pour les comptages
+  Covoiturage — renvoyait toujours `{}` ("Covoiturage (0)") car appelé trop
+  tôt au chargement, avant que `DataService._sb` soit initialisé. Remplacé
+  par un appel REST direct (`sbFetch('transport_lines?...')`), comme pour
+  Pro/Éducation — plus robuste, aucune dépendance de timing.
+
+**État final** : vérifié en local (desktop + mobile) — les 3 groupes
+affichent les bons comptages, cliquer un sous-élément ouvre le bon module
+avec le bon filtre pré-sélectionné (testé Plombier/Ferry/Physique). Reste à
+committer/pousser.
+
+---
+
 ## 2026-08-27 (quinzième) — Filtre catalogue mobile aligné sur le desktop
 
 **Demande** : le tiroir de filtres mobile (bottom sheet) restait "rudimentaire
