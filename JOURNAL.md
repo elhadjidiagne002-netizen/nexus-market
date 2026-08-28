@@ -6,6 +6,40 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-28 (dix-septième) — Traduction du nouveau filtre catalogue (FR/EN/WO)
+
+**Demande** : les éléments introduits dans le filtre catalogue (sidebar +
+tiroir mobile + bloc "Autres services NEXUS") ne changeaient pas de langue.
+
+**Cause** : tout ce bloc est construit dynamiquement en JS (chaînes HTML
+générées, comptages inclus) — le mécanisme `[data-i18n]` existant
+(`window.nexusI18n.applyDom()`, ré-exécuté à chaque changement de langue)
+ne peut pas s'appliquer à du texte injecté après coup ni mélangé à des
+nombres calculés (ex. "Électronique & High-Tech (484)").
+
+**Fait** :
+- ~25 nouvelles clés ajoutées à `NEXUS_TRANSLATIONS` (fr/en/wo) dans le
+  bundle : `filter.loading`, `filter.cat_unavailable`, `filter.no_cats`,
+  `filter.other_services`, `filter.cat_*` (8 familles), `filter.module_*`
+  (Pro/Covoiturage/Éducation), `filter.vtype_*` (6 types de véhicule).
+  Bundle renommé `app.5b2aee16cd.js` (règle cache-busting obligatoire).
+- `CATEGORY_GROUPS`/`EXTERNAL_MODULES` : `label` (repli FR) + `key`/`labelKey`
+  résolus via `nxT(key,null,label)` **au moment du rendu**, plus `data-label`
+  du DOM qui stocke désormais la clé stable (pas le texte traduit) pour que
+  la surbrillance "sélectionné" reste cohérente après un changement de langue.
+- Comptages mis en cache (`_lastCounts`/`_lastModuleCounts`) + écouteur
+  `nexus:lang-changed` qui **re-rend sans re-fetch réseau** — traduction
+  instantanée.
+- Tiroir mobile : ajout des `data-i18n` manquants sur "Filtres"/"Catégories"/
+  "Prix (FCFA)"/"à"/"Réinitialiser"/"Appliquer" (jamais câblés, gap
+  pré-existant à cette session).
+
+**État final** : vérifié en local — bascule fr→en→wo→fr instantanée sur
+sidebar desktop ET tiroir mobile, comptages toujours corrects après
+changement de langue. Reste à committer/pousser.
+
+---
+
 ## 2026-08-28 (seizième) — Pro/Covoiturage/Éducation intégrés DANS le filtre catalogue (pas juste dans leur propre modale)
 
 **Demande** : après vérification que les filtres internes (Pro/Covoiturage/
