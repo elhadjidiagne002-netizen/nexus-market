@@ -6,6 +6,75 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-29 (dix-huitième) — Audit SEO + message de bienvenue enrichi + stats de croissance
+
+**Demande 1 — Audit SEO** : vérifier quelles recommandations d'une liste (rendu
+bots, balises/OG/schema, local SEO, perf/mobile, sitemap/robots/GSC) étaient
+déjà appliquées.
+
+**Constat** : quasi tout était déjà en place, vérifié avec preuves (pas de
+supposition) : `functions/produit/[id].js` + `_lib/seo.js` (SSR par produit,
+OG/JSON-LD Product/LocalBusiness dynamiques), liens de partage du bundle
+confirmés pointer vers `/produit/:id` (pas `/?product=`), Imagor confirmé
+**en ligne** (`curl` → 200) avec `IMAGOR_BASE_URL` dans `wrangler.toml` (pas
+un secret — d'où l'absence dans `wrangler pages secret list`, fausse alerte
+initiale), sitemaps dynamiques + robots.txt + meta `google-site-verification`
+déjà présents. Seuls manques réels : Google Business Profile et annuaires
+locaux sénégalais (nécessitent un compte/action humaine, hors périmètre code).
+
+**Demande 2 — Message de bienvenue plus explicite** :
+- `OnboardingTour` (déjà existant, se déclenche à chaque 1ère connexion tant
+  que non complété) enrichi d'une étape dédiée listant tous les services
+  (Pro/Location/Troc/Louma/Stories/Coursier/Covoiturage/Dépannage Auto/
+  Immobilier/Élevage), pour buyer ET vendor — c'est le canal qui touche
+  réellement 100% des nouveaux inscrits (pas juste ceux qui lisent l'email).
+- Template email `welcome` (EmailJS, `EmailService.sendWelcome`, seul canal
+  bienvenue réellement actif en prod — les 2 autres implémentations serveur
+  `_lib/notify.js`/`confirm-email.js` sont du code mort jamais appelé) refondu
+  en grille de 10 services avec description courte, au lieu de 3 étapes
+  génériques.
+- **Bug corrigé au passage** : `site_popups` target `new_user` filtrait par
+  erreur exactement comme `guest` (`currentUser` falsy) — un nouvel inscrit
+  vient justement d'obtenir un compte, donc ne recevait JAMAIS ces popups.
+  Fix : `isNew` basé sur `currentUser.createdAt` (< 3 jours), variable qui
+  existait déjà mais n'était jamais utilisée dans le filtre.
+
+**Demande 3 — Statistiques de croissance** (téléchargements app/jour, visites/
+jour, autres stats) : n'existait pas du tout côté admin (seuls des totaux
+instantanés, pas de série temporelle ; zéro tracking des installations PWA).
+- Nouvelle table `pwa_install_events` + RPC `admin_growth_stats(days)`
+  (`sql`, migration Supabase MCP `pwa_install_events_and_growth_stats`) :
+  inscriptions/commandes/installations PWA par jour + totaux, RLS activée
+  sans policy (verrouillé service_role, même convention que
+  `admin_supabase_usage`).
+- `functions/api/track-pwa-install.js` (public, rate-limité 20/h/IP) appelé
+  depuis `window.nexusInstall()` (bouton "Télécharger l'app") ET l'event
+  natif `appinstalled` (installs hors de notre bouton), avec garde
+  anti-double-comptage (`sessionStorage`).
+- `functions/api/_lib/cf-analytics.js` extrait de `platform-usage.js` (zéro
+  changement de comportement, juste factorisé) pour être réutilisé par
+  `functions/api/admin/growth-stats.js` (visites/jour = requêtes HTTP
+  Cloudflare réelles, pas des visiteurs uniques — champ `uniq.uniques`
+  volontairement PAS ajouté à la requête GraphQL, non vérifiable sans token
+  en main → aurait risqué de casser le panneau Cloudflare existant qui
+  fonctionnait déjà).
+- Nouveau panneau admin `GrowthStatsPanel` (onglet "Statistiques de
+  croissance", mini bar-charts en divs sans dépendance graphique) : inscriptions
+  /jour, commandes/jour, installations PWA/jour, requêtes HTTP/jour, + totaux.
+
+**Piège évité** : le bundle `app.<hash>.js` est servi avec cache immutable
+1 an — après ~6 éditions en place lors de cette session, **renommage du hash
+fait en fin de session** (`app.5b2aee16cd.js` → `app.d04c01ab6d.js`, MD5 du
+contenu final) + MAJ `index.html`, sinon aucun des changements n'aurait
+jamais été livré (cf. `app-bundle-hash-cache-busting` en mémoire).
+
+**État final** : vérifié `node --check` sur tous les fichiers touchés +
+`admin_growth_stats(30)` testé en direct via SQL (données réelles retournées).
+**Pas encore commité/poussé/déployé** — décision explicite à prendre avec
+l'utilisateur (push = action à confirmer).
+
+---
+
 ## 2026-08-28 (dix-septième) — Traduction du nouveau filtre catalogue (FR/EN/WO)
 
 **Demande** : les éléments introduits dans le filtre catalogue (sidebar +
