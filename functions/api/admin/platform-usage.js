@@ -21,7 +21,6 @@
 //    on donne des liens directs vers chaque dashboard plutôt que d'inventer un
 //    scraping fragile.
 import { requireAdmin, supabase, json, err, options } from '../_lib/utils.js';
-import { fetchCloudflareDailyRequests } from '../_lib/cf-analytics.js';
 
 const SUPABASE_FREE_LIMITS = {
   db_size_bytes: 500 * 1024 * 1024, // 500 MB
@@ -72,28 +71,63 @@ async function fetchSupabaseUsage(env) {
 }
 
 async function fetchCloudflareUsage(env) {
-  const res = await fetchCloudflareDailyRequests(env, 30);
-  if (!res.configured || !res.ok) return res;
+  const token = env.CLOUDFLARE_API_TOKEN;
+  const zoneId = env.CLOUDFLARE_ZONE_ID;
+  if (!token || !zoneId) {
+    return {
+      configured: false,
+      note: 'CLOUDFLARE_API_TOKEN + CLOUDFLARE_ZONE_ID non configurés (variables Cloudflare Pages).',
+    };
+  }
+  const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const until = new Date().toISOString().slice(0, 10);
-  const totals = res.daily.reduce(
-    (acc, g) => ({
-      requests: acc.requests + (g.requests || 0),
-      bytes: acc.bytes + (g.bytes || 0),
-      cachedRequests: acc.cachedRequests + (g.cachedRequests || 0),
-      cachedBytes: acc.cachedBytes + (g.cachedBytes || 0),
-      threats: acc.threats + (g.threats || 0),
-    }),
-    { requests: 0, bytes: 0, cachedRequests: 0, cachedBytes: 0, threats: 0 }
-  );
-  const today = res.daily.find((g) => g.date === until);
-  return {
-    configured: true,
-    ok: true,
-    period_days: res.daily.length,
-    last_30d: totals,
-    today: today || null,
-    daily: res.daily,
-  };
+  const query = `query ($zoneTag: String!, $since: Date!, $until: Date!) {
+    viewer {
+      zones(filter: { zoneTag: $zoneTag }) {
+        httpRequests1dGroups(limit: 31, filter: { date_geq: $since, date_leq: $until }, orderBy: [date_ASC]) {
+          dimensions { date }
+          sum { requests bytes cachedRequests cachedBytes threats }
+        }
+      }
+    }
+  }`;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables: { zoneTag: zoneId, since, until } }),
+    });
+    clearTimeout(t);
+    const data = await res.json();
+    if (!res.ok || data.errors) {
+      return { configured: true, ok: false, error: (data.errors || []).map((e) => e.message).join('; ') || `HTTP ${res.status}` };
+    }
+    const groups = data?.data?.viewer?.zones?.[0]?.httpRequests1dGroups || [];
+    const totals = groups.reduce(
+      (acc, g) => ({
+        requests: acc.requests + (g.sum?.requests || 0),
+        bytes: acc.bytes + (g.sum?.bytes || 0),
+        cachedRequests: acc.cachedRequests + (g.sum?.cachedRequests || 0),
+        cachedBytes: acc.cachedBytes + (g.sum?.cachedBytes || 0),
+        threats: acc.threats + (g.sum?.threats || 0),
+      }),
+      { requests: 0, bytes: 0, cachedRequests: 0, cachedBytes: 0, threats: 0 }
+    );
+    const today = groups.find((g) => g.dimensions?.date === until);
+    return {
+      configured: true,
+      ok: true,
+      period_days: groups.length,
+      last_30d: totals,
+      today: today ? today.sum : null,
+      daily: groups.map((g) => ({ date: g.dimensions?.date, ...g.sum })),
+    };
+  } catch (e) {
+    return { configured: true, ok: false, error: e.message };
+  }
 }
 
 export async function onRequest({ request, env }) {

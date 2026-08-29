@@ -6630,32 +6630,10 @@ const NEXUS_EMAIL_DEFAULTS = {
 
   // 8. Bienvenue (NOUVEAU) ──────────────────────────────────────────────────
   welcome: {
-    subject: "🎊 Bienvenue sur NEXUS Market, {{user_name}} ! Découvrez tout ce que vous pouvez y faire",
+    subject: "🎊 Bienvenue sur NEXUS Market, {{user_name}} !",
     html: _tplWrap(
       `<tr><td style="background:linear-gradient(135deg,#006d40 0%,#008751 60%,#e9c176 100%);border-radius:16px 16px 0 0;padding:40px;text-align:center;"><div style="font-size:3rem;margin-bottom:12px;">🎊</div><span style="font-size:2rem;font-weight:900;color:#ffffff;letter-spacing:-1px;font-family:Georgia,serif;">⬡ NEXUS</span><p style="margin:10px 0 0;font-size:1rem;color:rgba(255,255,255,0.9);font-weight:600;">Market Sénégal</p></td></tr>` +
-      `<tr><td style="background:#ffffff;padding:40px;"><h1 style="margin:0 0 8px;font-size:1.7rem;font-weight:800;color:#1F2937;line-height:1.2;">Bienvenue, <span style="color:#006d40;">{{user_name}}</span> !</h1><p style="margin:0 0 24px;font-size:1rem;color:#6B7280;line-height:1.6;">Votre compte a été créé avec succès. NEXUS Market n'est pas qu'une marketplace de produits : c'est toute une palette de services pensés pour le Sénégal. Voici un tour d'horizon pour vous en faire une idée précise.</p>` +
-      `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px;"><tr>` +
-        `<td width="50%" style="padding:0 6px 12px 0;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🛒 Marketplace</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Achetez et vendez : électronique, mode, maison, beauté, auto/moto, immobilier…</p></td></tr></table></td>` +
-        `<td width="50%" style="padding:0 0 12px 6px;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🔧 NEXUS Pro</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Trouvez un artisan qualifié près de chez vous : plombier, électricien, menuisier…</p></td></tr></table></td>` +
-      `</tr><tr>` +
-        `<td width="50%" style="padding:0 6px 12px 0;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🔑 NEXUS Location</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Louez du matériel ou des objets au lieu de les acheter.</p></td></tr></table></td>` +
-        `<td width="50%" style="padding:0 0 12px 6px;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🔄 NEXUS Troc</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Échangez des objets entre particuliers, sans dépenser un centime.</p></td></tr></table></td>` +
-      `</tr><tr>` +
-        `<td width="50%" style="padding:0 6px 12px 0;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🐑 NEXUS Élevage</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Produits du terroir en direct des éleveurs et producteurs locaux.</p></td></tr></table></td>` +
-        `<td width="50%" style="padding:0 0 12px 6px;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🏪 Louma</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Le grand marché en ligne, animé chaque vendredi.</p></td></tr></table></td>` +
-      `</tr><tr>` +
-        `<td width="50%" style="padding:0 6px 12px 0;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🎬 NEXUS Stories</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Découvrez des produits en vidéo et faites vos offres en direct.</p></td></tr></table></td>` +
-        `<td width="50%" style="padding:0 0 12px 6px;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🛵 Coursier à la demande</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Faites livrer ou récupérer un colis en quelques minutes.</p></td></tr></table></td>` +
-      `</tr><tr>` +
-        `<td width="50%" style="padding:0 6px 12px 0;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🚐 Covoiturage & Transport</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Réservez vos trajets : bus, 7 places, van, ferry…</p></td></tr></table></td>` +
-        `<td width="50%" style="padding:0 0 12px 6px;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🚨 Dépannage Auto</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">SOS panne : un dépanneur géolocalisé près de vous.</p></td></tr></table></td>` +
-      `</tr><tr>` +
-        `<td width="50%" style="padding:0 6px 0 0;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">🏠 Immobilier</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Trouvez ou publiez un bien à louer ou à vendre.</p></td></tr></table></td>` +
-        `<td width="50%" style="padding:0 0 0 6px;vertical-align:top;"><table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F9F7F0;border-radius:10px;"><tr><td style="padding:14px 16px;"><p style="margin:0 0 3px;font-size:0.9rem;font-weight:700;color:#1F2937;">⭐ Fidélité & Parrainage</p><p style="margin:0;font-size:0.8rem;color:#6B7280;line-height:1.5;">Gagnez des points à chaque achat, invitez vos proches.</p></td></tr></table></td>` +
-      `</tr></table>` +
-      `<p style="margin:14px 0 28px;font-size:0.82rem;color:#9CA3AF;text-align:center;">…et bien plus encore : assistant IA, chat communauté, annonces, devis B2B, cours en ligne.</p>` +
-      `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#EFF6FF;border-left:4px solid #006d40;border-radius:0 10px 10px 0;padding:14px 18px;"><p style="margin:0;font-size:0.85rem;color:#1E40AF;line-height:1.6;"><strong>💡 Pour commencer :</strong> complétez votre profil, explorez le catalogue, et pourquoi pas devenez vendeur pour développer votre propre activité sur NEXUS.</p></td></tr></table>` +
-      `<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{site_url}}" style="display:inline-block;background:linear-gradient(135deg,#006d40,#008751);color:#ffffff;font-weight:700;font-size:1rem;text-decoration:none;padding:16px 48px;border-radius:50px;box-shadow:0 4px 16px rgba(0,109,64,0.3);">Découvrir NEXUS Market →</a></td></tr></table></td></tr>` +
+      `<tr><td style="background:#ffffff;padding:40px;"><h1 style="margin:0 0 8px;font-size:1.7rem;font-weight:800;color:#1F2937;line-height:1.2;">Bienvenue, <span style="color:#006d40;">{{user_name}}</span> !</h1><p style="margin:0 0 28px;font-size:1rem;color:#6B7280;line-height:1.6;">Votre compte a été créé avec succès. Vous avez désormais accès à la marketplace B2B/B2C #1 au Sénégal.</p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;"><tr><td style="background:#F9F7F0;border-radius:12px;padding:22px 24px;"><p style="margin:0 0 16px;font-size:0.85rem;font-weight:700;color:#1F2937;text-transform:uppercase;letter-spacing:1px;">🚀 Prochaines étapes</p><table cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="padding:8px 0;border-bottom:1px solid #E5E7EB;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:32px;height:32px;background:#006d40;border-radius:50%;text-align:center;line-height:32px;font-size:0.8rem;font-weight:700;color:white;">1</td><td style="padding-left:12px;font-size:0.88rem;color:#1F2937;">Complétez votre profil pour personnaliser votre expérience</td></tr></table></td></tr><tr><td style="padding:8px 0;border-bottom:1px solid #E5E7EB;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:32px;height:32px;background:#006d40;border-radius:50%;text-align:center;line-height:32px;font-size:0.8rem;font-weight:700;color:white;">2</td><td style="padding-left:12px;font-size:0.88rem;color:#1F2937;">Explorez le catalogue et découvrez nos milliers de produits</td></tr></table></td></tr><tr><td style="padding:8px 0;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:32px;height:32px;background:#006d40;border-radius:50%;text-align:center;line-height:32px;font-size:0.8rem;font-weight:700;color:white;">3</td><td style="padding-left:12px;font-size:0.88rem;color:#1F2937;">Devenez vendeur et développez votre activité sur NEXUS</td></tr></table></td></tr></table></td></tr></table><table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center"><a href="{{site_url}}" style="display:inline-block;background:linear-gradient(135deg,#006d40,#008751);color:#ffffff;font-weight:700;font-size:1rem;text-decoration:none;padding:16px 48px;border-radius:50px;box-shadow:0 4px 16px rgba(0,109,64,0.3);">Découvrir NEXUS Market →</a></td></tr></table></td></tr>` +
       _tplFooter("support@nexus.sn")
     )
   },
@@ -7614,7 +7592,6 @@ const OnboardingTour = ({ role, onComplete }) => {
   const steps = {
     buyer: [
       { icon: "\u{1F6CD}\uFE0F", title: "Bienvenue sur NEXUS Market !", text: "La place de march\xE9 s\xE9n\xE9galaise de confiance. D\xE9couvrez des milliers de produits de vendeurs v\xE9rifi\xE9s." },
-      { icon: "\u{1F9ED}", title: "Bien plus qu'une marketplace", text: "\u{1F527} NEXUS Pro (artisans pr\xE8s de chez vous) \xB7 \u{1F511} NEXUS Location (louer au lieu d'acheter) \xB7 \u{1F504} NEXUS Troc (\xE9changer sans payer) \xB7 \u{1F3EA} Louma (le march\xE9 du vendredi) \xB7 \u{1F3AC} NEXUS Stories (produits en vid\xE9o) \xB7 \u{1F6F5} Coursier \xE0 la demande \xB7 \u{1F690} Covoiturage & Transport \xB7 \u{1F6A8} D\xE9pannage Auto \xB7 \u{1F3E0} Immobilier \xB7 \u{1F411} \xC9levage & terroir. Tout est accessible depuis le menu \u2630." },
       { icon: "\u{1F50D}", title: "Trouvez vos produits", text: "Utilisez la barre de recherche, filtrez par cat\xE9gorie ou par prix. Cliquez sur le nom d'un vendeur pour voir sa boutique." },
       { icon: "\u2764\uFE0F", title: "Sauvegardez vos favoris", text: "Cliquez sur le \u2665 pour ajouter un produit \xE0 votre wishlist. Retrouvez-les dans le menu lat\xE9ral." },
       { icon: "\u{1F4B3}", title: "Paiement s\xE9curis\xE9", text: "Payez par carte bancaire ou Mobile Money (Orange Money, Wave, Free Money). Satisfait ou rembours\xE9 30 jours." },
@@ -7622,7 +7599,6 @@ const OnboardingTour = ({ role, onComplete }) => {
     ],
     vendor: [
       { icon: "\u{1F3EA}", title: "Bienvenue sur votre espace vendeur !", text: "Vous pouvez maintenant vendre vos produits \xE0 des milliers d'acheteurs au S\xE9n\xE9gal." },
-      { icon: "\u{1F9ED}", title: "Diversifiez vos ventes", text: "Au-del\xE0 du catalogue classique : \u{1F3AC} NEXUS Stories (vendez en vid\xE9o) \xB7 \u{1F3EA} Louma (le march\xE9 du vendredi) \xB7 \u{1F511} NEXUS Location \xB7 \u{1F504} NEXUS Troc \xB7 \u{1F527} NEXUS Pro si vous \xEAtes artisan. Explorez ces modules depuis le menu ☰ selon votre activit\xE9." },
       { icon: "\u{1F4E6}", title: "Ajoutez vos produits", text: 'Allez dans "Mes Produits" et cliquez sur "Ajouter". Vos produits seront visibles apr\xE8s validation par notre \xE9quipe (24h).', targetId: 'vendor-add-product-btn' },
       { icon: "\u{1F4AC}", title: "G\xE9rez vos offres", text: `Les acheteurs peuvent vous faire des offres de prix. Acceptez ou refusez depuis "Offres re\xE7ues". L'acceptation cr\xE9e automatiquement une commande.` },
       { icon: "\u{1F4CA}", title: "Suivez vos ventes", text: "Dashboard avec graphique des ventes, commandes en cours et statistiques. T\xE9l\xE9chargez des factures PDF." },
@@ -21039,124 +21015,6 @@ const PlatformUsagePanel = ({ addToast }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// GrowthStatsPanel — Inscriptions/commandes/installations PWA/visites par jour,
-// pour suivre le développement du site dans la durée (pas juste des totaux
-// instantanés). Appelle GET /api/admin/growth-stats (2026-08-29).
-// ════════════════════════════════════════════════════════════════════════════
-const GrowthStatsPanel = ({ addToast }) => {
-  const D = React.createElement;
-  const [data, setData] = React.useState(null);
-  const [loading, setLoading] = React.useState(false);
-  const [loadErr, setLoadErr] = React.useState(null);
-  const [days, setDays] = React.useState(30);
-
-  const load = async (d) => {
-    setLoading(true); setLoadErr(null);
-    try {
-      let token = null;
-      try { const s = await (DataService._sb && DataService._sb.auth.getSession()); token = s && s.data && s.data.session && s.data.session.access_token; } catch (_) {}
-      if (!token) token = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
-      const res = await fetch('/api/admin/growth-stats?days=' + (d || days), { headers: token ? { Authorization: 'Bearer ' + token } : {} });
-      if (!res.ok) { setLoadErr('HTTP ' + res.status); setLoading(false); return; }
-      setData(await res.json());
-    } catch (e) { setLoadErr(e.message); }
-    setLoading(false);
-  };
-  React.useEffect(() => { load(days); }, [days]);
-
-  // Mini bar chart en divs (pas de dépendance graphique) : une série [{date, value}]
-  // → barres proportionnelles au max, avec la valeur du jour au survol.
-  const BarChart = (title, series, opts) => {
-    opts = opts || {};
-    const max = Math.max(1, ...series.map((s) => s.value));
-    const total = series.reduce((a, s) => a + s.value, 0);
-    return D('div', { key: title, style: { border: '1px solid var(--line)', borderRadius: 10, padding: 14, marginBottom: 14 } },
-      D('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 } },
-        D('h3', { style: { margin: 0 } }, title),
-        D('span', { className: 'muted', style: { fontSize: 12 } }, 'Total période : ' + total.toLocaleString('fr-FR') + (opts.suffix || ''))
-      ),
-      !series.length ? D('p', { className: 'muted', style: { fontSize: 12 } }, 'Aucune donnée sur cette période.') :
-      D('div', { style: { display: 'flex', alignItems: 'flex-end', gap: 2, height: 90 } },
-        series.map((s) => D('div', {
-          key: s.date,
-          title: s.date + ' : ' + s.value.toLocaleString('fr-FR') + (opts.suffix || ''),
-          style: {
-            flex: 1, minWidth: 3, height: Math.max(2, Math.round((s.value / max) * 100)) + '%',
-            background: opts.color || 'var(--accent, #16a34a)', borderRadius: '2px 2px 0 0',
-          },
-        }))
-      ),
-      D('div', { className: 'muted', style: { fontSize: 10, display: 'flex', justifyContent: 'space-between', marginTop: 4 } },
-        D('span', null, series[0] ? series[0].date : ''),
-        D('span', null, series.length ? series[series.length - 1].date : '')
-      )
-    );
-  };
-
-  // Complète les jours manquants (RPC/CF ne renvoient que les jours avec activité)
-  // pour que les barres reflètent la vraie échelle temporelle, pas juste les jours actifs.
-  const fillDays = (rows, dCount, dateKey, valueFn) => {
-    const byDate = {};
-    (rows || []).forEach((r) => { byDate[r[dateKey]] = valueFn(r); });
-    const out = [];
-    for (let i = dCount - 1; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-      out.push({ date: d, value: byDate[d] || 0 });
-    }
-    return out;
-  };
-
-  const g = (data && data.growth && data.growth.ok && data.growth.data) || null;
-  const v = (data && data.visits) || {};
-  const totals = (g && g.totals) || {};
-
-  const Tile = (label, value) => D('div', { key: label, style: { minWidth: 130 } },
-    D('div', { className: 'muted', style: { fontSize: 11 } }, label),
-    D('div', { style: { fontSize: 22, fontWeight: 700 } }, (value == null ? '—' : Number(value).toLocaleString('fr-FR')))
-  );
-
-  return D('div', { className: 'card' },
-    D('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 } },
-      D('h2', null, D('i', { className: 'fas fa-chart-line' }), ' Statistiques de croissance'),
-      D('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
-        D('select', {
-          value: days, onChange: (e) => setDays(parseInt(e.target.value, 10)),
-          style: { padding: '4px 8px', borderRadius: 6, border: '1px solid var(--line)' },
-        },
-          D('option', { value: 14 }, '14 derniers jours'),
-          D('option', { value: 30 }, '30 derniers jours'),
-          D('option', { value: 90 }, '90 derniers jours')
-        ),
-        D('button', { className: 'btn ghost sm', onClick: () => load(days), disabled: loading }, D('i', { className: 'fas fa-sync' + (loading ? ' fa-spin' : '') }), ' Actualiser')
-      )
-    ),
-    D('p', { className: 'muted', style: { fontSize: 12, marginBottom: 14 } },
-      "Évolution jour par jour (inscriptions, commandes, installations d'app, visites), pour suivre le développement réel du site plutôt qu'une simple photo instantanée."),
-    loadErr ? D('p', { className: 'log-err' }, '✗ ' + loadErr) : null,
-    !data ? D('p', { className: 'muted' }, loading ? 'Chargement…' : '—') : D('div', null,
-
-      D('div', { style: { display: 'flex', gap: 24, flexWrap: 'wrap', border: '1px solid var(--line)', borderRadius: 10, padding: 14, marginBottom: 14 } },
-        Tile('Utilisateurs inscrits (total)', totals.users_total),
-        Tile('dont vendeurs', totals.vendors_total),
-        Tile('Commandes (total)', totals.orders_total),
-        Tile("Installations d'app acceptées", totals.pwa_installs_accepted_total)
-      ),
-
-      !g ? D('p', { className: 'muted' }, (data.growth && data.growth.error) ? ('Statistiques indisponibles : ' + data.growth.error) : 'Statistiques indisponibles.') : D('div', null,
-        BarChart('Nouvelles inscriptions / jour', fillDays(g.signups_daily, days, 'date', (r) => r.count)),
-        BarChart('Commandes / jour', fillDays(g.orders_daily, days, 'date', (r) => r.count), { color: '#2563eb' }),
-        BarChart("Installations d'app / jour (acceptées)", fillDays(g.pwa_installs_daily, days, 'date', (r) => r.accepted), { color: '#9333ea' })
-      ),
-
-      !v.configured ? D('p', { className: 'muted', style: { fontSize: 12 } },
-        "Visites/jour non configurées — ajoute CLOUDFLARE_API_TOKEN + CLOUDFLARE_ZONE_ID (voir panneau « Utilisation Plateformes »)."
-      ) : v.ok ? BarChart('Requêtes HTTP / jour (proxy du trafic — pas de visiteurs uniques)', fillDays(v.daily, days, 'date', (r) => r.requests), { color: '#f59e0b' })
-        : D('p', { className: 'log-err' }, 'Visites indisponibles : ' + v.error)
-    )
-  );
-};
-
-// ════════════════════════════════════════════════════════════════════════════
 // OrgCfgAdminPanel — Coordonnées légales + emails + réseaux sociaux (2026-08-23)
 // Une seule clé app_config.nexus_org_cfg, lue par CGU/Confidentialité/Contact/
 // À propos (SSR) + /api/org-cfg (bundle client, JSON-LD & bouton FB footer).
@@ -22652,11 +22510,7 @@ const SitePopupManager = ({ currentUser, currentPage = 'home' }) => {
     _loadPopups().then(popups => {
       if (cancelled) return;
       const role    = currentUser?.role || 'guest';
-      // [FIX] 'new_user' ciblait par erreur les mêmes visiteurs que 'guest'
-      // (currentUser falsy) — un nouvel inscrit vient d'obtenir un compte, donc
-      // currentUser est justement rempli. Vraie définition : compte créé il y a
-      // moins de 3 jours (profiles.created_at, exposé en camelCase par normalizeUser).
-      const isNew   = !!(currentUser?.id && currentUser?.createdAt && (Date.now() - new Date(currentUser.createdAt).getTime()) < 3 * 24 * 3600 * 1000);
+      const isNew   = !currentUser?.id;
       const seen    = seenIds();
 
       const filtered = popups.filter(p => {
@@ -22672,7 +22526,7 @@ const SitePopupManager = ({ currentUser, currentPage = 'home' }) => {
         if (p.target === 'logged_in' && !currentUser) return false;
         if (p.target === 'buyer' && role !== 'buyer') return false;
         if (p.target === 'vendor' && role !== 'vendor') return false;
-        if (p.target === 'new_user' && !isNew) return false;
+        if (p.target === 'new_user' && currentUser) return false;
         // show_once
         if (p.show_once && seen.has(p.id)) return false;
         return true;
@@ -26841,8 +26695,7 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "vendor_referrals", icon: "handshake",  label: "Parrainage vendeurs" },
     { id: "invoice_sequences", icon: "hashtag",  label: "N° Factures (DGID)" },
     { id: "config", icon: "cog", label: "Configuration" },
-    { id: "platform_usage", icon: "server", label: "Utilisation Plateformes" },
-    { id: "growth_stats", icon: "chart-line", label: "Statistiques de croissance" }
+    { id: "platform_usage", icon: "server", label: "Utilisation Plateformes" }
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
     if (item.id !== 'orders') setOrdersPage(1);
     setView(item.id);
@@ -29129,7 +28982,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(OrgCfgAdminPanel, { addToast }), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "platform_usage" && React.createElement(PlatformUsagePanel, { addToast }), view === "growth_stats" && React.createElement(GrowthStatsPanel, { addToast }), view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(OrgCfgAdminPanel, { addToast }), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "platform_usage" && React.createElement(PlatformUsagePanel, { addToast }), view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
@@ -39655,37 +39508,9 @@ window.addEventListener("beforeinstallprompt", (e) => {
       deferredInstallPrompt.prompt();
       const { outcome } = await deferredInstallPrompt.userChoice;
       deferredInstallPrompt = null;
-      // Suivi analytique (panneau admin "Statistiques de croissance") — best-effort,
-      // ne doit jamais bloquer ni faire échouer le flux d'installation.
-      try {
-        if (outcome === 'accepted') { try { sessionStorage.setItem('nexus_pwa_install_logged', '1'); } catch (_) {} }
-        let token = null;
-        try { const s = await (window.DataService && window.DataService._sb && window.DataService._sb.auth.getSession()); token = s && s.data && s.data.session && s.data.session.access_token; } catch (_) {}
-        fetch('/api/track-pwa-install', {
-          method: 'POST',
-          headers: Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: 'Bearer ' + token } : {}),
-          body: JSON.stringify({ outcome, platform: (navigator.userAgent || '').slice(0, 40) }),
-        }).catch(() => {});
-      } catch (_) {}
       return outcome;
     }
   };
-});
-// Installations déclenchées HORS de notre bouton (icône native de la barre
-// d'adresse du navigateur) : `beforeinstallprompt`/notre tracking ci-dessus ne
-// les voit pas, mais `appinstalled` se déclenche dans tous les cas.
-window.addEventListener('appinstalled', () => {
-  try {
-    // Évite le double comptage si l'install vient déjà d'être loguée via notre
-    // bouton (nexusInstall()), qui déclenche aussi appinstalled juste après.
-    if (sessionStorage.getItem('nexus_pwa_install_logged') === '1') return;
-    sessionStorage.setItem('nexus_pwa_install_logged', '1');
-    fetch('/api/track-pwa-install', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ outcome: 'accepted', platform: 'native:' + (navigator.userAgent || '').slice(0, 33) }),
-    }).catch(() => {});
-  } catch (_) {}
 });
 // ══════════════════════════════════════════════════════════════════
 // ANALYTICS — Google Analytics 4 + collecte locale enrichie
