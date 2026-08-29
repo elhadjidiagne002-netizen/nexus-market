@@ -6,6 +6,68 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-29 (dix-neuvième) — Incident prod (déploiement) + inscriptions cassées (bug DB pré-existant)
+
+**Incident 1 — déploiement cassé** : la fonctionnalité "message de bienvenue +
+stats de croissance" (voir tentative du même jour, commit `d058137`) faisait
+planter **toutes** les routes du site en prod avec « Worker exceeded resource
+limits » (Erreur 1102 Cloudflare, `outcome: exceededCpu`), y compris la page
+d'accueil qui n'a pourtant aucun lien avec le code ajouté. Confirmé en
+comparant en direct l'ancien déploiement (200 OK) vs le nouveau (503 partout)
+via `wrangler pages deployment tail`. Cause exacte non identifiée avant
+rollback (priorité = remettre le site en ligne) — hypothèse la plus probable :
+le bundling Cloudflare Pages Functions compile tout `functions/**` en un seul
+Worker, et un cold-start plus lourd (3 nouveaux fichiers) a fait franchir un
+seuil CPU déjà très serré pour ce compte. **Action** : `git revert` immédiat
+de `d058137` + push (commit `d9f8d0f`) → site restauré, vérifié 200 sur `/`,
+`/sitemap-listings.xml`, `/api/live-activity`, `/manifest.json`. La
+fonctionnalité "stats de croissance" est donc **retirée** pour l'instant — à
+ré-implémenter plus tard en isolant/testant chaque nouveau fichier séparément
+avant de repointer le domaine de prod dessus.
+
+**Incident 2 — inscriptions cassées** (signalé séparément par l'utilisateur,
+log navigateur fourni) : **totalement indépendant de l'incident 1**, bug
+pré-existant en base. `POST auth/v1/signup` renvoyait systématiquement
+500 « Database error saving new user » pour certains emails. Cause : le
+trigger `handle_new_user()` (AFTER INSERT ON auth.users) fait
+`INSERT INTO profiles (...) ON CONFLICT (id) DO NOTHING` — mais `profiles`
+a AUSSI une contrainte `UNIQUE(email)` (`profiles_email_key`) non couverte par
+ce conflict target. Dès qu'un profil "orphelin" existe (email présent dans
+`profiles` mais son `auth.users` a été supprimé, ex. via le dashboard Supabase
+sans nettoyer `profiles`), toute tentative d'inscription avec ce même email
+lève `unique_violation`, annule toute la transaction (y compris la création du
+compte `auth.users`) → 500 pour CET email, indéfiniment.
+
+Cas réel trouvé en base : `princepod51@gmail.com` — profil vendeur avec
+**648 produits + 3 commandes** liés à son id, mais plus aucun compte auth
+correspondant. **Ce profil et ses données n'ont PAS été touchés** : les ~90 FK
+vers `profiles(id)` du schéma sont toutes en `ON UPDATE NO ACTION`, donc
+changer son id aurait cassé ses 648 produits. Un autre email `admin@nexus.sn`
+(banni) et `diagnemor360@hotmail.com` (buyer) sont orphelins aussi mais sans
+données liées.
+
+**Fix appliqué** (`sql`, migrations Supabase MCP
+`fix_handle_new_user_orphan_email_crash` +
+`fix_handle_approved_vendor_signup_orphan_email_crash`) : les deux triggers
+`AFTER INSERT ON auth.users` (`handle_new_user` et
+`handle_approved_vendor_signup`, qui a exactement la même faille) attrapent
+désormais `unique_violation` sur leur propre INSERT et l'ignorent (`RAISE
+WARNING` + on continue) au lieu de laisser planter toute la transaction. Le
+compte `auth.users` se crée alors normalement même dans le cas orphelin (juste
+sans nouvelle ligne `profiles` dans ce cas rare et déjà identifié). Vérifié en
+direct par test SQL (insert test dans `auth.users` avec l'email orphelin →
+succès, ligne de test nettoyée immédiatement ; insert avec email neuf → profil
+toujours créé normalement).
+
+**État final** : inscriptions débloquées pour tout le monde. `princepod51`
+(vendeur avec 648 produits) reste bloqué pour SE reconnecter tant que son
+compte auth n'est pas recréé avec le même id — décision à prendre avec
+l'utilisateur (récupération manuelle via dashboard Supabase, hors urgence
+immédiate). Pas de nouveau commit applicatif nécessaire (fix 100% côté SQL
+Supabase, déjà appliqué en prod).
+
+---
+
 ## 2026-08-28 (dix-septième) — Traduction du nouveau filtre catalogue (FR/EN/WO)
 
 **Demande** : les éléments introduits dans le filtre catalogue (sidebar +
