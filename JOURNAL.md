@@ -6,6 +6,53 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-30 (vingt-troisième) — Diagnostic "code de vérification jamais reçu" + nettoyage compte de test
+
+**Demande** : utilisateur signale que le code à 6 chiffres n'est toujours pas
+reçu après inscription avec `diagnemor360@hotmail.com` (déjà refusé une fois
+comme "email déjà pris").
+
+**1. Compte de test bloqué** : `diagnemor360@hotmail.com` était l'un des 3
+profils orphelins identifiés dans l'audit du jour (profil sans compte
+`auth.users`). Une tentative de réinscription APRÈS mon fix du trigger
+(`handle_new_user`) avait créé un nouveau compte `auth.users` mais, par
+construction du fix (skip silencieux sur collision d'email), sans profil —
+d'où un second blocage. Les deux (ancien profil orphelin + nouveau compte
+auth sans profil, 0 commande liée aux deux) supprimés à la demande de
+l'utilisateur pour repartir propre.
+
+**2. Diagnostic de l'envoi d'email — fausse piste puis vraie confirmation** :
+- Le fix précédent (`3acd3bc`, `context.waitUntil`) est bien en place et
+  fonctionne : testé en direct via `wrangler pages deployment tail` + appel
+  réel à `/api/auth/send-verification-code` — l'envoi est maintenant
+  correctement tenté et journalisé (avant, silence total).
+- Premier test avec une adresse `@example.com` → Resend renvoie 422
+  ("domaines comme example.com" refusés explicitement par Resend, quel que
+  soit l'état du compte) **et** Brevo (repli) renvoie 401 "API Key is not
+  enabled" — repéré uniquement grâce à un ajout de logging (`sendEmail()`
+  ne journalisait jamais le corps de la réponse en cas d'échec HTTP non
+  exceptionnel). Ça ressemblait à un vrai problème de compte Resend/Brevo.
+- **Corrigé le tir** : `@example.com` est un domaine qu'aucun fournisseur
+  d'email transactionnel ne doit accepter (réservé IANA, ne reçoit jamais
+  vraiment de mail) — le 422 ne prouvait rien sur un VRAI destinataire.
+  Retest avec le vrai email de l'utilisateur (`diagnemor360@hotmail.com`) →
+  **`status: sent` via Resend, provider_id réel retourné**. L'envoi
+  fonctionne bien pour un destinataire réel.
+- Fait (déployé, commit `5a1d15f`) : ajout du log du corps de réponse
+  Resend/Brevo en cas d'échec HTTP (`functions/api/_lib/utils.js`) — sans
+  ça, la vraie cause d'un futur échec resterait invisible comme aujourd'hui.
+
+**Résiduel non urgent** : `BREVO_API_KEY` (fournisseur de secours) est
+invalide ("API Key is not enabled") — sans impact tant que Resend
+(primaire) fonctionne, mais aucune redondance réelle en cas de panne Resend.
+À régénérer côté dashboard Brevo si on veut restaurer le filet de sécurité.
+
+**État final** : le flux d'inscription + code de vérification fonctionne de
+bout en bout pour `diagnemor360@hotmail.com` (email envoyé). Utilisateur
+invité à vérifier sa boîte de réception (et les spams).
+
+---
+
 ## 2026-08-30 (vingt-deuxième) — Fusion complète des policies RLS qui se chevauchent (multiple_permissive_policies)
 
 **Suite directe** : après le nettoyage initplan + doublons exacts, l'utilisateur
