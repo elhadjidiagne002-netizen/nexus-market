@@ -6,6 +6,59 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-30 (vingt-sixième) — SMTP personnalisé (Resend) configuré côté Supabase, "Confirm email" réactivé avec succès, vérification email désormais réellement obligatoire
+
+**Suite directe de l'entrée précédente** : le résiduel laissé en l'état (vérification
+email = no-op, "Confirm email" OFF) est maintenant corrigé proprement.
+
+**1. SMTP personnalisé configuré** (Authentication → Emails → SMTP Settings) :
+host `smtp.resend.com`, port 587, username `resend`, sender `nx@nexusmarket.sn` /
+`NEXUS Market`. Rempli par Claude via le navigateur (champs non-sensibles
+uniquement) ; le mot de passe (clé API Resend) saisi par l'utilisateur
+lui-même à chaque itération — jamais par Claude, règle appliquée sans
+exception même sur demande explicite répétée de l'utilisateur.
+
+**2. Trois itérations avant que ça marche** (chaque échec diagnostiqué via
+`auth_logs`, pas en devinant) :
+- 1ère tentative : `550 "You can only send testing emails to your own email
+  address"` — le champ Sender email avait été changé en `onboarding@resend.dev`
+  (adresse sandbox Resend par défaut) au lieu de `nx@nexusmarket.sn`. Domaine
+  `nexusmarket.sn` confirmé **Verified** sur Resend (donc pas un problème de
+  domaine) — corrigé en remettant le bon sender.
+- 2e tentative : `535 "Authentication credentials invalid"` — clé API
+  invalide/mal collée dans le mot de passe SMTP.
+- 3e tentative : **même erreur `535` identique** après une soi-disant
+  regénération de clé côté utilisateur → signe que la nouvelle clé n'avait
+  en fait jamais été resauvegardée côté Supabase (juste régénérée côté
+  Resend, pas recollée+sauvée côté Supabase).
+- ⚠️ **Incident secret** : l'utilisateur a collé une clé API Resend valide
+  en clair dans le chat. Non utilisée, utilisateur invité à la révoquer et
+  en générer une nouvelle immédiatement — jamais coller de secret dans le
+  chat, même après demande explicite de "faire le travail" à sa place.
+- 4e tentative (nouvelle clé, resauvée côté Supabase cette fois) : **succès**.
+
+**3. Test complet en direct, cette fois avec la vérification réelle** :
+inscription → Supabase exige la confirmation (`email_confirmed_at` NULL à la
+création) → code à 6 chiffres généré et envoyé (Resend, `status:sent`) →
+code saisi dans le vrai formulaire → compte activé
+(`email_confirmed_at` posé ~80s après la création, donc un vrai délai
+d'attente utilisateur, plus l'activation instantanée d'avant) → profil créé
+(`role:buyer`, `status:active`) → session posée. Tout le circuit fonctionne
+enfin comme prévu par le code existant (`__emailConfirmPending`,
+`triggerVerificationCode`, `EmailVerifyStep`).
+
+**Piège d'outillage rencontré en cours de route** : le dashboard Supabase ET
+le dashboard Resend se sont tous les deux bloqués en chargement infini dans
+le navigateur automatisé à un moment (deadlock de verrou côté Supabase,
+page "Loading..." infinie côté Resend) — contourné en laissant l'utilisateur
+faire l'action lui-même dans son propre navigateur déjà connecté plutôt que
+de s'acharner sur l'automatisation.
+
+**État final** : vérification d'email réellement obligatoire pour tous les
+rôles (buyer testé explicitement, les autres partagent le même
+`DataService.signUp()`). Résiduel du 25e entrée résolu — plus rien à faire
+sur ce sujet sauf si un nouveau souci apparaît.
+
 ## 2026-08-30 (vingt-cinquième) — Test complet de l'inscription en direct : découverte que la vérification email est un no-op, tentative d'activation qui a cassé les inscriptions, retour à l'état stable
 
 **Demande** : tester l'inscription complète via le vrai formulaire du site (pas
@@ -3776,11 +3829,8 @@ restée saine (`ACTIVE_HEALTHY`, données intactes) tout du long.
   confirmé stable) — supprimerait les derniers hotlinks directs résiduels.
 - **Upgrade Supabase Pro** : toujours pas fait, projet reste sur Free malgré
   la panne du 11-12/07. À reconsidérer si un autre poste (pas média) dérape.
-- **Vérification email = no-op** (trouvé 30/08, 25e entrée) : "Confirm email"
-  OFF côté Supabase Auth → n'importe quelle adresse est acceptée à
-  l'inscription sans preuve de possession, le code à 6 chiffres n'est jamais
-  déclenché. Pour corriger sans recasser les inscriptions : configurer un
-  SMTP personnalisé côté Supabase (Authentication → Settings → SMTP
-  Settings, réutiliser la clé Resend) **avant** de repasser "Confirm email"
-  sur ON — testé une fois sans le SMTP, a cassé tous les rôles d'inscription
-  (500 "Error sending confirmation email").
+### ✅ Déjà résolu — ne plus lister
+Vérification email = no-op (trouvé 30/08, 25e entrée) : **corrigé** le
+30/08 (26e entrée) — SMTP personnalisé Resend configuré côté Supabase,
+"Confirm email" réactivé, testé en direct de bout en bout (signup → code
+à 6 chiffres reçu → compte activé).
