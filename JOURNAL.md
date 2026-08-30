@@ -6,6 +6,20 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-30 (vingt-quatrième) — Régénération de la clé Brevo (secours email)
+
+**Cause confirmée** : le dashboard Brevo n'avait **aucune clé API active**
+(0 résultat sous "Vos clés API") — l'ancienne valeur stockée dans le secret
+Cloudflare `BREVO_API_KEY` correspondait à une clé déjà supprimée côté Brevo,
+d'où l'erreur "API Key is not enabled" observée dans l'audit précédent.
+
+**Fait** : nouvelle clé générée dans le dashboard Brevo (nom
+`nexus-market-production`, expire le 30 août 2027), secret `BREVO_API_KEY`
+mis à jour côté Cloudflare Pages (`wrangler pages secret put`, environnement
+production). Resend (primaire) fonctionnant déjà normalement, ceci restaure
+uniquement le filet de sécurité de secours — pas de changement visible pour
+l'utilisateur tant que Resend reste opérationnel.
+
 ## 2026-08-30 (vingt-troisième) — Diagnostic "code de vérification jamais reçu" + nettoyage compte de test
 
 **Demande** : utilisateur signale que le code à 6 chiffres n'est toujours pas
