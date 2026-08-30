@@ -6,6 +6,86 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-30 (vingtième) — Audit Supabase complet + code de vérification jamais envoyé
+
+**Demande** : « audit Supabase pour corriger toute erreur qui risque de poser
+problème + améliorations si nécessaire », puis signalement séparé que le
+code à 6 chiffres de vérification de compte n'arrive jamais après inscription.
+
+**Audit** (`get_advisors` sécurité + performance, 286 144 + 1 234 676
+caractères, analysés via 2 agents en parallèle car trop volumineux pour être
+lus directement) :
+
+**Bugs réels trouvés et corrigés (SQL, migrations Supabase MCP)** :
+- `notifications_type_check` n'autorisait que 8 valeurs, mais **5 triggers déjà
+  en prod** insèrent des types absents de la liste : `commission`
+  (`ambassador_commission_on_delivery`, sur commande livrée), `delivery`
+  (`credit_courier_on_delivery`, sur livraison complétée), `b2b_quote`/
+  `b2b_quote_confirmed` (`notify_vendor_on_quote_sent`), `stock_alert`
+  (`notify_stock_alerts_on_restock`), `insurance_lead`
+  (`trg_insurance_lead_notify`). **Aucun n'avait de protection contre les
+  erreurs** : le premier vrai cas (1re commande livrée avec parrainage
+  ambassadeur actif, 1re livraison avec coursier crédité, 1er devis B2B, 1er
+  réapprovisionnement avec alerte stock active, 1er lead assurance) aurait
+  fait **planter l'action principale** (impossible de marquer une commande/
+  livraison comme livrée !). Vérifié : 0 ligne dans `courier_earnings`/
+  `notifications` de ces types → jamais encore déclenché en prod, mais
+  bombe à retardement certaine. Deux triggers (devis B2B, leads assurance)
+  utilisaient en plus des colonnes `body`/`data` qui n'existent pas sur
+  `notifications` (schéma réel : `message`/`link`) — double bug.
+  **Fix** : contrainte étendue aux 6 nouvelles valeurs + toutes les
+  `INSERT INTO notifications` de ces triggers isolées dans leur propre
+  `BEGIN/EXCEPTION WHEN OTHERS THEN NULL` (la notification ne doit jamais
+  bloquer l'action métier réelle), colonnes corrigées.
+- 4 clés étrangères sans index dédié (`email_verification_codes.user_id`,
+  `pwa_install_events.user_id`, `rescuer_earnings.request_id`,
+  `transport_trips.transporter_id`) → index créés.
+
+**Bug réel trouvé et corrigé (code applicatif)** — **code de vérification à 6
+chiffres jamais envoyé** : `functions/api/auth/send-verification-code.js`
+appelait `sendEventNotification(...)` sans `await` NI `context.waitUntil()`
+juste avant le `return` de la réponse HTTP. Cloudflare Workers peut couper
+une promesse non attenue dès que la réponse part — le code était bien généré
+et stocké en base (`email_verification_codes`), donc aucune erreur visible
+côté client, mais **`email_logs` ne recevait jamais aucune ligne** (ni "sent"
+ni "failed"), preuve que l'envoi n'allait jamais jusqu'au bout. Vérifié que
+les 15 autres appelants de `sendEventNotification()` dans `functions/` sont
+tous correctement `await`és — ce point d'entrée était le seul avec ce bug.
+Fix : `context.waitUntil()` (même convention déjà utilisée ailleurs dans le
+projet : `stripe.js`, `indexnow.js`, `img/[[path]].js`…).
+
+**Améliorations identifiées mais PAS appliquées** (bloquées par le
+classificateur de sécurité de Claude Code — modification de policies RLS sur
+`orders`, même une réécriture strictement équivalente `auth.uid()` →
+`(select auth.uid())`, refusée deux fois de suite) — décision utilisateur
+requise pour la suite :
+- **`auth_rls_initplan`** (205 items / 82 tables) : `auth.uid()` appelé
+  directement dans `USING`/`WITH CHECK` est ré-évalué à CHAQUE LIGNE au lieu
+  d'une fois par requête. Fix mécanique et sûr (`(select auth.uid())`) mais
+  gros volume.
+- **`multiple_permissive_policies`** (977 items / 66 tables, en réalité ~4
+  conflits de policies par table) : ex. `orders` a deux policies admin
+  redondantes (`orders_admin_all` via `is_admin()` et `orders_admin_all_fixed`
+  via `auth_user_role()='admin'` — vérifié équivalentes, la seconde jamais
+  nettoyée après la migration), et 2 policies buyer dupliquées en plus. Même
+  chevauchement sur `products`, `profiles`, `disputes`, etc.
+- 25 vues `SECURITY DEFINER` (dont plusieurs `*_revenue`/`*_admin`) —
+  échantillon vérifié (`payout_requests_admin` : filtre `WHERE is_admin()`
+  réel et fiable, `authenticated` a SELECT mais protégé par le filtre — pattern
+  déjà établi et review le 2026-07-03, pas un nouveau bug) ; les 24 autres
+  non vérifiées individuellement.
+- 35 fonctions avec `search_path` mutable, 206 index inutilisés (à vérifier
+  avant suppression), 3 extensions dans `public` au lieu d'un schéma dédié,
+  protection mot de passe divulgué (HaveIBeenPwned) désactivée côté Auth
+  (réglage dashboard, pas SQL).
+
+**État final** : les bugs à risque réel (crash garanti au premier usage) sont
+tous corrigés et déployés. Les améliorations de performance RLS restent à
+faire — nécessitent soit l'autorisation explicite de l'utilisateur pour que
+Claude les exécute, soit qu'il les exécute lui-même (SQL prêt, non appliqué).
+
+---
+
 ## 2026-08-29 (dix-neuvième) — Incident prod (déploiement) + inscriptions cassées (bug DB pré-existant)
 
 **Incident 1 — déploiement cassé** : la fonctionnalité "message de bienvenue +
