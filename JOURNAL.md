@@ -6,6 +6,66 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-30 (vingt-cinquième) — Test complet de l'inscription en direct : découverte que la vérification email est un no-op, tentative d'activation qui a cassé les inscriptions, retour à l'état stable
+
+**Demande** : tester l'inscription complète via le vrai formulaire du site (pas
+seulement l'API), pour vérifier que tout le travail des entrées précédentes
+(23e, 24e) fonctionne réellement de bout en bout.
+
+**1. Piège d'environnement rencontré (pas un bug de prod)** : la page d'accueil
+a une surcouche statique `#nx-proto-overlay` (cf. [[home-overlay-interface]])
+qui capte les clics sur les boutons "Connexion"/"S'inscrire" du header avant
+qu'ils n'atteignent les vrais boutons React en dessous. Contourné en appelant
+le même mécanisme que l'app utilise déjà (`hideProto()`, normalement déclenché
+par un paramètre `?q=`/`?cat=` dans l'URL) pour révéler le vrai header.
+
+**2. Le parcours d'inscription fonctionne réellement de bout en bout** : rôle
+"Acheteur / Vendeur particulier" → nom/email/mot de passe → `Créer mon
+compte` → `DataService.signUp()` → ligne `profiles` créée (`role:buyer`,
+`status:active`) → session valide posée en localStorage. Aucune erreur,
+aucun blocage. Vérifié deux fois avec des adresses de test jetables
+(`diagnemor360+…@hotmail.com`), nettoyées ensuite (`auth.users` + `profiles`).
+
+**3. Découverte majeure : le code à 6 chiffres n'est JAMAIS déclenché en
+prod actuellement** — le réglage Supabase Auth "Confirm email" était
+**désactivé**. Preuve concrète : `email_confirmed_at` posé 2 secondes après
+`created_at` sur un compte fraîchement créé, et session Supabase renvoyée
+immédiatement par `signUp()`. Le code de `DataService.signUp()` (déjà lu et
+compris) ne déclenche `triggerVerificationCode()` QUE si Supabase renvoie
+`session: null` — ce qui n'arrive jamais avec ce réglage. Conséquence :
+**n'importe qui peut s'inscrire (acheteur, vendeur, coursier, pro, éleveur,
+transporteur — tous passent par le même `signUp()`) avec une adresse qu'il
+ne possède pas, et obtient un compte actif instantané.** Tout le travail des
+entrées 23e/24e (envoi du code, repli Brevo) reste correct mais n'est
+simplement jamais appelé pour l'instant.
+
+**4. Tentative d'activer "Confirm email" → a cassé les inscriptions en
+prod** : dès l'activation, `signUp()` a commencé à échouer avec `500 Error
+sending confirmation email` (message renvoyé par Supabase lui-même, pas par
+le code de l'app). Cause : activer ce réglage fait que **Supabase tente
+d'envoyer SON propre email de confirmation intégré** (indépendant du système
+de code à 6 chiffres maison, basé sur Resend/Brevo) via son mailer par
+défaut — non configuré avec un SMTP personnalisé, cet envoi échoue et
+**`signUp()` lève une exception au lieu de renvoyer `session:null`
+proprement**. Résultat : plus aucune inscription possible, tous rôles
+confondus, pendant que le réglage était actif.
+
+**5. Reverti immédiatement** : "Confirm email" repassé à OFF sur demande de
+l'utilisateur dès le problème identifié. Retest en direct après coup :
+inscription de nouveau fonctionnelle de bout en bout, comportement identique
+au point 2 (pas d'erreur console, session posée normalement).
+
+**État final** : inscription fonctionnelle et vérifiée en direct pour tous
+les rôles (chemin `buyer` testé explicitement, les autres partagent le même
+`DataService.signUp()`). **Résiduel volontairement laissé en l'état** : la
+vérification d'email reste un no-op complet — n'importe quelle adresse est
+acceptée sans preuve de possession. Si on veut un jour rendre la
+vérification réellement obligatoire, il faudra configurer un **SMTP
+personnalisé côté Supabase** (Authentication → Settings → SMTP Settings, en
+réutilisant la clé Resend déjà existante) **avant** de réactiver "Confirm
+email" — sinon le même blocage reviendra. Non fait cette session (pas
+redemandé après le retour à l'état stable).
+
 ## 2026-08-30 (vingt-quatrième) — Régénération de la clé Brevo (secours email)
 
 **Cause confirmée** : le dashboard Brevo n'avait **aucune clé API active**
@@ -3716,3 +3776,11 @@ restée saine (`ACTIVE_HEALTHY`, données intactes) tout du long.
   confirmé stable) — supprimerait les derniers hotlinks directs résiduels.
 - **Upgrade Supabase Pro** : toujours pas fait, projet reste sur Free malgré
   la panne du 11-12/07. À reconsidérer si un autre poste (pas média) dérape.
+- **Vérification email = no-op** (trouvé 30/08, 25e entrée) : "Confirm email"
+  OFF côté Supabase Auth → n'importe quelle adresse est acceptée à
+  l'inscription sans preuve de possession, le code à 6 chiffres n'est jamais
+  déclenché. Pour corriger sans recasser les inscriptions : configurer un
+  SMTP personnalisé côté Supabase (Authentication → Settings → SMTP
+  Settings, réutiliser la clé Resend) **avant** de repasser "Confirm email"
+  sur ON — testé une fois sans le SMTP, a cassé tous les rôles d'inscription
+  (500 "Error sending confirmation email").
