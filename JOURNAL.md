@@ -6,6 +6,46 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-30 (vingt-deuxième) — Fusion complète des policies RLS qui se chevauchent (multiple_permissive_policies)
+
+**Suite directe** : après le nettoyage initplan + doublons exacts, l'utilisateur
+a demandé d'aller au bout (« tout corrige et fait le nécessaire »). Deux
+actions :
+
+**1. Fix `stock_alerts_deny_update`** : cette policy (`USING false` sur
+UPDATE) était un no-op — les policies RLS permissives se combinent en OR,
+donc `stock_alerts_own` (ALL) autorisait déjà l'UPDATE au propriétaire malgré
+elle. Scindé `stock_alerts_own` en 3 policies d'action (SELECT/INSERT/DELETE,
+sans UPDATE) pour que `stock_alerts_deny_update` redevienne effective.
+
+**2. Fusion des ~977 items `multiple_permissive_policies` restants** —
+**⚠️ faille évitée de justesse** : ma première tentative de fusion (générée
+programmatiquement en groupant par simple table+action) aurait mélangé des
+policies scopées `TO service_role` (condition `true` sans restriction) avec
+des policies `TO public`/`authenticated` sur `carts`, `coupons`,
+`invoice_sequences`, `invoices`, `notifications`, `referrals`,
+`vendor_referrals`, `wishlists` — ce qui aurait donné un accès total à
+n'importe quel utilisateur sur ces tables. Repéré **avant application** en
+vérifiant `pg_policy.polroles` de chaque policy. Correction : regroupement
+par (table, action, **rôles exacts**) au lieu de juste (table, action) — les
+policies `service_role` ne sont alors plus jamais mélangées.
+
+**Fait** (46 groupes fusionnés, tous vérifiés même rôle) : chaque fusion est
+un simple OR verbatim des conditions d'origine (aucune réinterprétation),
+donc strictement équivalente. Nettoyage notable sur `profiles` (5→3
+policies), `products` (9→6), `couriers`, `disputes`, `orders`, `email_templates`,
+`return_requests`, `transport_reservations`, etc. — voir migrations
+`audit_merge_overlapping_policies_batch_a/b`.
+
+**État final** : 270 policies RLS actives sur `public` (contre 322 après
+le tour précédent, ~333 au départ). Vérifié : 0 groupe restant avec policies
+dupliquées pour un même (table, action, rôle) ; `products` par ex. passé
+de 9 à 6 policies cohérentes (admin/own/public read, sans doublon). Les seuls
+groupes "multiples" restants sont des policies `service_role` séparées
+des policies utilisateur — c'est le comportement correct, pas un doublon.
+
+---
+
 ## 2026-08-30 (vingt-et-unième) — Nettoyage RLS (initplan + doublons), autorisé explicitement par l'utilisateur
 
 **Suite directe de l'entrée précédente** : l'utilisateur a explicitement
