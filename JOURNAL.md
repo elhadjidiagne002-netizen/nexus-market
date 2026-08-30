@@ -6,6 +6,60 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-30 (vingt-et-unième) — Nettoyage RLS (initplan + doublons), autorisé explicitement par l'utilisateur
+
+**Suite directe de l'entrée précédente** : l'utilisateur a explicitement
+autorisé Claude à modifier des policies RLS (bloqué par le classificateur de
+sécurité lors du tour précédent). Exécuté :
+
+- **`auth_rls_initplan`** : 203 policies (`orders` + 197 sur ~70 autres
+  tables) réécrites pour envelopper `auth.uid()`/`auth.role()` appelés
+  directement dans `USING`/`WITH CHECK` en `(select auth.uid())` — Postgres
+  les traite alors comme une constante par requête au lieu de les
+  ré-évaluer à chaque ligne. Généré programmatiquement depuis `pg_policy`
+  (substitution textuelle simple), appliqué en 5 lots de ~40 après relecture
+  de chaque lot, vérifié par une requête de contrôle en fin de course
+  (0 policy restante avec appel direct non enveloppé).
+- **Doublons exacts supprimés** (`multiple_permissive_policies`) :
+  `orders` (9→6 : deux policies buyer dupliquées + `orders_admin_all` vs
+  `orders_admin_all_fixed`, vérifiées équivalentes via leurs fonctions
+  sous-jacentes), `disputes` (`buyer_creates_disputes` doublon de
+  `dispute_insert_buyer`), `loyalty_points` (`loyalty_own` doublon de
+  `loyalty_points_select_own`), `stock_alerts` (10→3 : deux générations
+  complètes de policies select/insert/delete jamais nettoyées, alert_* et
+  stock_alerts_*, plus une policy ALL dupliquée — toutes fonctionnellement
+  identiques, juste l'ordre des opérandes `a = b` vs `b = a` différait).
+
+**Trouvé au passage, PAS corrigé** (hors périmètre de cette demande,
+nécessite une décision produit) : `stock_alerts_deny_update` (policy
+permissive `USING (false)` sur UPDATE) est un **no-op** — les policies RLS
+permissives se combinent en OR, donc cette policy ne bloque rien puisque
+`stock_alerts_own` (ALL) autorise déjà l'UPDATE au propriétaire. Pour
+vraiment interdire l'UPDATE il faudrait soit une policy RESTRICTIVE, soit
+retirer UPDATE du périmètre de la policy ALL — à trancher selon l'intention
+réelle (les alertes de stock sont-elles censées être modifiables par
+l'utilisateur ou non ?).
+
+**Non touché** (périmètre trop large pour une passe sûre en une session) :
+le reste des ~977 items `multiple_permissive_policies` sont des policies
+qui se chevauchent mais avec des conditions RÉELLEMENT différentes (ex.
+"l'acheteur voit sa commande" OR "le vendeur voit sa commande" — chacune
+légitime, combinées par OR). Les fusionner en une seule policy par
+(table, action) est possible mais demande de comprendre l'intention exacte
+de chaque table, pas juste un nettoyage mécanique — laissé pour une session
+dédiée si l'utilisateur le souhaite.
+
+**État final** : 322 policies RLS actives sur le schéma `public` (contre
+~333 avant nettoyage). Aucune régression attendue (chaque changement est soit
+une réécriture strictement équivalente, soit la suppression d'un doublon
+prouvé identique) — vérifié par relecture systématique de chaque policy
+réécrite avant application, mais **pas testé end-to-end sur le site** (pas de
+changement de comportement fonctionnel attendu, donc pas de test préventif
+au-delà de la vérification SQL). Non commité (travail 100% côté base
+Supabase, pas de fichier applicatif modifié).
+
+---
+
 ## 2026-08-30 (vingtième) — Audit Supabase complet + code de vérification jamais envoyé
 
 **Demande** : « audit Supabase pour corriger toute erreur qui risque de poser
