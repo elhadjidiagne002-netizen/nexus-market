@@ -22,7 +22,8 @@ function genCode() {
 
 export async function onRequestOptions() { return options(); }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(context) {
+  const { request, env } = context;
   let body;
   try { body = await request.json(); } catch { return err('JSON invalide', 400); }
   const email = String(body?.email || '').trim().toLowerCase();
@@ -52,9 +53,16 @@ export async function onRequestPost({ request, env }) {
     return err('Échec de la génération du code : ' + e.message, 502);
   }
 
-  // Best-effort, ne bloque jamais la réponse — l'utilisateur peut toujours
-  // demander un renvoi si l'email n'arrive pas.
-  sendEventNotification(env, 'email_verify_code', { email, phone, userId }, { name, code }).catch(() => {});
+  // Best-effort, ne bloque jamais la réponse — MAIS doit survivre au-delà du
+  // `return` ci-dessous : sans context.waitUntil(), Cloudflare Workers peut
+  // tuer cette promesse non attendue dès que la réponse HTTP est renvoyée,
+  // avant même l'appel réel à Resend/Brevo (bug trouvé le 2026-08-30 : le
+  // code était bien généré/stocké mais aucune ligne n'apparaissait jamais
+  // dans email_logs — ni "sent" ni "failed" — signe que l'envoi n'était
+  // jamais exécuté jusqu'au bout, pas qu'il échouait).
+  const notifyPromise = sendEventNotification(env, 'email_verify_code', { email, phone, userId }, { name, code }).catch(() => {});
+  if (typeof context.waitUntil === 'function') context.waitUntil(notifyPromise);
+  else await notifyPromise;
 
   return new Response(JSON.stringify({ ok: true }), {
     status: 200,
