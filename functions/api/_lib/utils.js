@@ -397,7 +397,8 @@ export async function sendEmail(env, { to, subject, html }) {
         body: JSON.stringify({ from, to, subject, html }),
       });
       if (r.ok) return r;
-      console.warn('[email] Resend HTTP ' + r.status + ' -> bascule Brevo');
+      const body = await r.clone().text().catch(() => '');
+      console.warn('[email] Resend HTTP ' + r.status + ' -> bascule Brevo :', body.slice(0, 500));
     } catch (e) { console.warn('[email] Resend KO:', e.message, '-> bascule Brevo'); }
   }
   // 2) Brevo (secours) — sender "Nom <email>" -> {name,email}
@@ -405,11 +406,20 @@ export async function sendEmail(env, { to, subject, html }) {
     const m = /^\s*(.*?)\s*<([^>]+)>\s*$/.exec(from);
     const sender = m ? { name: (m[1] || 'NEXUS Market').trim(), email: m[2].trim() } : { name: 'NEXUS Market', email: from };
     try {
-      return await fetch('https://api.brevo.com/v3/smtp/email', {
+      const r = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: { 'api-key': env.BREVO_API_KEY, 'Content-Type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ sender, to: [{ email: to }], subject, htmlContent: html }),
       });
+      // [DIAG 2026-08-30] sans ce log, un échec Brevo (ex: expéditeur non
+      // vérifié) était totalement invisible : pas d'exception (fetch réussit,
+      // r.ok=false), donc rien dans les logs Workers — seul email_logs.status
+      // passait à 'failed', sans aucune indication du POURQUOI.
+      if (!r.ok) {
+        const body = await r.clone().text().catch(() => '');
+        console.warn('[email] Brevo HTTP ' + r.status + ':', body.slice(0, 500));
+      }
+      return r;
     } catch (e) { console.warn('[email] Brevo KO:', e.message); }
   }
   console.warn('[email] aucun fournisseur email configure (RESEND_API_KEY / BREVO_API_KEY)');
