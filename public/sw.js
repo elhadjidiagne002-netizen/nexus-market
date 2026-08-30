@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v25"; // v25 (2026-07-05) → PURGE cache : STATUS_MAP (5 endroits) complétés avec pending/pending_payment — badges vides pour ~25% des commandes réelles (status=pending_payment). Bump = re-précache frais de "/".
+const CACHE_NAME = "nexus-v26"; // v26 (2026-08-30) → nouveau hash de bundle app.cd2ea48ce9.js (panneau Journal admin + Abonnements/Renouvellements) — bump obligatoire pour forcer un re-précache frais de "/" (sinon un client avec le SW déjà installé garde l'ancien index.html référençant l'ancien hash).
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────

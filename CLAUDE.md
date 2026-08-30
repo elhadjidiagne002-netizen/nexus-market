@@ -95,6 +95,32 @@ hash** + MAJ `index.html` (cache immutable 1 an sur `/assets/*`).
   `getComputedStyle(document.getElementById('nxp-widgetStack')).display` = `none` au
   chargement, et `flex` après clic sur `#nxp-widgetToggle`.
 
+### 7. `DataService.apiFetch()` renvoie toujours `null` — backend Railway retiré
+`NEXUS_CONFIG.apiUrl = ""` (app.js, commentaire explicite : « Backend Railway
+supprimé »). `apiFetch()` fait `if (!_apiBase) return null;` en tout premier —
+**tout appel `DataService.apiFetch(...)` est un no-op silencieux** (pas
+d'erreur, juste `null`), qu'il s'agisse d'un vieux code jamais nettoyé ou d'un
+appel écrit par erreur en copiant un ancien pattern. Pour toute route
+`/api/**` (Cloudflare Pages Functions, même origine) : **`fetch()` direct +
+JWT en en-tête `Authorization`**, motif déjà utilisé par `PlatformUsagePanel` —
+JAMAIS `DataService.apiFetch` pour ces routes. Trouvé 2026-08-30 en
+découvrant que le panneau admin « Journal activité » (`AdminLogsViewer`,
+câblé à la nav depuis un moment) était mort silencieux pour CETTE raison, en
+plus de ses endpoints manquants (cf. point suivant).
+
+### 8. Un panneau admin qui semble vide/cassé n'est pas forcément à refaire
+`AdminLogsViewer` existait déjà, entièrement construit et câblé à la nav
+(« Journal activité »), depuis un moment — juste privé de backend
+(`/api/admin/logs`, `/api/admin/logs/summary` n'existaient nulle part) et
+victime du piège #7 ci-dessus. Réflexe avant de recoder un panneau qui
+semble vide ou en erreur : vérifier s'il est déjà construit côté frontend
+et juste privé d'API, plutôt que de partir d'une page blanche. Piège annexe
+rencontré en ajoutant le backend manquant : **`.gitignore` ignore tout
+dossier littéralement nommé `logs/`** (ligne « Logs » du fichier) — un
+fichier `functions/api/admin/logs/summary.js` ne serait jamais committé ni
+déployé. Router ce genre d'endpoint sans sous-dossier `logs/` (ex.
+`logs-summary.js` plutôt que `logs/summary.js`).
+
 ## Endpoints de paiement (canoniques vs doublons)
 - **Stripe webhook** : `/api/webhooks/stripe` (`functions/api/webhooks/stripe.js`) — configuré.
   Doublon : `/api/payments/stripe/webhook` (corrigé, mais non principal).

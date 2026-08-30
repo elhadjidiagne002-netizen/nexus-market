@@ -6,6 +6,71 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-30 (vingt-septième) — Journal admin unifié + suivi des abonnements/renouvellements + rapport quotidien par email
+
+**Demande** : logs détaillés « dans tous les secteurs sans exception », suivi
+des abonnements/dates de renouvellement de tous les services payants, et un
+rapport complet chaque jour par email — pour anticiper les dysfonctionnements
+en prod plutôt que les subir.
+
+**Découverte de départ** : le panneau admin « Journal activité »
+(`AdminLogsViewer`, câblé à la nav depuis un moment) appelait
+`/api/admin/logs` et `/api/admin/logs/summary`, deux endpoints qui
+**n'existaient nulle part** — panneau mort silencieux. Pire : ces appels
+passaient par `DataService.apiFetch()`, qui renvoie **toujours `null`**
+depuis le retrait du backend Railway (`NEXUS_CONFIG.apiUrl = ""`) — même en
+créant les endpoints, le panneau serait resté cassé sans corriger l'appel
+lui-même (`fetch()` direct + JWT en en-tête, comme le fait déjà
+`PlatformUsagePanel`). Un **second panneau concurrent**, plus ancien,
+existait aussi sur la même vue (`view === "logs"`, IIFE avec son propre état
+`_logs`/`_logLoad`, fallback silencieux sur une requête directe
+`audit_logs` — table jamais écrite, 0 ligne) : les deux se seraient
+affichés empilés une fois le backend en place. Supprimé.
+
+**Fait** :
+- **Table `subscriptions`** (`sql/2026_08_30_admin_subscriptions_and_logs.sql`)
+  — admin-éditable (aucune API de Resend/Cloudflare/Supabase/PayTech/etc.
+  n'expose de date de renouvellement réelle), pré-remplie avec les 11
+  services déjà recensés dans `PlatformUsagePanel` (nom, lien dashboard,
+  note) — coût et date à saisir manuellement. Nouveau panneau admin
+  « Abonnements & Renouvellements » (liste + ajout/édition/suppression,
+  ligne colorée rouge si échéance dépassée, orange si ≤ 14 jours).
+- **Journal unifié** : deux fonctions SQL `admin_logs_feed`/`admin_logs_summary`
+  (SECURITY DEFINER, service_role only) qui font l'UNION de `email_logs`
+  (783 lignes), `whatsapp_logs` (51), `notification_outbox` (10),
+  `payment_events` (0 pour l'instant), `maintenance_log` (1) — normalisées
+  vers le format attendu par `AdminLogsViewer`. `audit_logs` (0 ligne,
+  jamais écrite) et `rate_limits` (compteur vivant, pas d'événements datés)
+  délibérément exclus. Endpoints `/api/admin/logs` et
+  `/api/admin/logs-summary` (⚠️ tiret, pas `/logs/summary` — `.gitignore`
+  ligne 13 ignore silencieusement tout dossier nommé `logs/`, un fichier
+  `functions/api/admin/logs/summary.js` n'aurait jamais été committé).
+- **Rapport quotidien** (`/cron/daily-report`, même pattern `?token=` que les
+  autres crons — pas de Cron Trigger natif sur Cloudflare Pages) : commandes
+  et comptes (24h), résumé du journal (24h), alertes (notifications en
+  échec, paiements en écart, config manquante), abonnements à renouveler
+  (≤ 14 jours). Envoyé à `DAILY_REPORT_EMAIL` (repli codé en dur sur
+  `elhadjidiagne002@gmail.com` — **pas** `ADMIN_EMAIL`, qui vaut
+  `nx@nexusmarket.sn` et sert à d'autres alertes existantes, non touchées).
+  L'envoi du rapport lui-même est journalisé dans `email_logs`
+  (`template: daily_admin_report`) — sinon il resterait invisible dans son
+  propre journal.
+- Renommage cache-busting du bundle (`app.5b2aee16cd.js` →
+  `app.cd2ea48ce9.js`) + bump `CACHE_NAME` du service worker (`nexus-v25`
+  → `nexus-v26`), obligatoires vu le Cache-Control immutable 1 an sur
+  `/assets/*`.
+
+**Vérifié** : `select * from admin_logs_feed(5,0,null,null)` renvoie de
+vraies lignes (`email_logs`/`notification_outbox`) ; `subscriptions`
+contient bien les 11 lignes seed ; `node --check` propre sur tous les
+nouveaux fichiers + le bundle entier.
+
+**Reste à faire (utilisateur)** : créer le job cron-job.org
+`GET https://nexusmarket.sn/cron/daily-report?token=<CRON_SECRET>`,
+une fois par jour (~07h00 UTC = heure locale Dakar) ; remplir les dates de
+renouvellement réelles dans le nouveau panneau Abonnements (laissées vides
+volontairement — aucune ne peut être devinée).
+
 ## 2026-08-30 (vingt-sixième) — SMTP personnalisé (Resend) configuré côté Supabase, "Confirm email" réactivé avec succès, vérification email désormais réellement obligatoire
 
 **Suite directe de l'entrée précédente** : le résiduel laissé en l'état (vérification
@@ -3809,8 +3874,18 @@ restée saine (`ACTIVE_HEALTHY`, données intactes) tout du long.
 | QR retrait coursier | ✅ Génération + scan | Boucle fermée |
 | Notifications retry | ✅ Outbox + cron | Job cron-job.org à confirmer côté user |
 | Supabase | ⚠️ Plan Free | Panne 402 le 11-12/07, R2 réduit le risque futur |
+| Journal admin (logs) | ✅ 5 sources unifiées (email/WhatsApp/notif/paiement/cron) | Panneau "Journal activité" enfin fonctionnel (27e entrée) |
+| Abonnements/renouvellements | ✅ Table + panneau admin | Dates de renouvellement à saisir manuellement (aucune API ne les expose) |
+| Rapport quotidien email | 🔧 Code déployé | Job cron-job.org `/cron/daily-report` à créer par l'utilisateur |
 
 ## Chantiers en attente / décisions ouvertes
+
+- **Job cron-job.org `/cron/daily-report`** : à créer par l'utilisateur
+  (quotidien, ~07h00 UTC), pas encore confirmé fait.
+- **Dates de renouvellement des abonnements** : les 11 services seed
+  (panneau "Abonnements & Renouvellements") n'ont ni coût ni date — à
+  remplir manuellement, sinon la section correspondante du rapport
+  quotidien reste vide.
 
 - **SMS httpSMS 502** : diagnostic à finir dès que le login admin refonctionne
   (dépendait de la panne Supabase). Vérifier téléphone en ligne, `HTTPSMS_FROM`

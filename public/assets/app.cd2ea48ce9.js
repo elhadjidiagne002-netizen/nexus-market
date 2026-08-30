@@ -19745,12 +19745,20 @@ const AdminLogsViewer = ({ addToast }) => {
   const fetchLogs = React.useCallback(async () => {
     setLoading(true);
     try {
+      // [FIX] DataService.apiFetch renvoie toujours null (NEXUS_CONFIG.apiUrl vide
+      // depuis le retrait du backend Railway) — /api/admin/* vit sur Cloudflare
+      // Pages Functions (même origine), donc fetch() direct + JWT en Authorization,
+      // même pattern que PlatformUsagePanel.
+      let token = null;
+      try { const s = await (DataService._sb && DataService._sb.auth.getSession()); token = s && s.data && s.data.session && s.data.session.access_token; } catch (_) {}
+      if (!token) token = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+      const authHeaders = token ? { Authorization: 'Bearer ' + token } : {};
       const params = new URLSearchParams({ limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE });
       if (filterAction) params.set("action", filterAction);
       if (filterLevel) params.set("level", filterLevel);
       const [logsRes, summaryRes] = await Promise.all([
-        DataService.apiFetch(`/api/admin/logs?${params}`),
-        DataService.apiFetch("/api/admin/logs/summary"),
+        fetch(`/api/admin/logs?${params}`, { headers: authHeaders }),
+        fetch("/api/admin/logs-summary", { headers: authHeaders }),
       ]);
       if (logsRes && logsRes.ok) { const d = await logsRes.json(); setLogs(d.logs || d || []); }
       if (summaryRes && summaryRes.ok) { const d = await summaryRes.json(); setSummary(d.summary || d || []); }
@@ -21009,6 +21017,147 @@ const PlatformUsagePanel = ({ addToast }) => {
             D('div', { className: 'muted', style: { fontSize: 11 } }, l.note)
           ))
         )
+      )
+    )
+  );
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// SubscriptionsPanel — Suivi des abonnements/renouvellements (2026-08-30)
+// Aucune API des services utilisés (Resend, Cloudflare, Supabase, PayTech...)
+// n'expose de date de renouvellement réelle → table admin-éditable
+// (sql/2026_08_30_admin_subscriptions_and_logs.sql), pré-remplie avec les
+// 11 services déjà recensés dans PlatformUsagePanel, dates/coûts à saisir.
+// ════════════════════════════════════════════════════════════════════════════
+const SubscriptionsPanel = ({ addToast }) => {
+  const D = React.createElement;
+  const [rows, setRows] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [loadErr, setLoadErr] = React.useState(null);
+  const [editing, setEditing] = React.useState(null); // id en cours d'édition, ou 'new'
+  const [form, setForm] = React.useState({});
+  const [saving, setSaving] = React.useState(false);
+
+  const authHeaders = async () => {
+    let token = null;
+    try { const s = await (DataService._sb && DataService._sb.auth.getSession()); token = s && s.data && s.data.session && s.data.session.access_token; } catch (_) {}
+    if (!token) token = sessionStorage.getItem('nexus_jwt') || localStorage.getItem('nexus_jwt');
+    return token ? { Authorization: 'Bearer ' + token } : {};
+  };
+
+  const load = async () => {
+    setLoading(true); setLoadErr(null);
+    try {
+      const headers = await authHeaders();
+      const res = await fetch('/api/admin/subscriptions', { headers });
+      if (!res.ok) { setLoadErr('HTTP ' + res.status); setLoading(false); return; }
+      const d = await res.json();
+      setRows(d.subscriptions || []);
+    } catch (e) { setLoadErr(e.message); }
+    setLoading(false);
+  };
+  React.useEffect(() => { load(); }, []);
+
+  const startEdit = (row) => { setEditing(row.id); setForm(row); };
+  const startNew = () => { setEditing('new'); setForm({ service_name: '', category: '', dashboard_url: '', notes: '', plan_name: '', cost_amount: '', cost_currency: 'EUR', billing_cycle: '', renewal_date: '', status: 'active' }); };
+  const cancelEdit = () => { setEditing(null); setForm({}); };
+
+  const save = async () => {
+    if (!form.service_name || !form.service_name.trim()) { addToast('Nom du service requis', 'warning'); return; }
+    setSaving(true);
+    try {
+      const headers = { ...(await authHeaders()), 'Content-Type': 'application/json' };
+      const isNew = editing === 'new';
+      const url = isNew ? '/api/admin/subscriptions' : `/api/admin/subscriptions?id=${encodeURIComponent(editing)}`;
+      const res = await fetch(url, { method: isNew ? 'POST' : 'PATCH', headers, body: JSON.stringify(form) });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); addToast(d.error || 'Erreur enregistrement', 'error'); setSaving(false); return; }
+      addToast('✅ Abonnement enregistré', 'success');
+      cancelEdit();
+      await load();
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+    setSaving(false);
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm('Supprimer cet abonnement du suivi ?')) return;
+    try {
+      const headers = await authHeaders();
+      const res = await fetch(`/api/admin/subscriptions?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers });
+      if (!res.ok) { addToast('Erreur suppression', 'error'); return; }
+      addToast('Abonnement retiré', 'success');
+      await load();
+    } catch (e) { addToast('Erreur : ' + e.message, 'error'); }
+  };
+
+  const renewalColor = (dateStr) => {
+    if (!dateStr) return 'inherit';
+    const days = Math.floor((new Date(dateStr) - new Date()) / 86400000);
+    if (days <= 0) return '#dc2626';
+    if (days <= 14) return '#f59e0b';
+    return 'inherit';
+  };
+
+  const field = (key, label, type = 'text', ph = '') => D('div', { style: { marginBottom: 8 } },
+    D('label', { style: { fontSize: 11, display: 'block', marginBottom: 2, color: 'var(--text-secondary)' } }, label),
+    D('input', {
+      type, className: 'form-input', placeholder: ph,
+      value: form[key] ?? '',
+      onChange: (e) => setForm(Object.assign({}, form, { [key]: e.target.value })),
+    })
+  );
+
+  return D('div', { className: 'card' },
+    D('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 } },
+      D('h2', null, D('i', { className: 'fas fa-receipt' }), ' Abonnements & Renouvellements'),
+      D('div', { style: { display: 'flex', gap: 8 } },
+        D('button', { className: 'btn ghost sm', onClick: load, disabled: loading }, D('i', { className: 'fas fa-sync' + (loading ? ' fa-spin' : '') }), ' Actualiser'),
+        D('button', { className: 'btn btn-primary sm', onClick: startNew }, D('i', { className: 'fas fa-plus' }), ' Ajouter')
+      )
+    ),
+    D('p', { className: 'muted', style: { fontSize: 12, marginBottom: 14 } },
+      "Aucun fournisseur n'expose sa date de renouvellement par API — à saisir ici manuellement. Rouge = échéance dépassée, orange = dans les 14 jours."),
+    loadErr ? D('p', { className: 'log-err' }, '✗ ' + loadErr) : null,
+
+    editing && D('div', { style: { border: '1px solid var(--line)', borderRadius: 10, padding: 14, marginBottom: 14, background: 'var(--card2)' } },
+      D('h3', { style: { marginTop: 0, fontSize: 14 } }, editing === 'new' ? 'Nouvel abonnement' : 'Modifier'),
+      D('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 } },
+        field('service_name', 'Service *', 'text', 'ex. Resend'),
+        field('category', 'Catégorie', 'text', 'email, hosting...'),
+        field('plan_name', 'Plan', 'text', 'Free, Pro...'),
+        field('cost_amount', 'Coût', 'number', '0'),
+        field('cost_currency', 'Devise', 'text', 'EUR'),
+        field('renewal_date', 'Renouvellement', 'date'),
+        field('dashboard_url', 'Lien dashboard', 'text', 'https://...'),
+      ),
+      D('div', { style: { marginBottom: 8 } },
+        D('label', { style: { fontSize: 11, display: 'block', marginBottom: 2, color: 'var(--text-secondary)' } }, 'Notes'),
+        D('textarea', { className: 'form-input', rows: 2, value: form.notes || '', onChange: (e) => setForm(Object.assign({}, form, { notes: e.target.value })) })
+      ),
+      D('div', { style: { display: 'flex', gap: 8 } },
+        D('button', { className: 'btn btn-primary sm', onClick: save, disabled: saving }, saving ? 'Enregistrement…' : 'Enregistrer'),
+        D('button', { className: 'btn ghost sm', onClick: cancelEdit }, 'Annuler')
+      )
+    ),
+
+    !rows ? D('p', { className: 'muted' }, loading ? 'Chargement…' : '—') :
+    rows.length === 0 ? D('p', { className: 'muted' }, 'Aucun abonnement suivi.') :
+    D('div', { className: 'table-wrapper' },
+      D('table', { className: 'data-table' },
+        D('thead', null, D('tr', null,
+          D('th', null, 'Service'), D('th', null, 'Plan'), D('th', null, 'Coût'),
+          D('th', null, 'Renouvellement'), D('th', null, 'Statut'), D('th', null, 'Actions')
+        )),
+        D('tbody', null, rows.map((r) => D('tr', { key: r.id },
+          D('td', null, D('strong', null, r.service_name), r.dashboard_url && D('div', null, D('a', { href: r.dashboard_url, target: '_blank', rel: 'noopener', style: { fontSize: 11 } }, 'Dashboard →'))),
+          D('td', { style: { fontSize: 13 } }, r.plan_name || '—'),
+          D('td', { style: { fontSize: 13 } }, r.cost_amount != null && r.cost_amount !== '' ? `${r.cost_amount} ${r.cost_currency || ''}` : '—'),
+          D('td', { style: { fontSize: 13, color: renewalColor(r.renewal_date), fontWeight: renewalColor(r.renewal_date) !== 'inherit' ? 700 : 400 } }, r.renewal_date || '—'),
+          D('td', null, D('span', { className: 'badge' }, r.status)),
+          D('td', { style: { display: 'flex', gap: 6 } },
+            D('button', { className: 'btn ghost sm', onClick: () => startEdit(r) }, D('i', { className: 'fas fa-pen' })),
+            D('button', { className: 'btn ghost sm', onClick: () => remove(r.id) }, D('i', { className: 'fas fa-trash' }))
+          )
+        )))
       )
     )
   );
@@ -26117,23 +26266,11 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     }
   }, [view]);
   // [FIX #310] useEffects hissés depuis les IIFEs
-  React.useEffect(() => {
-    _setLogLoad(true);
-    const _pl = DataService.apiFetch("/api/admin/logs");
-    if (_pl && typeof _pl.then === "function") {
-      _pl.then(r => r && r.ok ? r.json() : null)
-        .then(d => { if (d) _setLogs(Array.isArray(d) ? d : (d.logs || [])); _setLogLoad(false); })
-        .catch(() => _setLogLoad(false));
-    } else if (DataService._sb) {
-      // [MIGRATION SUPABASE] Chargement direct des logs admin (table audit_logs).
-      DataService._sb.from("audit_logs").select("*").order("created_at", { ascending: false }).limit(50)
-        .then(({ data, error }) => {
-          if (!error && data) _setLogs(data);
-          else if (error) console.warn("[admin/logs] Supabase:", error.message);
-          _setLogLoad(false);
-        });
-    } else { _setLogLoad(false); }
-  }, []);
+  // [FIX 2026-08-30] Ancien effet dupliqué pour l'IIFE "logs" legacy retiré ici —
+  // ce panneau (vue "logs") est désormais servi par AdminLogsViewer (vraie
+  // implémentation, cf. plus haut dans ce fichier) + /api/admin/logs côté backend.
+  // _logs/_setLogs/_logLoad/_setLogLoad restent déclarés (inutilisés, sans danger)
+  // pour ne pas perturber l'ordre des hooks.
   React.useEffect(() => {
     setEmailLoading(true);
     DataService.apiFetch('/api/email/logs?limit=100')
@@ -26695,7 +26832,8 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
     { id: "vendor_referrals", icon: "handshake",  label: "Parrainage vendeurs" },
     { id: "invoice_sequences", icon: "hashtag",  label: "N° Factures (DGID)" },
     { id: "config", icon: "cog", label: "Configuration" },
-    { id: "platform_usage", icon: "server", label: "Utilisation Plateformes" }
+    { id: "platform_usage", icon: "server", label: "Utilisation Plateformes" },
+    { id: "subscriptions", icon: "receipt", label: "Abonnements & Renouvellements" }
   ].map((item) => /* @__PURE__ */ React.createElement("li", { key: item.id, role: "menuitem" }, /* @__PURE__ */ React.createElement("button", { className: `sidebar-item ${view === item.id ? "active" : ""}`, onClick: () => {
     if (item.id !== 'orders') setOrdersPage(1);
     setView(item.id);
@@ -27072,31 +27210,6 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
       var _a, _b;
       return /* @__PURE__ */ React.createElement("tr", { key: r.id }, /* @__PURE__ */ React.createElement("td", { "data-label": "ID" }, /* @__PURE__ */ React.createElement("strong", { style: { fontSize: "0.78rem" } }, r.id)), /* @__PURE__ */ React.createElement("td", { "data-label": "Client" }, r.buyerName, /* @__PURE__ */ React.createElement("br", null), /* @__PURE__ */ React.createElement("small", { style: { color: "var(--text-secondary)" } }, r.buyerEmail)), /* @__PURE__ */ React.createElement("td", { "data-label": "Commande" }, /* @__PURE__ */ React.createElement("strong", null, r.orderId)), /* @__PURE__ */ React.createElement("td", { "data-label": "Motif", style: { maxWidth: "160px", fontSize: "0.82rem" } }, r.categoryLabel), /* @__PURE__ */ React.createElement("td", { "data-label": "Montant" }, /* @__PURE__ */ React.createElement("strong", null, formatPrice(r.orderTotal || 0))), /* @__PURE__ */ React.createElement("td", { "data-label": "Date" }, r.date ? new Date(r.date).toLocaleDateString("fr-FR") : "-"), /* @__PURE__ */ React.createElement("td", { "data-label": "Statut" }, /* @__PURE__ */ React.createElement("span", { className: `badge badge-${((_a = STATUS_RETURN[r.status]) == null ? void 0 : _a.badge) || "warning"}` }, ((_b = STATUS_RETURN[r.status]) == null ? void 0 : _b.label) || r.status)), /* @__PURE__ */ React.createElement("td", { "data-label": "Action" }, r.status === "pending" && /* @__PURE__ */ React.createElement("div", { className: "flex gap-1" }, /* @__PURE__ */ React.createElement("button", { className: "btn btn-success btn-sm", onClick: () => handleReturnAction(r.id, "approved") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-check" }), " Approuver"), /* @__PURE__ */ React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => handleReturnAction(r.id, "rejected") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-times" }), " Refuser")), r.status === "approved" && /* @__PURE__ */ React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => handleReturnAction(r.id, "refunded") }, /* @__PURE__ */ React.createElement("i", { className: "fas fa-money-bill-wave" }), " Marquer rembours\xE9"), ["refunded", "rejected"].includes(r.status) && /* @__PURE__ */ React.createElement("span", { style: { color: "var(--text-secondary)", fontSize: "0.82rem" } }, "Trait\xE9")));
     })))));
-  })(), view === "logs" && (() => {
-    // [FIX #310] États hissés au niveau AdminDashboard (_logs, _logLoad)
-    return React.createElement("div", { className: "card" },
-      React.createElement("div", { className: "card-header" },
-        React.createElement("h2", { className: "card-title" }, React.createElement("i", { className: "fas fa-history" }), " Journal (", _logs.length, ")"),
-        React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => { _setLogLoad(true); DataService.apiFetch("/api/admin/logs").then(r=>r&&r.ok?r.json():null).then(d=>{if(d)_setLogs(Array.isArray(d)?d:(d.logs||[]));_setLogLoad(false);}).catch(()=>_setLogLoad(false)); } }, React.createElement("i", { className: "fas fa-sync-alt" }), " Rafra\xeechir")
-      ),
-      _logLoad
-        ? React.createElement("div", { style: { textAlign: "center", padding: "2rem" } }, React.createElement("div", { className: "spinner" }))
-        : _logs.length === 0
-          ? React.createElement("div", { className: "empty-state" }, React.createElement("i", { className: "fas fa-check-circle" }), React.createElement("h3", null, "Aucun log"))
-          : React.createElement("div", { className: "table-wrapper" },
-              React.createElement("table", { className: "data-table" },
-                React.createElement("thead", null, React.createElement("tr", null, React.createElement("th", null, "Date"), React.createElement("th", null, "Niveau"), React.createElement("th", null, "Message"), React.createElement("th", null, "Service"))),
-                React.createElement("tbody", null, _logs.slice(0, 100).map(function(log, li) {
-                  return React.createElement("tr", { key: li },
-                    React.createElement("td", { style: { fontSize: "0.75rem", whiteSpace: "nowrap" } }, log.timestamp ? new Date(log.timestamp).toLocaleString("fr-FR") : "-"),
-                    React.createElement("td", null, React.createElement("span", { className: "badge badge-" + (log.level === "error" ? "danger" : log.level === "warn" ? "warning" : "info") }, log.level || "info")),
-                    React.createElement("td", { style: { fontSize: "0.82rem", maxWidth: "380px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, log.message || log.msg || "-"),
-                    React.createElement("td", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, log.service || "-")
-                  );
-                }))
-              )
-            )
-    );
   })(), view === "b2b" && /* @__PURE__ */ React.createElement(AdminB2BPanel, { addToast }), view === "ambassadors" && React.createElement(AdminAmbassadorsPanel, { addToast }), view === "ondemand_admin" && React.createElement(AdminOnDemandPanel, { addToast }), view === "insurance_leads" && React.createElement(AdminInsuranceLeads, { addToast }), view === "coupons" && (() => {
     const newCoupon = adminNewCoupon;
     const setNewCoupon = setAdminNewCoupon;
@@ -28982,7 +29095,7 @@ CREATE POLICY "Service role only" ON invoice_sequences
       )
 
     );
-  })(), view === "config" && React.createElement(OrgCfgAdminPanel, { addToast }), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "platform_usage" && React.createElement(PlatformUsagePanel, { addToast }), view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
+  })(), view === "config" && React.createElement(OrgCfgAdminPanel, { addToast }), view === "config" && React.createElement(BackendSetupPanel, { addToast }), view === "config" && React.createElement(AffiliateConfigPanel, { addToast }), view === "config" && React.createElement(AdSenseConfigPanel, { addToast }), view === "config" && React.createElement(Phase0ConfigPanel, { addToast }), view === "config" && React.createElement(SqlScriptsPanel, null), view === "config" && React.createElement(WhatsAppAdminPanel, { addToast }), view === "config" && React.createElement(BotsAdminPanel, { addToast }), view === "config" && React.createElement(SystemDiagnosticsPanel, { addToast }), view === "config" && React.createElement(ServicesConfigPanel, { addToast })  , view === "platform_usage" && React.createElement(PlatformUsagePanel, { addToast }), view === "subscriptions" && React.createElement(SubscriptionsPanel, { addToast }), view === "louma" && React.createElement(LoumaAdminMount, { addToast }), view === "flash_sales" && (() => {
     const fs = adminFlashForm; const setFs = setAdminFlashForm;
     // [FIX] Charger les ventes flash depuis GET /api/flash-sales (pas le localStorage)
     const flashSales = _flashSales; const setFlashSales = _setFlashSales; // [FIX #310]
