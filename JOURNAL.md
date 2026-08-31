@@ -6,6 +6,61 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-31 (vingt-neuvième) — Recherche de bus urbains Dakar par arrêt (AFTU/TATA + Dakar Dem Dikk)
+
+**Demande** : extraire les itinéraires des bus TATA (AFTU) depuis
+aftu-senegal.org et proposer une recherche « départ + destination → lignes
+suggérées » sur le site ; puis même demande pour Dakar Dem Dikk (DDD)
+depuis demdikk.sn.
+
+**Réalité des sources** (aucune n'a de coordonnées GPS ni de prix/horaires
+publiés — juste des itinéraires texte, rue par rue) :
+- **AFTU** : une page par ligne (`/map/dakar-urbain-ligne-N/`). Piège
+  découvert par l'agent d'extraction : WordPress redirige silencieusement
+  les URLs de lignes inexistantes (6 à 23) vers la ligne au slug le plus
+  proche (ex. `ligne-6` → contenu de `ligne-60`) — sans vérification via le
+  sitemap (`waymark_map-sitemap.xml`), ça aurait empoisonné les données
+  avec de faux numéros de ligne. Vrai inventaire confirmé : lignes 1-5 et
+  24-83, soit 65 lignes réelles.
+- **Dakar Dem Dikk** : tout sur une seule page
+  (`/reseau-urbain-dakar/`), section « LIGNES URBAINES » — 17 lignes avec
+  itinéraire complet (dont 2 boucles 502/503 et 2 lignes « TAF TAF » sans
+  numéro classique), extraites en une seule fois (pas de scraping page par
+  page nécessaire, contrairement à AFTU).
+
+**Fait** :
+- Import des 65 lignes AFTU (`sql/2026_08_31_aftu_tata_lines_import.sql`,
+  généré par un agent en arrière-plan pendant que le reste du travail
+  avançait) + 17 lignes DDD urbaines
+  (`sql/2026_08_31_demdikk_urban_lines_import.sql`) dans `transport_lines`
+  (table déjà existante — aucune migration de schéma). Convention :
+  `destinations = 'Ligne N : Départ → Arrivée'` (garantit l'unicité et sert
+  d'affichage), itinéraire complet dans `escales` (pipe-délimité).
+- Nouveau mode « 🚌 Bus urbains Dakar (par arrêt) » dans l'onglet existant
+  « Lignes régulières » (`CovoiturageModal`, `public/index.html`) : deux
+  menus déroulants départ/destination alimentés par les ~776 arrêts
+  distincts extraits des itinéraires (AFTU + DDD confondus), suggestion
+  des lignes directes couvrant les deux arrêts choisis. Aucun nouvel
+  endpoint backend — lecture directe Supabase, RLS déjà ouverte en lecture
+  sur `transport_lines`. Pas de correspondance multi-lignes en V1 (hors
+  scope, piste future si demandé).
+- Petite extension du template SEO `/ligne/[id].js` : la colonne `escales`
+  était déjà lue mais jamais affichée — ajout d'un bloc itinéraire (liste
+  ordonnée), utile pour toutes les lignes du répertoire, pas seulement les
+  nouvelles.
+
+**Vérifié en direct** (navigateur, session admin) : recherche AFTU
+(Rue Sandiniery → Terminus Espace HLM GD Medine) trouve bien Ligne 1 ;
+recherche DDD (UCAD → Terminus Palais 2) trouve bien les lignes 7/8/23 ;
+recherche sans ligne commune (AIBD → Terminus Leclerc) affiche le message
+« aucune ligne directe » ; page `/ligne/:id` d'une ligne DDD affiche
+l'itinéraire complet en liste ordonnée.
+
+**Résiduel volontaire** : pas de géolocalisation GPS réelle (décision
+utilisateur — aucune coordonnée dans les sources, sélection manuelle dans
+une liste d'arrêts connus). Pas de suggestion de correspondance (2 lignes
+pour un trajet) si aucune ligne directe.
+
 ## 2026-08-31 (vingt-huitième) — Vérification en direct du 27e chantier : deux bugs réels trouvés et corrigés (GRANT `profiles` manquant, 502 intercepté par Cloudflare)
 
 **Suite directe de l'entrée précédente** : vérification en direct (navigateur,
