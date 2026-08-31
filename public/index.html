@@ -5844,6 +5844,15 @@ window.addEventListener('unhandledrejection', function(event) {
         var q = this._sb.from('transport_lines')
           .select('*, transport_recurrences(*)')
           .eq('active', true)
+          // [FIX 2026-08-31] Les lignes urbaines AFTU/DDD importées pour le mode
+          // "par arrêt" (destinations = "Ligne N : Départ → Arrivée") ne doivent
+          // jamais apparaître dans cette recherche intercité classique : la carte
+          // résultat ici n'affiche ni numéro de ligne ni itinéraire (elle n'a pas
+          // été conçue pour ce format), donnant l'impression d'une fiche pauvre
+          // (un seul arrêt affiché, "Contacter" au lieu du détail complet) alors
+          // que ces mêmes lignes ont un rendu riche (numéro, 30+ arrêts, carte)
+          // dans le mode dédié "🚌 Bus urbains Dakar (par arrêt)".
+          .not('destinations', 'ilike', 'Ligne %')
           .order('operator', { ascending: true }).limit(120);
         if (originCity) q = q.ilike('origin_city', '%' + originCity + '%');
         if (destination) q = q.ilike('destinations', '%' + destination + '%');
@@ -6044,7 +6053,11 @@ window.addEventListener('unhandledrejection', function(event) {
          [GEO 2026-08-31] transport_stops_geo (géocodage Nominatim/OSM, gratuit,
          sans clé) fournit des coordonnées best-effort par nom d'arrêt — utilisées
          uniquement pour la carte inline (approximative), jamais pour le matching. */
-      var _lineMode = React.useState('ville'), lineMode = _lineMode[0], setLineMode = _lineMode[1];
+      // [FIX 2026-08-31] Défaut sur 'tata' (pas 'ville') : la recherche par
+      // arrêt/quartier (numéro de ligne, itinéraire complet, carte) est ce que
+      // les utilisateurs cherchent en premier — l'ancien mode intercité reste
+      // accessible en un clic mais ne doit plus être la première chose vue.
+      var _lineMode = React.useState('tata'), lineMode = _lineMode[0], setLineMode = _lineMode[1];
       var _tataLines = React.useState(null), tataLines = _tataLines[0], setTataLines = _tataLines[1];
       var _tataDepart = React.useState(''), tataDepart = _tataDepart[0], setTataDepart = _tataDepart[1];
       var _tataDest = React.useState(''), tataDest = _tataDest[0], setTataDest = _tataDest[1];
@@ -6123,6 +6136,10 @@ window.addEventListener('unhandledrejection', function(event) {
           .then(function (res) { setTataLines((res && res.data) || []); })
           .catch(function () { setTataLines([]); });
       };
+      // Charge immédiatement si 'tata' est déjà le mode actif au montage (défaut
+      // désormais) — sinon seul le clic sur le bouton de bascule déclenchait le
+      // chargement, jamais appelé si l'utilisateur ne quitte pas le mode par défaut.
+      React.useEffect(function () { if (lineMode === 'tata') loadTataLines(); }, []);
       var tataStops = React.useMemo(function () {
         if (!tataLines) return [];
         var set = {};
