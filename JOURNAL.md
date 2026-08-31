@@ -6,6 +6,63 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-31 (vingt-huitième) — Vérification en direct du 27e chantier : deux bugs réels trouvés et corrigés (GRANT `profiles` manquant, 502 intercepté par Cloudflare)
+
+**Suite directe de l'entrée précédente** : vérification en direct (navigateur,
+session admin réelle) du panneau Journal + Abonnements déployés. Deux bugs
+réels trouvés en cours de route, tous deux corrigés et déployés — aucun n'est
+introduit par le 27e chantier, mais découverts en le vérifiant.
+
+**1. Dashboard admin React inaccessible pour TOUS les admins** (bug
+pré-existant, sans rapport avec le 27e chantier) : naviguer vers
+`/dashboard-admin.html` renvoyait systématiquement l'admin vers son espace
+acheteur. Cause : `authenticated` avait `GRANT INSERT/UPDATE` sur `profiles`
+mais **pas `SELECT`** — `dashboard-admin.html` lit son propre profil en
+client-side (anon key + JWT) pour vérifier `role==='admin'`, recevait
+`permission denied for table profiles` (42501, erreur de GRANT, **pas** un
+filtrage RLS — confirmé en reproduisant l'appel en direct dans la console),
+concluait "pas admin", redirection. Les policies RLS existantes sur
+`profiles` (self-read via `auth.uid()=id`, `is_admin()`, lecture publique
+vendeur approuvé) étaient déjà correctes — seul le GRANT de base manquait.
+**Corrigé** : `grant select on public.profiles to authenticated;`. Découvert
+uniquement parce que le backend de ce projet (service_role, bypass RLS)
+avait masqué le problème jusqu'ici pour tous les endpoints `/api/**` — seul
+un accès client-side direct (comme celui de `dashboard-admin.html`) le
+révèle. ⚠️ **Piège important à noter** : il existe DEUX interfaces admin
+séparées — `dashboard-admin.html` (page statique, vanilla JS + Supabase
+direct) et le composant React `AdminDashboard` (dans `app.<hash>.js`,
+monté sur `/` quand `currentUser.role==='admin'`, contient tous les
+panneaux du 27e chantier). Ne pas confondre les deux en cherchant/testant
+une fonctionnalité admin.
+
+**2. `502` intercepté par Cloudflare — masque toute erreur réelle** : les 3
+nouveaux endpoints (`/api/admin/logs`, `/api/admin/logs-summary`,
+`/api/admin/subscriptions`) renvoyaient `502` dans leur bloc `catch`
+générique. Repéré en testant l'ajout d'un abonnement avec `billing_cycle`
+vide (violation légitime de la contrainte CHECK) : au lieu de voir l'erreur
+Postgres réelle, le client recevait la page d'erreur HTML générique de
+Cloudflare ("Bad gateway") — **Cloudflare remplace tout `502` renvoyé par
+le Worker par sa propre page**, quel que soit le corps JSON d'origine.
+**Corrigé** : `502` → `500` dans les 3 fichiers. Piège à retenir pour tout
+futur endpoint : ne jamais utiliser `502` comme code d'erreur applicatif
+générique sur ce projet.
+
+**3. Fix supplémentaire déjà écrit mais pas déployé au 1er commit** : la
+normalisation chaîne-vide→`NULL` dans `subscriptions.js` (`pickWritable`)
+avait été codée pendant la vérification mais oubliée dans le commit
+initial — incluse dans le même commit de correction que le point 2.
+
+**Vérifié en direct (navigateur, session admin réelle)** : panneau
+« Journal activité » affiche les vraies données (783 emails, 51 WhatsApp) ;
+panneau « Abonnements & Renouvellements » affiche les 11 lignes seed ;
+cycle complet créer→modifier (date passée)→supprimer testé via `fetch()`
+direct avec le JWT admin, aucune trace laissée (11 lignes après nettoyage,
+comme avant le test).
+
+**Reste à faire (utilisateur)** : créer le job cron-job.org pour
+`/cron/daily-report` (voir 27e entrée) — pas encore fait au moment de
+cette entrée.
+
 ## 2026-08-30 (vingt-septième) — Journal admin unifié + suivi des abonnements/renouvellements + rapport quotidien par email
 
 **Demande** : logs détaillés « dans tous les secteurs sans exception », suivi

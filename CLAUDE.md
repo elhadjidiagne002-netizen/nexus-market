@@ -121,6 +121,40 @@ fichier `functions/api/admin/logs/summary.js` ne serait jamais committé ni
 déployé. Router ce genre d'endpoint sans sous-dossier `logs/` (ex.
 `logs-summary.js` plutôt que `logs/summary.js`).
 
+### 9. DEUX interfaces admin séparées — ne pas les confondre
+`public/dashboard-admin.html` est une page **statique** (vanilla JS +
+`supabase-js` en client direct, pas de backend `/api/**`). Le composant
+React `AdminDashboard` (dans `app.<hash>.js`, tous les panneaux —
+Journal activité, Utilisation Plateformes, Abonnements, etc.) est un
+**second système entièrement différent**, monté sur `/` (page principale)
+quand `currentUser.role === 'admin'` — PAS sur `/dashboard-admin.html`.
+Avant de chercher/tester une fonctionnalité admin : vérifier laquelle des
+deux interfaces la contient (`grep` le nom du composant/panneau dans
+`app.<hash>.js` vs dans `dashboard-*.html`).
+
+### 10. `502` en code d'erreur applicatif = piégé par Cloudflare
+Ne **jamais** utiliser `502` comme statut HTTP pour une erreur applicative
+générique (`catch` d'un endpoint Cloudflare Pages Function). Cloudflare
+**remplace le corps de toute réponse `502` par sa propre page HTML
+générique** ("Bad gateway"), quel que soit le JSON réellement renvoyé par
+le Worker — l'appelant ne voit jamais le vrai message d'erreur, seulement
+`content-type: text/html`. Utiliser `500` (Internal Server Error) pour les
+erreurs serveur génériques. Trouvé 2026-08-31 en diagnostiquant un ajout
+d'abonnement qui échouait silencieusement (violation de contrainte CHECK
+légitime, masquée derrière la page Cloudflare).
+
+### 11. `profiles` — vérifier les GRANTs, pas seulement les policies RLS
+`authenticated` avait `GRANT INSERT/UPDATE` sur `profiles` mais **pas
+`SELECT`** (trouvé 2026-08-31, cause du piège du dashboard admin
+ci-dessus). Les policies RLS étaient pourtant correctes (self-read,
+`is_admin()`, lecture publique vendeur) — un GRANT manquant produit une
+erreur Postgres `42501 permission denied` **avant même que RLS ne
+s'applique**, différente d'un simple filtrage RLS (0 ligne sans erreur).
+Symptôme typique : ça marche depuis le backend (service_role, bypass RLS
+ET grants) mais pas depuis un appel client-side direct (anon key + JWT).
+Cf. aussi [[orders-update-grant-403]] (même classe de piège, déjà vu sur
+`orders`).
+
 ## Endpoints de paiement (canoniques vs doublons)
 - **Stripe webhook** : `/api/webhooks/stripe` (`functions/api/webhooks/stripe.js`) — configuré.
   Doublon : `/api/payments/stripe/webhook` (corrigé, mais non principal).
