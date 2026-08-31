@@ -13,7 +13,12 @@ const WRITABLE_FIELDS = [
 function pickWritable(body) {
   const out = {};
   for (const k of WRITABLE_FIELDS) {
-    if (Object.prototype.hasOwnProperty.call(body || {}, k)) out[k] = body[k];
+    if (Object.prototype.hasOwnProperty.call(body || {}, k)) {
+      // Chaîne vide → NULL (sinon Postgres rejette '' pour numeric/date : le
+      // formulaire envoie '' quand un champ optionnel — coût, date — est laissé vide).
+      const v = body[k];
+      out[k] = v === '' ? null : v;
+    }
   }
   return out;
 }
@@ -62,6 +67,9 @@ export async function onRequest({ request, env }) {
 
     return err('Méthode non supportée', 405);
   } catch (e) {
-    return err('Erreur abonnements: ' + e.message, 502);
+    // [FIX] 502 est intercepté par Cloudflare qui remplace le corps JSON par sa
+    // propre page d'erreur HTML générique — utiliser 500 pour que l'erreur réelle
+    // (ex. violation de contrainte CHECK sur billing_cycle) arrive au client.
+    return err('Erreur abonnements: ' + e.message, 500);
   }
 }

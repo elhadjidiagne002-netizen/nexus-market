@@ -23,6 +23,8 @@ export async function onRequest({ request, env }) {
     const logs = await fetchLogsFeed(env, { limit, offset, action, level });
     return json({ logs });
   } catch (e) {
-    return err('Erreur journal: ' + e.message, 502);
+    // [FIX] 502 est intercepté par Cloudflare (page d'erreur HTML générique
+    // à la place du JSON) — 500 laisse passer le vrai message d'erreur.
+    return err('Erreur journal: ' + e.message, 500);
   }
 }

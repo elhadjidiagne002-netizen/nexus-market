@@ -22,6 +22,8 @@ export async function onRequest({ request, env }) {
     const summary = await fetchLogsSummary(env, { sinceDays });
     return json({ summary });
   } catch (e) {
-    return err('Erreur résumé journal: ' + e.message, 502);
+    // [FIX] 502 est intercepté par Cloudflare (page d'erreur HTML générique
+    // à la place du JSON) — 500 laisse passer le vrai message d'erreur.
+    return err('Erreur résumé journal: ' + e.message, 500);
   }
 }
