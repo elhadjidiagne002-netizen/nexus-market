@@ -6,6 +6,69 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-31 (trentième) — Bus urbains Dakar v2 : quartiers, carte, correspondance
+
+**Demande** : en testant la recherche de bus par arrêt (v1, session
+précédente) avec des quartiers de banlieue, trois manques identifiés par
+l'utilisateur : (1) le menu déroulant ne propose que les ~800 noms d'arrêts
+bruts, pas de liste propre « quartiers de Dakar » ; (2) aucune carte pour
+visualiser le trajet ; (3) numéro de ligne/itinéraire pas assez visible +
+recherche qui ne trouve souvent aucun bus.
+
+**Fait** :
+- **Quartiers officiels** : 19 communes d'arrondissement de Dakar +
+  communes de banlieue (Pikine, Guédiawaye, Keur Massar, Rufisque…), ~40
+  noms, ajoutés en `<optgroup>` séparé dans les deux `<select>` (« Quartiers »
+  vs « Arrêts de bus (détaillé) », qui garde les ~800 noms bruts existants
+  — décision utilisateur : compléter, pas remplacer).
+- **Matching corrigé** : passé d'une égalité stricte (`indexOf` exact) à un
+  test de sous-chaîne normalisée (accents/casse). Corrige un vrai bug UX
+  découvert en testant : une sélection « Keur Massar » ne matchait pas les
+  variantes composées type « Station Keur Massar » présentes dans les
+  itinéraires réels — la recherche renvoyait « aucune ligne » alors qu'une
+  ligne existait bel et bien.
+- **Carte itinéraire (approximative)** : aucune ligne TATA/DDD n'a de
+  coordonnées GPS (source = texte libre uniquement). Géocodage de 801 noms
+  uniques (775 arrêts bruts + les quartiers officiels) via **Nominatim/
+  OpenStreetMap** (gratuit, sans clé — préféré à Google Geocoding après
+  clarification avec l'utilisateur, qui ne voulait pas gérer de compte/clé
+  API) : **405/801 localisés (51%)**, le reste (noms trop informels type
+  « MTOA », « Croisement Tivaouane Peulh ») reste consultable via la liste
+  texte complète, jamais perdu. Piège rencontré et corrigé : un simple
+  filtre bounding-box laissait passer des faux positifs (nom de rue
+  identique trouvé dans une tout autre région, ex. Thiès/Ziguinchor/
+  Saint-Louis) — remplacé par un filtre texte strict sur « Région de Dakar »
+  dans l'adresse formatée retournée par Nominatim, beaucoup plus fiable.
+  Nouvelle table `transport_stops_geo` (cache nom→coordonnées, lecture
+  publique) + script réexécutable `scripts/geocode-stops.mjs`.
+- **Affichage inline** : chaque ligne trouvée peut maintenant se déplier
+  dans la modale (bouton « 🗺️ Voir l'itinéraire ») sans navigation — liste
+  complète des arrêts + carte Leaflet/OpenStreetMap (déjà utilisée ailleurs
+  sur NEXUS pour le suivi coursier — nouvelle méthode `NexusMap.itinerary`,
+  marqueurs numérotés + ligne pointillée reliant les arrêts géocodés dans
+  l'ordre). Le lien externe `/ligne/:id` reste disponible en complément.
+- **Correspondance (1 changement)** : ajouté après un retour utilisateur
+  fort (« ça ne trouve jamais de bus ») — dans un réseau de 99 lignes
+  partiellement connecté, beaucoup de paires quartier/quartier n'ont
+  légitimement aucune ligne directe. Quand `tataResults` est vide, calcul
+  (différé, pas de coût sur le cas courant) d'une correspondance : ligne A
+  desservant le départ + ligne B desservant la destination partageant un
+  arrêt commun → « Ligne A jusqu'à {arrêt}, puis Ligne B ».
+
+**Vérifié en direct** (production, cache navigateur + Service Worker
+purgés avant de tester, pour écarter toute confusion avec une page
+restée ouverte depuis avant le déploiement) : recherche « Keur Massar »
+(quartier) → « Malika » (quartier) trouve 6 lignes directes dont Ligne 37,
+numéro/opérateur/trajet affichés, dépliage inline montre les 35 arrêts +
+carte avec marqueurs et tracé ; recherche « Almadies » → « Bargny » (pas
+de ligne directe) affiche bien 2 propositions de correspondance avec point
+de changement (Diamniadio) au lieu d'un message vide. Aucune erreur JS
+liée à la fonctionnalité en console (bruit préexistant sans rapport :
+CORS `reviews`/`louma_config`, CSP Google Ads, WebSocket Realtime).
+
+**Commits** : `418842f` (quartiers + carte + géocodage), `f497cb2`
+(correspondance).
+
 ## 2026-08-31 (vingt-neuvième) — Recherche de bus urbains Dakar par arrêt (AFTU/TATA + Dakar Dem Dikk)
 
 **Demande** : extraire les itinéraires des bus TATA (AFTU) depuis
