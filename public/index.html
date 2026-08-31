@@ -6065,6 +6065,14 @@ window.addEventListener('unhandledrejection', function(event) {
       var _tataExpanded = React.useState(null), tataExpanded = _tataExpanded[0], setTataExpanded = _tataExpanded[1];
       var _tataGeo = React.useState({}), tataGeo = _tataGeo[0], setTataGeo = _tataGeo[1];
       var _tataGeoLoading = React.useState({}), tataGeoLoading = _tataGeoLoading[0], setTataGeoLoading = _tataGeoLoading[1];
+      // [MULTIMODE 2026-08-31] 3 configurations de recherche pour des besoins
+      // différents : 'od' (départ+arrivée, existant), 'stop' (un seul arrêt —
+      // tous les bus qui y passent), 'line' (parcourir directement le trajet
+      // complet d'une ligne choisie, sans passer par une recherche d'arrêt).
+      var _tataSubMode = React.useState('od'), tataSubMode = _tataSubMode[0], setTataSubMode = _tataSubMode[1];
+      var _tataSingleStop = React.useState(''), tataSingleStop = _tataSingleStop[0], setTataSingleStop = _tataSingleStop[1];
+      var _tataSingleSearched = React.useState(false), tataSingleSearched = _tataSingleSearched[0], setTataSingleSearched = _tataSingleSearched[1];
+      var _tataLineSel = React.useState(''), tataLineSel = _tataLineSel[0], setTataLineSel = _tataLineSel[1];
       // 19 communes d'arrondissement de Dakar + communes de banlieue (Pikine,
       // Guédiawaye, Keur Massar, Rufisque) — mêmes noms que scripts/geocode-stops.mjs.
       var DAKAR_QUARTIERS = ['Plateau', 'Médina', 'Fann-Point E-Amitié', 'Gueule Tapée-Fass-Colobane',
@@ -6192,12 +6200,10 @@ window.addEventListener('unhandledrejection', function(event) {
         var m = /^Ligne\s+([^:]+?)\s*:/i.exec(l.destinations || '');
         return m ? 'Ligne ' + m[1].trim() : (l.destination_main || l.destinations || 'Ligne');
       };
-      // Déplie/replie le détail inline (liste d'arrêts + carte) d'une ligne, et
-      // va chercher (une seule fois, mis en cache dans tataGeo) les coordonnées
-      // connues de ses arrêts pour la carte.
-      var toggleTataExpand = function (l) {
-        if (tataExpanded === l.id) { setTataExpanded(null); return; }
-        setTataExpanded(l.id);
+      // Va chercher (une seule fois, mis en cache dans tataGeo) les coordonnées
+      // connues des arrêts d'une ligne pour la carte — partagé par le clic
+      // "Voir l'itinéraire" (modes od/stop) et la sélection directe (mode line).
+      var ensureGeoLoaded = function (l) {
         var names = (l.escales || '').split('|').map(function (s) { return s.trim(); }).filter(Boolean);
         var missing = names.filter(function (n) { return !(n in tataGeo); });
         if (!missing.length) return;
@@ -6213,6 +6219,91 @@ window.addEventListener('unhandledrejection', function(event) {
           })
           .catch(function () {})
           .then(function () { setTataGeoLoading(function (p) { var np = Object.assign({}, p); np[l.id] = false; return np; }); });
+      };
+      // Déplie/replie le détail inline (liste d'arrêts + carte) d'une ligne
+      // (modes od/stop — clic sur "Voir l'itinéraire").
+      var toggleTataExpand = function (l) {
+        if (tataExpanded === l.id) { setTataExpanded(null); return; }
+        setTataExpanded(l.id);
+        ensureGeoLoaded(l);
+      };
+      // Mode "Par ligne" : sélectionner une ligne l'ouvre directement (pas de
+      // clic "Voir l'itinéraire" nécessaire — c'est tout l'intérêt du mode).
+      var selectTataLine = function (id) {
+        setTataLineSel(id);
+        var l = tataLines && tataLines.filter(function (x) { return x.id === id; })[0];
+        if (!l) { setTataExpanded(null); return; }
+        setTataExpanded(l.id);
+        ensureGeoLoaded(l);
+      };
+      // Numéro extrait de "Ligne N : ..." pour un tri numérique correct (sinon
+      // "Ligne 4" trierait après "Ligne 37") — Infinity pour les identifiants
+      // texte ("Ligne TAF TAF...") triés en dernier, par ordre alphabétique.
+      var parseLineNumber = function (l) {
+        var m = /^Ligne\s+(\d+)/i.exec(l.destinations || '');
+        return m ? parseInt(m[1], 10) : Infinity;
+      };
+      var tataLineSort = function (a, b) {
+        var na = parseLineNumber(a), nb = parseLineNumber(b);
+        if (na !== nb) return na - nb;
+        return tataLineLabel(a).localeCompare(tataLineLabel(b), 'fr');
+      };
+      // Mode "Par ligne" : toutes les lignes groupées par opérateur, triées.
+      var tataLinesByOperator = React.useMemo(function () {
+        if (!tataLines) return [];
+        var groups = {};
+        tataLines.forEach(function (l) { (groups[l.operator] = groups[l.operator] || []).push(l); });
+        return Object.keys(groups).sort().map(function (op) {
+          return { operator: op, lines: groups[op].slice().sort(tataLineSort) };
+        });
+      }, [tataLines]);
+      // Mode "Par arrêt" : toutes les lignes desservant l'arrêt/quartier choisi,
+      // sans besoin d'une seconde extrémité — même test de sous-chaîne normalisée.
+      var tataStopResults = React.useMemo(function () {
+        if (!tataSingleSearched || !tataLines || !tataSingleStop) return [];
+        var s = normTxt(tataSingleStop);
+        return tataLines.filter(function (l) {
+          var stops = (l.escales || '').split('|').map(function (x) { return normTxt(x); });
+          return stops.some(function (x) { return x.indexOf(s) !== -1; });
+        }).sort(tataLineSort);
+      }, [tataSingleSearched, tataLines, tataSingleStop]);
+      // Carte de résultat (numéro, opérateur, trajet, itinéraire+carte dépliables)
+      // — un seul rendu réutilisé par les 3 modes (od/stop/line), aucune
+      // logique dupliquée entre les configurations de recherche.
+      var renderTataLineCard = function (l) {
+        var expanded = tataExpanded === l.id;
+        var escalesList = expanded ? (l.escales || '').split('|').map(function (s) { return s.trim(); }).filter(Boolean) : [];
+        var mapPoints = expanded ? escalesList.map(function (s) { return tataGeo[s] ? { lat: tataGeo[s].lat, lng: tataGeo[s].lng, label: s } : null; }).filter(Boolean) : [];
+        return E('div', { key: l.id, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
+          E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🚌 ', tataLineLabel(l)),
+          E('div', { style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700, marginTop: 2 } }, l.operator),
+          E('div', { style: { fontSize: '.78rem', color: '#888', marginTop: 2 } }, l.origin_gare, ' → ', l.arrival_gare),
+          E('div', { style: { display: 'flex', gap: 12, marginTop: 6 } },
+            E('button', {
+              onClick: function () { toggleTataExpand(l); },
+              style: { fontSize: '.76rem', color: '#006d40', fontWeight: 700, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }
+            }, expanded ? '▲ Masquer l\'itinéraire' : '🗺️ Voir l\'itinéraire'),
+            E('a', { href: '/ligne/' + l.id, target: '_blank', rel: 'noopener', style: { fontSize: '.76rem', color: '#1D4ED8', fontWeight: 700 } }, 'Fiche complète →')
+          ),
+          expanded && E('div', { style: { marginTop: '.7rem', paddingTop: '.7rem', borderTop: '1px solid #eee' } },
+            E('div', { style: { fontWeight: 700, fontSize: '.78rem', marginBottom: '.35rem' } }, '📍 Arrêts (' + escalesList.length + ')'),
+            E('ol', { style: { fontSize: '.74rem', color: '#444', paddingLeft: '1.1rem', margin: '0 0 .7rem', maxHeight: 150, overflowY: 'auto' } },
+              escalesList.map(function (s, i) { return E('li', { key: i }, s); })
+            ),
+            tataGeoLoading[l.id] ? E('p', { style: { fontSize: '.72rem', color: '#999', textAlign: 'center' } }, 'Chargement de la carte…') :
+            mapPoints.length >= 2 ? E('div', {
+              key: 'map-' + l.id,
+              ref: function (el) {
+                if (!el || !window.NexusMap) return;
+                var sig = JSON.stringify(mapPoints);
+                if (el.__sig === sig) return;
+                el.__sig = sig;
+                NexusMap.itinerary(el, mapPoints);
+              },
+              className: 'nexus-map', style: { height: 200 }
+            }) : E('p', { style: { fontSize: '.72rem', color: '#999', textAlign: 'center' } }, 'Trajet non localisable sur la carte pour cette ligne (arrêts non reconnus) — la liste ci-dessus reste exacte.')
+          )
+        );
       };
 
       var doSearch = function () {
@@ -6369,78 +6460,93 @@ window.addEventListener('unhandledrejection', function(event) {
             lineMode === 'tata' && E('div', null,
               !tataLines ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Chargement des lignes…') :
               E('div', null,
-                E('p', { style: { fontSize: '.76rem', color: '#888', marginBottom: '.6rem' } }, 'Choisissez un arrêt de départ et de destination parmi les rues/quartiers desservis par les réseaux AFTU (bus TATA) et Dakar Dem Dikk.'),
                 E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
-                  E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDepart, onChange: function (e) { setTataDepart(e.target.value); setTataSearched(false); } },
-                    E('option', { value: '' }, 'Départ…'),
-                    E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'dq-' + q, value: q }, q); })),
-                    E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'ds-' + s, value: s }, s); }))
-                  ),
-                  E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDest, onChange: function (e) { setTataDest(e.target.value); setTataSearched(false); } },
-                    E('option', { value: '' }, 'Destination…'),
-                    E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'aq-' + q, value: q }, q); })),
-                    E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'as-' + s, value: s }, s); }))
-                  )
-                ),
-                E('button', {
-                  onClick: function () { setTataSearched(true); }, disabled: !tataDepart || !tataDest,
-                  style: { width: '100%', padding: '.65rem', background: (!tataDepart || !tataDest) ? '#9ca3af' : '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: (!tataDepart || !tataDest) ? 'default' : 'pointer', marginBottom: '1rem' }
-                }, '🔎 Trouver mon bus'),
-                !tataSearched ? null : tataResults.length === 0 ? (
-                  tataConnections.length === 0 ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucune ligne directe ni correspondance trouvée entre ces deux arrêts — essayez des arrêts plus proches.') :
-                  E('div', null,
-                    E('p', { style: { fontSize: '.78rem', color: '#888', marginBottom: '.6rem' } }, 'Aucune ligne directe, mais une correspondance est possible :'),
-                    E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
-                      tataConnections.map(function (c, i) {
-                        return E('div', { key: i, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
-                          E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🚌 ', tataLineLabel(c.from), ' → 🔁 → 🚌 ', tataLineLabel(c.to)),
-                          E('div', { style: { fontSize: '.78rem', color: '#666', marginTop: 4 } }, c.from.origin_gare, ' → ', E('b', null, c.transfer), ' → ', c.to.arrival_gare),
-                          E('div', { style: { fontSize: '.74rem', color: '#888', marginTop: 4 } }, 'Changement à « ', c.transfer, ' »'),
-                          E('div', { style: { display: 'flex', gap: 12, marginTop: 6 } },
-                            E('a', { href: '/ligne/' + c.from.id, target: '_blank', rel: 'noopener', style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700 } }, 'Ligne 1 →'),
-                            E('a', { href: '/ligne/' + c.to.id, target: '_blank', rel: 'noopener', style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700 } }, 'Ligne 2 →')
-                          )
-                        );
-                      })
-                    )
-                  )
-                ) :
-                E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
-                  tataResults.map(function (l) {
-                    var expanded = tataExpanded === l.id;
-                    var escalesList = expanded ? (l.escales || '').split('|').map(function (s) { return s.trim(); }).filter(Boolean) : [];
-                    var mapPoints = expanded ? escalesList.map(function (s) { return tataGeo[s] ? { lat: tataGeo[s].lat, lng: tataGeo[s].lng, label: s } : null; }).filter(Boolean) : [];
-                    return E('div', { key: l.id, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
-                      E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🚌 ', tataLineLabel(l)),
-                      E('div', { style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700, marginTop: 2 } }, l.operator),
-                      E('div', { style: { fontSize: '.78rem', color: '#888', marginTop: 2 } }, l.origin_gare, ' → ', l.arrival_gare),
-                      E('div', { style: { display: 'flex', gap: 12, marginTop: 6 } },
-                        E('button', {
-                          onClick: function () { toggleTataExpand(l); },
-                          style: { fontSize: '.76rem', color: '#006d40', fontWeight: 700, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }
-                        }, expanded ? '▲ Masquer l\'itinéraire' : '🗺️ Voir l\'itinéraire'),
-                        E('a', { href: '/ligne/' + l.id, target: '_blank', rel: 'noopener', style: { fontSize: '.76rem', color: '#1D4ED8', fontWeight: 700 } }, 'Fiche complète →')
-                      ),
-                      expanded && E('div', { style: { marginTop: '.7rem', paddingTop: '.7rem', borderTop: '1px solid #eee' } },
-                        E('div', { style: { fontWeight: 700, fontSize: '.78rem', marginBottom: '.35rem' } }, '📍 Arrêts (' + escalesList.length + ')'),
-                        E('ol', { style: { fontSize: '.74rem', color: '#444', paddingLeft: '1.1rem', margin: '0 0 .7rem', maxHeight: 150, overflowY: 'auto' } },
-                          escalesList.map(function (s, i) { return E('li', { key: i }, s); })
-                        ),
-                        tataGeoLoading[l.id] ? E('p', { style: { fontSize: '.72rem', color: '#999', textAlign: 'center' } }, 'Chargement de la carte…') :
-                        mapPoints.length >= 2 ? E('div', {
-                          key: 'map-' + l.id,
-                          ref: function (el) {
-                            if (!el || !window.NexusMap) return;
-                            var sig = JSON.stringify(mapPoints);
-                            if (el.__sig === sig) return;
-                            el.__sig = sig;
-                            NexusMap.itinerary(el, mapPoints);
-                          },
-                          className: 'nexus-map', style: { height: 200 }
-                        }) : E('p', { style: { fontSize: '.72rem', color: '#999', textAlign: 'center' } }, 'Trajet non localisable sur la carte pour cette ligne (arrêts non reconnus) — la liste ci-dessus reste exacte.')
-                      )
-                    );
+                  [['od', '🔀 Trajet'], ['stop', '📍 Par arrêt'], ['line', '🔢 Par ligne']].map(function (mb) {
+                    var on = tataSubMode === mb[0];
+                    return E('button', {
+                      key: mb[0],
+                      onClick: function () { setTataSubMode(mb[0]); },
+                      style: { flex: 1, padding: '.4rem', fontSize: '.7rem', border: on ? '2px solid #006d40' : '1.5px solid #e5e7eb', background: on ? 'rgba(0,109,64,.08)' : '#fff', color: on ? '#006d40' : '#666', borderRadius: 8, cursor: 'pointer', fontWeight: 700 }
+                    }, mb[1]);
                   })
+                ),
+
+                // ── Mode "Trajet" (départ + arrivée) ──────────────────────
+                tataSubMode === 'od' && E('div', null,
+                  E('p', { style: { fontSize: '.76rem', color: '#888', marginBottom: '.6rem' } }, 'Choisissez un arrêt de départ et de destination parmi les rues/quartiers desservis par les réseaux AFTU (bus TATA) et Dakar Dem Dikk.'),
+                  E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
+                    E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDepart, onChange: function (e) { setTataDepart(e.target.value); setTataSearched(false); } },
+                      E('option', { value: '' }, 'Départ…'),
+                      E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'dq-' + q, value: q }, q); })),
+                      E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'ds-' + s, value: s }, s); }))
+                    ),
+                    E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDest, onChange: function (e) { setTataDest(e.target.value); setTataSearched(false); } },
+                      E('option', { value: '' }, 'Destination…'),
+                      E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'aq-' + q, value: q }, q); })),
+                      E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'as-' + s, value: s }, s); }))
+                    )
+                  ),
+                  E('button', {
+                    onClick: function () { setTataSearched(true); }, disabled: !tataDepart || !tataDest,
+                    style: { width: '100%', padding: '.65rem', background: (!tataDepart || !tataDest) ? '#9ca3af' : '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: (!tataDepart || !tataDest) ? 'default' : 'pointer', marginBottom: '1rem' }
+                  }, '🔎 Trouver mon bus'),
+                  !tataSearched ? null : tataResults.length === 0 ? (
+                    tataConnections.length === 0 ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucune ligne directe ni correspondance trouvée entre ces deux arrêts — essayez des arrêts plus proches.') :
+                    E('div', null,
+                      E('p', { style: { fontSize: '.78rem', color: '#888', marginBottom: '.6rem' } }, 'Aucune ligne directe, mais une correspondance est possible :'),
+                      E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
+                        tataConnections.map(function (c, i) {
+                          return E('div', { key: i, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
+                            E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🚌 ', tataLineLabel(c.from), ' → 🔁 → 🚌 ', tataLineLabel(c.to)),
+                            E('div', { style: { fontSize: '.78rem', color: '#666', marginTop: 4 } }, c.from.origin_gare, ' → ', E('b', null, c.transfer), ' → ', c.to.arrival_gare),
+                            E('div', { style: { fontSize: '.74rem', color: '#888', marginTop: 4 } }, 'Changement à « ', c.transfer, ' »'),
+                            E('div', { style: { display: 'flex', gap: 12, marginTop: 6 } },
+                              E('a', { href: '/ligne/' + c.from.id, target: '_blank', rel: 'noopener', style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700 } }, 'Ligne 1 →'),
+                              E('a', { href: '/ligne/' + c.to.id, target: '_blank', rel: 'noopener', style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700 } }, 'Ligne 2 →')
+                            )
+                          );
+                        })
+                      )
+                    )
+                  ) :
+                  E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } }, tataResults.map(renderTataLineCard))
+                ),
+
+                // ── Mode "Par arrêt" (un seul point) ──────────────────────
+                tataSubMode === 'stop' && E('div', null,
+                  E('p', { style: { fontSize: '.76rem', color: '#888', marginBottom: '.6rem' } }, 'Choisissez un arrêt ou quartier : toutes les lignes qui y passent.'),
+                  E('select', { style: Object.assign({}, inp, { marginBottom: '.7rem' }), value: tataSingleStop, onChange: function (e) { setTataSingleStop(e.target.value); setTataSingleSearched(false); } },
+                    E('option', { value: '' }, 'Arrêt ou quartier…'),
+                    E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'sq-' + q, value: q }, q); })),
+                    E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'ss-' + s, value: s }, s); }))
+                  ),
+                  E('button', {
+                    onClick: function () { setTataSingleSearched(true); }, disabled: !tataSingleStop,
+                    style: { width: '100%', padding: '.65rem', background: !tataSingleStop ? '#9ca3af' : '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: !tataSingleStop ? 'default' : 'pointer', marginBottom: '1rem' }
+                  }, '🔎 Voir les bus qui passent ici'),
+                  !tataSingleSearched ? null : tataStopResults.length === 0 ?
+                    E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucune ligne connue ne passe par cet arrêt.') :
+                    E('div', null,
+                      E('p', { style: { fontSize: '.76rem', color: '#888', marginBottom: '.6rem' } }, tataStopResults.length + ' ligne(s) passent par « ' + tataSingleStop + ' » :'),
+                      E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } }, tataStopResults.map(renderTataLineCard))
+                    )
+                ),
+
+                // ── Mode "Par ligne" (parcourir un trajet directement) ────
+                tataSubMode === 'line' && E('div', null,
+                  E('p', { style: { fontSize: '.76rem', color: '#888', marginBottom: '.6rem' } }, 'Choisissez une ligne pour voir directement son trajet complet.'),
+                  E('select', { style: Object.assign({}, inp, { marginBottom: '.9rem' }), value: tataLineSel, onChange: function (e) { selectTataLine(e.target.value); } },
+                    E('option', { value: '' }, 'Choisir une ligne…'),
+                    tataLinesByOperator.map(function (g) {
+                      return E('optgroup', { key: g.operator, label: g.operator }, g.lines.map(function (l) {
+                        return E('option', { key: l.id, value: l.id }, tataLineLabel(l) + ' — ' + l.origin_gare + ' → ' + l.arrival_gare);
+                      }));
+                    })
+                  ),
+                  tataLineSel && (function () {
+                    var sel = tataLines.filter(function (x) { return x.id === tataLineSel; })[0];
+                    return sel ? renderTataLineCard(sel) : null;
+                  })()
                 )
               )
             ),
