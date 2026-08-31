@@ -34,7 +34,12 @@ async function handle({ request, env, params }) {
   const url = `${origin}/ligne/${encodeURIComponent(t.id)}`;
   const appUrl = `${origin}/?covoiturage=1&ligne=${encodeURIComponent(t.id)}`;
   const vehicleLabel = VEHICLE_LABELS[t.vehicle_type] || 'Transport';
-  const title = `${t.operator} — ${t.origin_city} → ${t.destination_main || (t.destinations || '').split('|')[0]}`;
+  // Lignes urbaines AFTU (TATA) : destinations = "Ligne N : Départ → Arrivée" —
+  // en extraire le numéro pour un titre plus identifiable ("AFTU Ligne 12" plutôt
+  // que juste "AFTU"), sans ajouter de colonne dédiée pour ce seul usage.
+  const ligneMatch = /^Ligne\s+(\d+)\s*:/i.exec(t.destinations || '');
+  const operatorLabel = ligneMatch ? `${t.operator} Ligne ${ligneMatch[1]}` : t.operator;
+  const title = `${operatorLabel} — ${t.origin_city} → ${t.destination_main || (t.destinations || '').split('|')[0]}`;
   const priceTxt = t.price_fcfa ? `${Number(t.price_fcfa).toLocaleString('fr-FR')} FCFA` : '';
   // Pas de photo par ligne en base (transport_lines n'a pas de colonne image) →
   // image de partage générique du site, comme le fait déjà produit/[id].js pour
@@ -81,6 +86,15 @@ async function handle({ request, env, params }) {
   const scheduleTxt = [t.horaire_depart_raw ? `Départs : ${t.horaire_depart_raw}` : '', t.horaire_arrivee_raw ? `Arrivées : ${t.horaire_arrivee_raw}` : '']
     .filter(Boolean).join(' · ');
 
+  // [FIX 2026-08-31] `escales` était déjà sélectionné mais jamais affiché — pour
+  // les lignes urbaines AFTU (TATA), c'est l'itinéraire rue par rue complet
+  // (pas juste les villes intermédiaires comme pour les lignes intercités),
+  // l'info la plus utile de la fiche. Affiché comme liste ordonnée si présent.
+  const escalesList = (t.escales || '').split('|').map(s => s.trim()).filter(Boolean);
+  const itineraryHtml = escalesList.length > 1
+    ? `<div class="itin"><h2>🗺️ Itinéraire</h2><ol>${escalesList.map(s => `<li>${esc(s)}</li>`).join('')}</ol></div>`
+    : '';
+
   const html = `<!DOCTYPE html><html lang="fr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}${priceTxt ? ' — ' + priceTxt : ''} · NEXUS Market Sénégal</title>
@@ -98,7 +112,7 @@ async function handle({ request, env, params }) {
 <meta name="twitter:title" content="${esc(title)}">
 <meta name="twitter:image" content="${esc(img)}">
 <script type="application/ld+json">${graph}</script>
-<style>body{font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:20px;color:#1F2937;line-height:1.6}h1{font-size:1.5rem;margin:.4rem 0}.cat{color:#1d4ed8;font-weight:700;font-size:.95rem;margin-bottom:.5rem}.meta{color:#6B7280;font-size:.9rem;margin:.3rem 0}.price{color:#00853E;font-size:1.5rem;font-weight:800;margin:.6rem 0}.crumb{font-size:.8rem;color:#6B7280;margin-bottom:1rem}.crumb a{color:#1d4ed8;text-decoration:none}.crumb .sep{margin:0 4px}.cta{display:inline-block;background:#00853E;color:#fff;padding:13px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:1.2rem}.foot{color:#9CA3AF;font-size:.8rem;margin-top:2.2rem}</style>
+<style>body{font-family:Arial,Helvetica,sans-serif;max-width:760px;margin:0 auto;padding:20px;color:#1F2937;line-height:1.6}h1{font-size:1.5rem;margin:.4rem 0}.cat{color:#1d4ed8;font-weight:700;font-size:.95rem;margin-bottom:.5rem}.meta{color:#6B7280;font-size:.9rem;margin:.3rem 0}.price{color:#00853E;font-size:1.5rem;font-weight:800;margin:.6rem 0}.crumb{font-size:.8rem;color:#6B7280;margin-bottom:1rem}.crumb a{color:#1d4ed8;text-decoration:none}.crumb .sep{margin:0 4px}.cta{display:inline-block;background:#00853E;color:#fff;padding:13px 30px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:1.2rem}.foot{color:#9CA3AF;font-size:.8rem;margin-top:2.2rem}.itin{margin:1.1rem 0}.itin h2{font-size:1rem;margin:0 0 .5rem}.itin ol{margin:0;padding-left:1.3rem;color:#374151;font-size:.88rem;line-height:1.9}</style>
 </head><body>
 <nav class="crumb">${crumbHtml}</nav>
 <h1>🚌 ${esc(title)}</h1>
@@ -106,6 +120,7 @@ async function handle({ request, env, params }) {
 ${priceTxt ? `<div class="price">${esc(priceTxt)}</div>` : ''}
 <p>${esc(desc)}</p>
 ${scheduleTxt ? `<div class="meta">🕐 ${esc(scheduleTxt)}</div>` : ''}
+${itineraryHtml}
 ${t.price_luggage ? `<div class="meta">🧳 Bagages : ${esc(t.price_luggage)}</div>` : ''}
 ${t.notes ? `<div class="meta">${esc(t.notes)}</div>` : ''}
 ${t.phone ? `<div class="meta">📞 ${esc(t.phone)}</div>` : ''}

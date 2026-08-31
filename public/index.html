@@ -6036,6 +6036,16 @@ window.addEventListener('unhandledrejection', function(event) {
       var _linesSearched = React.useState(false), linesSearched = _linesSearched[0], setLinesSearched = _linesSearched[1];
       var _lineFilter = React.useState({ originCity: '', destination: '', vehicleType: props.initialVehicleType || '' }), lineFilter = _lineFilter[0], setLineFilter = _lineFilter[1];
       var _vTypeCounts = React.useState(null), vTypeCounts = _vTypeCounts[0], setVTypeCounts = _vTypeCounts[1];
+      /* [TATA 2026-08-31] Mode "Lignes régulières" alternatif : bus urbains AFTU
+         (Dakar), recherche par arrêt plutôt que par ville — transport_lines n'a
+         pas de coordonnées GPS pour ces lignes, seulement un itinéraire texte
+         (colonne escales, rue par rue) — matching par présence des deux arrêts
+         choisis dans la même ligne, pas de géolocalisation réelle. */
+      var _lineMode = React.useState('ville'), lineMode = _lineMode[0], setLineMode = _lineMode[1];
+      var _tataLines = React.useState(null), tataLines = _tataLines[0], setTataLines = _tataLines[1];
+      var _tataDepart = React.useState(''), tataDepart = _tataDepart[0], setTataDepart = _tataDepart[1];
+      var _tataDest = React.useState(''), tataDest = _tataDest[0], setTataDest = _tataDest[1];
+      var _tataSearched = React.useState(false), tataSearched = _tataSearched[0], setTataSearched = _tataSearched[1];
 
       var FCFA = function (n) { return Math.round(n || 0).toLocaleString('fr-FR') + ' F'; };
 
@@ -6077,6 +6087,47 @@ window.addEventListener('unhandledrejection', function(event) {
       var pickVehicleType = function (v) {
         var nf = Object.assign({}, lineFilter, { vehicleType: v });
         setLineFilter(nf); doSearchLines(nf);
+      };
+
+      // Charge une fois toutes les lignes de bus urbains Dakar (AFTU + Dakar Dem
+      // Dikk) avec leur itinéraire — lecture directe Supabase (RLS déjà ouverte
+      // en lecture sur transport_lines), pas de nouvel endpoint backend.
+      var loadTataLines = function () {
+        if (tataLines) return; // déjà chargé
+        // [FIX 2026-08-31] operateur non filtré — couvre AFTU (TATA) ET Dakar Dem
+        // Dikk (DDD), les deux réseaux urbains Dakar importés avec un itinéraire
+        // rue par rue. `destinations` commençant par "Ligne " distingue ces lignes
+        // détaillées des anciennes fiches intercités sommaires (mêmes opérateurs,
+        // format différent — escales y contient des villes, pas des rues).
+        DataService._sb.from('transport_lines')
+          .select('id, operator, origin_gare, arrival_gare, destinations, destination_main, escales')
+          .ilike('destinations', 'Ligne %').eq('active', true).not('escales', 'is', null)
+          .limit(200)
+          .then(function (res) { setTataLines((res && res.data) || []); })
+          .catch(function () { setTataLines([]); });
+      };
+      var tataStops = React.useMemo(function () {
+        if (!tataLines) return [];
+        var set = {};
+        tataLines.forEach(function (l) {
+          (l.escales || '').split('|').forEach(function (s) {
+            s = s.trim(); if (s) set[s] = true;
+          });
+        });
+        return Object.keys(set).sort(function (a, b) { return a.localeCompare(b, 'fr'); });
+      }, [tataLines]);
+      var tataResults = React.useMemo(function () {
+        if (!tataSearched || !tataLines || !tataDepart || !tataDest) return [];
+        return tataLines.filter(function (l) {
+          var stops = (l.escales || '').split('|').map(function (s) { return s.trim(); });
+          return stops.indexOf(tataDepart) !== -1 && stops.indexOf(tataDest) !== -1;
+        });
+      }, [tataSearched, tataLines, tataDepart, tataDest]);
+      var tataLineLabel = function (l) {
+        // Numéro classique ("Ligne 12 : ...") ou identifiant texte ("Ligne TAF TAF
+        // OUAKAM (TO1) : ...") — les deux formats existent selon l'opérateur.
+        var m = /^Ligne\s+([^:]+?)\s*:/i.exec(l.destinations || '');
+        return m ? 'Ligne ' + m[1].trim() : (l.destination_main || l.destinations || 'Ligne');
       };
 
       var doSearch = function () {
@@ -6218,8 +6269,50 @@ window.addEventListener('unhandledrejection', function(event) {
             )
           ),
 
-          // ── Lignes régulières (bus/ferry/7-places inter-villes) ───────────
+          // ── Lignes régulières (bus/ferry/7-places inter-villes + bus urbains AFTU/TATA) ─
           tab === 'lines' && E('div', null,
+            E('div', { style: { display: 'flex', gap: 6, marginBottom: '.8rem' } },
+              [['ville', '🏙️ Par ville (intercité)'], ['tata', '🚌 Bus urbains Dakar (par arrêt)']].map(function (mb) {
+                var on = lineMode === mb[0];
+                return E('button', {
+                  key: mb[0],
+                  onClick: function () { setLineMode(mb[0]); if (mb[0] === 'tata') loadTataLines(); },
+                  style: { flex: 1, padding: '.45rem', fontSize: '.72rem', border: on ? '2px solid #006d40' : '1.5px solid #e5e7eb', background: on ? 'rgba(0,109,64,.08)' : '#fff', color: on ? '#006d40' : '#666', borderRadius: 8, cursor: 'pointer', fontWeight: 700 }
+                }, mb[1]);
+              })
+            ),
+            lineMode === 'tata' && E('div', null,
+              !tataLines ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Chargement des lignes…') :
+              E('div', null,
+                E('p', { style: { fontSize: '.76rem', color: '#888', marginBottom: '.6rem' } }, 'Choisissez un arrêt de départ et de destination parmi les rues/quartiers desservis par les réseaux AFTU (bus TATA) et Dakar Dem Dikk.'),
+                E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
+                  E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDepart, onChange: function (e) { setTataDepart(e.target.value); setTataSearched(false); } },
+                    E('option', { value: '' }, 'Départ…'),
+                    tataStops.map(function (s) { return E('option', { key: s, value: s }, s); })
+                  ),
+                  E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDest, onChange: function (e) { setTataDest(e.target.value); setTataSearched(false); } },
+                    E('option', { value: '' }, 'Destination…'),
+                    tataStops.map(function (s) { return E('option', { key: s, value: s }, s); })
+                  )
+                ),
+                E('button', {
+                  onClick: function () { setTataSearched(true); }, disabled: !tataDepart || !tataDest,
+                  style: { width: '100%', padding: '.65rem', background: (!tataDepart || !tataDest) ? '#9ca3af' : '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: (!tataDepart || !tataDest) ? 'default' : 'pointer', marginBottom: '1rem' }
+                }, '🔎 Trouver mon bus'),
+                !tataSearched ? null : tataResults.length === 0 ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucune ligne directe trouvée entre ces deux arrêts — essayez des arrêts plus proches, une correspondance peut être nécessaire.') :
+                E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
+                  tataResults.map(function (l) {
+                    return E('div', { key: l.id, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
+                      E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🚌 ', tataLineLabel(l)),
+                      E('div', { style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700, marginTop: 2 } }, l.operator),
+                      E('div', { style: { fontSize: '.78rem', color: '#888', marginTop: 2 } }, l.origin_gare, ' → ', l.arrival_gare),
+                      E('a', { href: '/ligne/' + l.id, target: '_blank', rel: 'noopener', style: { fontSize: '.76rem', color: '#1D4ED8', fontWeight: 700, marginTop: 6, display: 'inline-block' } }, 'Voir l\'itinéraire complet →')
+                    );
+                  })
+                )
+              )
+            ),
+            lineMode === 'ville' && E('div', null,
             E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
               E('input', { style: Object.assign({}, inp, { marginBottom: 0 }), placeholder: 'Départ (ex. Dakar)', value: lineFilter.originCity, onChange: function (e) { setLineFilter(function (f) { return Object.assign({}, f, { originCity: e.target.value }); }); } }),
               E('input', { style: Object.assign({}, inp, { marginBottom: 0 }), placeholder: 'Destination (ex. Ziguinchor)', value: lineFilter.destination, onChange: function (e) { setLineFilter(function (f) { return Object.assign({}, f, { destination: e.target.value }); }); } })
@@ -6265,6 +6358,7 @@ window.addEventListener('unhandledrejection', function(event) {
                 );
               })
             )
+            ) // fin lineMode === 'ville'
           ),
 
           // ── Publier un trajet (particulier) ───────────────────────────────
