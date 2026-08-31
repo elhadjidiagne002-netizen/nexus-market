@@ -66,8 +66,31 @@ de changement (Diamniadio) au lieu d'un message vide. Aucune erreur JS
 liée à la fonctionnalité en console (bruit préexistant sans rapport :
 CORS `reviews`/`louma_config`, CSP Google Ads, WebSocket Realtime).
 
+**Bug réel trouvé après coup** : malgré cette vérification, l'utilisateur a
+continué à voir « pas de numéro de ligne, pas d'itinéraire, la recherche ne
+trouve rien » — capture d'écran à l'appui. Cause : la modale s'ouvrait par
+défaut sur l'ancien onglet **« 🏙️ Par ville (intercité) »** (pré-existant,
+non touché), et pire, les 82 lignes urbaines importées (`destinations ilike
+'Ligne %'`) remontaient *aussi* dans cette recherche intercité classique
+dès qu'on tapait « Dakar » comme ville de départ — rendues par l'ancienne
+carte générique (`DataService.searchLines`) jamais conçue pour ce format
+(un seul arrêt affiché, pas de numéro, juste « Contacter/Réserver »).
+L'utilisateur tombait involontairement sur la mauvaise fonctionnalité à
+chaque test, d'où l'impression persistante que rien ne marchait. Corrigé
+(`1b299fc`) : exclusion des lignes `Ligne %` dans `searchLines` (plus de
+fuite) + mode par défaut de l'onglet passé de `'ville'` à `'tata'` (la
+recherche par arrêt/quartier est maintenant ce qu'on voit en premier).
+Reproduit et vérifié en direct (recherche « Dakar » en mode ville ne
+renvoie plus que de vraies lignes intercités ; la modale s'ouvre bien
+directement sur le mode par arrêt). **Leçon** : une fonctionnalité peut
+être 100% correcte en test direct et rester invisible pour l'utilisateur
+si un autre chemin de navigation (ici : le mode par défaut d'un même
+composant) mène ailleurs — ne pas se contenter de vérifier que « ça marche »,
+vérifier aussi que c'est bien *ce que l'utilisateur voit en premier*.
+
 **Commits** : `418842f` (quartiers + carte + géocodage), `f497cb2`
-(correspondance).
+(correspondance), `1b299fc` (fix fuite recherche intercité + mode par
+défaut).
 
 ## 2026-08-31 (vingt-neuvième) — Recherche de bus urbains Dakar par arrêt (AFTU/TATA + Dakar Dem Dikk)
 
