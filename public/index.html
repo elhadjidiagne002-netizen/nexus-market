@@ -6039,13 +6039,30 @@ window.addEventListener('unhandledrejection', function(event) {
       /* [TATA 2026-08-31] Mode "Lignes régulières" alternatif : bus urbains AFTU
          (Dakar), recherche par arrêt plutôt que par ville — transport_lines n'a
          pas de coordonnées GPS pour ces lignes, seulement un itinéraire texte
-         (colonne escales, rue par rue) — matching par présence des deux arrêts
-         choisis dans la même ligne, pas de géolocalisation réelle. */
+         (colonne escales, rue par rue) — matching par présence (sous-chaîne,
+         accents/casse normalisés) d'un arrêt/quartier choisi dans la ligne.
+         [GEO 2026-08-31] transport_stops_geo (géocodage Nominatim/OSM, gratuit,
+         sans clé) fournit des coordonnées best-effort par nom d'arrêt — utilisées
+         uniquement pour la carte inline (approximative), jamais pour le matching. */
       var _lineMode = React.useState('ville'), lineMode = _lineMode[0], setLineMode = _lineMode[1];
       var _tataLines = React.useState(null), tataLines = _tataLines[0], setTataLines = _tataLines[1];
       var _tataDepart = React.useState(''), tataDepart = _tataDepart[0], setTataDepart = _tataDepart[1];
       var _tataDest = React.useState(''), tataDest = _tataDest[0], setTataDest = _tataDest[1];
       var _tataSearched = React.useState(false), tataSearched = _tataSearched[0], setTataSearched = _tataSearched[1];
+      var _tataExpanded = React.useState(null), tataExpanded = _tataExpanded[0], setTataExpanded = _tataExpanded[1];
+      var _tataGeo = React.useState({}), tataGeo = _tataGeo[0], setTataGeo = _tataGeo[1];
+      var _tataGeoLoading = React.useState({}), tataGeoLoading = _tataGeoLoading[0], setTataGeoLoading = _tataGeoLoading[1];
+      // 19 communes d'arrondissement de Dakar + communes de banlieue (Pikine,
+      // Guédiawaye, Keur Massar, Rufisque) — mêmes noms que scripts/geocode-stops.mjs.
+      var DAKAR_QUARTIERS = ['Plateau', 'Médina', 'Fann-Point E-Amitié', 'Gueule Tapée-Fass-Colobane',
+        'Grand Dakar', 'Biscuiterie', 'HLM', 'Hann Bel-Air', 'Sicap-Liberté', 'Dieuppeul-Derklé',
+        'Grand Yoff', 'Patte d\'Oie', 'Parcelles Assainies', 'Cambérène', 'Ngor', 'Ouakam', 'Yoff',
+        'Mermoz-Sacré Cœur', 'Almadies', 'Pikine', 'Guédiawaye', 'Golf Sud', 'Sam Notaire',
+        'Wakhinane Nimzatt', 'Médina Gounass', 'Keur Massar Nord', 'Keur Massar Sud', 'Yeumbeul Nord',
+        'Yeumbeul Sud', 'Malika', 'Jaxaay', 'Rufisque Est', 'Rufisque Ouest', 'Rufisque Nord',
+        'Bargny', 'Sébikotane', 'Diamniadio', 'Sangalkam', 'Tivaouane Peulh-Niaga', 'Bambilor'
+      ].sort(function (a, b) { return a.localeCompare(b, 'fr'); });
+      var normTxt = function (s) { return String(s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim(); };
 
       var FCFA = function (n) { return Math.round(n || 0).toLocaleString('fr-FR') + ' F'; };
 
@@ -6118,9 +6135,16 @@ window.addEventListener('unhandledrejection', function(event) {
       }, [tataLines]);
       var tataResults = React.useMemo(function () {
         if (!tataSearched || !tataLines || !tataDepart || !tataDest) return [];
+        // Test de présence (sous-chaîne, normalisée) plutôt qu'égalité stricte :
+        // une sélection de quartier (ex. "Keur Massar") doit matcher toute
+        // variante composée qui le contient (ex. "Station Keur Massar") — un
+        // arrêt exact reste trivialement trouvé (une chaîne se contient elle-même).
+        var d = normTxt(tataDepart), a = normTxt(tataDest);
         return tataLines.filter(function (l) {
-          var stops = (l.escales || '').split('|').map(function (s) { return s.trim(); });
-          return stops.indexOf(tataDepart) !== -1 && stops.indexOf(tataDest) !== -1;
+          var stops = (l.escales || '').split('|').map(function (s) { return normTxt(s); });
+          var hasDepart = stops.some(function (s) { return s.indexOf(d) !== -1; });
+          var hasDest = stops.some(function (s) { return s.indexOf(a) !== -1; });
+          return hasDepart && hasDest;
         });
       }, [tataSearched, tataLines, tataDepart, tataDest]);
       var tataLineLabel = function (l) {
@@ -6128,6 +6152,28 @@ window.addEventListener('unhandledrejection', function(event) {
         // OUAKAM (TO1) : ...") — les deux formats existent selon l'opérateur.
         var m = /^Ligne\s+([^:]+?)\s*:/i.exec(l.destinations || '');
         return m ? 'Ligne ' + m[1].trim() : (l.destination_main || l.destinations || 'Ligne');
+      };
+      // Déplie/replie le détail inline (liste d'arrêts + carte) d'une ligne, et
+      // va chercher (une seule fois, mis en cache dans tataGeo) les coordonnées
+      // connues de ses arrêts pour la carte.
+      var toggleTataExpand = function (l) {
+        if (tataExpanded === l.id) { setTataExpanded(null); return; }
+        setTataExpanded(l.id);
+        var names = (l.escales || '').split('|').map(function (s) { return s.trim(); }).filter(Boolean);
+        var missing = names.filter(function (n) { return !(n in tataGeo); });
+        if (!missing.length) return;
+        setTataGeoLoading(function (p) { var np = Object.assign({}, p); np[l.id] = true; return np; });
+        DataService._sb.from('transport_stops_geo').select('stop_name, lat, lng').in('stop_name', missing)
+          .then(function (res) {
+            var add = {};
+            missing.forEach(function (n) { add[n] = null; });
+            ((res && res.data) || []).forEach(function (row) {
+              if (row.lat != null && row.lng != null) add[row.stop_name] = { lat: row.lat, lng: row.lng };
+            });
+            setTataGeo(function (prev) { return Object.assign({}, prev, add); });
+          })
+          .catch(function () {})
+          .then(function () { setTataGeoLoading(function (p) { var np = Object.assign({}, p); np[l.id] = false; return np; }); });
       };
 
       var doSearch = function () {
@@ -6288,11 +6334,13 @@ window.addEventListener('unhandledrejection', function(event) {
                 E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
                   E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDepart, onChange: function (e) { setTataDepart(e.target.value); setTataSearched(false); } },
                     E('option', { value: '' }, 'Départ…'),
-                    tataStops.map(function (s) { return E('option', { key: s, value: s }, s); })
+                    E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'dq-' + q, value: q }, q); })),
+                    E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'ds-' + s, value: s }, s); }))
                   ),
                   E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDest, onChange: function (e) { setTataDest(e.target.value); setTataSearched(false); } },
                     E('option', { value: '' }, 'Destination…'),
-                    tataStops.map(function (s) { return E('option', { key: s, value: s }, s); })
+                    E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'aq-' + q, value: q }, q); })),
+                    E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'as-' + s, value: s }, s); }))
                   )
                 ),
                 E('button', {
@@ -6302,11 +6350,38 @@ window.addEventListener('unhandledrejection', function(event) {
                 !tataSearched ? null : tataResults.length === 0 ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucune ligne directe trouvée entre ces deux arrêts — essayez des arrêts plus proches, une correspondance peut être nécessaire.') :
                 E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
                   tataResults.map(function (l) {
+                    var expanded = tataExpanded === l.id;
+                    var escalesList = expanded ? (l.escales || '').split('|').map(function (s) { return s.trim(); }).filter(Boolean) : [];
+                    var mapPoints = expanded ? escalesList.map(function (s) { return tataGeo[s] ? { lat: tataGeo[s].lat, lng: tataGeo[s].lng, label: s } : null; }).filter(Boolean) : [];
                     return E('div', { key: l.id, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
                       E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🚌 ', tataLineLabel(l)),
                       E('div', { style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700, marginTop: 2 } }, l.operator),
                       E('div', { style: { fontSize: '.78rem', color: '#888', marginTop: 2 } }, l.origin_gare, ' → ', l.arrival_gare),
-                      E('a', { href: '/ligne/' + l.id, target: '_blank', rel: 'noopener', style: { fontSize: '.76rem', color: '#1D4ED8', fontWeight: 700, marginTop: 6, display: 'inline-block' } }, 'Voir l\'itinéraire complet →')
+                      E('div', { style: { display: 'flex', gap: 12, marginTop: 6 } },
+                        E('button', {
+                          onClick: function () { toggleTataExpand(l); },
+                          style: { fontSize: '.76rem', color: '#006d40', fontWeight: 700, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }
+                        }, expanded ? '▲ Masquer l\'itinéraire' : '🗺️ Voir l\'itinéraire'),
+                        E('a', { href: '/ligne/' + l.id, target: '_blank', rel: 'noopener', style: { fontSize: '.76rem', color: '#1D4ED8', fontWeight: 700 } }, 'Fiche complète →')
+                      ),
+                      expanded && E('div', { style: { marginTop: '.7rem', paddingTop: '.7rem', borderTop: '1px solid #eee' } },
+                        E('div', { style: { fontWeight: 700, fontSize: '.78rem', marginBottom: '.35rem' } }, '📍 Arrêts (' + escalesList.length + ')'),
+                        E('ol', { style: { fontSize: '.74rem', color: '#444', paddingLeft: '1.1rem', margin: '0 0 .7rem', maxHeight: 150, overflowY: 'auto' } },
+                          escalesList.map(function (s, i) { return E('li', { key: i }, s); })
+                        ),
+                        tataGeoLoading[l.id] ? E('p', { style: { fontSize: '.72rem', color: '#999', textAlign: 'center' } }, 'Chargement de la carte…') :
+                        mapPoints.length >= 2 ? E('div', {
+                          key: 'map-' + l.id,
+                          ref: function (el) {
+                            if (!el || !window.NexusMap) return;
+                            var sig = JSON.stringify(mapPoints);
+                            if (el.__sig === sig) return;
+                            el.__sig = sig;
+                            NexusMap.itinerary(el, mapPoints);
+                          },
+                          className: 'nexus-map', style: { height: 200 }
+                        }) : E('p', { style: { fontSize: '.72rem', color: '#999', textAlign: 'center' } }, 'Trajet non localisable sur la carte pour cette ligne (arrêts non reconnus) — la liste ci-dessus reste exacte.')
+                      )
                     );
                   })
                 )
@@ -9343,6 +9418,7 @@ window.addEventListener('unhandledrejection', function(event) {
      API :
        NexusMap.track(el, delivery)        -> carte retrait/dépôt/coursier + suivi live
        NexusMap.nearby(el, point, couriers)-> point + coursiers autour
+       NexusMap.itinerary(el, points)      -> arrêts de bus géocodés, dans l'ordre (approximatif)
        NexusMap.locateMe()                 -> Promise<{lat,lng}> (GPS navigateur)
      ============================================================ -->
 <style>
@@ -9503,6 +9579,36 @@ window.addEventListener('unhandledrejection', function(event) {
       addCourierMarkers(map); finish();
       return map;
     }).catch(function(){ return null; });
+  }
+
+  // ── Carte « itinéraire de ligne de bus » (arrêts géocodés, dans l'ordre) ────
+  // points : [{lat,lng,label}] déjà filtrés (coordonnées connues uniquement).
+  // Trace un marqueur numéroté par arrêt + une ligne droite les reliant dans
+  // l'ordre — approximatif (pas de tracé routier réel), les arrêts non
+  // géocodés sont simplement absents du tracé (affichés à part en texte).
+  function itinerary(el, points){
+    if(!el || !points || points.length < 2) return Promise.resolve(null);
+    return ensureLeaflet().then(function(L){
+      el.classList.add('nexus-map');
+      if(el.__map){ try{ el.__map.remove(); }catch(e){} el.__map=null; }
+      var map=L.map(el).setView([points[0].lat, points[0].lng], 12);
+      el.__map=map;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+      var latlngs=[];
+      points.forEach(function(p, i){
+        var color = i===0 ? COLORS.pickup : (i===points.length-1 ? COLORS.dropoff : COLORS.courier);
+        var icon = (i===0 || i===points.length-1) ? pin(L, color) : dot(L, color);
+        L.marker([p.lat, p.lng], { icon: icon }).addTo(map).bindPopup((i+1)+'. '+(p.label||''));
+        latlngs.push([p.lat, p.lng]);
+      });
+      L.polyline(latlngs, { color:'#1d4ed8', weight:3, opacity:.7, dashArray:'6,6' }).addTo(map);
+      map.fitBounds(latlngs, { padding:[30,30] });
+      setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} },250);
+      return map;
+    }).catch(function(err){
+      el.innerHTML='<div style="padding:1rem;color:#999;font:14px system-ui">Carte indisponible ('+(err&&err.message||'')+')</div>';
+      return null;
+    });
   }
 
   // ── Carte « flotte » (admin) : livreurs en ligne/hors-ligne + courses en cours ─
@@ -9752,7 +9858,8 @@ window.addEventListener('unhandledrejection', function(event) {
 
   window.NexusMap = { track:track, nearby:nearby, locateMe:locateMe, autoMount:autoMount,
                       ensureLeaflet:ensureLeaflet, startCourierPing:startCourierPing, stopCourierPing:stopCourierPing,
-                      openDirections:openDirections, fuzz:fuzz, pickLocation:pickLocation, ensureCluster:ensureCluster, fleet:fleet };
+                      openDirections:openDirections, fuzz:fuzz, pickLocation:pickLocation, ensureCluster:ensureCluster, fleet:fleet,
+                      itinerary:itinerary };
   console.info("[NEXUS] Module carte (Leaflet/OSM) prêt ✅");
 })();
 </script>
