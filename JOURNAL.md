@@ -6,6 +6,45 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-31 (trente-deuxième) — Fix clic sous-catégorie NEXUS Pro + puces compactes
+
+**Suite du chantier filtres** (même session) : deux retours supplémentaires
+après le fix double-clic/alignement précédent.
+
+**Bug** : cliquer une sous-catégorie « NEXUS Pro » dans le panneau de
+filtres retombait toujours sur « Tous » au lieu du métier ciblé. Cause :
+`NexusPro.openFor(profession)` matchait le métier sur le **texte affiché**
+du chip (emoji + libellé, extrait du DOM) — mais `paintChipCounts()` lui
+ajoute un suffixe `" (N)"` dès que les comptages chargent (course avec le
+`setTimeout` de `openFor`, quasi toujours déjà résolue en pratique) :
+`"🧱 Maçon"` devient `"🧱 Maçon (518)"`, plus jamais égal à la valeur brute
+reçue → aucun chip trouvé, retombée silencieuse sur la recherche libre
+(chip « Tous » resté actif). Un identifiant stable existait déjà
+(`chipRefs[].id`, utilisé par `paintChipCounts` elle-même) mais n'était
+jamais posé sur l'élément DOM du chip — ajouté (`data-metier-id`) et
+`openFor` matche désormais dessus. Vérifié en direct : `NexusPro.openFor
+('Maçon')` active bien le chip `data-metier-id="Maçon"` malgré son texte
+affiché `"🧱 Maçon (518)"`.
+
+**Compacité** : la liste de sous-catégories (un item par ligne) prenait
+beaucoup de place pour les modules à nombreuses entrées (NEXUS Pro : 55
+métiers). Remplacée par des puces qui s'enroulent (`flex flex-wrap`),
+réutilisant visuellement le motif déjà présent dans l'écran de recherche
+NEXUS Pro lui-même (capture d'écran fournie par l'utilisateur comme
+référence) — aucun changement de logique de clic/double-clic/surbrillance
+(mêmes attributs `data-role`/`data-cat`/`data-key`, seule la disposition
+CSS change). Vérifié en direct par géométrie DOM (`display:flex`,
+`flexWrap:wrap`, `borderRadius:9999px`).
+
+**Repéré en passant, hors scope** : des requêtes 404 vers `/1`…`/5` +
+requêtes `stories/media/...` avortées au chargement de l'accueil — pas
+lié à ce chantier, tâche de fond créée (`task_a47d09e4`) pour investigation
+séparée plutôt que traité ici.
+
+**Commit** : `2fcfd0a`.
+
+---
+
 ## 2026-08-31 (trente-et-unième) — Audit prix location + fix filtres catalogue
 
 **Demande 1** : « les prix de certains produits en location ne sont pas les
