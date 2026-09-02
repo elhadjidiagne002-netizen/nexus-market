@@ -6,6 +6,57 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-08-31 (trente-et-unième) — Audit prix location + fix filtres catalogue
+
+**Demande 1** : « les prix de certains produits en location ne sont pas les
+bons, recroiser avec les données de prospection ».
+
+**Audit effectué** : comparaison systématique des ~70 produits `is_rental`
+avec un tarif ferme (voitures, matériel événementiel, BTP, nautique,
+hébergement…) face aux sources `prospection/catalogue_location_senegal.csv`
+et `sql/2026_08_27_..._batch2.sql` — **100% concordants**, conversion
+EUR↔FCFA (`/655.957`) exacte au centime pour chaque produit vérifié. La
+donnée elle-même n'était pas en cause.
+
+**Bug réel trouvé** (confirmé par l'utilisateur : « le prix affiché est
+656 ») : le badge de prix du **produit lié à une story** (NEXUS Stories,
+achat en 1 tap) ne sélectionnait que `id,name,price,image_url,stock` —
+sans `rental_specs`/`animal_specs`, impossible pour `isVitrineListing()`
+de détecter les ~55 fiches « vitrine » (loueurs importés en masse sans
+tarif ferme, prix placeholder 1.00€ = 656 FCFA converti brut). Trois
+autres circuits d'affichage (`card()` overlay statique, page SEO
+`/produit/:id`, composant React `PriceDisplay` utilisé partout ailleurs)
+géraient déjà correctement ce cas — seul ce chemin précis (stories) avait
+été oublié. Fix : select enrichi + réutilisation de `PriceDisplay` au lieu
+d'un formatage manuel dédié. Commit `03ec2b2`.
+
+**Demande 2** : panneau de filtres catalogue — (a) double-clic sur une
+catégorie/sous-catégorie pour accéder directement aux résultats au lieu
+d'obliger un clic sur « Appliquer » séparément ; (b) libellés « Autres
+services NEXUS » mal alignés/désharmonisés.
+
+**Diagnostic du (b)** : capture d'écran fournie par l'utilisateur, mais le
+rendu du panneau de filtres (bottom-sheet mobile, position fixed) ne
+s'affichait pas dans les captures du navigateur de test cette session
+(outil `computer`/`screenshot` peu fiable sur cet overlay précis) —
+diagnostic fait à la place par géométrie DOM (`getBoundingClientRect`) :
+à largeur étroite (~320px), les libellés longs « NEXUS Pro — Ouvriers &
+artisans » / « Covoiturage — Lignes régulières » passaient sur 2 lignes,
+et `items-center` centrait le badge de comptage + chevron sur toute la
+hauteur du bloc replié (2 lignes) au lieu du haut du bloc — donnant un
+badge « flottant » incohérent avec les lignes de catégories produits
+restées sur une seule ligne. Fix double : libellés raccourcis (redondance
+avec le préfixe déjà implicite via l'en-tête de section + l'icône
+supprimée) + `items-center` → `items-start` sur les lignes catégorie/
+module (aucun effet visuel sur le cas courant à une ligne, robuste si un
+libellé re-wrap dans une autre langue/largeur). Vérifié après déploiement
+par géométrie DOM (plus fiable que les captures cette session) : lignes
+retombées à une seule hauteur cohérente (36px), double-clic déclenche bien
+`doApply()` (fermeture du panneau confirmée par le changement de
+`transform`), aucune erreur console. Commit `6158e44`.
+
+---
+
 ## 2026-08-31 (trentième) — Bus urbains Dakar v2 : quartiers, carte, correspondance
 
 **Demande** : en testant la recherche de bus par arrêt (v1, session
