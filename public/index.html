@@ -12014,7 +12014,7 @@ window.addEventListener('unhandledrejection', function(event) {
     var chipEls = [allChip]; var chipRefs = [];
     allChip.addEventListener('click', function () { cur = ''; chipEls.forEach(function (x) { x.classList.remove('on'); }); allChip.classList.add('on'); });
     function addChip(m) {
-      var ch = document.createElement('span'); ch.className = 'nx-pro-chip'; ch.textContent = m.e + ' ' + m.id; chipHost.appendChild(ch); chipEls.push(ch); chipRefs.push({ id: m.id, el: ch, label: m.e + ' ' + m.id });
+      var ch = document.createElement('span'); ch.className = 'nx-pro-chip'; ch.textContent = m.e + ' ' + m.id; ch.dataset.metierId = m.id; chipHost.appendChild(ch); chipEls.push(ch); chipRefs.push({ id: m.id, el: ch, label: m.e + ' ' + m.id });
       ch.addEventListener('click', function () { cur = m.id; chipEls.forEach(function (x) { x.classList.remove('on'); }); ch.classList.add('on'); });
     }
     METIERS.forEach(addChip);
@@ -12067,15 +12067,18 @@ window.addEventListener('unhandledrejection', function(event) {
   // Recherche par MÉTIER : réutilise la mécanique existante (sélection du chip +
   // bouton de recherche géolocalisée). Repli sur la recherche par nom si le chip
   // n'existe pas encore (métier de base absent).
+  // [FIX 2026-08-31] Le matching se faisait sur le TEXTE affiché du chip (emoji +
+  // libellé) — mais paintChipCounts() lui ajoute un suffixe " (N)" dès que les
+  // comptages sont chargés (course avec le setTimeout ci-dessous, souvent déjà
+  // là) : "🧱 Maçon" devenait "🧱 Maçon (518)", plus jamais égal à `profession`
+  // → aucun chip trouvé, clic silencieusement retombé sur la recherche libre
+  // (onglet "Tous" toujours actif). data-metier-id (posé par addChip) porte
+  // l'identifiant stable, indépendant de l'affichage.
   function openFor(profession) {
     ensureFindTab();
     setTimeout(function () {
       if (!ov) return;
-      var target = null;
-      Array.prototype.forEach.call(ov.querySelectorAll('#nx-pro-chips .nx-pro-chip'), function (ch) {
-        var lbl = ch.textContent.replace(/^\S+\s/, '').trim(); // retire l'emoji de tête
-        if (lbl === profession) target = ch;
-      });
+      var target = ov.querySelector('#nx-pro-chips .nx-pro-chip[data-metier-id="' + CSS.escape(profession) + '"]');
       if (target) { target.click(); var btn = ov.querySelector('#nx-pro-search-btn'); if (btn) btn.click(); }
       else searchPros(ov.querySelector('#nx-pro-results'), profession);
     }, 250);
@@ -15517,9 +15520,9 @@ function initProto(){
             +'<span class="flex items-center gap-1"><span class="text-xs text-on-surface-variant">('+g.total+')</span>'
             +(multi?'<span class="nxp-catChevron material-symbols-outlined text-[16px] text-on-surface-variant transition-transform" style="transform:rotate(0deg)">expand_more</span>':'')
             +'</span></div>'
-          +(multi?('<div class="nxp-catSubs pl-6 space-y-0.5" style="display:none">'
+          +(multi?('<div class="nxp-catSubs pl-2 flex flex-wrap gap-1.5" style="display:none">'
             +g.subs.map(function(s){
-              return '<div class="nxp-catRow flex items-start justify-between px-2 py-1.5 rounded hover:bg-surface-container cursor-pointer text-xs" data-role="sub" data-cat="'+s.name.replace(/"/g,'&quot;')+'">'
+              return '<div class="nxp-catRow inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-outline-variant hover:bg-surface-container cursor-pointer text-xs" data-role="sub" data-cat="'+s.name.replace(/"/g,'&quot;')+'">'
                 +'<span>'+s.name+'</span><span class="text-on-surface-variant">('+s.cnt+')</span></div>';
             }).join('')
             +'</div>'):'')
@@ -15597,9 +15600,9 @@ function initProto(){
           +'<span class="flex items-center gap-1"><span class="text-xs text-on-surface-variant">('+total+')</span>'
           +(multi?'<span class="nxp-catChevron material-symbols-outlined text-[16px] text-on-surface-variant transition-transform" style="transform:rotate(0deg)">expand_more</span>':'')
           +'</span></div>'
-        +(multi?('<div class="nxp-catSubs pl-6 space-y-0.5" style="display:none">'
+        +(multi?('<div class="nxp-catSubs pl-2 flex flex-wrap gap-1.5" style="display:none">'
           +subs.map(function(s){
-            return '<div class="nxp-catRow flex items-start justify-between px-2 py-1.5 rounded hover:bg-surface-container cursor-pointer text-xs" data-role="module-sub" data-key="'+String(s.key).replace(/"/g,'&quot;')+'">'
+            return '<div class="nxp-catRow inline-flex items-center gap-1 px-3 py-1.5 rounded-full border border-outline-variant hover:bg-surface-container cursor-pointer text-xs" data-role="module-sub" data-key="'+String(s.key).replace(/"/g,'&quot;')+'">'
               +'<span>'+s.label+'</span><span class="text-on-surface-variant">('+s.cnt+')</span></div>';
           }).join('')
           +'</div>'):'')
