@@ -12819,7 +12819,7 @@ const NexusStoriesWidget = ({ user }) => {
     const c = items[idx];
     if (!open || !c || !c.product_id || !DataService._sb) return;
     let cancelled = false;
-    DataService._sb.from('products').select('id,name,price,image_url,stock')
+    DataService._sb.from('products').select('id,name,price,image_url,stock,rental_specs,animal_specs,is_educational')
       .eq('id', c.product_id).maybeSingle()
       .then(({ data }) => { if (!cancelled && data) setStoryProd(data); }).catch(() => {});
     return () => { cancelled = true; };
@@ -12967,7 +12967,10 @@ const NexusStoriesWidget = ({ user }) => {
                   E('img', { src: storyProd.image_url || 'https://placehold.co/52x52/e8f5e9/00853E?text=NX', alt: storyProd.name, style: { width: 46, height: 46, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }, onError: e => { e.target.onerror = null; e.target.src = 'https://placehold.co/52x52/e8f5e9/00853E?text=NX'; } }),
                   E('div', { style: { flex: 1, minWidth: 0 } },
                     E('div', { style: { fontWeight: 700, fontSize: '.86rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, storyProd.name),
-                    E('div', { style: { fontWeight: 800, fontSize: '.84rem', color: '#006d40' } }, _storyPrice(storyProd.price), storyProd.stock === 0 ? E('span', { style: { color: '#b91c1c', fontWeight: 700, marginLeft: 6 } }, t('stories.out_of_stock')) : null)
+                    E('div', { style: { display: 'flex', alignItems: 'center' } },
+                      E(PriceDisplay, { product: storyProd, style: { fontWeight: 800, fontSize: '.84rem', color: '#006d40' } }),
+                      storyProd.stock === 0 ? E('span', { style: { color: '#b91c1c', fontWeight: 700, marginLeft: 6 } }, t('stories.out_of_stock')) : null
+                    )
                   ),
                   E('span', { style: { flexShrink: 0, background: '#006d40', color: '#fff', borderRadius: 10, padding: '.5rem .8rem', fontWeight: 800, fontSize: '.8rem', whiteSpace: 'nowrap' } }, t('stories.view_btn'))
                 ),
