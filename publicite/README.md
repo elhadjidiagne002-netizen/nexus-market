@@ -303,6 +303,76 @@ d'un format directement postable sur Facebook/Instagram.
 
 ---
 
+## 🎠 Carrousels multi-slides (HTML → export PNG)
+
+En plus des 47 affiches statiques ci-dessus, 5 fichiers HTML génèrent des
+**carrousels** (plusieurs slides liées, format Instagram/Facebook carrousel,
+1080×1350 chacune). À ouvrir directement dans un navigateur : chaque slide
+s'affiche en aperçu, avec un bouton `PNG ↓` par slide et `📥 Exporter ce
+carrousel` par deck (zip manuel — les PNG se téléchargent un par un).
+Même charte graphique que les affiches (vert `#00853E`, jaune `#FDEF42`,
+fond drapeau sénégalais en pied de slide).
+
+### `carrousels-nexus.html` — Découverte des services (12 decks)
+Bienvenue sur NEXUS Market · Acheter en toute sécurité · Coursier à la
+demande · NEXUS Pro · NEXUS Stories · NEXUS Troc · Louma du vendredi ·
+Local & Élevage · Immobilier & Location · Covoiturage · Dépannage Auto ·
+Vendre & fidélité.
+
+### `carrousels-tutoriel.html` — Tutoriels pas-à-pas (11 decks)
+Commander un coursier en détail · Trouver & contacter un pro · Regarder &
+publier une Story · Échanger via NEXUS Troc · Profiter de la Louma du
+vendredi · Devenir vendeur & créer sa boutique · Immobilier & Location de
+matériel · Élevage & produits locaux · Covoiturage · Mon compte & suivi de
+commandes · Fidélité, cashback & parrainage.
+
+### `carrousels-complementaires.html` — Marque, recrutement & saisonnier (14 decks)
+Pourquoi NEXUS Market (Purement Sénégalais) · Recruter des vendeurs ·
+Recruter des artisans & ouvriers (Pro) · Recruter agents immobiliers &
+loueurs · Ambassadeurs universitaires · FAQ · NEXUS Market vs vendre sur
+WhatsApp · Tabaski · Korité · Rentrée scolaire · Fêtes de fin d'année ·
+Saint-Valentin · 4 avril (Indépendance) · Parrainage — invite & gagne.
+
+### `carrousels-lancement.html` — Campagne d'ouverture (9 decks)
+Compte à rebours (pré-lancement, J-3→J-1) · L'annonce de lancement · Le
+problème → la solution · Offre de lancement (early adopters) · Pour les
+acheteurs · Pour les vendeurs · Pour les livreurs/coursiers · Pour les
+artisans & ouvriers · 100% sénégalais 🇸🇳 · Rejoins la communauté.
+
+### `carrousels-guide-complet.html` — Grand débutant & services manquants (13 decks) 🆕
+Complète les 4 fichiers ci-dessus : les services qui n'avaient **encore
+aucun carrousel**, plus un vrai guide pas-à-pas pour quelqu'un qui n'a
+jamais acheté en ligne. Vérifié sans doublon contre les 46 decks existants.
+
+**🌱 Grand débutant** (4 decks, 27 slides) : C'est quoi NEXUS Market ? ·
+Créer son compte étape par étape · Faire son premier achat (du choix du
+produit à la livraison) · Questions que tout débutant se pose (FAQ
+remboursement, paiement sans carte, contact vendeur…).
+
+**🆕 Services jamais couverts** (9 decks, 42 slides) : Espace B2B
+(acheteurs professionnels) · Assistant IA · Blog NEXUS · NEXUS On Demand
+(liste de courses) · Annonces Express (sans compte) · Tableau de bord &
+Boost vendeur · Retours, échanges & SAV · Wishlist, alertes prix & chat ·
+Recrutement mécaniciens/pièces détachées/pneus.
+
+### `carrousels-education-transport.html` — Éducation, Transport & Ventes Flash (3 decks) 🆕
+3 derniers services réels du site n'ayant **jamais eu d'affiche ni de carrousel**, vérifiés
+directement dans `public/index.html` avant rédaction (pas de contenu inventé) :
+
+**🎓 NEXUS Éducation** (7 slides) — cours **gratuits** téléchargeables, 14 matières
+(Maths, Physique, Chimie, Histoire-Géo, Français, Philo, Anglais, SVT, Éco, Info, Droit,
+Espagnol, Allemand, Latin) × 3 niveaux (Collège, Lycée, Université/Prépa), contenu sous
+licence Creative Commons (Wikiversité et sources ouvertes).
+
+**🚌 Lignes de Transport** (7 slides) — bus urbains de Dakar (AFTU/TATA) et cars/ferries
+interurbains, recherche par **arrêt** (départ/arrivée) ou par **ligne** (trajet complet),
+distinct du Covoiturage (compagnies régulières, pas un particulier).
+
+**⚡ Ventes Flash** (5 slides) — promos à durée limitée avec compte à rebours, disponibles
+**n'importe quel jour** (à ne pas confondre avec la Louma, spéciale vendredi).
+
+---
+
 ## ✅ Checklist avant de poster
 - [ ] Logo NEXUS + `nexusmarket.sn` visibles sur l'affiche
 - [ ] Couleurs de la charte respectées
