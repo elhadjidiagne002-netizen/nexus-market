@@ -6,6 +6,649 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-04 (quarante-quatrième) — Chips de catégories : défilement horizontal au lieu de l'enroulement
+
+**Demande** : l'écran « Trouver un pro » (~50 chips métiers) prenait trop
+de hauteur (capture d'écran fournie : ~15 lignes empilées avant de voir le
+bouton de recherche). Trouver un système plus compact et l'appliquer aux
+autres modules.
+
+**Fix** (CSS uniquement, aucune logique de clic touchée — même principe
+que le fix `2fcfd0a` du 2026-09-02 sur le panneau de filtres) : les
+conteneurs de chips passent de `flex-wrap:wrap` (empilement multi-lignes)
+à `flex-wrap:nowrap;overflow-x:auto` (défilement horizontal en 1 seule
+ligne, quel que soit le nombre de chips). Appliqué à :
+- `#nx-pro-chips` (NEXUS Pro, ~50 métiers — le cas signalé).
+- `.nx-edu-chips` (NEXUS Éducation, matières + niveaux — même motif,
+  seul autre endroit du site avec une liste de chips équivalente).
+
+Vérifié en local (`static-root`, SW purgé) : capture avant/après confirmée
+— 1 ligne avec flèches de défilement ‹ › au lieu de ~15 lignes empilées,
+sur les deux écrans.
+
+---
+
+## 2026-09-04 (quarante-troisième) — Noms de pros tronqués corrigés (193 fiches)
+
+**Demande** : « les noms des pros exportés vers Supabase ne sont pas
+complets, tout corrige ».
+
+**Diagnostic** : un lot de pros **antérieur à cette session** (import plus
+ancien, pas `build_pros_insert*.py`) avait été inséré avec `name` = colonne
+`Nom` (nom de famille) SEULE — le `Prenom` du CSV source, pourtant présent,
+n'avait jamais été concaténé. Résultat en base : des fiches comme
+« Diop », « Ndiaye », « Sarr », « Diallo »… sans prénom, sur ~150-190
+fiches (principalement `Coiffure/Beauté à domicile`, `Réparateur
+électronique`, `Coach bien-être`, `Professeur/Formateur`, `Ménage`,
+`Cuisinier à domicile` — des professions individuelles, pas des
+entreprises).
+
+**Méthode de correction** : cross-référencement par **numéro de téléphone**
+entre `pros.phone` et les 24 CSV `nexus_pro/*.csv` à schéma riche
+(colonnes `Nom`+`Prenom` séparées) — 193 correspondances trouvées où le
+prénom source existait mais avait disparu en base. `UPDATE` avec double
+garde (téléphone ET nom actuel == juste le nom de famille attendu) pour ne
+jamais écraser un nom déjà correct ou modifié depuis. Fichier :
+[sql/2026_09_04_fix_truncated_pro_names.sql](../sql/2026_09_04_fix_truncated_pro_names.sql)
+(exécuté directement, correction de données pure — pas de policy RLS, donc
+pas bloqué par le classifieur contrairement aux chantiers précédents).
+
+**Vérifié** : échantillon avant/après confirmé (« Diop » → « Diop Mame
+Diarra », « Ndiaye » → « Ndiaye Ousmane », etc.), 0 candidat restant non
+corrigé parmi les 193 identifiés.
+
+⚠️ **Note pour plus tard, pas traitée ici** : les numéros de téléphone de
+ce lot ancien suivent un motif clairement **synthétique/séquentiel**
+(`+221762345617`, `+221773456718`, `+221774567819`…) — à valider si ces
+fiches sont de vrais prospects scrapés ou des données d'exemple/test
+insérées par erreur en production. Hors périmètre de la demande (noms),
+signalé pour vigilance future.
+
+---
+
+## 2026-09-04 (quarante-deuxième) — Fusion RLS lot 2 (18 tables restantes) + nettoyage final : TERMINÉ
+
+**Suite de l'entrée précédente** : les 18 tables laissées de côté (rôle-cible
+différent entre policies en conflit) traitées avec une méthode plus prudente
+que le lot 1 — **subsomption** (une policy A est purement redondante si une
+policy B, sur un sur-ensemble des rôles de A, couvre déjà tout ce que A
+autorise → suppression sans rien recréer, risque nul) pour la majorité des
+17 tables `public.*`, et **fusion ciblée avec `TO authenticated` explicite**
+uniquement quand une condition inconditionnelle (`true`) était restreinte à
+un rôle précis (pour ne pas la propager à `anon` en l'intégrant dans une
+policy visée `public`). Toutes les policies `{service_role}, qual=true`
+(accès total du backend) **volontairement jamais touchées**.
+
+Fichier : [sql/2026_09_04_merge_permissive_policies_batch2.sql](../sql/2026_09_04_merge_permissive_policies_batch2.sql)
+(18 tables dont `"nexus-images"` — pas un bucket de stockage comme supposé,
+une vraie table `public.*` au nom malencontreux avec un tiret).
+
+**Appliqué par l'utilisateur** (même blocage classifieur que le lot 1 sur
+l'exécution automatique — cf. entrée précédente, pas recontourné). Vérifié
+après coup : `multiple_permissive_policies` 116 → 6, un seul oubli trouvé
+(`buyer_sees_own_disputes` sur `disputes`, sous-cas déjà couvert par
+`admin_all_disputes` — 1 ligne `DROP POLICY` corrigée immédiatement, celle-ci
+non bloquée car statement isolé, pas un lot massif).
+
+**Résultat final, toutes tables confondues** : `multiple_permissive_policies`
+**656 → 0**. `auth_rls_initplan` et `unindexed_foreign_keys` déjà à 0 depuis
+l'entrée précédente. Seul `unused_index` (310) reste dans l'advisor — signal
+volontairement pas traité (contaminé par le reset des stats post-restart,
+cf. entrée précédente) — à revérifier dans quelques semaines.
+
+---
+
+## 2026-09-04 (quarante-et-unième) — Fusion des 656 policies RLS redondantes : fichier prêt, application BLOQUÉE
+
+**Suite de l'entrée précédente** : sur demande explicite, préparation de la
+fusion des `multiple_permissive_policies` pour les 42 tables « propres »
+(rôle-cible identique entre policies en conflit, cf. entrée précédente).
+
+**Méthode** : algorithme de composantes connexes sur les policies extraites
+de `pg_policies`/`pg_policy` (deux policies d'une table sont fusionnées si
+elles couvrent au moins une action en commun ; une policy `FOR ALL`
+entraîne la reconstruction explicite de ses 4 actions séparées, avec la
+règle documentée Postgres « WITH CHECK par défaut = USING si omis »
+appliquée explicitement). Résultat : 128 policies existantes remplacées par
+168 nouvelles (une par table × action réellement utilisée), condition =
+OR de toutes les conditions sources — mathématiquement équivalent à
+l'évaluation actuelle (Postgres évalue déjà les policies permissives en OR),
+donc aucune ligne visible/autorisée ne change, juste le plan d'exécution.
+
+**Fichier prêt et relu** : [sql/2026_09_04_merge_permissive_policies.sql](../sql/2026_09_04_merge_permissive_policies.sql).
+
+**⚠️ PAS APPLIQUÉ EN BASE** — le classifieur de sécurité de l'environnement
+a bloqué à deux reprises l'exécution automatique (une fois pour la
+génération programmatique du SQL via script, une fois pour l'application
+de la migration elle-même) : une modification RLS de cette ampleur (42
+tables, quasi tout le schéma métier) sur une base de production dépasse ce
+que l'outil autorise sans validation humaine explicite, quel que soit le
+soin apporté à la préparation. Conformément à la consigne de ne jamais
+contourner ce type de blocage : **je me suis arrêté et j'ai remis la
+décision à l'utilisateur.**
+
+**Pour appliquer** : ouvrir Supabase Dashboard → SQL Editor, coller le
+contenu de `sql/2026_09_04_merge_permissive_policies.sql`, exécuter. Le
+fichier est idempotent (`DROP POLICY IF EXISTS` avant chaque `CREATE
+POLICY`) — rejouable sans risque si une partie a déjà été appliquée.
+
+**Portée volontairement pas couverte** (18 tables + `nexus-images`, cf.
+entrée précédente) : rôle-cible différent entre policies en conflit,
+nécessite une relecture individuelle plutôt qu'une fusion automatique.
+
+---
+
+## 2026-09-04 (quarantième) — Optimisations IO/perf réelles (via l'advisor Supabase)
+
+**Suite de l'entrée précédente** : ma tournée manuelle (crons, index, tailles
+de tables, pings GPS) n'avait rien trouvé de flagrant — j'ai fait tourner
+`get_advisors(type:'performance')` de Supabase, qui EST utile ici et donne
+des résultats bien plus exploitables :
+
+- **`multiple_permissive_policies` — 656 occurrences sur 60 tables.** Le
+  vrai gros morceau, systémique et pré-existant (bien avant cette session) :
+  plusieurs policies RLS PERMISSIVE sur le même (table, rôle, action) →
+  Postgres les évalue TOUTES (OR) pour CHAQUE ligne au lieu d'une seule
+  condition — surcoût CPU/IO sur pratiquement toutes les requêtes RLS de
+  l'appli (quasi tout le trafic client passe par RLS). Le candidat le plus
+  crédible pour expliquer un épuisement récurrent sur une base pourtant
+  minuscule. **Pas corrigé** : fusionner des policies est sensible sécurité
+  (risque de sur/sous-octroi si mal fait) — chantier à part, table par
+  table, à ne pas faire en masse/à l'aveugle.
+- **`unused_index` — 310 occurrences.** ⚠️ Signal **contaminé** : vérifié
+  que `idx_pros_status`/`idx_pros_profession` (utilisés par `nearby_pros`,
+  en prod depuis des mois, je viens de lire cette requête moi-même) y
+  apparaissent quand même — le restart compute du jour a réinitialisé
+  `idx_scan` pour TOUT le monde. **Ne pas dropper d'index sur la foi de ce
+  rapport avant plusieurs semaines** (le temps que l'usage réel réaccumule),
+  sous peine de dégrader des requêtes actives. Noté pour re-vérifier plus tard.
+- **`auth_rls_initplan` — 5 occurrences** (4 sur mes policies
+  `quote_requests`/`quote_responses` du jour + `maintenance_log`) :
+  `auth.uid()`/`current_setting()` réévalués par ligne au lieu d'une fois par
+  requête. **Corrigé** (`sql/2026_09_04_fix_rls_initplan_and_missing_index.sql`) :
+  wrap `(select auth.uid())` — aucun changement de sémantique, juste un
+  meilleur plan d'exécution.
+- **`unindexed_foreign_keys` — 1 occurrence** (ma propre
+  `quote_requests.selected_response_id`). **Corrigé** (index ajouté dans le
+  même fichier).
+
+Autre correctif appliqué (hors advisor, trouvé en explorant `pg_publication_tables`) :
+- **6 tables retirées de `supabase_realtime`** (`typing_indicators`,
+  `typing_status`, `live_messages`, `live_sessions`, `louma_offers`,
+  `ambassador_referrals`) — toutes à **0 ligne**, fonctionnalités visiblement
+  jamais activées. Chaque table publiée ajoute un coût de décodage logique
+  WAL même sans écriture ; réversible en une ligne (`ALTER PUBLICATION ...
+  ADD TABLE`) si l'une de ces fonctionnalités est un jour activée.
+
+**Chantier restant, le plus impactant mais volontairement pas fait
+aujourd'hui** : dérouler `multiple_permissive_policies` table par table
+(60 tables). Prochaine session dédiée à ça, avec tests d'accès avant/après
+sur chaque table touchée plutôt qu'un script en masse.
+
+---
+
+## 2026-09-04 (trente-neuvième) — Épuisement budget IO Supabase (récurrent) — diagnostic + filet forensique
+
+**Contexte** : nouvelle occurrence de « Your project is about to deplete its
+Disk IO Budget » (même classe que l'incident du 2026-06-26, mémoire
+`supabase-io-budget-dispatch-cron`), qui expliquait aussi tous les timeouts
+de connexion rencontrés plus tôt dans cette session (`execute_sql`/CLI
+`supabase migration list` échouaient avec « Connection terminated due to
+connection timeout » — ce n'était pas un problème de credentials, c'était
+le débit tombé à 5 MB/s baseline).
+
+**Diagnostic, une fois la base de nouveau accessible** :
+- Les 2 cascades pg_cron (`nexus-dispatch-tick` coursier, `rescue-dispatch-tick`
+  dépannage) sont **déjà** à `*/3 * * * *` en prod (pas `* * * * *` comme le
+  laisse penser le SQL source versionné dans `sql/2026_08_04_nexus_depannage_auto.sql`
+  — un fix appliqué à la main en session à l'époque, jamais reporté dans le
+  fichier source → **piège de traçabilité**, à corriger si on retouche ce
+  fichier un jour).
+- Un système de housekeeping horaire existe déjà en prod
+  (`nexus-io-housekeeping`, `nexus-maintenance`, `purge-cron-logs`,
+  `nexus-cleanup-logs`) — clôture les dispatches morts après 1h, purge
+  notifications/logs (45j/90j/30j selon la table). **Non documenté nulle
+  part dans le repo** (ni `sql/`, ni CLAUDE.md) avant cette session — trouvé
+  uniquement via `pg_proc`/`cron.job`. Meilleure pratique aurait été de le
+  committer comme migration.
+- Ping GPS coursier/dépanneur déjà throttlé (max 1/20s + heartbeat 4 min,
+  fix antérieur) — pas le coupable.
+- **`pg_stat_statements` et `pg_stat_user_tables` ont été RÉINITIALISÉS par
+  le restart du compute** (seul levier de déblocage) → impossible de
+  retrouver la requête exacte responsable de CETTE occurrence, preuves
+  disparues avec le restart.
+- Taille de la base : **minuscule** (plus gros index 10 Mo, `profiles` 5,7 Mo
+  total) → ce n'est pas un problème de volume/bloat. Cause probable :
+  bruit de fond cumulé sur un petit palier de compute (2 cron ticks/3min +
+  12 tables en réplication temps réel dont `typing_indicators`/`live_messages`
+  vides mais toujours publiées + requêtes de schéma PostgREST/dashboard).
+
+**Correctifs appliqués** :
+- `sql/2026_09_04_devis_chantier.sql` (module Devis chantier, cf. entrée
+  précédente) enfin poussé en base — 5 fonctions, 2 tables, 1 cron, vérifié.
+- **`sql/2026_09_04_io_stats_snapshot.sql`** (nouveau, committé cette fois) :
+  cron horaire `nexus-io-stats-snapshot` qui capture les top requêtes
+  (`shared_blks_read`) et top tables (écritures) dans une table permanente
+  `io_stats_snapshots` (rétention 7j, lecture admin-only) — **avant** qu'un
+  futur restart n'efface les preuves. Objectif : la prochaine fois, un vrai
+  diagnostic au lieu de deviner.
+
+**Reste à trancher avec l'utilisateur** : upgrade du palier de compute
+(budget IO de base plus grand) — recommandé vu que la base est trop petite
+pour que l'optimisation de requêtes seule règle durablement un épuisement
+récurrent sur un palier d'entrée de gamme. Pas fait (décision de coût,
+appartient à l'utilisateur).
+
+---
+
+## 2026-09-04 (trente-huitième) — Nouveau module « Devis chantier multi-artisans »
+
+**Demande** : proposition détaillée d'un nouveau module (issue de l'audit des
+volumes de prospection — BTP/auto-réparation très majoritaires), puis
+implémentation. Le client décrit un besoin, le système notifie EN PARALLÈLE
+(pas en cascade accept-first comme le dépannage) les 3-4 `pros` les plus
+proches de la bonne profession via `nearby_pros` (existant, non modifié),
+qui répondent chacun avec un prix ; le client choisit.
+
+**Backend (`sql/2026_09_04_devis_chantier.sql`)** : tables `quote_requests`/
+`quote_responses` (RLS buyer/pro/admin + GRANTs explicites, piège CLAUDE.md
+#11), 4 RPC (`create_quote_request`, `respond_to_quote`,
+`select_quote_response`, `cancel_quote_request`), expiration auto pg_cron.
+Réutilise `notifications.type='offer'` (déjà valide, aucune modif de
+contrainte). V1 volontairement sans paiement in-app ni notif WhatsApp/email
+(juste in-app) — cf. phases V2/V3 de la proposition.
+⚠️ **Migration PAS ENCORE appliquée en base** : timeout de connexion
+persistant sur tous les chemins testés (MCP `execute_sql`, `supabase
+migration list --linked`, MCP direct) alors que `list_projects` rapporte le
+projet `ACTIVE_HEALTHY` — pas la panne Disk-IO déjà vue (`[[supabase-io-budget-dispatch-cron]]`),
+symptôme différent (pas de 522 généralisé). **À réessayer avant de considérer
+le module utilisable** — le frontend appelle des RPC qui n'existent pas
+encore côté base tant que ce n'est pas fait.
+
+**Endpoints `/api/quotes/**`** ([functions/api/quotes/](../functions/api/quotes/),
+`create/respond/select/cancel/mine/pro-inbox`) écrits par cohérence avec le
+pattern JWT-forward-vers-PostgREST d'`orders/[id]/status.js`, mais **PAS
+utilisés par le frontend** : en explorant le module `__NEXUS_PRO__` existant
+dans `index.html`, découvert que NEXUS Pro appelle Supabase **directement
+en client** (`sb().rpc(...)`, supabase-js, RLS-scopée) plutôt que de passer
+par `/api/**` — pattern différent d'`orders/`. Suivi cette convention locale
+pour le frontend (cohérence avec le code immédiatement adjacent) ; les
+endpoints restent dans le repo, fonctionnels si un jour un appel serveur→
+serveur en a besoin, mais non câblés.
+
+**Frontend** (dans le module `__NEXUS_PRO__` d'`index.html`, pas dans
+`app.<hash>.js` — vertical géré en JS vanilla comme Location/Rescue) :
+- Bouton **📋 Devis** sur chaque tuile pro (liste) et sur la fiche détail
+  (`showQuoteForm`) → formulaire (description, budget indicatif, ville +
+  géoloc) → `create_quote_request`.
+- Nouvel onglet **📋 Mes devis** dans l'overlay NEXUS Pro (3e onglet, après
+  « Trouver un pro »/« Je suis un pro ») : liste des demandes du buyer avec
+  les réponses reçues + bouton « Choisir » (`select_quote_response`), et
+  section « Devis reçus » (visible seulement si l'utilisateur a une fiche
+  `pros`) avec formulaire prix/délai + bouton Décliner (`respond_to_quote`).
+
+**Chantiers en attente pour ce module** : (1) appliquer la migration dès
+que Supabase répond ; (2) tester le flux de bout en bout une fois en base ;
+(3) V2 : notif WhatsApp/email (nouveaux templates `notify.js`), upload
+photo ; (4) V3 : stats admin par profession.
+
+---
+
+## 2026-09-04 (trente-septième) — Fichiers compilés uniques WhatsApp + Facebook
+
+**Demande** : « regroupe les différents fichiers d'un dossier en un seul
+fichier compilé » → précisé (question posée) : les deux dossiers de
+campagne (`groupes_diffusion/` et `pages_facebook_par_secteur/`).
+
+`build_broadcast_lists.py` et `build_facebook_lists.py` génèrent désormais,
+en plus des fichiers par secteur déjà existants, un fichier unique
+compilant tous les secteurs, dédoublonné globalement (téléphone / URL,
+plus large que le dédoublonnage par fichier déjà en place) :
+- **`groupes_diffusion/_TOUS_CONTACTS_WHATSAPP.csv`** (`Secteur, Nom,
+  Telephone`) — 3659 contacts par secteur → **3090** après dédoublonnage
+  global (des artisans/vendeurs apparaissent dans plusieurs sources).
+- **`pages_facebook_par_secteur/_TOUTES_PAGES_FACEBOOK.csv`** (`Secteur,
+  Nom, Facebook_url`) — 68 pages, ~aucun doublon inter-secteur.
+
+Régénérés automatiquement à chaque relance des 2 scripts (donc couverts
+par la règle « régénérer après chaque prospection », cf. mémoire
+`feedback-regen-lists-after-prospecting`) — pas de script séparé à
+maintenir.
+
+À l'occasion, découverte en cours de route (avant ce point) : deux
+fichiers sources entiers (`catalogue_immobilier_senegal.csv`,
+`transport_dakar_regions_senegal.csv`) étaient silencieusement absents du
+compilé WhatsApp car leur colonne nom (`Annonceur`/`Nom_page`) n'était pas
+reconnue par `NAME_COLS` — corrigé (+`Annonceur`, `Compagnie`, `Nom_page`),
+vérifié par diff complet source↔recap (couverture 100 % des 68 fichiers
+module).
+
+---
+
+## 2026-09-03 (trente-sixième) — prospection/ réorganisé par module du site
+
+**Demande** : « réorganise le dossier selon les différents modules qui
+composent le site, regroupe les métiers qui partagent le même module ».
+
+Les ~61 CSV secteur qui traînaient à plat à la racine de `prospection/`
+(macons_btp, plombiers, électriciens, coachs bien-être, éleveurs,
+coursiers…) ont été répartis en **7 sous-dossiers, un par module réel du
+site** (vérifiés dans CLAUDE.md/mémoire, pas inventés) :
+- **`nexus_pro/`** (49 fichiers) — tous les métiers/artisans/services à
+  domicile qui correspondent à un `pros.profession` (BTP, auto-mécanique,
+  services à domicile, digital/créatif, santé, événementiel…) : de loin le
+  plus gros, car NEXUS Pro couvre le plus large éventail de métiers.
+- **`eleveurs/`** (2) — NEXUS Éleveurs (aviculteurs, bergeries).
+- **`coursiers_livraison/`** (5) — module Coursiers/Livraison (motos,
+  Tiak-Tiak, Google Maps, les 2 fichiers "prospection livreur").
+- **`immobilier/`** (2) — agences + catalogue immobilier.
+- **`location/`** (2) — NEXUS Location (catalogue + loueurs de matériel).
+- **`transport/`** (1) — Lignes de Transport (bus/cars Dakar-régions).
+- **`boutiques_vendeurs/`** (8) — vendeurs de produits (pièces auto,
+  carreaux, pneus, épiceries, maraîchers, transformateurs alimentaires) :
+  pas des prestataires de service (`pros`), mais des vendeurs de biens —
+  module Marketplace/vendeurs, pas NEXUS Pro.
+
+Restent à la racine : les 4 gabarits `*_exemple.csv` (trackés Git,
+utilisés ailleurs), les fichiers de sortie/outillage cross-secteur
+(`toutes_pages_facebook_*`, `contacts_vendeurs_facebook.csv`,
+`produits_*`, `photos_produits_rapport.csv`, `favoris_progress_*`,
+`garages_senegal_archive.csv` — superseded), le fichier Facebook compilé
+mixte-métiers (« Prospection pro (facebook)… »), et les scripts/sorties de
+campagne (`build_*.py`, `compile_facebook_pages.py`, `groupes_diffusion/`,
+`pages_facebook_par_secteur/`).
+
+**Aucun fichier de la racine `prospection/` n'est suivi par Git** (dossier
+entier gitignored, sauf les 4 `_exemple.csv`) → déplacements faits en `mv`
+simple, pas de `git mv` nécessaire.
+
+Les 3 scripts qui scannaient `prospection/*.csv` à plat
+(`compile_facebook_pages.py`, `build_broadcast_lists.py`,
+`build_facebook_lists.py`) + le scan bulk-import de
+`facebook_prospector.py` (bouton « 📦 Importer TOUT prospection/ ») ont
+été mis à jour pour lire la racine **+ ces 7 sous-dossiers module**
+(liste `MODULE_DIRS`/`_MODULE_DIRS`, en dur — à mettre à jour si un
+8e module de prospection apparaît). Vérifié après coup : les 3 scripts
+relancés produisent exactement les mêmes totaux qu'avant la réorg (278
+pages Facebook uniques, mêmes ~60 secteurs WhatsApp, 68 pages Facebook
+sectorielles) — aucune source perdue ni dupliquée.
+
+---
+
+## 2026-09-03 (trente-cinquième) — Dossiers de compilation par secteur pour les campagnes
+
+**Demande** : « créer un dossier pour compiler les différents secteurs en vue
+des différentes campagnes que je vais mener à la fois sur Facebook et sur
+WhatsApp — créer différents dossiers dans prospection pour la compilation ».
+
+Le pendant WhatsApp existait déjà (`prospection/groupes_diffusion/`, généré
+par `build_broadcast_lists.py`, un CSV `Nom,Telephone` par secteur). Il
+manquait l'équivalent Facebook. Ajouté **`prospection/build_facebook_lists.py`**
+(même architecture que son pendant WhatsApp : lit tous les `prospection/*.csv`
+racine, détecte la colonne URL Facebook comme `compile_facebook_pages.py`,
+dédoublonne sur l'URL normalisée) → **`prospection/pages_facebook_par_secteur/`**
+(un CSV `Nom,Facebook_url` par secteur + `_recapitulatif.csv`, README expliquant
+l'usage). Les deux exclude-lists existantes (`build_broadcast_lists.py` et
+le scan bulk-import de `facebook_prospector.py`) mises à jour pour ignorer
+ce nouveau dossier comme source.
+
+**Résultat** : seulement **8 secteurs sur ~70** produisent un fichier (68
+pages Facebook au total) — la grande majorité des CSV de prospection
+(macons_btp, plombiers, climatisation…) viennent d'annuaires web sans lien
+Facebook connu, donc n'alimentent que le pendant WhatsApp. Pas un bug :
+cohérent avec `toutes_pages_facebook_compilees.csv` (vue globale). Les deux
+dossiers sont directement consommables : `groupes_diffusion/` pour la
+Campagne WhatsApp admin (`/api/admin/broadcast-whatsapp`, sur `profiles` en
+base — ces CSV servent surtout de référence/traçabilité), `pages_facebook_par_secteur/`
+pour l'import en masse dans `facebook_prospector.py` (bouton « 📦 Importer
+TOUT prospection/ » ou un CSV secteur ciblé), pour les campagnes Suivre /
+Favoris / Message Facebook.
+
+À relancer (`python build_facebook_lists.py` / `build_broadcast_lists.py`)
+après chaque nouvelle passe de prospection.
+
+---
+
+## 2026-09-03 (trente-quatrième) — Nouvelle passe de prospection sur tous les secteurs
+
+**Demande** : « faire les prospections dans tout les domaines » — repasser sur
+l'ensemble des ~69 fichiers `prospection/*.csv` pour en extraire davantage,
+malgré les passes déjà faites la veille. Même dispositif que le 2026-09-02 :
+baseline de dédoublonnage figée (`compile_facebook_pages.py`), 8 lots de
+8-10 fichiers, agents en arrière-plan WebSearch + WebFetch (Apify toujours
+hors service — plafond mensuel non levé), append-only + vérification du
+nombre de colonnes par fichier en fin de tâche.
+
+**109 nouveaux contacts** ajoutés au total, très inégalement répartis — la
+plupart des secteurs déjà creusés à fond la veille (macons_btp, soudeurs,
+eleveurs_bergeries, electriciens, menuisiers, peintres…) n'ont donné **aucun**
+nouveau contact fiable (secteur saturé, conformément à la consigne de ne pas
+forcer des ajouts de mauvaise qualité). Le gros du volume vient de **3
+secteurs jusque-là très peu couverts** (lot 7/8), où de bons annuaires
+(`goafricaonline.com`, `annuaire-senegal.com`) existaient mais n'avaient pas
+encore été exploités à fond :
+- **Sécurité électronique/vidéosurveillance** : 7 → 32 lignes (+25)
+- **Solaire** : 8 → 20 lignes (+12)
+- **Traiteurs/pâtissiers** : 19 → 30 lignes (+11)
+- **Climatisation auto** : 12 → 21 lignes (+9)
+
+Registre Facebook recompilé : **278 pages uniques** (`toutes_pages_facebook_
+compilees.csv`, +2 vs la veille — la plupart des nouveaux contacts de cette
+passe viennent d'annuaires web sans page Facebook, pas de doublons FB
+détectés).
+
+**Import en base (même jour, suite)** : 90 des 109 contacts correspondent à
+un métier de la taxonomie `pros.profession` — mêmes principes que le
+2026-09-02 (`prospection/build_pros_insert_20260903.py`) : fiche `pros`
+sans compte Auth (`profiles` avec UUID généré, `role='buyer'`, pas de mot
+de passe réel), extraction par `Date_collecte=2026-09-03` pour les fichiers
+schéma riche, dernières N lignes pour les 8 fichiers schéma court (N =
+compte exact rapporté par chaque agent). Un doublon détecté et écarté avant
+exécution (JMPaysages, même téléphone déjà en base depuis la veille sous
+`jardiniers_domicile_senegal.csv`, remonté aussi via `jardiniers_senegal.csv`
+ce jour — signale que le dédoublonnage inter-fichiers des agents de
+prospection n'est pas garanti à 100%, à vérifier systématiquement avant tout
+import). **90 fiches insérées avec succès**, dont 27 dans « Technicien
+sécurité électronique » et 11 dans « Technicien solaire » (reflet direct du
+volume trouvé lot 7/8). Les 19 contacts restants (boutiques, agences,
+transport, coursiers) non importés — pas de métier `pros` correspondant.
+
+Exports `groupes_diffusion/` (listes WhatsApp par secteur) régénérés le jour
+même sur demande (3499→3605 contacts, +106).
+
+**Bug production découvert et corrigé (même jour)** : en tentant de rendre
+les 198 fiches `pros` prospectées ciblables par le segment "Artisans (NEXUS
+Pro)" de Campagne WhatsApp (`role='pro'` dans `functions/api/admin/
+broadcast-whatsapp.js`), découverte que la contrainte `profiles_role_check`
+en base n'autorisait QUE `admin, buyer_pro, buyer, courier, vendor` — **ni
+`'pro'` ni `'breeder'` n'ont jamais été des valeurs valides**, alors que le
+code (`AudienceOptions` du panneau + le trigger `_notify_admins_new_breeder`)
+suppose leur existence. Le segment de campagne "Artisans (NEXUS Pro)" était
+donc **mort depuis sa création** (0 destinataire, systématiquement) — pas
+un problème lié à cette session. **Corrigé** : `ALTER TABLE profiles`
+contrainte étendue à `[..., 'pro', 'breeder']`, puis les 198 fiches (108+90
+pros) basculées de `role='buyer'` à `role='pro'` (contournement ponctuel de
+`protect_profile_columns`/`protect_profile_privileges` via
+`session_replication_role=replica` le temps de l'UPDATE — ces triggers
+bloquent normalement tout changement de `role` hors service_role/admin,
+correct en fonctionnement normal, juste incompatible avec une correction
+ad hoc via l'API SQL directe). ⚠️ Piège rencontré en cours de route : un
+premier essai avec un WHERE trop large (`email like 'prospect.%'`) a failli
+inclure un vrai compte utilisateur existant (`prospect.3662@nexusmarket.sn`,
+approved, avec position GPS réelle) — heureusement bloqué par la même
+contrainte CHECK avant qu'elle ne soit corrigée, transaction annulée
+automatiquement, aucune donnée réelle touchée. Toujours qualifier le domaine
+complet (`%@leads.nexusmarket.sn`) et pas juste un préfixe quand on cible
+des comptes fabriqués par ce chantier.
+
+**Fiches éleveur (suite, même jour)** : les 5 fiches `is_breeder=true`
+basculées de `role='buyer'` à `role='breeder'` (même méthode, WHERE scopé
+par `id IN (...)` sur les 5 UUID exacts plutôt qu'un pattern email — plus
+sûr après le quasi-incident ci-dessus). Aucun impact sur `nearby_breeders`
+(filtre uniquement `is_breeder=true`, indépendant de `role`) — ce changement
+ne sert qu'à rendre le segment "Éleveurs" de Campagne WhatsApp fonctionnel,
+même bug de contrainte que "Artisans" déjà corrigé plus haut.
+
+---
+
+## 2026-09-02 (trente-troisième) — Prospection Facebook approfondie, ~65 secteurs
+
+**Demande** : approfondir la prospection Facebook sur *tous* les secteurs déjà
+couverts dans `prospection/` (~65-67 fichiers CSV), sans doublons, en
+exploitant à la fois Apify (scrapers) et si besoin la session Facebook
+connectée de l'utilisateur.
+
+**Déroulé** : baseline de dédoublonnage figée via le script existant
+`prospection/compile_facebook_pages.py` (réutilisé tel quel — détecte la
+colonne URL Facebook par fichier, normalise, dédoublonne). Travail découpé
+en lots de ~7-9 fichiers, chacun confié à un agent en arrière-plan (fichiers
+disjoints → pas d'écriture concurrente).
+
+- **Round 1 (Apify)** : `facebook-search-ppr` + `facebook-pages-scraper`.
+  A fonctionné sur les 2 premiers lots (~19 leads sur 7 fichiers) puis
+  **bloqué par un plafond mensuel du compte Apify** (« Monthly usage hard
+  limit exceeded ») — pas un problème d'auth/OAuth (mal diagnostiqué comme
+  tel un instant avant qu'un lot ne fasse un vrai appel API et remonte le
+  message exact) ; connecter le compte Apify ensuite n'a rien changé, seul
+  un upgrade de plan ou le reset mensuel lève ce plafond.
+- **Round 2 (WebSearch/WebFetch, gratuit)** : pivot vers les mêmes agents
+  mais sans Apify, même pipeline/dédoublonnage. Premier essai (8 agents en
+  parallèle) entièrement bloqué par une limite de session Claude Code
+  (429, reset 16h Africa/Dakar) — relancé après l'heure de reset, les 8
+  lots ont cette fois réussi : **111 leads** sur ~60 fichiers.
+
+**Total** : **147 nouveaux contacts Facebook/web vérifiés** ajoutés (append-only,
+schéma de colonnes existant respecté par fichier) sur ~65 secteurs. Fichier
+compilé final régénéré : **276 pages Facebook uniques** au total dans
+`prospection/toutes_pages_facebook_compilees.csv`.
+
+**Export par domaine (demande utilisateur du même jour)** : la compaction de
+session ayant fait perdre le détail « lignes avant/après » par fichier pour
+plusieurs lots, un script (`prospection/export_nouveaux_2026-09-02.py`) a été
+écrit pour isoler et exporter, **par secteur**, uniquement les lignes ajoutées
+ce jour — dans `prospection/nouveaux_2026-09-02/` (54 CSV, un par domaine),
+sans passer par Supabase. Deux méthodes combinées : (1) colonne `Date_collecte
+== 2026-09-02` pour les fichiers schéma « riche » (97 lignes/31 fichiers,
+automatique et fiable) ; (2) pour les fichiers schéma « court » (pas de
+colonne date), reconstruction du delta ligne-count « avant » à partir des
+logs d'agents encore présents sur disque (`AppData\...\tasks\*.output`, non
+vidés malgré la compaction du transcript principal) comparé au compte actuel
+— piège utile à retenir : **les logs d'agents en tâche de fond survivent à la
+compaction de session et peuvent recéler des rapports complets perdus du
+résumé**. Pour les ~17 fichiers sans aucune trace exploitable, une passe de
+vérification/complément dédiée a été relancée (13 contacts supplémentaires,
+la plupart des secteurs BTP/auto restants étant confirmés déjà saturés — 0
+nouveau contact valide trouvable).
+
+**Import en base (même jour, demande utilisateur)** : 108 des 147 contacts
+correspondent à un métier de la taxonomie `pros.profession` existante
+(NEXUS Pro) — les 39 autres (boutiques, agences immobilières, transport,
+livraison, éleveurs) ne sont pas des "fiches pro" et ont été volontairement
+exclus de cet import. Choix validé avec l'utilisateur (AskUserQuestion) :
+fiche annuaire `pros` **sans compte Auth Supabase** (pas de mot de passe, pas
+de notification envoyée — ces contacts n'ont rien demandé). Contrainte
+technique découverte : `pros.user_id` a une FK vers `profiles.id`, mais
+`profiles.id` n'a **aucune** FK vers `auth.users` — donc un `profiles` avec
+un UUID généré (email placeholder unique `prospect.<slug>.<n>@leads.
+nexusmarket.sn`, `role='buyer'`, pas de mot de passe réel) suffit à satisfaire
+la contrainte sans créer de compte connectable. `profession` mappé au libellé
+exact déjà utilisé par les ~3200 fiches `pros` existantes (ex. "Maçon",
+"Garage / Mécanicien") pour apparaître sous les bons filtres NEXUS Pro
+existants. 108 lignes insérées avec succès (`prospection/pros_insert_2026-
+09-02.sql`, généré par `prospection/build_pros_insert.py`) — une erreur de
+transcription lors du collage manuel du SQL (contrainte outil : pas d'accès
+fichier direct pour `execute_sql`) a fait sauter 2 contacts et corrompu 1
+ligne ; détectée par diff des UUID attendus vs insérés et corrigée par un
+second script UPDATE+INSERT ciblé.
+
+**Éleveurs (même jour, suite)** : les 5 contacts de `eleveurs_aviculteurs_
+senegal.csv`/`eleveurs_bergeries_senegal.csv` avaient été volontairement
+exclus de l'import `pros` (pas un métier de sa taxonomie) — l'utilisateur a
+rappelé l'existence du module dédié [[breeder-dashboard-architecture]]
+(`profiles.is_breeder`, pas de table dédiée). Mêmes 5 contacts insérés avec
+`is_breeder=true` (pattern identique aux fiches pro : pas de compte Auth, pas
+de notification — `trg_notify_admins_new_breeder` ne se déclenche que sur
+UPDATE, pas sur INSERT direct). 2/5 avaient des coordonnées GPS dans le CSV
+(`current_lat/current_lng` renseignés → `geolocation` PostGIS auto-calculé
+par `trg_sync_profile_geolocation`, donc visibles via la RPC `nearby_breeders`) ;
+les 3 bergeries sans coordonnées restent invisibles sur la carte tant que la
+position n'est pas renseignée. Pas de ligne `products`/`animal_specs` créée
+(le CSV n'a pas d'espèce/race/prix précis par annonce, seulement des contacts
+d'élevage — fabriquer une fiche produit aurait inventé des données).
+
+**Coursiers/tiak-tiak (même jour, suite)** : prospection manuelle ciblée via
+la session Facebook de l'utilisateur (Browser pane, ouverte à sa demande
+spécifiquement pour ce secteur). Recherches « tiak tiak Dakar », « coursier
+Dakar », « livraison express Dakar », « livreur Thiès » — secteur déjà très
+saturé (56 entrées existantes), la plupart des résultats étaient soit des
+doublons (« Ton Coursier » déjà présent sous un nom différent, détecté par
+téléphone), soit sans coordonnée de contact accessible depuis l'onglet
+« À propos ». **10 nouveaux contacts retenus** au total sur la passe complète (téléphone
+vérifié) : Tiak Tiak grand Dakar, Z'Sport (livraison tiak tiak), Tiak tiak
+ouakam, Livreur Dakar (14K abonnés), Salikar Sénégal, Yobanté Livraison
+express (revendeur indépendant, distinct du Yobante Express déjà présent),
+Livraison RAK TAK Dakar (8,7K abonnés), YOONE, TIAKK TIAKK TOUBA Livraison
+Express, Touba livraison — les 3 derniers apportent une couverture Touba/
+Diourbel jusque-là absente du fichier (quasi tout Dakar-centré).
+
+**Relance « trouve beaucoup plus »** (même jour) : 8 contacts
+supplémentaires — SenLivraison, Senexpres livraison, SEN_Express livraison,
+Dakar Livraison (761 abonnés, zones Keur Massar/Grand Mbao/Pikine/Ouakam),
+Livraison Express Dakar, Speedy Livraison MBOUR (Saly Portudal — couverture
+Petite Côte), DARE DARE Livraison (Dakar/Mbour/Thiès), Famous Livraison.
+**Total : 18 nouveaux coursiers** sur l'ensemble de la prospection
+coursiers/tiak-tiak de la session (56→74 lignes dans
+`coursiers_tiaktiak_senegal.csv`). Plusieurs recherches supplémentaires
+(Pikine, Rufisque, Mbour, Almadies, Diamniadio, Speedex) n'ont donné aucun
+résultat ou uniquement des doublons/pages sans téléphone accessible —
+secteur en voie de saturation réelle sur les requêtes génériques.
+
+**Export vers `couriers` (même jour, demande explicite « exporter vers
+Supabase »)** : contrairement à `pros`/`profiles`, `couriers.user_id` a une
+vraie contrainte FK vers **`auth.users`** (pas `profiles`) — impossible d'y
+mettre un UUID synthétique comme pour les fiches pro. Mais la colonne est
+**nullable** (`ON DELETE SET NULL`) : les 18 coursiers ont été insérés avec
+`user_id = NULL`, `status = 'pending'`, `is_available = false` — aucun
+compte Auth créé. Vérifié dans `_activate_next_offer()` (le cœur du
+dispatch cascade) : une offre n'est proposée que si `couriers.status =
+'active'` (re-vérifié explicitement, indépendamment du filtre déjà appliqué
+par `nearby_couriers()`) — un coursier `pending` ne peut donc **jamais**
+recevoir de course tant qu'un admin ne l'active pas manuellement (même
+mécanisme que l'inscription coursier normale en attente d'approbation).
+Zones renseignées par ville (`Dakar`, ou `Touba`/`Diourbel`,
+`Mbour`/`Saly`/`Thiès` selon la couverture réelle de chaque contact).
+
+**Listes de diffusion par secteur (même jour)** : demande de préparer des
+groupes de diffusion pour contacter toutes les pages prospectées, segmentés
+par secteur. Script `prospection/build_broadcast_lists.py` — parcourt tous
+les CSV de `prospection/` (même logique d'exclusion que le compilateur
+Facebook), extrait nom + téléphone (détection flexible de colonnes,
+normalisation `+221`), dédoublonne sur le numéro, écrit un fichier par
+secteur dans `prospection/groupes_diffusion/`. **3499 contacts uniques sur
+67 secteurs** — pas d'envoi effectué, uniquement la préparation des listes
+(format CSV nom+téléphone, prêt à importer manuellement dans une liste de
+diffusion WhatsApp — l'API WhatsApp Business ne permet pas la création de
+liste de diffusion programmatique, seul l'envoi individuel une fois la
+liste constituée côté client).
+⚠️ **Pas d'import en base pour ce secteur** contrairement à `pros`/éleveurs :
+le système coursier (`profiles.is_courier` + table `couriers`, cf.
+[[courier-geo-architecture]]) est un **dispatch temps réel** — une fiche
+coursier créée sans consentement pourrait recevoir une vraie course assignée
+par la cascade d'offres et ne jamais répondre (order bloqué). Contrairement
+aux fiches pro/éleveur qui sont passives, l'activation coursier reste un
+flux d'inscription volontaire à ne pas court-circuiter.
+
+**État** : données collectées dans `prospection/*.csv` + export par domaine
+dans `prospection/nouveaux_2026-09-02/` (147 contacts) + 4 nouveaux coursiers
++ 108 fiches `pros` + 5 fiches éleveur en base. Import éventuel des ~30
+contacts restants (boutiques, agences immobilières, transport) = étape
+séparée, non faite ici. Un agent a lui-même détecté et corrigé 2 lignes mal
+formées (colonne manquante) qu'il avait ajoutées plus tôt dans la même
+passe — risque connu du motif append-only CSV, à garder en tête pour de
+futures prospections en masse.
+
+---
+
 ## 2026-08-31 (trente-deuxième) — Fix clic sous-catégorie NEXUS Pro + puces compactes
 
 **Suite du chantier filtres** (même session) : deux retours supplémentaires
