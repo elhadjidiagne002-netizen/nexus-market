@@ -96,6 +96,94 @@ def _captions_from(path: str) -> dict[int, dict]:
     return out
 
 
+def load_carousels() -> list[dict]:
+    """Regroupe `exports/nom-1.png … nom-N.png` en publications multi-images.
+
+    Un carrousel est UNE publication contenant plusieurs visuels — c'est le
+    format qui performe le mieux sur Facebook, et le dossier en contient 64
+    (288 slides) contre 41 affiches simples. Les ignorer reviendrait à laisser
+    de côté l'essentiel du kit.
+
+    La légende vient de `legendes-carrousels.md` (éditable) ; sans entrée, le
+    carrousel est ignoré — on ne publie pas un visuel muet.
+    """
+    dossier = os.path.join(BASE_DIR, "exports")
+    if not os.path.isdir(dossier):
+        return []
+    series: dict[str, list[tuple[int, str]]] = {}
+    for fname in os.listdir(dossier):
+        m = re.match(r"^(.+?)-(\d+)\.(png|jpg|jpeg)$", fname)
+        if m:
+            series.setdefault(m.group(1), []).append((int(m.group(2)), fname))
+
+    legendes = _carousel_captions()
+    out = []
+    for nom, slides in sorted(series.items()):
+        cap = legendes.get(nom)
+        if not cap:
+            continue
+        images = [os.path.join(dossier, f) for _, f in sorted(slides)]
+        # Facebook plafonne à 10 images par publication.
+        out.append({"slug": nom, "images": images[:10], "legende": cap,
+                    "titre": nom, "nb_slides": len(images)})
+    return out
+
+
+def _carousel_captions() -> dict[str, str]:
+    """Lit `legendes-carrousels.md` : `## <slug>` puis la légende en citation."""
+    path = os.path.join(BASE_DIR, "legendes-carrousels.md")
+    if not os.path.exists(path):
+        return {}
+    txt = io.open(path, encoding="utf-8").read()
+    out = {}
+    for slug, corps in re.findall(r"^## (\S+)\s*\n(.*?)(?=\n## |\Z)", txt, re.S | re.M):
+        m = re.search(r"((?:^>.*\n?)+)", corps, re.M)
+        if m:
+            leg = re.sub(r"^>\s?", "", m.group(1), flags=re.M).strip()
+            if leg:
+                out[slug] = leg
+    return out
+
+
+def publish_carousel(page_id: str, token: str, images: list[str], message: str,
+                     scheduled_at: dt.datetime | None) -> dict:
+    """Publication multi-images : on téléverse chaque slide SANS la publier,
+    puis on crée un post du fil qui les rattache toutes (`attached_media`).
+    C'est le seul moyen d'obtenir un vrai carrousel via l'API Graph."""
+    fbids = []
+    for img in images:
+        body, ctype = _multipart({"published": "false", "access_token": token}, "source", img)
+        req = urllib.request.Request(f"{GRAPH}/{page_id}/photos", data=body,
+                                     headers={"Content-Type": ctype}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                fbids.append(json.loads(r.read().decode("utf-8"))["id"])
+        except urllib.error.HTTPError as e:
+            return {"ok": False, "error": f"slide {os.path.basename(img)} → HTTP {e.code} "
+                                          f"{e.read().decode('utf-8','replace')[:200]}"}
+        except Exception as e:
+            return {"ok": False, "error": f"slide {os.path.basename(img)} → {type(e).__name__} : {e}"}
+        time.sleep(1)   # ne pas enchaîner les téléversements sans respirer
+
+    fields = {"message": message, "access_token": token}
+    for i, fbid in enumerate(fbids):
+        fields[f"attached_media[{i}]"] = json.dumps({"media_fbid": fbid})
+    if scheduled_at is not None:
+        fields["published"] = "false"
+        fields["scheduled_publish_time"] = str(int(scheduled_at.timestamp()))
+
+    data = urllib.parse.urlencode(fields).encode("utf-8")
+    req = urllib.request.Request(f"{GRAPH}/{page_id}/feed", data=data, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return {"ok": True, "slides": len(fbids), **json.loads(r.read().decode("utf-8"))}
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:400]
+        return {"ok": False, "error": f"HTTP {e.code} — {detail}"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__} : {e}"}
+
+
 def load_posts() -> list[dict]:
     """Associe chaque affiche numérotée à sa légende (README + complément)."""
     captions = _captions_from(os.path.join(BASE_DIR, "README.md"))
@@ -213,12 +301,25 @@ def main() -> int:
     ap.add_argument("--per-day", type=int, default=2, help="publications par jour")
     ap.add_argument("--only", default="", help="numéros d'affiches à traiter, ex. 1,5,12")
     ap.add_argument("--limit", type=int, default=0, help="s'arrêter après N publications")
+    ap.add_argument("--carrousels", action="store_true",
+                    help="publier les carrousels d'exports/ (multi-images) au lieu des affiches")
+    ap.add_argument("--tout", action="store_true",
+                    help="affiches PUIS carrousels dans la même campagne")
     args = ap.parse_args()
 
-    posts = load_posts()
+    if args.carrousels:
+        posts = load_carousels()
+    elif args.tout:
+        posts = load_posts() + load_carousels()
+    else:
+        posts = load_posts()
     if args.only:
-        garder = {int(x) for x in re.split(r"[,\s]+", args.only) if x.strip().isdigit()}
-        posts = [p for p in posts if p["n"] in garder]
+        jetons = [x for x in re.split(r"[,\s]+", args.only) if x.strip()]
+        nums = {int(x) for x in jetons if x.isdigit()}
+        slugs = [x.lower() for x in jetons if not x.isdigit()]
+        posts = [p for p in posts
+                 if p.get("n") in nums
+                 or any(sg in p.get("slug", "").lower() for sg in slugs)]
     if args.limit:
         posts = posts[: args.limit]
 
@@ -244,7 +345,11 @@ def main() -> int:
         print("\n--- SIMULATION (aucun envoi) ---")
         for p, s in zip(posts, slots):
             quand = f"{s:%a %d/%m %H:%M}" if args.schedule else "immédiat"
-            print(f"  [{p['n']:02d}] {quand}  {p['fichier']}")
+            if p.get("images"):
+                etiq = f"[carrousel x{p['nb_slides']}] {p['slug']}"
+            else:
+                etiq = f"[{p['n']:02d}] {p['fichier']}"
+            print(f"  {quand}  {etiq}")
             print(f"       {p['legende'].splitlines()[0][:95]}")
         print("\nRelancer sans --dry-run pour exécuter "
               "(--now = publication immédiate, --schedule = programmation).")
@@ -269,23 +374,27 @@ def main() -> int:
         if args.schedule:
             delta = (s - dt.datetime.now()).total_seconds()
             if delta < MIN_SCHEDULE_S:
-                print(f"  [{p['n']:02d}] IGNORÉ — créneau {s:%d/%m %H:%M} trop proche "
+                print(f"  [{p.get('slug') or p.get('n')}] IGNORÉ — créneau {s:%d/%m %H:%M} trop proche "
                       f"(Facebook exige au moins 10 min d'avance).")
                 continue
             if delta > MAX_SCHEDULE_S:
-                print(f"  [{p['n']:02d}] IGNORÉ — créneau {s:%d/%m %H:%M} au-delà de 6 mois.")
+                print(f"  [{p.get('slug') or p.get('n')}] IGNORÉ — créneau {s:%d/%m %H:%M} au-delà de 6 mois.")
                 continue
             quand = s
 
-        res = publish_photo(page_id, token, p["image"], p["legende"], quand)
+        if p.get("images"):
+            res = publish_carousel(page_id, token, p["images"], p["legende"], quand)
+        else:
+            res = publish_photo(page_id, token, p["image"], p["legende"], quand)
         etat = "programmé " + f"{s:%d/%m %H:%M}" if quand else "publié"
         if res.get("ok"):
             envoyes += 1
-            print(f"  [{p['n']:02d}] OK {etat} — id {res.get('post_id') or res.get('id')}")
+            ref = p.get("slug") or f"{p.get('n'):02d}"
+            print(f"  [{ref}] OK {etat} — id {res.get('post_id') or res.get('id')}")
         else:
-            print(f"  [{p['n']:02d}] ÉCHEC — {res.get('error')}")
+            print(f"  [{p.get('slug') or p.get('n')}] ÉCHEC — {res.get('error')}")
         log_result({
-            "n": p["n"], "fichier": p["fichier"], "quand": quand.isoformat() if quand else "now",
+            "n": p.get("n"), "fichier": p.get("fichier") or p.get("slug"), "quand": quand.isoformat() if quand else "now",
             "ok": bool(res.get("ok")), "id": res.get("post_id") or res.get("id"),
             "erreur": res.get("error"), "horodatage": dt.datetime.now().isoformat(timespec="seconds"),
         })
