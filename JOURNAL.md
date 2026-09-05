@@ -6,6 +6,91 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (quarante-sixième) — Bandeau « EN DIRECT » : le clic ouvre l'annonce + outils admin
+
+**Demande** : « cliquer les annonces ne donne pas vers l'annonce, corrige
+cela et donne plus d'outils de gestion à l'admin de cette fonctionnalité
+en améliorant le tableau de bord de gestion » (capture du ticker fournie).
+
+**Cause** : `/api/live-activity` ne renvoyait **aucun identifiant** — par
+conception, pour ne jamais exposer de ligne brute des tables privées. Le
+clic ne pouvait donc que dispatcher un événement générique
+(`nexus:open-pros`…) ouvrant le **module entier**, sans savoir de quelle
+annonce il s'agissait.
+
+**Fix clic** — l'API porte désormais un `ref {kind, id}` sur les **5
+verticaux publics uniquement** (pro, élevage, location, immobilier, troc :
+lignes déjà librement consultables, avec des URL partageables `?pro=` /
+`?product=` / `?troc=` déjà en place). `courier` et `rescue` restent
+**volontairement sans `ref`** — tables protégées par RLS (adresses,
+téléphones), la garantie « aucune ligne brute » de l'endpoint est
+intacte. Le bandeau réutilise les deep-links **existants** (rien de
+nouveau inventé) : `NexusPro.openPro(id)` / `nexus:open-product`
+(detail = id) / `nexus:open-troc` (detail.id, écouteur étendu dans
+`app.js`), avec repli sur l'ouverture du module quand il n'y a pas de
+`ref`. Garde anti-XSS sur les liens admin (`^https?://` ou `^/` seulement,
+jamais `javascript:`/`data:`), + activation clavier (`role=link`,
+`tabindex`, Entrée/Espace).
+
+**Outils admin** (Gestion Page d'Accueil → Bandeau live) : réordonnancement
+des messages (↑/↓), pause par message sans suppression, lien cliquable par
+message, activation/désactivation de **chaque flux automatique**, vitesse
+de défilement réglable, et un **diagnostic** qui interroge l'API publique
+pour montrer ce qu'un visiteur reçoit réellement (compte par vertical,
+nombre de cliquables, vitesse appliquée). La vitesse transite par un
+en-tête `X-Ticker-Speed` et non dans le corps : la réponse reste un
+tableau, donc un `index.html` encore en cache continue de fonctionner.
+⚠ Le nouvel état React est déclaré **au niveau du composant**, pas dans
+l'IIFE conditionnelle (piège déjà rencontré sur Promos/Sections/Confiance).
+
+**Vérifié en local** (`static-py` + fixture temporaire, supprimée ensuite) :
+les 4 comportements de clic déclenchent la bonne action (espions sur les
+événements + sur `NexusPro.openPro`), la garde XSS rejette
+`javascript:`/`data:`, l'activation clavier marche, un lien admin prime sur
+l'événement de module, **zéro erreur JS**. Bundle renommé
+`app.4460e4787c.js` → `app.8939f172e4.js` (cache immuable) + `sw.js`
+bumpé en `nexus-v29`. Lint et `node --check` OK.
+
+---
+
+## 2026-09-05 (quarante-cinquième) — Noms de pros incomplets : 2e passe (377 fiches)
+
+**Demande** : « y a toujours des noms de pros incomplet » (après la passe
+de 193 fiches de la veille).
+
+**Diagnostic** : la correction précédente ne couvrait qu'**un lot déjà
+identifié**. En repartant de la base (2695 pros) : 75 noms **vides** et
+~200 réduits au seul patronyme, plus une centaine tronqués au premier mot
+(`Pharmacie`, `Hôpital`, `Centre`…). Rapprochement refait sur **tous** les
+CSV de prospection (220 fichiers, 3089 téléphones indexés) contre l'export
+complet, par numéro de téléphone.
+
+**Fix** : `sql/2026_09_05_fix_pro_names_round2.sql` — 377 UPDATE avec garde
+défensive (`name` actuel == fragment attendu, pour ne jamais écraser une
+saisie manuelle). Appliqué en prod, **vérifié : 0 nom vide restant**
+(75 → 0).
+
+⚠ **Heuristique resserrée en cours de route** : la première version
+proposait 389 corrections dont certaines auraient **dégradé** les noms en y
+collant un complément entre parenthèses (`Carreleur Africain` →
+`Carreleur Africain (julesdiallo146@gmail.com)`). Filtre ajouté : on ignore
+tout candidat n'ajoutant qu'un parenthétique ou contenant un `@`, et on
+écrit le nom **sans** son complément descriptif. Faux positif écarté aussi :
+les `é` affichés `?` venaient de la console Windows, pas des données
+(vérifié : codepoint `0xe9`, correct).
+
+**Reste non corrigé, volontairement** : 162 **acronymes** (`EGB`, `ECM`,
+`AVN`, `CCS`…) qui sont les vrais noms commerciaux dans les sources — les
+« compléter » serait inventer ; et 47 patronymes seuls dont aucun CSV ne
+contient le téléphone (prénom irrécupérable automatiquement, nécessite une
+nouvelle passe de prospection).
+
+Outil réutilisable après chaque prospection : `prospection/audit_noms_pros.py`
+(non versionné — `prospection/` est gitignoré, comme les autres scripts du
+dossier).
+
+---
+
 ## 2026-09-04 (quarante-quatrième) — Chips de catégories : défilement horizontal au lieu de l'enroulement
 
 **Demande** : l'écran « Trouver un pro » (~50 chips métiers) prenait trop

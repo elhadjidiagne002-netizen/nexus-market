@@ -3157,7 +3157,7 @@
     })();
     </script>
 
-    <script src="/assets/app.4460e4787c.js"></script>
+    <script src="/assets/app.8939f172e4.js"></script>
 
 <!-- MessagingCenter v4.0.0 — Injection automatique par integrate_messaging.py -->
 <script>
@@ -14153,25 +14153,83 @@ console.info('[NEXUS] Onboarding première visite prêt ✅');
   var content = document.getElementById('nx-lt-content');
   if (!wrap || !content) return;
 
-  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  // Seuls http(s) et les chemins internes sont acceptés (jamais javascript:).
+  function safeLink(u) { return (typeof u === 'string' && /^(https?:\/\/|\/)[^\s]*$/i.test(u)) ? u : ''; }
   function itemHtml(it) {
     var t = TYPES[it.type]; if (!t || !it.text) return '';
-    return '<span class="nx-lt-item" data-evt="' + t.evt + '"><span class="nx-lt-badge" style="background:' + t.color + '">' + t.icon + '</span>' + esc(it.text) + '</span>';
+    // `ref` (annonces publiques) => ouverture de L'ANNONCE cliquée ; sinon on
+    // retombe sur l'ouverture du module (cas courier/rescue, sans id par
+    // conception — données privées, cf. /api/live-activity).
+    var attrs = ' data-evt="' + t.evt + '"';
+    if (it.ref && it.ref.kind && it.ref.id) {
+      attrs += ' data-ref-kind="' + esc(it.ref.kind) + '" data-ref-id="' + esc(it.ref.id) + '"';
+    }
+    var href = safeLink(it.link);
+    if (href) attrs += ' data-href="' + esc(href) + '"';
+    return '<span class="nx-lt-item" role="link" tabindex="0"' + attrs + '><span class="nx-lt-badge" style="background:' + t.color + '">' + t.icon + '</span>' + esc(it.text) + '</span>';
   }
+  var adminSpeed = 0; // durée imposée par l'admin (s), 0 = calcul auto
   function render(items) {
     items = (items || []).filter(function (it) { return it && TYPES[it.type] && it.text; });
     if (!items.length) { wrap.style.display = 'none'; return; }
     // Dupliqué pour un défilement en boucle sans à-coup (translateX -50%).
     content.innerHTML = items.map(itemHtml).join('') + items.map(itemHtml).join('');
     wrap.style.display = 'flex';
-    content.style.animationDuration = Math.max(25, items.length * 5) + 's';
+    content.style.animationDuration = (adminSpeed > 0 ? adminSpeed : Math.max(25, items.length * 5)) + 's';
   }
   function load() {
-    fetch('/api/live-activity').then(function (r) { return r.ok ? r.json() : []; }).then(render).catch(function () {});
+    fetch('/api/live-activity').then(function (r) {
+      if (!r.ok) return [];
+      // Vitesse réglée par l'admin (en-tête, pour garder un corps = tableau).
+      var s = parseInt(r.headers.get('X-Ticker-Speed') || '', 10);
+      adminSpeed = (s > 0 && s <= 600) ? s : 0;
+      return r.json();
+    }).then(render).catch(function () {});
+  }
+  // Ouvre l'annonce précise quand on la connaît, en réutilisant les deep-links
+  // DÉJÀ en place sur le site (aucun nouveau mécanisme inventé) :
+  //   pro     -> ?pro=<id>     (module Pro : showProDetail + page SEO /pro/:id)
+  //   product -> nexus:open-product, detail = id (élevage / location / immobilier)
+  //   troc    -> ?troc=<id>    (lu par le module Troc dans app.js)
+  function openRef(kind, id) {
+    try {
+      if (kind === 'product') {
+        // detail = product_id (contrat existant, cf. « STORIES SHOPPABLES »).
+        window.dispatchEvent(new CustomEvent('nexus:open-product', { detail: id }));
+        return true;
+      }
+      if (kind === 'pro') {
+        // API déjà exposée par le module Pro ; elle gère aussi la synchro ?pro=.
+        if (window.NexusPro && typeof window.NexusPro.openPro === 'function') {
+          window.NexusPro.openPro(id);
+          return true;
+        }
+        return false;
+      }
+      if (kind === 'troc') {
+        window.dispatchEvent(new CustomEvent('nexus:open-troc', { detail: { id: id } }));
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+  function activate(el) {
+    var href = el.getAttribute('data-href');
+    if (href) { window.location.href = href; return; }
+    var kind = el.getAttribute('data-ref-kind'), id = el.getAttribute('data-ref-id');
+    if (kind && id && openRef(kind, id)) return;
+    // Repli : ouvrir le module du vertical (comportement historique).
+    try { window.dispatchEvent(new CustomEvent(el.getAttribute('data-evt'))); } catch (_) {}
   }
   content.addEventListener('click', function (e) {
     var el = e.target.closest('[data-evt]'); if (!el) return;
-    try { window.dispatchEvent(new CustomEvent(el.getAttribute('data-evt'))); } catch (_) {}
+    activate(el);
+  });
+  content.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var el = e.target.closest('[data-evt]'); if (!el) return;
+    e.preventDefault(); activate(el);
   });
   load();
   setInterval(load, 90000);

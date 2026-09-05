@@ -12473,7 +12473,16 @@ const NexusTrocWidget = ({ user }) => {
   }, []);
   // Ouverture via événement global (menu / bannière / liens divers)
   React.useEffect(() => {
-    const h = () => setOpen(true);
+    const h = (e) => {
+      setOpen(true);
+      // [BANDEAU LIVE] detail.id = annonce cliquée dans le ticker « EN DIRECT » :
+      // on ouvre la FICHE précise, pas seulement le module (même chargement que
+      // le deep-link ?troc=<id> déjà géré par onPop ci-dessus).
+      const tid = e && e.detail && e.detail.id;
+      if (!tid || !DataService._sb) return;
+      DataService._sb.from('troc_listings').select('*').eq('id', tid).maybeSingle()
+        .then(({ data }) => { if (data) setSelectedTroc(data); }).catch(() => {});
+    };
     window.addEventListener('nexus:open-troc', h);
     return () => window.removeEventListener('nexus:open-troc', h);
   }, []);
@@ -26201,6 +26210,11 @@ const AdminDashboard = ({ currentUser: currentUser2, addToast, sidebarOpen, onTo
   const [adminTicker, setAdminTicker] = React.useState(() => {
     try { return storage.get('nexus_ticker_cfg') || { enabled: true, items: [] }; } catch(e) { return { enabled: true, items: [] }; }
   });
+  // [BANDEAU LIVE] Diagnostic : ce que /api/live-activity sert RÉELLEMENT en ce
+  // moment (ce que voit un visiteur), pour vérifier l'effet des réglages.
+  // ⚠ Hook au niveau du composant — jamais dans l'IIFE conditionnelle du
+  // panneau (cf. bug déjà rencontré sur Promos/Sections/Confiance/Textes).
+  const [tickerDiag, setTickerDiag] = React.useState({ loading: false, items: null, speed: 0, error: '' });
   // [FIX #310] États hissés depuis l'IIFE "flash_sales_vendor"
   const [vFlashSales, setVFlashSales] = React.useState([]);
   const [vFlashForm, setVFlashForm] = React.useState({ productId: "", discount: "20", hours: "24" });
@@ -28515,8 +28529,31 @@ CREATE POLICY "Service role only" ON invoice_sequences
         };
         const save = (next) => { setAdminTicker(next); saveS('nexus_ticker_cfg', next); };
         const setItem = (i, patch) => { const arr = items.map((x, j) => j === i ? Object.assign({}, x, patch) : x); save(Object.assign({}, TK, { items: arr })); };
-        const addItem = () => save(Object.assign({}, TK, { items: [...items, { type: "pro", text: "" }] }));
+        const addItem = () => save(Object.assign({}, TK, { items: [...items, { type: "pro", text: "", enabled: true }] }));
         const delItem = (i) => save(Object.assign({}, TK, { items: items.filter((_, j) => j !== i) }));
+        // Réordonnancement : l'ordre des messages = leur ordre d'apparition en
+        // tête de bandeau (moveItem est déjà défini plus haut dans ce composant).
+        const moveMsg = (i, dir) => save(Object.assign({}, TK, { items: moveItem(items, i, dir) }));
+        // Sources = flux automatiques activables un par un. Absent ⇒ activé
+        // (une config enregistrée avant cette fonctionnalité reste inchangée).
+        const sources = (TK.sources && typeof TK.sources === "object") ? TK.sources : {};
+        const srcOn = (k) => sources[k] !== false;
+        const toggleSrc = (k) => save(Object.assign({}, TK, { sources: Object.assign({}, sources, { [k]: !srcOn(k) }) }));
+        const setSpeed = (v) => save(Object.assign({}, TK, { speed: v }));
+        // Diagnostic : relit l'API publique (ce que voit réellement un visiteur).
+        const loadDiag = () => {
+          setTickerDiag({ loading: true, items: null, speed: 0, error: "" });
+          fetch("/api/live-activity", { cache: "no-store" })
+            .then((r) => {
+              const sp = parseInt(r.headers.get("X-Ticker-Speed") || "", 10);
+              return r.json().then((arr) => ({ arr, sp: sp > 0 ? sp : 0 }));
+            })
+            .then(({ arr, sp }) => setTickerDiag({ loading: false, items: Array.isArray(arr) ? arr : [], speed: sp, error: "" }))
+            .catch((e) => setTickerDiag({ loading: false, items: null, speed: 0, error: String(e && e.message || e) }));
+        };
+        const diag = tickerDiag || { loading: false, items: null, speed: 0, error: "" };
+        const diagCounts = (diag.items || []).reduce((acc, it) => { const k = it && it.type; if (k) acc[k] = (acc[k] || 0) + 1; return acc; }, {});
+        const diagLinkable = (diag.items || []).filter((it) => it && (it.ref || it.link)).length;
         return React.createElement("div", { className: "card" },
           React.createElement("div", { className: "card-header" },
             React.createElement("h3", { className: "card-title" },
@@ -28546,18 +28583,105 @@ CREATE POLICY "Service role only" ON invoice_sequences
               }, TK.enabled !== false ? React.createElement(React.Fragment, null, React.createElement("i", { className: "fas fa-eye-slash" }), " Couper tout le bandeau") : React.createElement(React.Fragment, null, React.createElement("i", { className: "fas fa-eye" }), " Réactiver le bandeau")),
               React.createElement("span", { style: { fontSize: "0.78rem", color: "var(--text-secondary)" } }, "Couper masque AUSSI l'activité automatique.")
             ),
-            // Liste éditable des messages
+            // Liste éditable des messages (ordre = ordre d'affichage en tête)
             React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "0.6rem" } },
-              items.map((it, i) => React.createElement("div", { key: i, style: { display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" } },
+              items.length === 0 && React.createElement("p", { style: { fontSize: "0.82rem", color: "var(--text-secondary)", fontStyle: "italic", margin: 0 } }, "Aucun message personnalisé — seule l'activité automatique défile."),
+              items.map((it, i) => React.createElement("div", {
+                key: i,
+                style: { display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap", padding: "0.55rem", border: "1px solid var(--border)", borderRadius: 8, opacity: it.enabled === false ? 0.55 : 1 }
+              },
+                // Ordre
+                React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 } },
+                  React.createElement("button", { className: "btn btn-secondary btn-sm", style: { padding: "0 6px", lineHeight: 1.1 }, disabled: i === 0, onClick: () => moveMsg(i, -1), title: "Monter" }, React.createElement("i", { className: "fas fa-chevron-up" })),
+                  React.createElement("button", { className: "btn btn-secondary btn-sm", style: { padding: "0 6px", lineHeight: 1.1 }, disabled: i === items.length - 1, onClick: () => moveMsg(i, 1), title: "Descendre" }, React.createElement("i", { className: "fas fa-chevron-down" }))
+                ),
                 React.createElement("select", { className: "form-select", value: it.type || "pro", onChange: (e) => setItem(i, { type: e.target.value }), style: { width: "170px", flexShrink: 0 } },
                   Object.keys(TYPE_META).map((k) => React.createElement("option", { key: k, value: k }, TYPE_META[k].icon + " " + TYPE_META[k].label))
                 ),
                 React.createElement("input", { className: "form-input", style: { flex: 1, minWidth: "180px" }, maxLength: 120, value: it.text || "", placeholder: "Ex. Promo Tabaski : -20% sur l'électroménager", onChange: (e) => setItem(i, { text: e.target.value }) }),
+                // Lien cliquable (facultatif) — rend le message actionnable.
+                React.createElement("input", {
+                  className: "form-input", style: { flex: "0 1 230px", minWidth: "150px", fontSize: "0.8rem" }, maxLength: 300,
+                  value: it.link || "", placeholder: "Lien (facultatif) : /ventes-flash",
+                  title: "URL ouverte au clic. https://… ou chemin interne commençant par /",
+                  onChange: (e) => setItem(i, { link: e.target.value })
+                }),
+                React.createElement("button", {
+                  className: "btn btn-sm " + (it.enabled === false ? "btn-success" : "btn-secondary"),
+                  onClick: () => setItem(i, { enabled: it.enabled === false }),
+                  title: it.enabled === false ? "Réactiver ce message" : "Mettre ce message en pause (sans le supprimer)"
+                }, React.createElement("i", { className: "fas fa-" + (it.enabled === false ? "play" : "pause") })),
                 React.createElement("button", { className: "btn btn-danger btn-sm", onClick: () => delItem(i), title: "Supprimer" }, React.createElement("i", { className: "fas fa-trash" }))
               ))
             ),
             React.createElement("button", { className: "btn btn-secondary btn-sm", style: { alignSelf: "flex-start" }, onClick: addItem },
               React.createElement("i", { className: "fas fa-plus" }), " Ajouter un message"
+            ),
+
+            // ── Sources automatiques : quels verticaux alimentent le bandeau ──
+            React.createElement("div", { style: { borderTop: "1px solid var(--border)", paddingTop: "0.9rem" } },
+              React.createElement("h4", { style: { fontSize: "0.9rem", fontWeight: 700, margin: "0 0 0.15rem" } }, "Flux automatiques affichés"),
+              React.createElement("p", { style: { fontSize: "0.78rem", color: "var(--text-secondary)", margin: "0 0 0.6rem" } },
+                "Désactivez un vertical pour le retirer du bandeau sans toucher au reste (ex. masquer les dépannages en cours)."
+              ),
+              React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "0.45rem" } },
+                Object.keys(TYPE_META).map((k) => React.createElement("button", {
+                  key: k,
+                  className: "btn btn-sm " + (srcOn(k) ? "btn-primary" : "btn-secondary"),
+                  style: { opacity: srcOn(k) ? 1 : 0.6 },
+                  onClick: () => toggleSrc(k),
+                  title: srcOn(k) ? "Affiché — cliquer pour masquer" : "Masqué — cliquer pour afficher"
+                }, TYPE_META[k].icon + " " + TYPE_META[k].label + (srcOn(k) ? "" : " (masqué)")))
+              )
+            ),
+
+            // ── Vitesse de défilement ──
+            React.createElement("div", { style: { borderTop: "1px solid var(--border)", paddingTop: "0.9rem" } },
+              React.createElement("h4", { style: { fontSize: "0.9rem", fontWeight: 700, margin: "0 0 0.15rem" } }, "Vitesse de défilement"),
+              React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" } },
+                React.createElement("input", {
+                  type: "range", min: 20, max: 180, step: 5,
+                  value: Number(TK.speed) > 0 ? Number(TK.speed) : 55,
+                  onChange: (e) => setSpeed(Number(e.target.value)),
+                  style: { flex: "1 1 220px", maxWidth: 340 }
+                }),
+                React.createElement("span", { style: { fontSize: "0.82rem", fontWeight: 600, minWidth: 130 } },
+                  Number(TK.speed) > 0 ? (TK.speed + " s par boucle") : "Automatique (selon le nombre)"
+                ),
+                Number(TK.speed) > 0 && React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: () => setSpeed(0) }, "Revenir en auto")
+              ),
+              React.createElement("p", { style: { fontSize: "0.76rem", color: "var(--text-secondary)", margin: "0.4rem 0 0" } },
+                "Durée d'un tour complet : plus la valeur est grande, plus le défilement est lent (donc lisible)."
+              )
+            ),
+
+            // ── Diagnostic : ce que voit réellement un visiteur ──
+            React.createElement("div", { style: { borderTop: "1px solid var(--border)", paddingTop: "0.9rem" } },
+              React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginBottom: "0.5rem" } },
+                React.createElement("h4", { style: { fontSize: "0.9rem", fontWeight: 700, margin: 0, flex: 1 } }, "Diagnostic — ce que voit un visiteur"),
+                React.createElement("button", { className: "btn btn-secondary btn-sm", onClick: loadDiag, disabled: diag.loading },
+                  React.createElement("i", { className: "fas fa-" + (diag.loading ? "spinner fa-spin" : "rotate") }), diag.loading ? " Lecture…" : " Vérifier maintenant"
+                )
+              ),
+              diag.error
+                ? React.createElement("div", { className: "alert alert-danger", style: { fontSize: "0.8rem" } }, "Échec de lecture de /api/live-activity : " + diag.error)
+                : diag.items === null
+                  ? React.createElement("p", { style: { fontSize: "0.8rem", color: "var(--text-secondary)", margin: 0 } }, "Cliquez sur « Vérifier maintenant » pour interroger l'API publique (l'API met ~30 s en cache, et le site recharge le bandeau toutes les ~90 s).")
+                  : React.createElement("div", { style: { fontSize: "0.82rem" } },
+                      React.createElement("p", { style: { margin: "0 0 0.45rem" } },
+                        React.createElement("b", null, diag.items.length + " élément(s) servis"),
+                        diag.items.length === 0 ? " — le bandeau est masqué côté visiteur." : "",
+                        diag.speed > 0 ? " · vitesse imposée : " + diag.speed + " s" : "",
+                        " · ", React.createElement("b", null, diagLinkable + " cliquable(s) vers une annonce")
+                      ),
+                      React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: "0.35rem" } },
+                        Object.keys(TYPE_META).map((k) => React.createElement("span", {
+                          key: k,
+                          className: "badge badge-" + (diagCounts[k] ? "success" : "secondary"),
+                          style: { fontSize: "0.72rem" }
+                        }, TYPE_META[k].icon + " " + TYPE_META[k].label + " : " + (diagCounts[k] || 0)))
+                      )
+                    )
             )
           )
         );

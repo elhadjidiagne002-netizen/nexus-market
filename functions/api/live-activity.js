@@ -10,6 +10,15 @@
 // quartier/zone (même niveau que les annonces Location/Immobilier déjà
 // publiques), sans id, nom, téléphone ni coordonnées exactes.
 //
+// [REF] Les 5 verticaux PUBLICS (pro, elevage, rental, realestate, troc)
+// portent en plus un `ref` {kind,id} permettant au bandeau d'ouvrir
+// l'annonce cliquée (avant : le clic ouvrait seulement le module, sans
+// savoir de quelle annonce il s'agissait). Ces lignes sont déjà librement
+// consultables (pros.status=active, products.active=true,
+// troc_listings.status=active) et ont déjà des URL partageables
+// (?pro= / ?product= / ?troc=) : exposer leur id n'ajoute aucune fuite.
+// courier et rescue restent VOLONTAIREMENT sans `ref` — données privées.
+//
 // Public, sans authentification, cache Cloudflare 30s (réduit la charge DB
 // pour un ticker qui rafraîchit toutes les ~60-90s côté client).
 import { supabase, options, CORS } from './_lib/utils.js';
@@ -27,17 +36,29 @@ export async function onRequestOptions() { return options(); }
 
 // Messages personnalisés injectés par l'admin (Admin → Gestion Page d'Accueil →
 // « Bandeau live ») + interrupteur maître, stockés dans app_config.nexus_ticker_cfg :
-//   { enabled: bool, items: [{ type, text }] }
+//   { enabled: bool,
+//     items:   [{ type, text, link?, enabled? }],   // link = URL cliquable
+//     sources: { courier: bool, rescue: bool, … },  // flux auto activables 1 à 1
+//     speed:   number }                             // durée du défilement (s)
 // type ∈ des clés TYPES du bandeau (courier/rescue/pro/elevage/rental/realestate/troc)
 // pour réutiliser exactement le même rendu (badge coloré + icône). Best-effort.
+// Tous les champs sont optionnels : une config ancienne (sans sources/speed)
+// garde le comportement d'avant (tout activé).
+const DEFAULT_CFG = { enabled: true, items: [], sources: {}, speed: 0 };
+
 async function adminTicker(env) {
   try {
     const sb = supabase(env);
     const rows = await sb.from('app_config').select('value', `key=eq.nexus_ticker_cfg`);
     const cfg = Array.isArray(rows) && rows[0] && rows[0].value;
-    if (!cfg || typeof cfg !== 'object') return { enabled: true, items: [] };
-    return { enabled: cfg.enabled !== false, items: Array.isArray(cfg.items) ? cfg.items : [] };
-  } catch (_) { return { enabled: true, items: [] }; }
+    if (!cfg || typeof cfg !== 'object') return { ...DEFAULT_CFG };
+    return {
+      enabled: cfg.enabled !== false,
+      items: Array.isArray(cfg.items) ? cfg.items : [],
+      sources: (cfg.sources && typeof cfg.sources === 'object') ? cfg.sources : {},
+      speed: Number(cfg.speed) > 0 ? Number(cfg.speed) : 0,
+    };
+  } catch (_) { return { ...DEFAULT_CFG }; }
 }
 
 const VALID_TYPES = new Set(['courier', 'rescue', 'pro', 'elevage', 'rental', 'realestate', 'troc']);
@@ -73,54 +94,92 @@ export async function onRequestGet({ env }) {
       });
     }),
     safe(async () => {
-      const rows = await sb.from('pros').select('profession,city',
+      const rows = await sb.from('pros').select('id,profession,city',
         `status=eq.active&order=created_at.desc&limit=6`);
       return pick(6, rows).filter(r => r.profession).map(r => ({
         type: 'pro', text: `${r.profession} disponible${r.city ? ' à ' + r.city : ''}`,
+        ref: r.id ? { kind: 'pro', id: String(r.id) } : null,
       }));
     }),
     safe(async () => {
-      const rows = await sb.from('products').select('name,animal_specs',
+      const rows = await sb.from('products').select('id,name,animal_specs',
         `is_animal=eq.true&active=eq.true&order=created_at.desc&limit=6`);
       return pick(6, rows).filter(r => r.name).map(r => ({
         type: 'elevage', text: `Nouveau : ${r.name}`,
+        ref: r.id ? { kind: 'product', id: String(r.id) } : null,
       }));
     }),
     safe(async () => {
-      const rows = await sb.from('products').select('name,rental_specs',
+      const rows = await sb.from('products').select('id,name,rental_specs',
         `is_rental=eq.true&active=eq.true&order=created_at.desc&limit=6`);
       return pick(6, rows).filter(r => r.name).map(r => {
         const region = r.rental_specs && r.rental_specs.region;
-        return { type: 'rental', text: `En location : ${r.name}${region ? ' à ' + region : ''}` };
+        return {
+          type: 'rental', text: `En location : ${r.name}${region ? ' à ' + region : ''}`,
+          ref: r.id ? { kind: 'product', id: String(r.id) } : null,
+        };
       });
     }),
     safe(async () => {
-      const rows = await sb.from('products').select('name,realestate_specs',
+      const rows = await sb.from('products').select('id,name,realestate_specs',
         `is_realestate=eq.true&active=eq.true&order=created_at.desc&limit=6`);
       return pick(6, rows).filter(r => r.name).map(r => {
         const s = r.realestate_specs || {};
         const verbe = s.transaction === 'vente' ? 'À vendre' : 'À louer';
-        return { type: 'realestate', text: `${verbe} : ${r.name}${s.region ? ' à ' + s.region : ''}` };
+        return {
+          type: 'realestate', text: `${verbe} : ${r.name}${s.region ? ' à ' + s.region : ''}`,
+          ref: r.id ? { kind: 'product', id: String(r.id) } : null,
+        };
       });
     }),
     safe(async () => {
-      const rows = await sb.from('troc_listings').select('title,city',
+      const rows = await sb.from('troc_listings').select('id,title,city',
         `status=eq.active&order=created_at.desc&limit=6`);
       return pick(6, rows).filter(r => r.title).map(r => ({
         type: 'troc', text: `Proposé au troc : ${r.title}${r.city ? ' à ' + r.city : ''}`,
+        ref: r.id ? { kind: 'troc', id: String(r.id) } : null,
       }));
     }),
   ]);
 
   // Messages admin en TÊTE du bandeau (les plus visibles), filtrés/nettoyés.
+  // `enabled !== false` : un message peut être mis en pause sans être supprimé.
+  // `link` : URL cliquable choisie par l'admin (http(s) ou chemin interne
+  // uniquement — jamais de javascript:/data:, qui serait un XSS au clic).
   const custom = (admin.items || [])
-    .filter((it) => it && VALID_TYPES.has(it.type) && it.text)
-    .map((it) => ({ type: it.type, text: String(it.text).slice(0, 120) }));
+    .filter((it) => it && VALID_TYPES.has(it.type) && it.text && it.enabled !== false)
+    .map((it) => {
+      const raw = typeof it.link === 'string' ? it.link.trim() : '';
+      const link = /^(https?:\/\/|\/)[^\s]*$/i.test(raw) ? raw.slice(0, 300) : '';
+      return { type: it.type, text: String(it.text).slice(0, 120), link: link || undefined };
+    });
 
-  const items = [...custom, ...courier, ...rescue, ...pro, ...elevage, ...rental, ...realestate, ...troc];
+  // Flux automatiques activables un par un par l'admin (absent = activé,
+  // pour que les configs existantes gardent le comportement d'avant).
+  const on = (key) => admin.sources[key] !== false;
+  const auto = [
+    ...(on('courier') ? courier : []),
+    ...(on('rescue') ? rescue : []),
+    ...(on('pro') ? pro : []),
+    ...(on('elevage') ? elevage : []),
+    ...(on('rental') ? rental : []),
+    ...(on('realestate') ? realestate : []),
+    ...(on('troc') ? troc : []),
+  ];
 
-  return new Response(JSON.stringify(items), {
-    status: 200,
-    headers: { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30' },
-  });
+  const items = [...custom, ...auto];
+
+  const headers = {
+    ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30',
+  };
+  // Vitesse en en-tête (et non dans le corps) : la réponse reste un tableau,
+  // donc un index.html encore en cache continue de fonctionner à l'identique.
+  // Expose-Headers posé ici seulement (pas dans le CORS partagé) car cet
+  // en-tête n'existe que pour cet endpoint ; en same-origin il est déjà lisible.
+  if (admin.speed > 0) {
+    headers['X-Ticker-Speed'] = String(Math.round(admin.speed));
+    headers['Access-Control-Expose-Headers'] = 'X-Ticker-Speed';
+  }
+
+  return new Response(JSON.stringify(items), { status: 200, headers });
 }
