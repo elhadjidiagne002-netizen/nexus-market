@@ -6,6 +6,50 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (quarante-septième) — Rotation du catalogue sur l'accueil (12 → 99 produits vus en 4 visites)
+
+**Demande** : « apporte plus de rotation sur les produits affichés dans le
+site après rafraîchissement, ouverture d'une page ou autres circonstances
+où il serait pertinent d'afficher bien plus de nouveaux produits de mon
+catalogue ».
+
+**Constat chiffré en base** : **478 produits classiques actifs**, mais
+l'accueil n'en exposait qu'une douzaine. Deux causes cumulées :
+- seule « Meilleures Ventes » tournait (fix du 2026-08-26, pool de 48) ;
+- **aucun produit n'a de note** (`rating = 0` sur 721 produits actifs), donc
+  le tri de « Recommandé » (`rating.desc, created_at.desc`) retombait sur
+  `created_at desc` — soit **exactement les mêmes 12 fiches** que
+  « Nouveaux Arrivages ». Les sections verticales (147 en location, 61 en
+  immobilier) servaient elles aussi toujours les 12 mêmes.
+
+**Fix** (`public/index.html`, overlay statique — ce que voit un visiteur non
+connecté, cf. `boost-static-overlay-integration`) : helpers `sbShuffle` /
+`sbRotate` partagés, appliqués à TOUTES les sections. Principes :
+1. pool large côté serveur, mélange Fisher-Yates côté client ;
+2. les produits **boostés (payants) restent toujours en tête**, jamais noyés ;
+3. `seen` partagé entre les 3 sections produits → **36 fiches DIFFÉRENTES**
+   par page au lieu de ~12 répétées ;
+4. « Recommandé » puise dans une **fenêtre aléatoire** (`offset` au hasard)
+   de tout le catalogue — c'est ce qui fait réellement remonter le fond de
+   catalogue ; repli automatique sur le début si l'offset dépasse la fin
+   (aucun réglage à maintenir quand le catalogue grandit).
+5. Re-rotation au retour sur l'onglet après >3 min et au retour arrière
+   bfcache (`pageshow`) — jamais pendant que l'utilisateur regarde.
+
+⚠ **Régression introduite puis corrigée pendant le développement** : la 1re
+version chaînait les 3 requêtes en série pour fiabiliser `seen`, ce qui
+retardait visiblement les 2e/3e sections (mesuré). Réécrit en **2 pools tirés
+en parallèle** (`Promise.all`) — récentes d'un côté, fenêtre profonde de
+l'autre — partagés après coup : dédoublonnage total, sans coût de latence.
+Second bug attrapé par la mesure : `sbRotate` recevant deux pools concaténés
+pouvait sortir deux fois la même fiche → dédoublonnage ajouté **à
+l'intérieur** du helper.
+
+**Mesuré en local** (vraies données Supabase, 4 rechargements) : 36 → 62 →
+83 → **99 produits distincts vus**, **0 doublon** sur chaque page, 0 erreur JS.
+
+---
+
 ## 2026-09-05 (quarante-sixième) — Bandeau « EN DIRECT » : le clic ouvre l'annonce + outils admin
 
 **Demande** : « cliquer les annonces ne donne pas vers l'annonce, corrige

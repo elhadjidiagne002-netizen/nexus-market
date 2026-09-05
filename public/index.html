@@ -15093,34 +15093,101 @@ function initProto(){
      Postgres). On pioche donc un pool plus large (48) et on mélange côté client,
      en gardant les produits boostés (payants) toujours en tête — jamais noyés
      dans le mélange. */
-  var QPbest = QP.replace('&limit=12', '&limit=48');
-  sbFetch('products?'+QPbest+'&order=is_boosted.desc.nullslast,rating.desc.nullslast').then(function(data){
-    if (!bsEl) return;
-    if (!data || !data.length) { bsEl.innerHTML = emptyStateCards(); return; }
-    var boosted = data.filter(function(p){ return p.is_boosted && (!p.boost_ends_at || new Date(p.boost_ends_at).getTime() > Date.now()); });
-    var rest = data.filter(function(p){ return boosted.indexOf(p) === -1; });
-    for (var i = rest.length - 1; i > 0; i--) {
+  /* [ROTATION CATALOGUE 2026-09-05] Le catalogue compte ~478 produits classiques
+     actifs, mais l'accueil n'en exposait qu'une douzaine : seules « Meilleures
+     Ventes » tournaient (fix du 2026-08-26), « Nouveaux Arrivages » et
+     « Recommandé » servaient toujours le même lot. Pire : AUCUN produit n'a de
+     note (rating=0 partout), donc le tri par rating de « Recommandé » retombait
+     sur created_at desc — soit exactement les mêmes 12 fiches que « Nouveaux
+     Arrivages ». Un visiteur voyait donc ~12 produits sur 478.
+     Principes de la rotation, valables pour toutes les sections :
+       1. pool large côté serveur, mélange côté client (Fisher-Yates) ;
+       2. les produits BOOSTÉS (payants) restent toujours en tête, jamais noyés ;
+       3. `seen` évite qu'une même fiche apparaisse dans deux sections d'une
+          même page — 3 sections = 36 produits DIFFÉRENTS au lieu de ~12 ;
+       4. « Recommandé » pioche dans une fenêtre ALÉATOIRE de tout le catalogue
+          (offset au hasard) pour faire remonter le fond de catalogue, pas
+          seulement les fiches récentes. */
+  function sbIsBoosted(p){ return !!p.is_boosted && (!p.boost_ends_at || new Date(p.boost_ends_at).getTime() > Date.now()); }
+  function sbShuffle(a){
+    for (var i = a.length - 1; i > 0; i--) {
       var j = Math.floor(Math.random() * (i + 1));
-      var tmp = rest[i]; rest[i] = rest[j]; rest[j] = tmp;
+      var t = a[i]; a[i] = a[j]; a[j] = t;
     }
-    var picked = boosted.concat(rest).slice(0, 12);
-    bsEl.innerHTML = picked.map(sbCard).join('');
-  });
-  sbFetch('products?'+QP+'&order=is_boosted.desc.nullslast,created_at.desc').then(function(data){
-    if(naEl) naEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):emptyStateCards();
-  });
-  sbFetch('products?'+QP+'&order=is_boosted.desc.nullslast,rating.desc.nullslast,created_at.desc').then(function(data){
-    if(rcEl) rcEl.innerHTML=(data&&data.length)?data.map(sbCard).join(''):emptyStateCards();
-    /* Annonces Express : affichées EN TÊTE des « Recommandés » (l'overlay ne les
-       chargeait pas → invisibles sur l'accueil). Cartes WhatsApp dédiées. */
-    sbFetch('annonces_express?select=id,photo_url,price_fcfa,category,description,phone,city,status,expires_at&status=eq.active&order=created_at.desc&limit=12').then(function(ax){
-      if(!rcEl||!ax||!ax.length)return;
-      var now=Date.now();
-      ax=ax.filter(function(a){return !a.expires_at||new Date(a.expires_at).getTime()>now;});
-      if(!ax.length)return;
-      rcEl.innerHTML=ax.map(axCard).join('')+rcEl.innerHTML;
+    return a;
+  }
+  /* Boostés d'abord, reste mélangé, en écartant ce qui est déjà affiché ailleurs.
+     Dédoublonne AUSSI à l'intérieur du pool reçu : les appelants concatènent
+     parfois deux pools (fenêtre profonde + récentes) qui peuvent se recouvrir,
+     et sans ça la même fiche pouvait sortir deux fois dans une même section. */
+  function sbRotate(data, n, seen){
+    var local = {}, fresh = [];
+    (data || []).forEach(function(p){
+      if (!p || local[p.id] || (seen && seen[p.id])) return;
+      local[p.id] = 1; fresh.push(p);
     });
-  });
+    var picked = sbShuffle(fresh.filter(function(p){ return !sbIsBoosted(p); }));
+    picked = (fresh.filter(sbIsBoosted)).concat(picked).slice(0, n);
+    if (seen) picked.forEach(function(p){ seen[p.id] = 1; });
+    return picked;
+  }
+  function loadProductSections(){
+    /* Deux pools seulement, tirés EN PARALLÈLE (et non 3 requêtes en série :
+       mesuré, le chaînage retardait visiblement les 2e/3e sections sur
+       connexion lente) :
+         A = les 60 fiches les plus RÉCENTES  -> « Nouveaux Arrivages » ;
+         B = une fenêtre ALÉATOIRE du catalogue -> « Meilleures Ventes » et
+             « Recommandé », qui puisent donc dans le fond de catalogue.
+       Le partage de `seen` se fait après Promise.all, dans un ordre fixe :
+       la déduplication reste totale, sans coût de latence. */
+    var recent = 'products?'+QP.replace('&limit=12','&limit=60')+'&order=is_boosted.desc.nullslast,created_at.desc';
+    /* Offset au hasard : si le tirage dépasse la fin du catalogue (catalogue
+       plus petit que prévu), on complète depuis le début — aucun réglage à
+       maintenir quand le catalogue grandit ou rétrécit. */
+    var off = Math.floor(Math.random() * 8) * 48;
+    var deep = 'products?'+QP.replace('&limit=12','&limit=48')+'&order=is_boosted.desc.nullslast,created_at.desc';
+    var poolDeep = sbFetch(deep + (off ? '&offset='+off : '')).then(function(d){
+      if (d && d.length >= 24) return d;
+      return sbFetch(deep).then(function(d0){ return (d || []).concat(d0 || []); });
+    });
+
+    Promise.all([sbFetch(recent), poolDeep]).then(function(res){
+      var seen = {}, poolA = res[0] || [], poolB = res[1] || [];
+      function fill(el, pool){
+        if (!el) return;
+        var picked = sbRotate(pool, 12, seen);
+        el.innerHTML = picked.length ? picked.map(sbCard).join('') : emptyStateCards();
+      }
+      /* Ordre de service = ordre de priorité sur les fiches disponibles. */
+      fill(naEl, poolA);                    // Nouveaux Arrivages : les récentes
+      fill(bsEl, poolB.concat(poolA));      // repli sur A si B est court
+      fill(rcEl, poolB.concat(poolA));      // le reste de la fenêtre profonde
+
+      /* Annonces Express : affichées EN TÊTE des « Recommandés » (l'overlay ne les
+         chargeait pas → invisibles sur l'accueil). Cartes WhatsApp dédiées. */
+      sbFetch('annonces_express?select=id,photo_url,price_fcfa,category,description,phone,city,status,expires_at&status=eq.active&order=created_at.desc&limit=12').then(function(ax){
+        if(!rcEl||!ax||!ax.length)return;
+        var now=Date.now();
+        ax=ax.filter(function(a){return !a.expires_at||new Date(a.expires_at).getTime()>now;});
+        if(!ax.length)return;
+        rcEl.innerHTML=sbShuffle(ax).map(axCard).join('')+rcEl.innerHTML;
+      });
+    });
+  }
+  loadProductSections();
+  /* Re-rotation quand l'utilisateur REVIENT sur l'onglet après une absence
+     (>3 min) et au retour arrière depuis le cache bfcache — sans quoi la page
+     resterait figée sur la sélection d'il y a une heure. Jamais pendant qu'il
+     regarde : on ne change rien sous ses yeux. */
+  var _nxLastRotate = Date.now();
+  function maybeRerotate(){
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - _nxLastRotate < 180000) return;
+    _nxLastRotate = Date.now();
+    loadProductSections();
+  }
+  document.addEventListener('visibilitychange', maybeRerotate);
+  window.addEventListener('pageshow', function(e){ if (e.persisted) maybeRerotate(); });
 
   /* Sections verticales additionnelles (élevage/terroir, location, immobilier,
      covoiturage, troc) — affichées au même titre que les produits. Togglables par
@@ -15136,9 +15203,14 @@ function initProto(){
       var section=el.closest('section');
       if(!modOn(flagKey)){ if(section) section.style.display='none'; return; }
       el.innerHTML=skeletonCards(6);
-      sbFetch(fetchPath).then(function(data){
+      /* [ROTATION 2026-09-05] Même principe que les sections produits : ces
+         sections servaient toujours les 12 mêmes annonces (147 en location,
+         61 en immobilier). On élargit le pool puis on mélange (boostés en
+         tête via sbRotate). `seen` non partagé ici : chaque vertical a son
+         propre stock, aucun risque de doublon entre eux. */
+      sbFetch(fetchPath.replace('&limit=12','&limit=48')).then(function(data){
         if(!data||!data.length){ if(section) section.style.display='none'; return; }
-        el.innerHTML=data.map(renderer).join('');
+        el.innerHTML=sbRotate(data,12,null).map(renderer).join('');
       });
     }
     /* Images de repli PAR TYPE (mêmes URLs Unsplash déjà utilisées comme visuels de
