@@ -6,6 +6,85 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (cinquante-deuxième) — Le pilote envoie enfin : déclencheur pg_cron, WAHA réparé, Green API écarté
+
+Suite directe de l'entrée précédente : mise en service réelle de la campagne.
+Trois blocages successifs, chacun révélé par le suivant.
+
+### 1. GitHub Actions n'est pas un déclencheur fiable
+
+Le 1er lot n'était jamais parti, **sans qu'aucune erreur ne soit levée** : le job
+était `skipped` à chaque run. Mesuré via l'API GitHub publique : **~12 runs
+planifiés en 13 h au lieu des ~156 attendus** par le créneau `*/5`, aucun run
+entre 13:12 et 13:47, et le créneau de **10:00 exécuté à 13:12** (3 h de retard).
+
+Première correction (insuffisante) : déplacer la cadence du planificateur vers le
+code — `wa_campaigns.min_gap_minutes` (50 min), le job refusant d'envoyer si le
+lot précédent est trop récent. Cela corrige aussi un risque non couvert : deux
+runs rapprochés envoyaient **deux lots coup sur coup** (le plafond journalier
+bornait le total, pas la rafale).
+
+Correction décisive : **passage à pg_cron**, déjà utilisé par 8 jobs du projet.
+`/cron/wa-campaign` accepte désormais aussi `X-Internal-Secret` (motif des
+triggers DB, secret du vault). Job `nexus-wa-campaign` toutes les 15 min —
+et il s'exécute **à l'heure pile** (14:00, 14:15, 14:30, 14:45…), là où GitHub
+en manquait la quasi-totalité. Toutes les 15 min et non chaque minute : la
+cadence réelle est gouvernée par `min_gap_minutes`, et un pg_cron trop fréquent
+a déjà épuisé le budget Disk IO du projet par le passé.
+
+### 2. L'erreur affichée accusait le mauvais fournisseur
+
+1er lot réel : **4 échecs sur 4, disjoncteur déclenché**, 6 cibles préservées,
+0 message délivré. L'erreur affichée était `WAHA 422` — trompeuse.
+`sendWhatsAppDirect` bascule sur WAHA quand Green API échoue, et **l'erreur de
+WAHA écrasait celle de Green API** : la vraie cause était invisible. Les deux
+erreurs sont désormais conservées, et `httpStatus` reste celui du fournisseur
+PRINCIPAL (c'est lui qui doit gouverner le réessai).
+
+### 3. La vraie cause : Green API gratuit ne peut PAS faire de démarchage
+
+Erreur réelle enfin lisible : `Quota mensuel Green API dépassé (plan
+Developer/gratuit)`. D'après la doc Green API, le plan Developer **ne permet
+d'échanger qu'avec 3 chats par mois** — ce n'est pas un plafond de messages qui
+se recharge, c'est 3 destinataires distincts.
+
+⚠ **Correction d'une affirmation faite plus tôt dans la session** : j'avais écrit
+que « WAHA n'est plus critique » grâce à la remise en file. C'était faux — le
+réessai protège d'une panne passagère, pas d'une limite produit. **WAHA n'est pas
+un secours : c'est le seul canal gratuit viable.**
+
+Bon comportement au passage : le 466 a été classé **transitoire** et les cibles
+**remises en file** (+3 h) au lieu d'être perdues.
+
+### 4. WAHA réparé — et il n'était pas cassé comme on le croyait
+
+`GET /api/whatsapp` remontait `404 Session not found`. En listant les sessions du
+serveur (`?action=list`), la session **existait** sous le bon nom
+(`nexus-market`), en `SCAN_QR_CODE`, et gardait le compte `221776254895`.
+Pendant la préparation du QR, WAHA a terminé sa reconnexion seul : **aucun scan
+n'a été nécessaire**. Leçon : lister avant de conclure à l'absence.
+
+Défaut corrigé au passage : `?action=qr` renvoyait le PNG en base64 → réponse en
+**502**, dont Cloudflare remplace le corps par sa page générique (piège déjà
+documenté) — donc impossible à diagnostiquer. L'endpoint renvoie maintenant la
+valeur brute du QR. `/api/admin/waha-session` accepte aussi `X-Internal-Secret`,
+ce qui permet de piloter la réparation depuis pg_net sans jeton admin.
+
+### Résultat vérifié
+
+**2 messages réellement délivrés à 14:33**, salutation et personnalisation
+correctes (« Bonjour Fall… les Développeur web/mobile de Dakar »). WAHA
+`WORKING`, Green API `notAuthorized`. Les 4 échecs antérieurs à la réparation
+ont été remis en file. Pilote relancé sur les 8 restantes, en laissant pg_cron
+déclencher seul (ce qui valide le chemin autonome).
+
+**Campagne principale (1612 cibles) : toujours `paused`.** Le risque de
+bannissement repose désormais entièrement sur nos garde-fous (80/jour, délais
+aléatoires, disjoncteur) : WAHA, contrairement à Green API, n'impose aucune
+limite qui protégerait le numéro malgré nous.
+
+---
+
 ## 2026-09-05 (cinquante et unième) — Campagne WhatsApp autonome (goutte-à-goutte) + réparation WAHA
 
 **Demande** : « je ne peux pas faire de lancement en masse à cause des
