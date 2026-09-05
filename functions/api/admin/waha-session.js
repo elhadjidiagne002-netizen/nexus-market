@@ -22,7 +22,7 @@
 // ⚠ Réservé admin (requireAdmin) : appairer un compte WhatsApp est une action
 // sensible, elle ne doit jamais être exposée publiquement — contrairement au
 // diagnostic en lecture seule de /api/whatsapp.
-import { requireAdmin, json, err, options } from '../_lib/utils.js';
+import { requireAdmin, isInternalCall, json, err, options } from '../_lib/utils.js';
 
 export async function onRequestOptions() { return options(); }
 
@@ -46,11 +46,18 @@ async function waha(env, path, { method = 'GET', body } = {}) {
 }
 
 export async function onRequestGet({ request, env }) {
-  // requireAdmin renvoie un TUPLE [user, errResponse] — pas une Response.
-  // Tester `instanceof Response` ne bloquerait jamais personne et rendrait cet
-  // endpoint d'appairage WhatsApp public (bug attrapé à la relecture).
-  const [, denied] = await requireAdmin(request, env);
-  if (denied) return denied;
+  /* Deux appelants autorisés, tous deux de confiance équivalente :
+     • un ADMIN authentifié (JWT) — requireAdmin renvoie un TUPLE
+       [user, errResponse], PAS une Response : tester `instanceof Response`
+       ne bloquerait personne (bug attrapé à la relecture) ;
+     • un appel INTERNE porteur de X-Internal-Secret — permet de piloter la
+       réparation depuis pg_net/pg_cron, sans jeton admin. Ce secret est
+       server-only : quiconque le détient a déjà un accès complet, la surface
+       d'attaque n'est donc pas élargie. Même motif que /api/notify-user. */
+  if (!isInternalCall(request, env)) {
+    const [, denied] = await requireAdmin(request, env);
+    if (denied) return denied;
+  }
 
   const conf = wahaConf(env);
   if (!conf.ok) return err('WAHA non configuré (WAHA_BASE_URL / WAHA_API_KEY manquantes).', 503);
@@ -109,11 +116,18 @@ export async function onRequestGet({ request, env }) {
 }
 
 export async function onRequestPost({ request, env }) {
-  // requireAdmin renvoie un TUPLE [user, errResponse] — pas une Response.
-  // Tester `instanceof Response` ne bloquerait jamais personne et rendrait cet
-  // endpoint d'appairage WhatsApp public (bug attrapé à la relecture).
-  const [, denied] = await requireAdmin(request, env);
-  if (denied) return denied;
+  /* Deux appelants autorisés, tous deux de confiance équivalente :
+     • un ADMIN authentifié (JWT) — requireAdmin renvoie un TUPLE
+       [user, errResponse], PAS une Response : tester `instanceof Response`
+       ne bloquerait personne (bug attrapé à la relecture) ;
+     • un appel INTERNE porteur de X-Internal-Secret — permet de piloter la
+       réparation depuis pg_net/pg_cron, sans jeton admin. Ce secret est
+       server-only : quiconque le détient a déjà un accès complet, la surface
+       d'attaque n'est donc pas élargie. Même motif que /api/notify-user. */
+  if (!isInternalCall(request, env)) {
+    const [, denied] = await requireAdmin(request, env);
+    if (denied) return denied;
+  }
 
   const conf = wahaConf(env);
   if (!conf.ok) return err('WAHA non configuré (WAHA_BASE_URL / WAHA_API_KEY manquantes).', 503);
