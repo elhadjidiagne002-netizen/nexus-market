@@ -33,7 +33,7 @@
  * ──────────────────────────────────────────────────────────────────────────
  */
 
-import { supabase } from '../api/_lib/utils.js';
+import { supabase, isInternalCall } from '../api/_lib/utils.js';
 import { sendWhatsAppDirect } from '../api/_lib/wa-send.js';
 
 const jsonR = (d, s = 200) => new Response(JSON.stringify(d, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -105,7 +105,17 @@ export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
   const token = url.searchParams.get('token');
   const secret = env.CRON_SECRET || env.NEXUS_WA_SECRET;
-  if (!secret || token !== secret) return jsonR({ error: 'Non autorisé — ?token=requis' }, 401);
+  /* [DÉCLENCHEUR 2026-09-05] Deux appelants autorisés :
+     • `?token=` — GitHub Actions (historique) ;
+     • en-tête X-Internal-Secret — pg_cron via net.http_post, qui est le
+       déclencheur FIABLE. GitHub n'honore quasiment plus les planifications de
+       ce dépôt : sur 13 h, une douzaine de runs au lieu des ~156 attendus, et
+       le créneau de 10:00 exécuté à 13:12. pg_cron tourne déjà pour 8 autres
+       jobs du projet, avec le même motif que les triggers (secret du vault). */
+  const okToken = !!secret && token === secret;
+  if (!okToken && !isInternalCall(request, env)) {
+    return jsonR({ error: 'Non autorisé — ?token= ou X-Internal-Secret requis' }, 401);
+  }
   return jsonR(await run(env, { dry: url.searchParams.get('dry') === '1' }));
 }
 
