@@ -182,7 +182,9 @@ async function run(env, { dry }) {
   // 3. Plafond sur 24 h glissantes — le vrai garde-fou. Le plafond horaire seul
   //    ne suffit pas : un rattrapage de crons manqués pourrait tout envoyer d'un coup.
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-  const sent24 = await safe(() => sb.from('wa_campaign_targets').select('id',
+  // `sent_at` récupéré en plus de l'id : la même lecture sert au plafond 24 h
+  // ET à l'espacement entre lots, plutôt que deux requêtes.
+  const sent24 = await safe(() => sb.from('wa_campaign_targets').select('id,sent_at',
     `campaign_id=eq.${camp.id}&status=eq.sent&sent_at=gte.${since}&limit=1000`), null);
   // Si ce comptage échoue, le plafond 24 h n'est plus garanti : on s'abstient
   // plutôt que d'envoyer à l'aveugle.
@@ -191,6 +193,24 @@ async function run(env, { dry }) {
   const budget = Math.min(camp.hourly_limit, Math.max(0, camp.daily_limit - already));
   if (budget <= 0) {
     return { ...out, note: `Plafond quotidien atteint (${already}/${camp.daily_limit} sur 24 h).` };
+  }
+
+  /* [CADENCE 2026-09-05] L'espacement entre lots est imposé ICI, pas par le
+     planificateur. GitHub Actions déclenche ses créneaux de façon erratique
+     (constaté : créneau de 10:00 exécuté à 13:12, runs à 00:29/01:05/05:04…).
+     Compter sur sa ponctualité produisait soit une campagne à l'arrêt, soit
+     deux lots coup sur coup si deux runs tombaient rapprochés.
+     Conséquence : le job peut être rattaché au créneau le plus fréquent — un
+     passage trop tôt ne fait rien, un créneau manqué est rattrapé au suivant. */
+  const gapMin = Number(camp.min_gap_minutes) > 0 ? Number(camp.min_gap_minutes) : 50;
+  const lastSent = (Array.isArray(sent24) ? sent24 : [])
+    .map(r => Date.parse(r.sent_at || '') || 0)
+    .reduce((a, b) => Math.max(a, b), 0);
+  if (lastSent > 0) {
+    const ecouleMin = Math.floor((Date.now() - lastSent) / 60000);
+    if (ecouleMin < gapMin) {
+      return { ...out, note: `Lot precedent il y a ${ecouleMin} min ; attente de ${gapMin} min entre deux lots.` };
+    }
   }
 
   // 4. Le lot à traiter.

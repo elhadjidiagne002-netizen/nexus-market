@@ -7,7 +7,12 @@ on:
     - cron: '*/5 * * * *'    # dispatch — toutes les 5 min (puis boucle interne → ~1/min)
     - cron: '30 * * * *'     # abandoned-cart — horaire (décalé de 30 min pour ne pas cumuler avec expire)
     - cron: '0 10 * * *'     # review-request — 1×/jour à 10h UTC (heure ouvrable au Sénégal)
-    - cron: '15 * * * *'     # wa-campaign — horaire (décalé de 15 min ; le job filtre lui-même la fenêtre 8h-19h)
+    # wa-campaign est rattaché au créneau */5 ci-dessus (le plus souvent honoré),
+    # PAS à un créneau horaire dédié : GitHub déclenche les schedules de façon
+    # erratique (constaté 2026-09-05 : créneau de 10:00 exécuté à 13:12). La
+    # cadence réelle est imposée par le job lui-même (wa_campaigns.min_gap_minutes,
+    # défaut 50 min) — un passage trop tôt ne fait rien, un créneau manqué est
+    # rattrapé au suivant.
   workflow_dispatch:
     inputs:
       job:
@@ -113,7 +118,7 @@ jobs:
   # partir d'un déclenchement manuel générique.
   cron-wa-campaign:
     name: Campagne WhatsApp — lot horaire
-    if: github.event.schedule == '15 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'wa-campaign')
+    if: github.event.schedule == '*/5 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'wa-campaign')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/wa-campaign
