@@ -34,12 +34,12 @@ UTILISATION
     # 2) Publier UNE seule affiche, tout de suite (test réel)
     python publier_facebook.py --only 1 --now
 
-    # 3) Programmer toute la campagne : 2/jour à 09:00 et 17:30
+    # 3) Programmer toute la campagne : 5/jour
     python publier_facebook.py --schedule --start 2026-09-06
 
 Options utiles :
-    --per-day 2         nombre de publications par jour
-    --hours 09:00,17:30 heures de parution
+    --per-day 5         nombre de publications par jour (défaut 5)
+    --hours 08:00,11:00,14:00,17:00,20:00   heures de parution
     --only N[,M...]     ne traiter que ces affiches (numéro du fichier)
     --limit N           s'arrêter après N publications
 
@@ -297,8 +297,13 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="n'envoie rien ; combinable avec --schedule pour voir les créneaux")
     ap.add_argument("--start", default=None, help="date de départ AAAA-MM-JJ (défaut : demain)")
-    ap.add_argument("--hours", default="09:00,17:30", help="heures de parution, séparées par une virgule")
-    ap.add_argument("--per-day", type=int, default=2, help="publications par jour")
+    # 5 créneaux répartis sur la journée active au Sénégal (UTC = heure locale,
+    # pas de décalage) : matin, fin de matinée, après-midi, sortie de bureau,
+    # soirée. Étaler évite que 5 publications se marchent dessus dans le fil.
+    ap.add_argument("--hours", default="08:00,11:00,14:00,17:00,20:00",
+                    help="heures de parution, séparées par une virgule")
+    ap.add_argument("--per-day", type=int, default=5,
+                    help="publications par jour (plafonné par le nombre d'heures fournies)")
     ap.add_argument("--only", default="", help="numéros d'affiches à traiter, ex. 1,5,12")
     ap.add_argument("--limit", type=int, default=0, help="s'arrêter après N publications")
     ap.add_argument("--carrousels", action="store_true",
