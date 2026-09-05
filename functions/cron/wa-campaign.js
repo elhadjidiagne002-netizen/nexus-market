@@ -86,15 +86,48 @@ export async function onRequestGet({ request, env }) {
 
 export default { async scheduled(event, env, ctx) { ctx.waitUntil(run(env, {})); } };
 
+// Préfixes mobiles sénégalais. Un fixe (33…) n'a pas WhatsApp : l'envoi échoue
+// à coup sûr. Constaté en préparant la 1re campagne : 1176 cibles sur 2828
+// (42 %) étaient des fixes. Sans ce filtre, le disjoncteur sautait en
+// permanence — et surtout, un fort taux d'envois vers des numéros absents de
+// WhatsApp est précisément le signal qui fait classer un compte comme spam.
+const MOBILE_PREFIXES = ['70', '75', '76', '77', '78'];
+
+function isSenegalMobile(phone) {
+  const d = String(phone || '').replace(/\D/g, '');
+  const local = d.startsWith('221') ? d.slice(3) : d;
+  return local.length === 9 && MOBILE_PREFIXES.includes(local.slice(0, 2));
+}
+
+/**
+ * Formule d'adresse. Prendre le 1er mot comme « prénom » marche pour une
+ * personne (« Fall », « Niang » — usage courant au Sénégal) mais produit des
+ * absurdités pour une raison sociale : « Bonjour Dakar » pour « Dakar Rapid
+ * Pare-Brise », « Bonjour Immobilière », « Bonjour SAHEL ». Constaté sur la
+ * campagne pilote AVANT tout envoi.
+ * Règle retenue : un nom en un seul mot est traité comme un nom de personne ;
+ * un nom composé est une entreprise, qu'on salue en entier.
+ */
+function greetingName(raw) {
+  const name = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!name) return '';
+  const mots = name.split(' ');
+  if (mots.length === 1) return mots[0];
+  return name.length <= 45 ? name : mots.slice(0, 3).join(' ');
+}
+
 /** Remplace les variables du gabarit par les données du prospect. */
 function fillTemplate(tpl, t) {
-  const prenom = String(t.name || '').trim().split(/\s+/)[0] || '';
+  const prenom = greetingName(t.name);
   return String(tpl || '')
     .replace(/\{\{\s*nom\s*\}\}/gi, t.name || '')
     .replace(/\{\{\s*prenom\s*\}\}/gi, prenom)
     .replace(/\{\{\s*ville\s*\}\}/gi, t.city || 'votre ville')
     .replace(/\{\{\s*metier\s*\}\}/gi, t.profession || 'votre activité')
-    .replace(/\s{2,}/g, ' ')
+    // Nom absent : « Bonjour {{prenom}}, » deviendrait « Bonjour , ». On
+    // recolle proprement plutôt que d'envoyer une ponctuation orpheline.
+    .replace(/(Bonjour|Bonsoir|Salut)\s+,/gi, '$1,')
+    .replace(/[ \t]{2,}/g, ' ')       // pas \s : les sauts de ligne du gabarit doivent survivre
     .trim();
 }
 
@@ -163,6 +196,15 @@ async function run(env, { dry }) {
     if (optedOut.has(t.phone)) {
       out.skipped++;
       if (!dry) await safe(() => sb.from('wa_campaign_targets').update({ status: 'opted_out' }, `id=eq.${t.id}`));
+      continue;
+    }
+
+    // Filet de sécurité : même si la file a été remplie sans filtrer, on
+    // n'envoie jamais vers un non-mobile (échec garanti + signal spam).
+    if (!isSenegalMobile(t.phone)) {
+      out.skipped++;
+      if (!dry) await safe(() => sb.from('wa_campaign_targets').update(
+        { status: 'skipped', error_msg: 'numero non mobile (pas de WhatsApp)' }, `id=eq.${t.id}`));
       continue;
     }
 
