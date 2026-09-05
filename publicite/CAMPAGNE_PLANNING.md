@@ -1,12 +1,12 @@
-# 📅 Campagne NEXUS Market — 105 publications, 5/jour
+# 📅 Campagne NEXUS Market — 105 publications, 8/jour
 
-Départ **06/09/2026** · 5 posts/jour (08:00, 11:00, 14:00, 17:00, 20:00) · Fin **26/09/2026**
+Départ **06/09/2026** · 8 posts/jour (07:00, 09:30, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00) · Fin **19/09/2026**
 
 41 affiches simples + 64 carrousels multi-images.
 
 Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 
-## Sun 06/09 08:00 — 🛍️ La Marketplace
+## Sun 06/09 07:00 — 🛍️ La Marketplace
 **Image :** `publicite/01-marketplace.png`
 
 ```
@@ -15,7 +15,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusMarket #Sénégal #AchatEnLigne #Dakar #WaveSénégal #OrangeMoney
 ```
 
-## Sun 06/09 11:00 — 🛵 Coursier à la demande
+## Sun 06/09 09:30 — 🛵 Coursier à la demande
 **Image :** `publicite/02-coursier-express.png`
 
 ```
@@ -24,7 +24,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Livraison #Coursier #Dakar #NexusMarket #LivraisonExpress
 ```
 
-## Sun 06/09 14:00 — 🔧 NEXUS Pro — Artisans & ouvriers
+## Sun 06/09 12:00 — 🔧 NEXUS Pro — Artisans & ouvriers
 **Image :** `publicite/03-nexus-pro.png`
 
 ```
@@ -33,7 +33,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusPro #Artisan #Sénégal #Plombier #Maçon #Dakar
 ```
 
-## Sun 06/09 17:00 — 🐏 NEXUS Élevage & produits locaux
+## Sun 06/09 14:00 — 🐏 NEXUS Élevage & produits locaux
 **Image :** `publicite/04-elevage-terroir.png`
 
 ```
@@ -42,7 +42,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Tabaski #NexusÉlevage #Mouton #ProduitsLocaux #Sénégal
 ```
 
-## Sun 06/09 20:00 — 🎬 NEXUS Stories
+## Sun 06/09 16:00 — 🎬 NEXUS Stories
 **Image :** `publicite/05-stories-video.png`
 
 ```
@@ -51,7 +51,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusStories #ShoppingVidéo #Sénégal #NexusMarket
 ```
 
-## Mon 07/09 08:00 — 🔄 NEXUS Troc
+## Sun 06/09 18:00 — 🔄 NEXUS Troc
 **Image :** `publicite/06-troc.png`
 
 ```
@@ -60,7 +60,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusTroc #Échange #Troc #Sénégal #SecondeMain
 ```
 
-## Mon 07/09 11:00 — 🤝 Programme Ambassadeur
+## Sun 06/09 20:00 — 🤝 Programme Ambassadeur
 **Image :** `publicite/07-ambassadeur.png`
 
 ```
@@ -69,7 +69,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Ambassadeur #GagnerDeLArgent #Parrainage #Sénégal #NexusMarket
 ```
 
-## Mon 07/09 14:00 — ⭐ Fidélité & Points
+## Sun 06/09 22:00 — ⭐ Fidélité & Points
 **Image :** `publicite/08-fidelite-points.png`
 
 ```
@@ -78,7 +78,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Fidélité #Points #Réduction #NexusMarket #Sénégal
 ```
 
-## Mon 07/09 17:00 — 🏪 Louma du vendredi
+## Mon 07/09 07:00 — 🏪 Louma du vendredi
 **Image :** `publicite/09-louma-vendredi.png`
 
 ```
@@ -87,7 +87,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Louma #VenteFlash #Promo #Vendredi #Sénégal
 ```
 
-## Mon 07/09 20:00 — 🏪 Devenez vendeur
+## Mon 07/09 09:30 — 🏪 Devenez vendeur
 **Image :** `publicite/10-devenir-vendeur.png`
 
 ```
@@ -96,7 +96,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #DevenirVendeur #Business #Entrepreneur #Sénégal #NexusMarket
 ```
 
-## Tue 08/09 08:00 — 🏢 Espace B2B (Acheteurs Pro)
+## Mon 07/09 12:00 — 🏢 Espace B2B (Acheteurs Pro)
 **Image :** `publicite/11-espace-b2b.png`
 
 ```
@@ -105,7 +105,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #B2B #Entreprise #AchatPro #Sénégal #NexusMarket
 ```
 
-## Tue 08/09 11:00 — 💳 Paiement sécurisé & Protection acheteur
+## Mon 07/09 14:00 — 💳 Paiement sécurisé & Protection acheteur
 **Image :** `publicite/12-paiement-securise.png`
 
 ```
@@ -114,7 +114,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #PaiementSécurisé #Wave #OrangeMoney #ProtectionAcheteur #Sénégal
 ```
 
-## Tue 08/09 14:00 — 🐏 Tabaski
+## Mon 07/09 16:00 — 🐏 Tabaski
 **Image :** `publicite/13-tabaski.png`
 
 ```
@@ -123,7 +123,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Tabaski #NexusMarket #Sénégal #Mouton #Dakar #Élevage
 ```
 
-## Tue 08/09 17:00 — 🌙 Ramadan
+## Mon 07/09 18:00 — 🌙 Ramadan
 **Image :** `publicite/14-ramadan.png`
 
 ```
@@ -132,7 +132,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Ramadan #NexusMarket #Sénégal #Ndogou #Dakar #Halal
 ```
 
-## Tue 08/09 20:00 — 🎒 Rentrée scolaire
+## Mon 07/09 20:00 — 🎒 Rentrée scolaire
 **Image :** `publicite/15-rentree.png`
 
 ```
@@ -141,7 +141,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Rentrée #NexusMarket #Sénégal #Fournitures #Dakar #École
 ```
 
-## Wed 09/09 08:00 — 🎉 Fin d'année
+## Mon 07/09 22:00 — 🎉 Fin d'année
 **Image :** `publicite/16-fin-annee.png`
 
 ```
@@ -150,7 +150,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #FinDAnnée #NexusMarket #Sénégal #Cadeaux #Dakar #Fêtes
 ```
 
-## Wed 09/09 11:00 — ✈️ Diaspora — envoyer à la famille
+## Tue 08/09 07:00 — ✈️ Diaspora — envoyer à la famille
 **Image :** `publicite/17-diaspora-envoi.png`
 
 ```
@@ -159,7 +159,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Diaspora #NexusMarket #Sénégal #Famille #Livraison #Dakar
 ```
 
-## Wed 09/09 14:00 — 💳 Diaspora — payer d'ici
+## Tue 08/09 09:30 — 💳 Diaspora — payer d'ici
 **Image :** `publicite/18-diaspora-paiement.png`
 
 ```
@@ -168,7 +168,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Diaspora #NexusMarket #Sénégal #PaiementSécurisé #Carte #FCFA
 ```
 
-## Wed 09/09 17:00 — 👗 Mode
+## Tue 08/09 12:00 — 👗 Mode
 **Image :** `publicite/19-mode.png`
 
 ```
@@ -177,7 +177,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Mode #NexusMarket #Sénégal #Wax #Dakar #Style
 ```
 
-## Wed 09/09 20:00 — 📱 Électronique
+## Tue 08/09 14:00 — 📱 Électronique
 **Image :** `publicite/20-electronique.png`
 
 ```
@@ -186,7 +186,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Électronique #NexusMarket #Sénégal #Téléphone #Dakar #HighTech
 ```
 
-## Thu 10/09 08:00 — 💄 Beauté
+## Tue 08/09 16:00 — 💄 Beauté
 **Image :** `publicite/21-beaute.png`
 
 ```
@@ -195,7 +195,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Beauté #NexusMarket #Sénégal #Cosmétiques #Dakar #Naturel
 ```
 
-## Thu 10/09 11:00 — 🚗 Auto & Moto
+## Tue 08/09 18:00 — 🚗 Auto & Moto
 **Image :** `publicite/22-auto.png`
 
 ```
@@ -204,7 +204,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Auto #NexusMarket #Sénégal #Moto #Dakar #Garage
 ```
 
-## Thu 10/09 14:00 — 💬 Chat avec le vendeur
+## Tue 08/09 20:00 — 💬 Chat avec le vendeur
 **Image :** `publicite/23-chat.png`
 
 ```
@@ -213,7 +213,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusMarket #Sénégal #Chat #AchatEnLigne #Dakar #Confiance
 ```
 
-## Thu 10/09 17:00 — 🔔 Alertes prix
+## Tue 08/09 22:00 — 🔔 Alertes prix
 **Image :** `publicite/24-alertes-prix.png`
 
 ```
@@ -222,7 +222,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusMarket #Sénégal #BonPlan #Promo #Dakar #AchatMalin
 ```
 
-## Thu 10/09 20:00 — ❤️ Liste d'envies
+## Wed 09/09 07:00 — ❤️ Liste d'envies
 **Image :** `publicite/25-wishlist.png`
 
 ```
@@ -231,7 +231,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusMarket #Sénégal #Wishlist #Shopping #Dakar #Cadeaux
 ```
 
-## Fri 11/09 08:00 — 📲 Installer l'appli
+## Wed 09/09 09:30 — 📲 Installer l'appli
 **Image :** `publicite/26-telecharger.png`
 
 ```
@@ -240,7 +240,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusMarket #Sénégal #Appli #Mobile #Dakar #PWA
 ```
 
-## Fri 11/09 11:00 — 📊 Tableau de bord vendeur
+## Wed 09/09 12:00 — 📊 Tableau de bord vendeur
 **Image :** `publicite/27-dashboard.png`
 
 ```
@@ -249,7 +249,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Vendeur #NexusMarket #Sénégal #Business #Dakar #Entrepreneur
 ```
 
-## Fri 11/09 14:00 — 🚀 Booster une annonce
+## Wed 09/09 14:00 — 🚀 Booster une annonce
 **Image :** `publicite/28-boost.png`
 
 ```
@@ -258,7 +258,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Vendeur #NexusMarket #Sénégal #Visibilité #Dakar #Boost
 ```
 
-## Fri 11/09 17:00 — 📦 Gestion du stock
+## Wed 09/09 16:00 — 📦 Gestion du stock
 **Image :** `publicite/29-stock.png`
 
 ```
@@ -267,7 +267,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Vendeur #NexusMarket #Sénégal #Stock #Dakar #Gestion
 ```
 
-## Fri 11/09 20:00 — ↩️ Retours & remboursement
+## Wed 09/09 18:00 — ↩️ Retours & remboursement
 **Image :** `publicite/30-retours.png`
 
 ```
@@ -276,7 +276,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusMarket #Sénégal #Remboursement #Confiance #Dakar #AchatSûr
 ```
 
-## Sat 12/09 08:00 — ✅ Authenticité des vendeurs
+## Wed 09/09 20:00 — ✅ Authenticité des vendeurs
 **Image :** `publicite/31-authenticite.png`
 
 ```
@@ -285,7 +285,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusMarket #Sénégal #Confiance #VendeurVérifié #Dakar #Sécurité
 ```
 
-## Sat 12/09 11:00 — 🛠️ Service après-vente
+## Wed 09/09 22:00 — 🛠️ Service après-vente
 **Image :** `publicite/32-sav.png`
 
 ```
@@ -294,7 +294,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusMarket #Sénégal #SAV #ServiceClient #Dakar #Confiance
 ```
 
-## Sat 12/09 14:00 — 🏪 Vendeurs (produits) — « On crée ta fiche pour toi »
+## Thu 10/09 07:00 — 🏪 Vendeurs (produits) — « On crée ta fiche pour toi »
 **Image :** `publicite/33-vendeurs-concierge.png`
 
 ```
@@ -303,7 +303,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #DevenirVendeur #NexusMarket #Business #Sénégal #VendreEnLigne
 ```
 
-## Sat 12/09 17:00 — 🔨 Artisans & ouvriers — « On s'occupe de ta fiche pro »
+## Thu 10/09 09:30 — 🔨 Artisans & ouvriers — « On s'occupe de ta fiche pro »
 **Image :** `publicite/34-artisans-nexus-pro.png`
 
 ```
@@ -312,7 +312,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusPro #Artisan #Maçon #Plombier #Électricien #Sénégal
 ```
 
-## Sat 12/09 20:00 — 🛵 Coursiers & transporteurs — « Rejoins le réseau NEXUS »
+## Thu 10/09 12:00 — 🛵 Coursiers & transporteurs — « Rejoins le réseau NEXUS »
 **Image :** `publicite/35-coursiers-transporteurs.png`
 
 ```
@@ -321,7 +321,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Coursier #Transporteur #Livraison #Covoiturage #Sénégal #NexusMarket
 ```
 
-## Sun 13/09 08:00 — 🐏 Éleveurs & producteurs locaux — « On publie tes animaux/produits »
+## Thu 10/09 14:00 — 🐏 Éleveurs & producteurs locaux — « On publie tes animaux/produits »
 **Image :** `publicite/36-eleveurs.png`
 
 ```
@@ -330,7 +330,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusÉlevage #Éleveur #Tabaski #ProduitsLocaux #Sénégal
 ```
 
-## Sun 13/09 11:00 — 🔑 Loueurs de matériel — « On met ton matériel en ligne »
+## Thu 10/09 16:00 — 🔑 Loueurs de matériel — « On met ton matériel en ligne »
 **Image :** `publicite/37-loueurs-materiel.png`
 
 ```
@@ -339,7 +339,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusLocation #Location #Matériel #Événementiel #BTP #Sénégal
 ```
 
-## Sun 13/09 14:00 — 🔑 NEXUS Location — Louez plutôt qu'acheter
+## Thu 10/09 18:00 — 🔑 NEXUS Location — Louez plutôt qu'acheter
 **Image :** `publicite/38-location-materiel.png`
 
 ```
@@ -348,7 +348,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #NexusLocation #Location #Événementiel #BTP #Sénégal
 ```
 
-## Sun 13/09 17:00 — 🚗 NEXUS Covoiturage — Trajets & colis entre villes
+## Thu 10/09 20:00 — 🚗 NEXUS Covoiturage — Trajets & colis entre villes
 **Image :** `publicite/39-covoiturage.png`
 
 ```
@@ -357,7 +357,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #Covoiturage #Trajet #Colis #Sénégal #NexusMarket
 ```
 
-## Sun 13/09 20:00 — 🤖 Assistant IA — Trouve le bon produit en un message
+## Thu 10/09 22:00 — 🤖 Assistant IA — Trouve le bon produit en un message
 **Image :** `publicite/40-assistant-ia.png`
 
 ```
@@ -366,7 +366,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #AssistantIA #Wolof #NexusMarket #Sénégal #IA
 ```
 
-## Mon 14/09 08:00 — 📰 Blog NEXUS — Conseils, astuces & bons plans
+## Fri 11/09 07:00 — 📰 Blog NEXUS — Conseils, astuces & bons plans
 **Image :** `publicite/41-blog-nexus.png`
 
 ```
@@ -375,7 +375,7 @@ Pilotage : `python publier_facebook.py --tout --schedule --start 2026-09-06`
 #BlogNexus #Conseils #AstucesSénégal #NexusMarket
 ```
 
-## Mon 14/09 11:00 — 🎠 nexus-acheter-en-toute-securite (5 slides)
+## Fri 11/09 09:30 — 🎠 nexus-acheter-en-toute-securite (5 slides)
 
 ```
 🔒 Acheter en ligne au Sénégal sans se faire avoir, c'est possible.
@@ -385,7 +385,7 @@ Ton argent n'est versé au vendeur qu'une fois le colis reçu ✅
 #NexusMarket #Sénégal #AchatSûr #Dakar #PaiementSécurisé
 ```
 
-## Mon 14/09 14:00 — 🎠 nexus-bienvenue-sur-nexus-market (5 slides)
+## Fri 11/09 12:00 — 🎠 nexus-bienvenue-sur-nexus-market (5 slides)
 
 ```
 👋 Bienvenue sur NEXUS Market — le marché du Sénégal, dans ton téléphone.
@@ -394,7 +394,7 @@ Fais défiler pour découvrir tout ce que tu peux y faire ⬅️➡️
 #NexusMarket #Sénégal #Dakar #Marketplace #MadeInSenegal
 ```
 
-## Mon 14/09 17:00 — 🎠 nexus-compl-4-avril-fete-de-l-independance (3 slides)
+## Fri 11/09 14:00 — 🎠 nexus-compl-4-avril-fete-de-l-independance (3 slides)
 
 ```
 🇸🇳 Bonne fête de l'Indépendance ! Le 4 avril, on célèbre ce qu'on construit nous-mêmes.
@@ -404,7 +404,7 @@ Fais défiler ⬅️➡️
 #4Avril #Indépendance #Sénégal #NexusMarket #MadeInSenegal
 ```
 
-## Mon 14/09 20:00 — 🎠 nexus-compl-ambassadeurs-universitaires (4 slides)
+## Fri 11/09 16:00 — 🎠 nexus-compl-ambassadeurs-universitaires (4 slides)
 
 ```
 🎓 Étudiant ? Deviens ambassadeur NEXUS sur ton campus et gagne une commission sur chaque inscription.
@@ -413,7 +413,7 @@ Fais défiler pour voir comment ça marche ⬅️➡️
 #Étudiant #NexusMarket #Sénégal #Ambassadeur #Dakar #JobÉtudiant
 ```
 
-## Tue 15/09 08:00 — 🎠 nexus-compl-faq-tes-questions-nos-reponses (8 slides)
+## Fri 11/09 18:00 — 🎠 nexus-compl-faq-tes-questions-nos-reponses (8 slides)
 
 ```
 ❓ « C'est fiable ? » « Comment je suis payé ? » « Et si le produit ne me plaît pas ? »
@@ -422,7 +422,7 @@ On répond aux 8 questions qu'on nous pose le plus. Fais défiler ⬅️➡️
 #FAQ #NexusMarket #Sénégal #Dakar #Confiance
 ```
 
-## Tue 15/09 11:00 — 🎠 nexus-compl-fetes-de-fin-d-annee (3 slides)
+## Fri 11/09 20:00 — 🎠 nexus-compl-fetes-de-fin-d-annee (3 slides)
 
 ```
 🎉 Les fêtes arrivent — les cadeaux aussi. Mode, électronique, beauté, déco.
@@ -431,7 +431,7 @@ Fais défiler pour nos idées ⬅️➡️
 #FinDAnnée #NexusMarket #Sénégal #Cadeaux #Dakar
 ```
 
-## Tue 15/09 14:00 — 🎠 nexus-compl-korite-sur-nexus (3 slides)
+## Fri 11/09 22:00 — 🎠 nexus-compl-korite-sur-nexus (3 slides)
 
 ```
 🌙 Korité approche ! Tenues, chaussures, produits de la maison — commande tôt, reçois à temps.
@@ -440,7 +440,7 @@ Fais défiler ⬅️➡️
 #Korité #NexusMarket #Sénégal #Dakar #Fête
 ```
 
-## Tue 15/09 17:00 — 🎠 nexus-compl-nexus-market-vs-vendre-sur-whatsapp (3 slides)
+## Sat 12/09 07:00 — 🎠 nexus-compl-nexus-market-vs-vendre-sur-whatsapp (3 slides)
 
 ```
 📱 Vendre sur WhatsApp, ça marche… jusqu'au jour où tu perds une commande dans la discussion.
@@ -449,7 +449,7 @@ Fais défiler : la différence en 3 points ⬅️➡️
 #Vendeur #NexusMarket #Sénégal #Business #Dakar
 ```
 
-## Tue 15/09 20:00 — 🎠 nexus-compl-parrainage-invite-gagne (4 slides)
+## Sat 12/09 09:30 — 🎠 nexus-compl-parrainage-invite-gagne (4 slides)
 
 ```
 🤝 Invite, ils achètent, tu gagnes. Le parrainage NEXUS en 4 étapes.
@@ -458,7 +458,7 @@ Fais défiler ⬅️➡️
 #Parrainage #NexusMarket #Sénégal #Dakar #GagnerDeLArgent
 ```
 
-## Wed 16/09 08:00 — 🎠 nexus-compl-pourquoi-nexus-market-purement-senegalai (6 slides)
+## Sat 12/09 12:00 — 🎠 nexus-compl-pourquoi-nexus-market-purement-senegalai (6 slides)
 
 ```
 🇸🇳 Pourquoi une marketplace 100% sénégalaise ? Parce que Wave, Orange Money, le Louma et la Tabaski, ça ne s'improvise pas depuis l'étranger.
@@ -467,7 +467,7 @@ Fais défiler ⬅️➡️
 #NexusMarket #Sénégal #MadeInSenegal #Dakar #Local
 ```
 
-## Wed 16/09 11:00 — 🎠 nexus-compl-recruter-agents-immobiliers-loueurs (4 slides)
+## Sat 12/09 14:00 — 🎠 nexus-compl-recruter-agents-immobiliers-loueurs (4 slides)
 
 ```
 🏠 Agent immobilier ou loueur de matériel ? Publie tes biens sur NEXUS et touche des clients qui cherchent déjà.
@@ -476,7 +476,7 @@ Fais défiler ⬅️➡️
 #Immobilier #NexusMarket #Sénégal #Dakar #Location
 ```
 
-## Wed 16/09 14:00 — 🎠 nexus-compl-recruter-des-artisans-ouvriers-pro (4 slides)
+## Sat 12/09 16:00 — 🎠 nexus-compl-recruter-des-artisans-ouvriers-pro (4 slides)
 
 ```
 🔧 Maçon, plombier, électricien, menuisier ? Ta fiche NEXUS Pro est gratuite, et les clients de ton quartier te trouvent.
@@ -485,7 +485,7 @@ Fais défiler ⬅️➡️
 #NexusPro #Artisan #Sénégal #Dakar #Métier
 ```
 
-## Wed 16/09 17:00 — 🎠 nexus-compl-recruter-des-vendeurs (5 slides)
+## Sat 12/09 18:00 — 🎠 nexus-compl-recruter-des-vendeurs (5 slides)
 
 ```
 🏪 Tu vends déjà quelque chose ? Ouvre ta boutique NEXUS gratuitement et vends à tout le Sénégal.
@@ -494,7 +494,7 @@ Fais défiler pour voir ce que ça change ⬅️➡️
 #Vendeur #NexusMarket #Sénégal #Dakar #Boutique
 ```
 
-## Wed 16/09 20:00 — 🎠 nexus-compl-rentree-scolaire (3 slides)
+## Sat 12/09 20:00 — 🎠 nexus-compl-rentree-scolaire (3 slides)
 
 ```
 🎒 La rentrée sans courir les marchés : cahiers, sacs, uniformes, livrés chez toi.
@@ -503,7 +503,7 @@ Fais défiler ⬅️➡️
 #Rentrée #NexusMarket #Sénégal #Fournitures #Dakar
 ```
 
-## Thu 17/09 08:00 — 🎠 nexus-compl-saint-valentin (3 slides)
+## Sat 12/09 22:00 — 🎠 nexus-compl-saint-valentin (3 slides)
 
 ```
 💝 Saint-Valentin : fais plaisir sans te ruiner. Idées cadeaux livrées à Dakar et partout au Sénégal.
@@ -512,7 +512,7 @@ Fais défiler ⬅️➡️
 #SaintValentin #NexusMarket #Sénégal #Cadeau #Dakar
 ```
 
-## Thu 17/09 11:00 — 🎠 nexus-compl-tabaski-sur-nexus (4 slides)
+## Sun 13/09 07:00 — 🎠 nexus-compl-tabaski-sur-nexus (4 slides)
 
 ```
 🐏 Tabaski : ton mouton, tes tenues, tes provisions — sans courir tout Dakar.
@@ -521,7 +521,7 @@ Fais défiler, tout y est ⬅️➡️
 #Tabaski #NexusMarket #Sénégal #Mouton #Dakar
 ```
 
-## Thu 17/09 14:00 — 🎠 nexus-coursier-a-la-demande (4 slides)
+## Sun 13/09 09:30 — 🎠 nexus-coursier-a-la-demande (4 slides)
 
 ```
 🛵 Un colis à faire livrer maintenant ? Commande un coursier et suis-le en direct sur la carte 📍
@@ -530,7 +530,7 @@ Fais défiler ⬅️➡️
 #Coursier #Livraison #NexusMarket #Dakar #Sénégal
 ```
 
-## Thu 17/09 17:00 — 🎠 nexus-covoiturage (4 slides)
+## Sun 13/09 12:00 — 🎠 nexus-covoiturage (4 slides)
 
 ```
 🚗 Tu pars à Thiès, Saint-Louis, Ziguinchor ? Trouve une place — ou propose la tienne et partage les frais.
@@ -539,7 +539,7 @@ Fais défiler ⬅️➡️
 #Covoiturage #NexusMarket #Sénégal #Dakar #Transport
 ```
 
-## Thu 17/09 20:00 — 🎠 nexus-depannage-auto (4 slides)
+## Sun 13/09 14:00 — 🎠 nexus-depannage-auto (4 slides)
 
 ```
 🚨 Panne, crevaison, batterie à plat ? Un dépanneur près de toi, en quelques minutes.
@@ -548,7 +548,7 @@ Fais défiler ⬅️➡️
 #Dépannage #Auto #NexusMarket #Sénégal #Dakar
 ```
 
-## Fri 18/09 08:00 — 🎠 nexus-edutransport-lignes-de-transport-bus-cars (7 slides)
+## Sun 13/09 16:00 — 🎠 nexus-edutransport-lignes-de-transport-bus-cars (7 slides)
 
 ```
 🚌 Horaires, tarifs et compagnies pour tes trajets : Dakar, Thiès, Kaolack, Ziguinchor…
@@ -557,7 +557,7 @@ Fais défiler pour les lignes disponibles ⬅️➡️
 #Transport #NexusMarket #Sénégal #Bus #Voyage
 ```
 
-## Fri 18/09 11:00 — 🎠 nexus-edutransport-nexus-education-cours-gratuits (7 slides)
+## Sun 13/09 18:00 — 🎠 nexus-edutransport-nexus-education-cours-gratuits (7 slides)
 
 ```
 📚 Des cours et exercices scolaires **gratuits**, du primaire au lycée. Sans compte, sans abonnement.
@@ -566,7 +566,7 @@ Fais défiler ⬅️➡️
 #Éducation #NexusMarket #Sénégal #Cours #École
 ```
 
-## Fri 18/09 14:00 — 🎠 nexus-edutransport-ventes-flash-promos-a-duree-limitee (5 slides)
+## Sun 13/09 20:00 — 🎠 nexus-edutransport-ventes-flash-promos-a-duree-limitee (5 slides)
 
 ```
 ⚡ Ventes flash : des prix cassés, mais pas longtemps. Repère l'offre avant qu'elle ne parte.
@@ -575,7 +575,7 @@ Fais défiler ⬅️➡️
 #VenteFlash #Promo #NexusMarket #Sénégal #BonPlan
 ```
 
-## Fri 18/09 17:00 — 🎠 nexus-guide-annonces-express-sans-compte (5 slides)
+## Sun 13/09 22:00 — 🎠 nexus-guide-annonces-express-sans-compte (5 slides)
 
 ```
 📝 Une chose à vendre, tout de suite ? Publie une annonce express **sans créer de compte**.
@@ -584,7 +584,7 @@ Fais défiler pour la marche à suivre ⬅️➡️
 #Annonce #NexusMarket #Sénégal #Dakar #Vendre
 ```
 
-## Fri 18/09 20:00 — 🎠 nexus-guide-assistant-ia-trouve-en-un-message (5 slides)
+## Mon 14/09 07:00 — 🎠 nexus-guide-assistant-ia-trouve-en-un-message (5 slides)
 
 ```
 🤖 Tu ne sais pas quoi chercher ? Décris ce qu'il te faut, l'assistant s'occupe du reste.
@@ -593,7 +593,7 @@ Fais défiler ⬅️➡️
 #Assistant #NexusMarket #Sénégal #Dakar #Recherche
 ```
 
-## Sat 19/09 08:00 — 🎠 nexus-guide-blog-nexus-conseils-bons-plans (4 slides)
+## Mon 14/09 09:30 — 🎠 nexus-guide-blog-nexus-conseils-bons-plans (4 slides)
 
 ```
 📰 Choisir un mouton, négocier juste, repérer une arnaque — nos conseils sur le blog NEXUS.
@@ -602,7 +602,7 @@ Fais défiler ⬅️➡️
 #Blog #NexusMarket #Sénégal #Conseils #Dakar
 ```
 
-## Sat 19/09 11:00 — 🎠 nexus-guide-c-est-quoi-nexus-market (7 slides)
+## Mon 14/09 12:00 — 🎠 nexus-guide-c-est-quoi-nexus-market (7 slides)
 
 ```
 🤔 NEXUS Market, c'est quoi exactement ? Une marketplace, oui — mais pas seulement.
@@ -611,7 +611,7 @@ Fais défiler : tout est expliqué en 7 images ⬅️➡️
 #NexusMarket #Sénégal #Dakar #Marketplace #Guide
 ```
 
-## Sat 19/09 14:00 — 🎠 nexus-guide-creer-son-compte-etape-par-etape (6 slides)
+## Mon 14/09 14:00 — 🎠 nexus-guide-creer-son-compte-etape-par-etape (6 slides)
 
 ```
 ✅ Créer ton compte prend moins de 2 minutes. On te montre chaque étape.
@@ -620,7 +620,7 @@ Fais défiler ⬅️➡️
 #Guide #NexusMarket #Sénégal #Dakar #Inscription
 ```
 
-## Sat 19/09 17:00 — 🎠 nexus-guide-espace-b2b-acheteurs-professionnels (5 slides)
+## Mon 14/09 16:00 — 🎠 nexus-guide-espace-b2b-acheteurs-professionnels (5 slides)
 
 ```
 🏢 Entreprise ou revendeur ? Commande en gros, demande des devis, reçois tes factures.
@@ -629,7 +629,7 @@ Fais défiler ⬅️➡️
 #B2B #NexusMarket #Sénégal #Entreprise #Dakar
 ```
 
-## Sat 19/09 20:00 — 🎠 nexus-guide-faire-son-premier-achat (7 slides)
+## Mon 14/09 18:00 — 🎠 nexus-guide-faire-son-premier-achat (7 slides)
 
 ```
 🛒 Ton tout premier achat sur NEXUS, expliqué pas à pas — jusqu'à la réception du colis.
@@ -638,7 +638,7 @@ Fais défiler ⬅️➡️
 #Guide #NexusMarket #Sénégal #Achat #Dakar
 ```
 
-## Sun 20/09 08:00 — 🎠 nexus-guide-mecaniciens-pieces-pneus (4 slides)
+## Mon 14/09 20:00 — 🎠 nexus-guide-mecaniciens-pieces-pneus (4 slides)
 
 ```
 🔧 Pièces, pneus, batteries — et le mécanicien près de chez toi si tu préfères déléguer.
@@ -647,7 +647,7 @@ Fais défiler ⬅️➡️
 #Auto #Mécanicien #NexusMarket #Sénégal #Dakar
 ```
 
-## Sun 20/09 11:00 — 🎠 nexus-guide-nexus-on-demand-liste-de-courses (6 slides)
+## Mon 14/09 22:00 — 🎠 nexus-guide-nexus-on-demand-liste-de-courses (6 slides)
 
 ```
 🧺 Écris ta liste de courses, un coursier s'en charge. Comme si tu envoyais quelqu'un au marché.
@@ -656,7 +656,7 @@ Fais défiler ⬅️➡️
 #OnDemand #NexusMarket #Sénégal #Courses #Dakar
 ```
 
-## Sun 20/09 14:00 — 🎠 nexus-guide-questions-que-tout-debutant-se-pose (6 slides)
+## Tue 15/09 07:00 — 🎠 nexus-guide-questions-que-tout-debutant-se-pose (6 slides)
 
 ```
 🙋 Première fois sur NEXUS ? Voici les 6 questions que tout le monde se pose au début.
@@ -665,7 +665,7 @@ Fais défiler ⬅️➡️
 #Guide #NexusMarket #Sénégal #Débutant #Dakar
 ```
 
-## Sun 20/09 17:00 — 🎠 nexus-guide-retours-echanges-sav (5 slides)
+## Tue 15/09 09:30 — 🎠 nexus-guide-retours-echanges-sav (5 slides)
 
 ```
 ↩️ Le produit ne correspond pas ? Voici comment ouvrir un litige et récupérer ton argent.
@@ -674,7 +674,7 @@ Fais défiler ⬅️➡️
 #SAV #Remboursement #NexusMarket #Sénégal #Confiance
 ```
 
-## Sun 20/09 20:00 — 🎠 nexus-guide-tableau-de-bord-boost-vendeur (6 slides)
+## Tue 15/09 12:00 — 🎠 nexus-guide-tableau-de-bord-boost-vendeur (6 slides)
 
 ```
 📊 Côté vendeur : suis tes ventes, gère ton stock, booste tes annonces.
@@ -683,7 +683,7 @@ Fais défiler pour la visite guidée ⬅️➡️
 #Vendeur #NexusMarket #Sénégal #Business #Dakar
 ```
 
-## Mon 21/09 08:00 — 🎠 nexus-guide-wishlist-alertes-prix-chat (5 slides)
+## Tue 15/09 14:00 — 🎠 nexus-guide-wishlist-alertes-prix-chat (5 slides)
 
 ```
 ❤️ Garde tes coups de cœur, sois prévenu quand le prix baisse, discute avec le vendeur.
@@ -692,7 +692,7 @@ Fais défiler ⬅️➡️
 #NexusMarket #Sénégal #BonPlan #Dakar #Shopping
 ```
 
-## Mon 21/09 11:00 — 🎠 nexus-immobilier-location (4 slides)
+## Tue 15/09 16:00 — 🎠 nexus-immobilier-location (4 slides)
 
 ```
 🏠 Chambre, appartement, terrain, local commercial — à louer ou à vendre, partout au Sénégal.
@@ -701,7 +701,7 @@ Fais défiler ⬅️➡️
 #Immobilier #NexusMarket #Sénégal #Dakar #Location
 ```
 
-## Mon 21/09 14:00 — 🎠 nexus-lancement-100-senegalais (4 slides)
+## Tue 15/09 18:00 — 🎠 nexus-lancement-100-senegalais (4 slides)
 
 ```
 🇸🇳 Conçue à Dakar, pour le Sénégal. Pas une copie adaptée — une plateforme pensée d'ici.
@@ -710,7 +710,7 @@ Fais défiler ⬅️➡️
 #NexusMarket #Sénégal #MadeInSenegal #Dakar #Lancement
 ```
 
-## Mon 21/09 17:00 — 🎠 nexus-lancement-compte-a-rebours-pre-lancement (4 slides)
+## Tue 15/09 20:00 — 🎠 nexus-lancement-compte-a-rebours-pre-lancement (4 slides)
 
 ```
 ⏳ Ça arrive. Prépare-toi : NEXUS Market ouvre bientôt.
@@ -719,7 +719,7 @@ Fais défiler ⬅️➡️
 #Lancement #NexusMarket #Sénégal #Dakar #BientôtDisponible
 ```
 
-## Mon 21/09 20:00 — 🎠 nexus-lancement-l-annonce-de-lancement (5 slides)
+## Tue 15/09 22:00 — 🎠 nexus-lancement-l-annonce-de-lancement (5 slides)
 
 ```
 🚀 C'est officiel : NEXUS Market est en ligne ! La marketplace 100% sénégalaise ouvre ses portes.
@@ -728,7 +728,7 @@ Fais défiler pour tout découvrir ⬅️➡️
 #Lancement #NexusMarket #Sénégal #Dakar #MadeInSenegal
 ```
 
-## Tue 22/09 08:00 — 🎠 nexus-lancement-le-probleme-la-solution (4 slides)
+## Wed 16/09 07:00 — 🎠 nexus-lancement-le-probleme-la-solution (4 slides)
 
 ```
 😤 Payer d'avance sans garantie, chercher un artisan sans savoir s'il est fiable… on connaît.
@@ -737,7 +737,7 @@ Fais défiler : voici ce qu'on a construit ⬅️➡️
 #NexusMarket #Sénégal #Dakar #Confiance #Solution
 ```
 
-## Tue 22/09 11:00 — 🎠 nexus-lancement-offre-de-lancement-early-adopters (4 slides)
+## Wed 16/09 09:30 — 🎠 nexus-lancement-offre-de-lancement-early-adopters (4 slides)
 
 ```
 🎁 Les premiers inscrits ont droit à des avantages qui ne reviendront pas. Profites-en maintenant.
@@ -746,7 +746,7 @@ Fais défiler ⬅️➡️
 #Lancement #NexusMarket #Sénégal #Offre #Dakar
 ```
 
-## Tue 22/09 14:00 — 🎠 nexus-lancement-pour-les-acheteurs (4 slides)
+## Wed 16/09 12:00 — 🎠 nexus-lancement-pour-les-acheteurs (4 slides)
 
 ```
 🛍️ Acheteurs : ce que NEXUS change pour toi, concrètement.
@@ -755,7 +755,7 @@ Fais défiler ⬅️➡️
 #Acheteur #NexusMarket #Sénégal #Dakar #AchatEnLigne
 ```
 
-## Tue 22/09 17:00 — 🎠 nexus-lancement-pour-les-artisans-ouvriers (4 slides)
+## Wed 16/09 14:00 — 🎠 nexus-lancement-pour-les-artisans-ouvriers (4 slides)
 
 ```
 🔧 Artisans et ouvriers : vos clients vous cherchent déjà en ligne. Soyez trouvables.
@@ -764,7 +764,7 @@ Fais défiler ⬅️➡️
 #NexusPro #Artisan #Sénégal #Dakar #Métier
 ```
 
-## Tue 22/09 20:00 — 🎠 nexus-lancement-pour-les-livreurs-coursiers (4 slides)
+## Wed 16/09 16:00 — 🎠 nexus-lancement-pour-les-livreurs-coursiers (4 slides)
 
 ```
 🛵 Tu as une moto ? Deviens coursier NEXUS et travaille quand tu veux.
@@ -773,7 +773,7 @@ Fais défiler ⬅️➡️
 #Coursier #Livreur #NexusMarket #Sénégal #Dakar
 ```
 
-## Wed 23/09 08:00 — 🎠 nexus-lancement-pour-les-vendeurs (5 slides)
+## Wed 16/09 18:00 — 🎠 nexus-lancement-pour-les-vendeurs (5 slides)
 
 ```
 🏪 Vendeurs : une boutique en ligne gratuite, des clients dans tout le Sénégal, un paiement garanti.
@@ -782,7 +782,7 @@ Fais défiler ⬅️➡️
 #Vendeur #NexusMarket #Sénégal #Dakar #Boutique
 ```
 
-## Wed 23/09 11:00 — 🎠 nexus-lancement-rejoins-la-communaute (3 slides)
+## Wed 16/09 20:00 — 🎠 nexus-lancement-rejoins-la-communaute (3 slides)
 
 ```
 🤝 NEXUS, c'est d'abord des gens : vendeurs, artisans, coursiers, acheteurs. Rejoins-nous.
@@ -791,7 +791,7 @@ Fais défiler ⬅️➡️
 #Communauté #NexusMarket #Sénégal #Dakar #Ensemble
 ```
 
-## Wed 23/09 14:00 — 🎠 nexus-local-elevage (4 slides)
+## Wed 16/09 22:00 — 🎠 nexus-local-elevage (4 slides)
 
 ```
 🐏 Moutons, volailles, produits du terroir — directement auprès des éleveurs et producteurs.
@@ -800,7 +800,7 @@ Fais défiler ⬅️➡️
 #Élevage #Terroir #NexusMarket #Sénégal #Local
 ```
 
-## Wed 23/09 17:00 — 🎠 nexus-louma-du-vendredi (4 slides)
+## Thu 17/09 07:00 — 🎠 nexus-louma-du-vendredi (4 slides)
 
 ```
 🏪 Comme le vrai louma, mais en ligne : chaque **vendredi**, promos et ventes flash.
@@ -809,7 +809,7 @@ Fais défiler ⬅️➡️
 #Louma #Vendredi #NexusMarket #Sénégal #Promo
 ```
 
-## Wed 23/09 20:00 — 🎠 nexus-nexus-pro-artisans-ouvriers (4 slides)
+## Thu 17/09 09:30 — 🎠 nexus-nexus-pro-artisans-ouvriers (4 slides)
 
 ```
 🔧 Une fuite, un mur à monter, une prise à refaire ? Trouve l'artisan le plus proche.
@@ -818,7 +818,7 @@ Fais défiler ⬅️➡️
 #NexusPro #Artisan #Sénégal #Dakar #Dépannage
 ```
 
-## Thu 24/09 08:00 — 🎠 nexus-nexus-stories (4 slides)
+## Thu 17/09 12:00 — 🎠 nexus-nexus-stories (4 slides)
 
 ```
 🎬 Vois le produit en vidéo avant d'acheter. Les vendeurs le présentent eux-mêmes.
@@ -827,7 +827,7 @@ Fais défiler ⬅️➡️
 #Stories #NexusMarket #Sénégal #Vidéo #Dakar
 ```
 
-## Thu 24/09 11:00 — 🎠 nexus-nexus-troc (4 slides)
+## Thu 17/09 14:00 — 🎠 nexus-nexus-troc (4 slides)
 
 ```
 🔄 Pas besoin d'argent : échange ce que tu n'utilises plus contre ce qu'il te faut.
@@ -836,7 +836,7 @@ Fais défiler ⬅️➡️
 #Troc #Échange #NexusMarket #Sénégal #Dakar
 ```
 
-## Thu 24/09 14:00 — 🎠 nexus-tuto-commander-un-coursier-en-detail (4 slides)
+## Thu 17/09 16:00 — 🎠 nexus-tuto-commander-un-coursier-en-detail (4 slides)
 
 ```
 🛵 Commander un coursier, écran par écran. Aucune étape sautée.
@@ -845,7 +845,7 @@ Fais défiler ⬅️➡️
 #Tuto #Coursier #NexusMarket #Sénégal #Dakar
 ```
 
-## Thu 24/09 17:00 — 🎠 nexus-tuto-covoiturage (3 slides)
+## Thu 17/09 18:00 — 🎠 nexus-tuto-covoiturage (3 slides)
 
 ```
 🚗 Réserver une place en covoiturage, en 3 étapes.
@@ -854,7 +854,7 @@ Fais défiler ⬅️➡️
 #Tuto #Covoiturage #NexusMarket #Sénégal #Transport
 ```
 
-## Thu 24/09 20:00 — 🎠 nexus-tuto-devenir-vendeur-creer-sa-boutique (4 slides)
+## Thu 17/09 20:00 — 🎠 nexus-tuto-devenir-vendeur-creer-sa-boutique (4 slides)
 
 ```
 🏪 Ouvrir ta boutique NEXUS : de l'inscription à ta première annonce en ligne.
@@ -863,7 +863,7 @@ Fais défiler ⬅️➡️
 #Tuto #Vendeur #NexusMarket #Sénégal #Boutique
 ```
 
-## Fri 25/09 08:00 — 🎠 nexus-tuto-echanger-via-nexus-troc (4 slides)
+## Thu 17/09 22:00 — 🎠 nexus-tuto-echanger-via-nexus-troc (4 slides)
 
 ```
 🔄 Proposer un objet au troc et conclure l'échange — le mode d'emploi.
@@ -872,7 +872,7 @@ Fais défiler ⬅️➡️
 #Tuto #Troc #NexusMarket #Sénégal #Dakar
 ```
 
-## Fri 25/09 11:00 — 🎠 nexus-tuto-elevage-produits-locaux (3 slides)
+## Fri 18/09 07:00 — 🎠 nexus-tuto-elevage-produits-locaux (3 slides)
 
 ```
 🐏 Acheter ton mouton ou tes produits du terroir en ligne, sans mauvaise surprise.
@@ -881,7 +881,7 @@ Fais défiler ⬅️➡️
 #Tuto #Élevage #NexusMarket #Sénégal #Terroir
 ```
 
-## Fri 25/09 14:00 — 🎠 nexus-tuto-fidelite-cashback-parrainage (4 slides)
+## Fri 18/09 09:30 — 🎠 nexus-tuto-fidelite-cashback-parrainage (4 slides)
 
 ```
 ⭐ Points de fidélité, cashback, parrainage : comment gagner à chaque commande.
@@ -890,7 +890,7 @@ Fais défiler ⬅️➡️
 #Fidélité #Cashback #NexusMarket #Sénégal #Dakar
 ```
 
-## Fri 25/09 17:00 — 🎠 nexus-tuto-immobilier-location-de-materiel (3 slides)
+## Fri 18/09 12:00 — 🎠 nexus-tuto-immobilier-location-de-materiel (3 slides)
 
 ```
 🔑 Louer un logement ou du matériel sur NEXUS : la marche à suivre.
@@ -899,7 +899,7 @@ Fais défiler ⬅️➡️
 #Tuto #Immobilier #Location #NexusMarket #Sénégal
 ```
 
-## Fri 25/09 20:00 — 🎠 nexus-tuto-mode-d-emploi-comment-utiliser-nexus-mar (10 slides)
+## Fri 18/09 14:00 — 🎠 nexus-tuto-mode-d-emploi-comment-utiliser-nexus-mar (10 slides)
 
 ```
 📖 Le mode d'emploi complet de NEXUS Market, en 10 images. Garde-le sous la main.
@@ -908,7 +908,7 @@ Fais défiler ⬅️➡️
 #ModeDEmploi #NexusMarket #Sénégal #Guide #Dakar
 ```
 
-## Sat 26/09 08:00 — 🎠 nexus-tuto-mon-compte-suivi-de-commandes (3 slides)
+## Fri 18/09 16:00 — 🎠 nexus-tuto-mon-compte-suivi-de-commandes (3 slides)
 
 ```
 📦 Où en est ma commande ? Tout se suit depuis ton compte, en direct.
@@ -917,7 +917,7 @@ Fais défiler ⬅️➡️
 #Tuto #Commande #NexusMarket #Sénégal #Suivi
 ```
 
-## Sat 26/09 11:00 — 🎠 nexus-tuto-profiter-de-la-louma-du-vendredi (3 slides)
+## Fri 18/09 18:00 — 🎠 nexus-tuto-profiter-de-la-louma-du-vendredi (3 slides)
 
 ```
 🏪 Bien profiter du Louma du vendredi : nos conseils pour ne rien rater.
@@ -926,7 +926,7 @@ Fais défiler ⬅️➡️
 #Louma #Vendredi #NexusMarket #Sénégal #Promo
 ```
 
-## Sat 26/09 14:00 — 🎠 nexus-tuto-regarder-publier-une-story (4 slides)
+## Fri 18/09 20:00 — 🎠 nexus-tuto-regarder-publier-une-story (4 slides)
 
 ```
 🎬 Regarder les stories produit — et publier les tiennes si tu vends.
@@ -935,7 +935,7 @@ Fais défiler ⬅️➡️
 #Tuto #Stories #NexusMarket #Sénégal #Vidéo
 ```
 
-## Sat 26/09 17:00 — 🎠 nexus-tuto-trouver-contacter-un-pro-nexus-pro (4 slides)
+## Fri 18/09 22:00 — 🎠 nexus-tuto-trouver-contacter-un-pro-nexus-pro (4 slides)
 
 ```
 🔧 Trouver un artisan près de chez toi et le contacter, en 4 étapes.
@@ -944,7 +944,7 @@ Fais défiler ⬅️➡️
 #Tuto #NexusPro #Artisan #Sénégal #Dakar
 ```
 
-## Sat 26/09 20:00 — 🎠 nexus-vendre-fidelite (5 slides)
+## Sat 19/09 07:00 — 🎠 nexus-vendre-fidelite (5 slides)
 
 ```
 ⭐ Fidéliser tes clients, ça se travaille. Points, promos, relances — les outils sont dans ta boutique.

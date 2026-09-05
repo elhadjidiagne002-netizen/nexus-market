@@ -34,12 +34,12 @@ UTILISATION
     # 2) Publier UNE seule affiche, tout de suite (test réel)
     python publier_facebook.py --only 1 --now
 
-    # 3) Programmer toute la campagne : 5/jour
+    # 3) Programmer toute la campagne : 8/jour
     python publier_facebook.py --schedule --start 2026-09-06
 
 Options utiles :
-    --per-day 5         nombre de publications par jour (défaut 5)
-    --hours 08:00,11:00,14:00,17:00,20:00   heures de parution
+    --per-day 8         nombre de publications par jour (défaut 8)
+    --hours 07:00,...,22:00   heures de parution (autant que --per-day)
     --only N[,M...]     ne traiter que ces affiches (numéro du fichier)
     --limit N           s'arrêter après N publications
 
@@ -77,6 +77,44 @@ LOG_FILE = os.path.join(BASE_DIR, "publication_log.json")
 MIN_SCHEDULE_S = 10 * 60          # 10 minutes
 MAX_SCHEDULE_S = 180 * 24 * 3600  # ~6 mois
 PAUSE_BETWEEN_S = 4               # rafale = plafonnement de la page
+
+# Programmer toute la campagne téléverse ~330 images en une exécution (64
+# carrousels + 41 affiches) : on heurte alors les limites de débit de l'API
+# Graph. Ce n'est PAS un bannissement — les appels sont refusés temporairement
+# et repassent quelques minutes plus tard. Sans reprise, on perdrait
+# silencieusement des publications en fin de liste.
+RATE_LIMIT_CODES = {4, 17, 32, 613}   # « request limit reached » côté Graph
+RATE_LIMIT_BACKOFF_S = [60, 180, 420]  # 1 min, 3 min, 7 min
+
+
+def _is_rate_limited(detail: str) -> bool:
+    """Reconnaît un refus pour dépassement de quota dans la réponse d'erreur."""
+    try:
+        err = json.loads(detail).get("error", {})
+        if err.get("code") in RATE_LIMIT_CODES:
+            return True
+    except Exception:
+        pass
+    return bool(re.search(r"request limit|rate limit|too many calls|réessayer plus tard",
+                          detail, re.I))
+
+
+def _with_retry(fn, label: str):
+    """Rejoue `fn` quand l'API refuse pour dépassement de quota.
+
+    Seul ce cas est réessayé : une image invalide ou un token expiré
+    échoueraient identiquement à la 4e tentative, autant le dire tout de suite.
+    """
+    for i, attente in enumerate([*RATE_LIMIT_BACKOFF_S, None]):
+        res = fn()
+        if res.get("ok") or not _is_rate_limited(str(res.get("error", ""))):
+            return res
+        if attente is None:
+            return {**res, "error": f"{res.get('error')} — abandon après "
+                                    f"{len(RATE_LIMIT_BACKOFF_S)} reprises"}
+        print(f"       quota API atteint sur {label} — reprise dans {attente // 60} min…")
+        time.sleep(attente)
+    return {"ok": False, "error": "quota API"}
 
 
 # ── Lecture du kit ──────────────────────────────────────────────────────────
@@ -297,12 +335,14 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="n'envoie rien ; combinable avec --schedule pour voir les créneaux")
     ap.add_argument("--start", default=None, help="date de départ AAAA-MM-JJ (défaut : demain)")
-    # 5 créneaux répartis sur la journée active au Sénégal (UTC = heure locale,
-    # pas de décalage) : matin, fin de matinée, après-midi, sortie de bureau,
-    # soirée. Étaler évite que 5 publications se marchent dessus dans le fil.
-    ap.add_argument("--hours", default="08:00,11:00,14:00,17:00,20:00",
+    # 8 créneaux étalés de 7h à 22h (UTC = heure locale au Sénégal, pas de
+    # décalage). L'étalement n'est pas cosmétique : l'algorithme montre rarement
+    # plus d'une ou deux publications de la même page à la même personne dans
+    # une journée. Groupées, les publications se voleraient leur propre portée.
+    ap.add_argument("--hours",
+                    default="07:00,09:30,12:00,14:00,16:00,18:00,20:00,22:00",
                     help="heures de parution, séparées par une virgule")
-    ap.add_argument("--per-day", type=int, default=5,
+    ap.add_argument("--per-day", type=int, default=8,
                     help="publications par jour (plafonné par le nombre d'heures fournies)")
     ap.add_argument("--only", default="", help="numéros d'affiches à traiter, ex. 1,5,12")
     ap.add_argument("--limit", type=int, default=0, help="s'arrêter après N publications")
@@ -387,14 +427,16 @@ def main() -> int:
                 continue
             quand = s
 
+        ref = p.get("slug") or f"{p.get('n'):02d}"
         if p.get("images"):
-            res = publish_carousel(page_id, token, p["images"], p["legende"], quand)
+            res = _with_retry(lambda: publish_carousel(
+                page_id, token, p["images"], p["legende"], quand), ref)
         else:
-            res = publish_photo(page_id, token, p["image"], p["legende"], quand)
+            res = _with_retry(lambda: publish_photo(
+                page_id, token, p["image"], p["legende"], quand), ref)
         etat = "programmé " + f"{s:%d/%m %H:%M}" if quand else "publié"
         if res.get("ok"):
             envoyes += 1
-            ref = p.get("slug") or f"{p.get('n'):02d}"
             print(f"  [{ref}] OK {etat} — id {res.get('post_id') or res.get('id')}")
         else:
             print(f"  [{p.get('slug') or p.get('n')}] ÉCHEC — {res.get('error')}")
