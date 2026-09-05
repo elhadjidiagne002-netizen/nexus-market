@@ -122,7 +122,7 @@ ${p.photo_url ? `<p><img src="${esc(img)}" alt="${esc(name)}" loading="lazy"></p
 ${p.experience_years || p.tarif_text ? `<div class="meta">${p.experience_years ? esc(p.experience_years) + ' ans d\'expérience' : ''}${(p.experience_years && p.tarif_text) ? ' · ' : ''}${p.tarif_text ? 'Tarif : ' + esc(p.tarif_text) : ''}</div>` : ''}
 <p>${esc(desc)}</p>
 <a class="cta" href="${esc(appUrl)}">Contacter ce professionnel sur NEXUS Market →</a>
-${hubUrl ? `<p style="margin-top:1.4rem"><a href="${esc(hubUrl)}" style="color:#1d4ed8;font-weight:700;text-decoration:none">← Voir tous les ${esc(hubLabel.toLowerCase())}</a></p>` : ''}
+${hubUrl ? `<p style="margin-top:1.4rem"><a href="${esc(hubUrl)}" style="color:#1d4ed8;font-weight:700;text-decoration:none">← Tous les professionnels « ${esc(p.profession || 'Professionnel')} » à ${esc(p.city || 'Sénégal')}</a></p>` : ''}
 <p class="foot">NEXUS Market — Trouvez un ouvrier ou artisan près de chez vous au Sénégal · Maçon, plombier, électricien, menuisier…</p>
 </body></html>`;
 
@@ -155,11 +155,15 @@ async function handleHub(origin, env, slug) {
 
   const url = `${origin}/pro/${hub.slug}`;
   const title = `${hub.profession} à ${hub.city}`;
-  const n = rows.length;
+  const n = rows.length;      // affichés (plafond de la requête)
+  const total = hub.count;    // total réel en base
   // Description factuelle : uniquement des chiffres réellement en base — on
-  // n'invente ni délai, ni tarif, ni promesse de service.
-  const desc = `${n} ${hub.profession.toLowerCase()}${n > 1 ? 's' : ''} référencé${n > 1 ? 's' : ''} à ${hub.city} sur NEXUS Market. `
-    + `Consultez les profils et contactez directement le professionnel de votre choix.`;
+  // n'invente ni délai, ni tarif, ni promesse de service. On annonce le TOTAL
+  // réel, et on précise combien sont listés quand la page est plafonnée (sinon
+  // la page annoncerait 60 là où la base en compte 63).
+  const desc = `${total} ${hub.profession.toLowerCase()}${total > 1 ? 's' : ''} référencé${total > 1 ? 's' : ''} à ${hub.city} sur NEXUS Market.`
+    + (n < total ? ` Les ${n} derniers mis à jour sont listés ci-dessous.` : '')
+    + ` Consultez les profils et contactez directement le professionnel de votre choix.`;
 
   // Autres villes pour ce métier + autres métiers dans cette ville : maillage
   // interne réel entre les hubs (ce qui manquait totalement aux fiches isolées).
@@ -191,6 +195,8 @@ async function handleHub(origin, env, slug) {
   }).join('');
 
   const itemList = {
+    // numberOfItems = ce qui est réellement listé sur la page (règle Schema.org),
+    // pas le total en base : les deux diffèrent quand la page est plafonnée.
     '@type': 'ItemList', name: title, numberOfItems: n,
     itemListElement: rows.slice(0, 60).map((r, i) => ({
       '@type': 'ListItem', position: i + 1,
@@ -215,7 +221,7 @@ async function handleHub(origin, env, slug) {
 
   const html = `<!DOCTYPE html><html lang="fr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} — ${n} professionnel${n > 1 ? 's' : ''} · NEXUS Market Sénégal</title>
+<title>${esc(title)} — ${total} professionnel${total > 1 ? 's' : ''} · NEXUS Market Sénégal</title>
 <meta name="description" content="${esc(desc)}">
 <link rel="canonical" href="${esc(url)}">
 <meta name="robots" content="index, follow, max-image-preview:large">
