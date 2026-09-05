@@ -96,6 +96,39 @@ Campagne complète : `--tout` → **105 publications** (41 affiches + 64
 carrousels), 2/jour, du 06/09 au 28/10. Vérifié : 64/64 lus, aucune légende
 manquante ni orpheline, toutes avec lien du site, aucune > 500 caractères.
 
+### B-ter. Cadence portée à 8/jour + reprise sur quota API
+
+Question de l'utilisateur : « quels sont les risques de bannissement si je
+finis cette campagne en 3 jours ? » (105 publications ⇒ 35/jour). Réponse
+donnée, et elle est nuancée : **le bannissement n'est pas le sujet ici**.
+Publier sur SA PROPRE page n'a rien à voir avec le démarchage WhatsApp — les
+abonnés ont choisi de suivre, et Meta ne sanctionne pas une page qui publie
+beaucoup. Les trois risques réels sont ailleurs :
+1. le **plafond de débit de l'API** (le seul blocage immédiat) ;
+2. la **portée détruite par auto-concurrence** — l'algorithme montre rarement
+   plus d'une ou deux publications de la même page à la même personne par
+   jour, donc à 35/jour la majorité ne serait jamais vue ;
+3. les **signaux négatifs** (masquer, se désabonner), qui réduisent
+   durablement la portée — la seule vraie sanction, et elle n'est pas
+   réversible d'un clic.
+Argument décisif au vu de l'objectif (expliquer le fonctionnement du site) :
+un tutoriel noyé dans 34 autres publications n'est pas lu, et un visiteur
+arrivant à J+4 tomberait sur un fil vide.
+
+Compromis retenu : **8/jour, du 06/09 au 19/09**, étalé de 07:00 à 22:00.
+⚠ `--per-day` est plafonné par le nombre d'heures fournies : changer le chiffre
+seul ne suffit pas, il faut autant de créneaux.
+
+**Ajout rendu nécessaire par ce rythme** : programmer toute la campagne
+téléverse **~330 images en UNE exécution** (64 carrousels + 41 affiches), ce
+qui heurte les limites de débit de l'API Graph. Sans reprise, les publications
+de fin de liste étaient **perdues silencieusement** — journalisées en échec,
+mais jamais retentées, donc le trou n'aurait été découvert que des jours plus
+tard. `_with_retry()` rejoue **uniquement** les refus pour dépassement de quota
+(codes 4/17/32/613 ou message explicite), backoff 1/3/7 min ; un token expiré
+ou une image refusée échoue immédiatement, insister ne changerait rien.
+6/6 cas de test conformes.
+
 ### C. Automa — campagne de messages Facebook réparée
 
 Le workflow s'arrêtait à la 17e page sur 278, sur l'erreur Chrome « message
