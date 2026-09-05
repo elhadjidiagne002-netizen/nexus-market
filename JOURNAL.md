@@ -6,6 +6,94 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (cinquante-troisième) — Campagne publicitaire Facebook + verdict du pilote WhatsApp
+
+### A. Pilote WhatsApp : le disjoncteur a coupé, et il a eu raison
+
+Bilan du pilote (`eb8dc354…`) : **2 messages réellement délivrés** (14:33, via
+WAHA), 8 cibles en attente, campagne repassée en **`stopped`** par le
+disjoncteur. La campagne principale (1612 cibles) n'a jamais été lancée.
+
+Cause vérifiée sur `/api/whatsapp` : **les deux fournisseurs sont tombés** —
+Green API `notAuthorized` (et de toute façon plafonné à 3 chats/mois), WAHA de
+nouveau `404 Session not found`. La session WAHA, réparée en début
+d'après-midi, a donc **redisparu en moins de deux heures**.
+
+⚠ **Confirmation empirique de la fragilité annoncée** : le disque de Render est
+éphémère et la session ne survit pas. Ce n'était pas une hypothèse, c'est
+constaté deux fois dans la même journée. Tant que
+`WHATSAPP_SESSIONS_POSTGRESQL_URL` ne pointe pas vers une base persistante
+(Neon gratuit — IPv4 natif et `CREATEDB` autorisé, contrairement à Supabase
+dont la connexion directe est IPv6), **aucune campagne WhatsApp ne peut aboutir**.
+
+Ce qui a bien fonctionné, en revanche : le déclencheur pg_cron s'exécute à
+l'heure pile, la remise en file a reprogrammé les échecs transitoires (1/3
+puis 2/3, backoff 3 h puis 12 h) au lieu de les perdre, et le disjoncteur a
+protégé les 8 cibles restantes. **Aucune cible brûlée.**
+
+### B. Campagne publicitaire Facebook — automatisation par navigateur : échec, API Graph : solution
+
+Demande : lancer la campagne publicitaire depuis le dossier `publicite/` sur la
+page Facebook NEXUS Market (session déjà ouverte).
+
+**Ce qui bloque, et qui ne se contourne pas** : joindre une image LOCALE. Trois
+voies essayées, trois échecs — collage presse-papiers dans le composeur Meta
+Business Suite (ignoré), composeur principal de la page (inaccessible depuis le
+tableau de bord d'administration), boîte de dialogue Windows pilotée par
+PowerShell (jamais ouverte/détectable). Cause de fond : les outils pilotent le
+NAVIGATEUR, pas le système ; une boîte de dialogue de fichier leur échappe par
+construction. À retenir pour toute demande future d'upload automatisé.
+
+**Solution livrée** : `publicite/publier_facebook.py`, qui passe par l'**API
+Graph** (`POST /{page-id}/photos`) — elle reçoit les octets de l'image
+directement, et sait aussi programmer (`published=false` +
+`scheduled_publish_time`). Garde-fous : simulation par défaut (rien ne part
+sans option explicite), vérification que le token est bien un token DE PAGE,
+contrôle des bornes Facebook (10 min mini, 6 mois maxi) avec message clair,
+pause de 4 s entre appels, journal `publication_log.json`. Le token n'est lu
+que depuis l'environnement — jamais dans un fichier du dépôt.
+
+**Kit complété** : les 20 affiches sans légende en avaient une écrite
+(`publicite/legendes-13-32.md` — Tabaski, Ramadan, rentrée, diaspora, mode,
+électronique, beauté, auto, chat, alertes prix, wishlist, appli, tableau de
+bord, boost, stock, retours, authenticité, SAV). Le kit passe de **23 à 41
+publications exploitables** (les 2 `.svg` restent exclus : l'API photos ne les
+accepte pas). Vérifié en simulation : 41 affiches, 2/jour, du 06/09 au 26/09.
+
+Défaut trouvé par le test : `--dry-run --schedule` était refusé, donc
+impossible de prévisualiser les créneaux avant d'engager 41 publications.
+`--dry-run` est devenu un modificateur combinable.
+
+Reste à faire côté utilisateur : générer le token de page Meta (permissions
+`pages_manage_posts` + `pages_read_engagement`), publier 1 affiche en test,
+puis programmer.
+
+### C. Automa — campagne de messages Facebook réparée
+
+Le workflow s'arrêtait à la 17e page sur 278, sur l'erreur Chrome « message
+channel closed before a response was received » (onglet qui navigue/recharge
+pendant le script — inévitable sur une SPA comme Facebook, et transitoire).
+`onError: "stop-workflow"` tuait alors toute la campagne. Corrigé dans le
+générateur (`prospection/app prospects/facebook_prospector.py`) et dans le
+fichier déjà exporté : `onError: "continue"`, réessai par bloc (2× à 5 s) sur
+les scripts JS, `waitTabLoaded: true`.
+
+⚠ **Trouvé au passage, plus grave** : **104 des 278 cibles (37 %) étaient à
+jeter** — doublons (`facebook.com/x` et `www.facebook.com/x` comptés deux
+fois), liens de POST (aucun bouton Message), URL sans identifiant. Le workflow
+écrivait donc deux fois aux mêmes pages, exactement le signal qui fait repérer
+un compte. Nettoyage `_clean_page_urls()` intégré au générateur. Piège évité
+dans mon propre nettoyage : `« facebook.com / expat-dakar.com »` devenait une
+URL FABRIQUÉE en supprimant l'espace — ces entrées malformées sont désormais
+écartées, pas recollées.
+
+**Publications multiples** ajoutées à l'app : le champ page accepte une liste
+(une par ligne, ou séparées par `,`/`;`), avec un réglage « Espacement (min) »
+qui échelonne les parutions — publier sur N pages à la même minute est le motif
+« rafale » que Facebook détecte.
+
+---
+
 ## 2026-09-05 (cinquante-deuxième) — Le pilote envoie enfin : déclencheur pg_cron, WAHA réparé, Green API écarté
 
 Suite directe de l'entrée précédente : mise en service réelle de la campagne.
