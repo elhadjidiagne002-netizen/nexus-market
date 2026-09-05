@@ -315,3 +315,26 @@ export async function sbGet(env, path) {
     return r.ok ? await r.json() : [];
   } catch { return []; }
 }
+
+// ⚠ PostgREST plafonne CHAQUE réponse à 1000 lignes (db-max-rows) : un
+// `&limit=5000` ne sert à rien, et sbGet ci-dessus tronque donc en silence,
+// sans erreur. Piège déjà rencontré en prod (19/08/2026 : `pros` avait 2497
+// lignes actives, le sitemap n'en listait que 1000). Utiliser sbGetAll dès
+// qu'une table peut dépasser 1000 lignes — pagination par en-tête Range.
+export async function sbGetAll(env, path, maxRows = 20000) {
+  const pageSize = 1000;
+  const all = [];
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+    try {
+      const r = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
+        headers: { ...sbHeaders(env), Range: `${offset}-${offset + pageSize - 1}` },
+      });
+      if (!r.ok) break;
+      const page = await r.json();
+      if (!Array.isArray(page) || page.length === 0) break;
+      all.push(...page);
+      if (page.length < pageSize) break; // dernière page atteinte
+    } catch { break; }
+  }
+  return all;
+}

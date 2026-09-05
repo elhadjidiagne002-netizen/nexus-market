@@ -6,6 +6,62 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (quarante-huitième) — Search Console : 1352 pages « Détectée, non indexée » → hubs métier × ville
+
+**Déclencheur** : export Search Console fourni par l'utilisateur
+(`nexusmarket.sn-Coverage-Drilldown-2026-09-05.zip`), problème « Détectée,
+actuellement non indexée » : **70 pages fin juin → 1352 fin août**.
+
+**Diagnostic** — les 1000 URLs de l'export ont TOUTES
+`dernière exploration = 1970-01-01`, c'est-à-dire **jamais explorées** : Google
+connaît ces URLs et refuse d'y dépenser du budget d'exploration. Répartition :
+600 `/pro/<uuid>`, 245 `/vendeur/<uuid>`, 111 `/produit/<uuid>`. Mesuré en base
+sur les **2695 pros actifs** : **0 photo, 0 avis**, 3 tarifs, 9 expériences, et
+192 descriptions d'une longueur **moyenne de 5 caractères**. Une fiche ne portait
+donc qu'un nom + un métier + une ville, pour seulement 48 métiers et 88 villes
+→ des centaines de pages quasi identiques, déclarées au sitemap en
+`priority 0.6 / changefreq weekly`. **Ce n'était pas un problème technique**
+(canonical, JSON-LD, OG tous corrects) mais un problème de contenu, qui
+pénalisait aussi les 721 fiches produit, elles réellement remplies (721
+descriptions, 554 images).
+
+**Fix** (`functions/_lib/pro-hubs.js`, partagé par la page et le sitemap) :
+- **Pages d'annuaire `/pro/<metier>-<ville>`** greffées sur la route existante
+  (`/pro/:id` : un slug n'est jamais un UUID, aucun conflit). Contenu agrégé
+  réel : liste des artisans, comptes factuels, JSON-LD `ItemList`, et maillage
+  interne entre hubs (même métier ailleurs / autres métiers dans la ville).
+  **106 hubs couvrent 2426 des 2695 pros (90%)** et correspondent à la vraie
+  demande (« plombier Dakar », pas le nom d'un artisan inconnu).
+- **Fiches sans substance en `noindex, follow`** et retirées du sitemap : elles
+  restent accessibles aux visiteurs, on cesse juste d'en réclamer l'indexation.
+- `changefreq` des fiches individuelles ramené à `monthly` (annoncer `weekly`
+  sur des pages figées était un signal faux de plus).
+
+⚠ **Trois pièges trouvés par la mesure, pas par la lecture** :
+1. **Collisions de slug** : `Thiès`/`Thies`, `Garage / Mécanicien`/
+   `Garage / Mecanicien`, `Carrosserie / Tôlerie auto`/`… Tolerie …` se
+   réduisent au même slug. La fusion est souhaitable, mais il faut garder
+   TOUTES les variantes : la page interroge `profession=in.(…)`/`city=in.(…)`,
+   sinon elle annoncerait 8 artisans et n'en afficherait que 6. Vérifié sur
+   l'API réelle : 8 lignes renvoyées (6+2), et 12 pour `Menuisier (bois)`
+   (libellé à parenthèses).
+2. **`sbGet` ne pagine pas** — PostgREST plafonne à 1000 lignes, or il y a 2695
+   pros : la table des hubs aurait été tronquée en silence. `sbGetAll` (paginé
+   par en-tête `Range`) exporté depuis `_lib/seo.js`. C'est exactement le piège
+   déjà documenté dans le sitemap le 19/08/2026.
+3. **Ville « Non précisé »** exclue des hubs (« Maçon à Non précisé » aurait été
+   précisément la page maigre qu'on supprime), et lien vers le hub posé sur une
+   fiche seulement si le hub existe vraiment (seuil de 3), sinon la fiche
+   pointait vers un 404.
+
+**Reste à surveiller** : 245 URLs `/vendeur/` découvertes pour **9 vendeurs
+réels** en base (~236 URLs mortes, déjà en 404) — sans impact direct, mais à
+garder en tête si le chiffre remonte. Effet attendu non immédiat : Google doit
+re-crawler le sitemap ; la mesure se fera sur l'évolution de la courbe dans
+Search Console.
+
+---
+
 ## 2026-09-05 (quarante-septième) — Rotation du catalogue sur l'accueil (12 → 99 produits vus en 4 visites)
 
 **Demande** : « apporte plus de rotation sur les produits affichés dans le

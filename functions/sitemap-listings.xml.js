@@ -2,6 +2,7 @@
 // Sitemap DYNAMIQUE des annonces (annonces_express) + produits actifs, afin que
 // les moteurs découvrent chaque fiche. Complète le sitemap statique (accueil/catégories).
 // Référencé en plus dans robots.txt. Cache 1h.
+import { buildProHubs, proHasSubstance } from './_lib/pro-hubs.js';
 
 function xmlEscape(s) {
   return String(s || '').replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
@@ -66,7 +67,9 @@ async function handle({ request, env }) {
     sbGetAll(env, `annonces_express?select=id,category,city,photo_url,created_at&status=eq.active&order=created_at.desc`),
     sbGetAll(env, `troc_listings?select=id,title,photo_url,created_at&status=eq.active&order=created_at.desc`),
     sbGetAll(env, `stories?select=id,mux_playback_id,created_at&status=eq.active&order=created_at.desc`),
-    sbGetAll(env, `pros?select=id,profession,photo_url,updated_at&status=eq.active&order=updated_at.desc`),
+    // `city` + les colonnes de substance sont nécessaires au calcul des hubs et
+    // au filtrage des fiches indexables (cf. _lib/pro-hubs.js).
+    sbGetAll(env, `pros?select=id,profession,city,photo_url,description,experience_years,tarif_text,rating_count,updated_at&status=eq.active&order=updated_at.desc`),
     sbGetAll(env, `profiles?select=id,name,avatar,updated_at&role=eq.vendor&order=updated_at.desc`),
     // Lignes de transport régulières (annuaire public, sql/2026_08_10_transport_lines.sql)
     // → /ligne/:id. Contenu réel/unique par ligne (pas de flag is_vitrine ici).
@@ -101,10 +104,27 @@ async function handle({ request, env }) {
     urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(st.created_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>${img}\n  </url>`);
   }
 
+  /* [SEO 2026-09-05] NEXUS Pro : on ne déclare plus les 2695 fiches une par une.
+     Search Console montrait 1352 pages « Détectée, actuellement non indexée »,
+     JAMAIS explorées : réclamer l'indexation de milliers de fiches quasi vides
+     (0 photo, 0 avis, description moyenne de 5 caractères — mesuré en base) a
+     fait couper le budget d'exploration, au détriment des fiches produit, elles
+     réellement remplies. On déclare désormais :
+       • les hubs métier × ville (contenu agrégé réel, ~107 pages couvrant 90%
+         des pros, alignés sur la demande « plombier Dakar ») ;
+       • les seules fiches individuelles ayant de la substance.
+     Les autres fiches restent en ligne, mais en noindex (cf. functions/pro/[id].js).
+     `changefreq` passe à monthly : ces pages ne changent pas chaque semaine —
+     l'annoncer était un signal faux de plus. */
+  for (const h of buildProHubs(pros).values()) {
+    const loc = `${origin}/pro/${h.slug}`;
+    urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${nowIso}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n  </url>`);
+  }
   for (const pr of (pros || [])) {
+    if (!proHasSubstance(pr)) continue;
     const loc = `${origin}/pro/${encodeURIComponent(pr.id)}`;
     const img = pr.photo_url ? `\n    <image:image><image:loc>${xmlEscape(pr.photo_url)}</image:loc><image:title>${xmlEscape(pr.profession)}</image:title></image:image>` : '';
-    urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(pr.updated_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>${img}\n  </url>`);
+    urls.push(`  <url>\n    <loc>${xmlEscape(loc)}</loc>\n    <lastmod>${(pr.updated_at || '').slice(0, 10) || nowIso}</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.5</priority>${img}\n  </url>`);
   }
 
   // Boutiques/vendeurs → /vendeur/:id (vitrine SEO Store). Découverte auto des
