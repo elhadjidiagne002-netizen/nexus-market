@@ -68,6 +68,34 @@ Reste à faire côté utilisateur : générer le token de page Meta (permissions
 `pages_manage_posts` + `pages_read_engagement`), publier 1 affiche en test,
 puis programmer.
 
+### B-bis. Carrousels : l'essentiel du kit avait été oublié
+
+⚠ **Lacune trouvée après coup, sur question de l'utilisateur** (« as-tu
+exploité les carrousels ? »). Réponse honnête : non. Je m'étais limité aux 43
+affiches numérotées de `publicite/` et j'avais ignoré `publicite/exports/`, qui
+contient **64 carrousels / 288 slides** — soit bien plus que les 41 affiches,
+et sous le format multi-images qui performe le mieux sur Facebook. À retenir :
+faire l'inventaire COMPLET d'un dossier avant de dimensionner un chantier, pas
+seulement sa racine.
+
+`publish_carousel()` ajouté : un vrai carrousel demande **deux temps** via
+l'API Graph — téléverser chaque slide SANS la publier (`published=false`), puis
+créer un post du fil qui les rattache toutes (`attached_media`). Sans ça on
+obtiendrait 288 publications séparées au lieu de 64 carrousels. Plafond
+Facebook de 10 images respecté.
+
+Les carrousels n'avaient **aucune légende** (les fichiers HTML du dossier sont
+des générateurs, pas des textes). Premier jet : des brouillons dérivés
+mécaniquement du nom de fichier — plats et sans accents (« Acheter en toute
+securite. »). Signalé comme tel plutôt que présenté comme fini, puis
+**64 légendes réellement rédigées** (`legendes-carrousels.md`), adaptées au
+contenu de chacun, chacune avec un appel explicite à faire défiler — c'est ce
+qui déclenche l'interaction sur un carrousel.
+
+Campagne complète : `--tout` → **105 publications** (41 affiches + 64
+carrousels), 2/jour, du 06/09 au 28/10. Vérifié : 64/64 lus, aucune légende
+manquante ni orpheline, toutes avec lien du site, aucune > 500 caractères.
+
 ### C. Automa — campagne de messages Facebook réparée
 
 Le workflow s'arrêtait à la 17e page sur 278, sur l'erreur Chrome « message
