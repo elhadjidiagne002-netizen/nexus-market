@@ -6,6 +6,77 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (cinquante-cinquième) — Bus urbains Dakar : dire quel bus prendre, pas quelle ligne existe
+
+### Le besoin
+
+Le mode « Bus urbains Dakar » listait les lignes desservant les deux extrémités
+d'un trajet, sans dire quoi en faire : ni où monter, ni où descendre, ni dans
+quel sens, ni combien d'arrêts. Objectif de cette session : donner **exactement
+le ou les bus à prendre** pour aller d'un point à un autre.
+
+### Trois défauts trouvés, tous mesurés sur les données réelles (82 lignes, 1402 arrêts)
+
+1. **La moitié de la liste déroulante ne pouvait rien retourner.** Les 40
+   « quartiers » proposés sont des communes administratives, alors que les
+   arrêts portent des noms de repères : **19 sur 40** — « Plateau » en tête de
+   liste — ne correspondaient à **aucun** arrêt. C'est ce que l'utilisateur a
+   signalé en cours de session (« avec les arrêts ça marche, avec les villes ça
+   ne marche pas »). Corrigé par une table d'alias (Plateau → Sandaga, Petersen,
+   Place de l'Indépendance…), plus un filtrage de la liste sur les quartiers
+   réellement desservis : « Médina Gounass » et « Sébikotane » n'ont aucun arrêt
+   dans le réseau importé et disparaissent de la liste.
+2. **Les correspondances se cherchaient par égalité EXACTE de nom** alors que la
+   recherche, elle, normalisait. « Allées Papa Guèye Fall » (ligne 13) et
+   « Allees Papa Gueye Fall » (ligne 50) sont le même arrêt et ne se
+   rencontraient jamais. 255 arrêts sont partagés une fois normalisés, contre
+   246 en comparaison exacte.
+3. **Des correspondances impossibles étaient proposées.** « Cite ASECNA » existe
+   à Ouakam (ligne 3) *et* à Guédiawaye (ligne 45) : deux endroits différents,
+   même nom. Le trajet Ouakam → Yeumbeul proposait d'y changer de bus.
+
+### Ce qui a été construit
+
+Un vrai **planificateur d'itinéraire** (`public/index.html`), qui exploite le
+fait que `escales` est ordonné du terminus de départ vers celui d'arrivée :
+
+- **Direct, 1 changement, 2 changements** (ces derniers en dernier recours),
+  classés par nombre de changements puis longueur, dédoublonnés sur la suite de
+  lignes empruntées.
+- Pour chaque segment : ligne, opérateur, **sens** (direction affichée sur le
+  bus), arrêt de montée, arrêt de descente, nombre d'arrêts, et la liste des
+  arrêts **dans le sens du trajet**.
+- Le point de changement retenu est celui qui **minimise le trajet total** —
+  l'ancien code prenait le premier arrêt commun venu, quitte à faire traverser
+  toute une ligne pour rien.
+- **Garde-fou anti-homonymes** : les arrêts voisins géocodés de part et d'autre
+  d'un changement sont comparés (`transport_stops_geo`, 405 arrêts sur 801) ;
+  au-delà de 6 km, la correspondance est écartée. Fail-open sans coordonnées.
+  Premier essai trop strict (un seul voisin, et « Autoroute » est mal géocodé à
+  Diamniadio, 25 km) → plusieurs voisins comparés, il suffit qu'une paire soit
+  proche. Sur 400 paires tirées au hasard : 2 % de propositions écartées,
+  **26 meilleurs itinéraires corrigés**, 2 paires sans solution restante (des
+  pièges homonymes avérés).
+
+### Vérification
+
+Banc de test qui **extrait le code réellement livré** de `public/index.html`
+(pas une copie) et le fait tourner sur les 82 lignes et 405 géocodages de
+production : 9 trajets, 9 invariants chacun (cohérence du total, aucun segment
+nul, montée et descente qui coïncident au changement, liste d'arrêts alignée sur
+le segment, extrémités conformes à la demande, pas de doublon) — tous passent,
+en 10 à 50 ms. Puis vérification dans le navigateur (serveur local, SW purgé) :
+« Plateau → Keur Massar Nord » donne la ligne 56 en direct ; « Ouakam →
+Yeumbeul Nord » donne ligne 42 puis ligne 51 avec changement à Route Des Niayes
+(et non plus le faux « Cite ASECNA ») ; la liste des quartiers est bien passée à
+38 entrées ; « Sicap-Liberté » en mode « Par arrêt » renvoie 27 lignes au lieu
+de zéro.
+
+Aucun changement de schéma ni d'API — tout est côté client, sur des données déjà
+présentes.
+
+---
+
 ## 2026-09-05 (cinquante-quatrième) — WAHA : session persistante via Neon, vérifiée après redémarrage
 
 ### Le problème

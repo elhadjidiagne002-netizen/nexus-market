@@ -6073,6 +6073,8 @@ window.addEventListener('unhandledrejection', function(event) {
       var _tataSingleStop = React.useState(''), tataSingleStop = _tataSingleStop[0], setTataSingleStop = _tataSingleStop[1];
       var _tataSingleSearched = React.useState(false), tataSingleSearched = _tataSingleSearched[0], setTataSingleSearched = _tataSingleSearched[1];
       var _tataLineSel = React.useState(''), tataLineSel = _tataLineSel[0], setTataLineSel = _tataLineSel[1];
+      var _tataJExpanded = React.useState(null), tataJExpanded = _tataJExpanded[0], setTataJExpanded = _tataJExpanded[1];
+      var _tataStopGeo = React.useState(null), tataStopGeo = _tataStopGeo[0], setTataStopGeo = _tataStopGeo[1];
       // 19 communes d'arrondissement de Dakar + communes de banlieue (Pikine,
       // Guédiawaye, Keur Massar, Rufisque) — mêmes noms que scripts/geocode-stops.mjs.
       var DAKAR_QUARTIERS = ['Plateau', 'Médina', 'Fann-Point E-Amitié', 'Gueule Tapée-Fass-Colobane',
@@ -6143,6 +6145,18 @@ window.addEventListener('unhandledrejection', function(event) {
           .limit(200)
           .then(function (res) { setTataLines((res && res.data) || []); })
           .catch(function () { setTataLines([]); });
+        // Coordonnées des arrêts (405 connues sur 801) — servent à écarter les
+        // fausses correspondances entre arrêts homonymes, cf. transferOk().
+        DataService._sb.from('transport_stops_geo').select('stop_name, lat, lng')
+          .not('lat', 'is', null).limit(2000)
+          .then(function (res) {
+            var m = {};
+            ((res && res.data) || []).forEach(function (r) {
+              m[String(r.stop_name || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().replace(/\s+/g, ' ')] = { lat: r.lat, lng: r.lng };
+            });
+            setTataStopGeo(m);
+          })
+          .catch(function () { setTataStopGeo({}); });
       };
       // Charge immédiatement si 'tata' est déjà le mode actif au montage (défaut
       // désormais) — sinon seul le clic sur le bouton de bascule déclenchait le
@@ -6158,42 +6172,295 @@ window.addEventListener('unhandledrejection', function(event) {
         });
         return Object.keys(set).sort(function (a, b) { return a.localeCompare(b, 'fr'); });
       }, [tataLines]);
-      var tataResults = React.useMemo(function () {
-        if (!tataSearched || !tataLines || !tataDepart || !tataDest) return [];
-        // Test de présence (sous-chaîne, normalisée) plutôt qu'égalité stricte :
-        // une sélection de quartier (ex. "Keur Massar") doit matcher toute
-        // variante composée qui le contient (ex. "Station Keur Massar") — un
-        // arrêt exact reste trivialement trouvé (une chaîne se contient elle-même).
-        var d = normTxt(tataDepart), a = normTxt(tataDest);
-        return tataLines.filter(function (l) {
-          var stops = (l.escales || '').split('|').map(function (s) { return normTxt(s); });
-          var hasDepart = stops.some(function (s) { return s.indexOf(d) !== -1; });
-          var hasDest = stops.some(function (s) { return s.indexOf(a) !== -1; });
-          return hasDepart && hasDest;
-        });
-      }, [tataSearched, tataLines, tataDepart, tataDest]);
-      // Aucune ligne directe : cherche une correspondance à une escale (ligne A
-      // qui dessert le départ + ligne B qui dessert la destination, partageant
-      // au moins un arrêt commun où changer de bus). Calcul différé (uniquement
-      // si tataResults est vide) pour ne pas alourdir le cas courant.
-      var tataConnections = React.useMemo(function () {
-        if (!tataSearched || tataResults.length > 0 || !tataLines || !tataDepart || !tataDest) return [];
-        var d = normTxt(tataDepart), a = normTxt(tataDest);
-        var linesWithStops = tataLines.map(function (l) {
-          return { line: l, stops: (l.escales || '').split('|').map(function (s) { return s.trim(); }) };
-        });
-        var fromLines = linesWithStops.filter(function (x) { return x.stops.some(function (s) { return normTxt(s).indexOf(d) !== -1; }); });
-        var toLines = linesWithStops.filter(function (x) { return x.stops.some(function (s) { return normTxt(s).indexOf(a) !== -1; }); });
+      // ── Planificateur de trajet (bus urbains Dakar) ────────────────────────
+      // `escales` est ordonné du terminus de départ vers celui d'arrivée
+      // (vérifié : « Terminus Petersen|…|Terminus Malika Plage »). On peut donc
+      // raisonner sur les POSITIONS : où monter, où descendre, combien d'arrêts,
+      // et dans quel sens prendre le bus — au lieu de se contenter de dire
+      // « cette ligne dessert les deux points ».
+      //
+      // Normalisation partagée par la recherche ET les correspondances. L'ancien
+      // code cherchait les arrêts communs par égalité EXACTE alors que la
+      // recherche, elle, normalisait : « Allées Papa Guèye Fall » (ligne 13) et
+      // « Allees Papa Gueye Fall » (ligne 50) sont le même arrêt et ne se
+      // rencontraient jamais. 255 arrêts sont partagés une fois normalisés,
+      // contre 246 en comparaison exacte.
+      var normStop = function (s) { return normTxt(s).replace(/\s+/g, ' '); };
+
+      // Lignes prêtes à l'emploi : arrêts bruts (affichage) + normalisés (calcul).
+      var tataIndexed = React.useMemo(function () {
+        if (!tataLines) return [];
+        return tataLines.map(function (l) {
+          var raw = (l.escales || '').split('|').map(function (s) { return s.trim(); }).filter(Boolean);
+          return { line: l, stops: raw, norm: raw.map(normStop) };
+        }).filter(function (e) { return e.stops.length >= 2; });
+      }, [tataLines]);
+
+      // Toutes les positions où une ligne dessert le lieu cherché. Test de
+      // sous-chaîne (et non d'égalité) pour qu'un quartier — « Keur Massar » —
+      // matche ses arrêts composés — « Station Keur Massar ».
+      var stopMatches = function (norm, queries) {
+        var qs = Array.isArray(queries) ? queries : [queries];
         var out = [];
-        fromLines.forEach(function (fx) {
-          toLines.forEach(function (tx) {
-            if (fx.line.id === tx.line.id) return;
-            var common = fx.stops.filter(function (s) { return tx.stops.indexOf(s) !== -1; });
-            if (common.length) out.push({ from: fx.line, to: tx.line, transfer: common[0] });
+        for (var i = 0; i < norm.length; i++) {
+          for (var k = 0; k < qs.length; k++) { if (norm[i].indexOf(qs[k]) !== -1) { out.push(i); break; } }
+        }
+        return out;
+      };
+
+      // Les noms de la liste ci-dessus sont des COMMUNES administratives ; les
+      // arrêts, eux, portent des noms de repères. 19 des 40 quartiers proposés
+      // ne correspondaient donc à aucun arrêt et ne pouvaient JAMAIS donner de
+      // résultat (« Plateau » en tête de liste : zéro arrêt le contient, alors
+      // que Sandaga, Petersen ou Place de l'Indépendance y sont). Ces alias
+      // rattachent un quartier aux repères réellement présents dans `escales`.
+      // Termes volontairement resserrés : « fass » seul attraperait « Fass Mbao »
+      // (Pikine) et « sicap » « Sicap Mbao », deux endroits qui n'ont rien à voir.
+      var QUARTIER_ALIASES = {
+        'Plateau': ['plateau', 'place de l independance', 'petersen', 'gare de dakar', 'avenue faidherbe', 'palais', 'sandaga', 'hopitale principale', 'assemblee nationale'],
+        'Fann-Point E-Amitié': ['fann', 'point e', 'amitie'],
+        'Gueule Tapée-Fass-Colobane': ['colobane', 'gueule tapee', 'marche fass', 'hlm fass', 'mbedou fass'],
+        'Biscuiterie': ['biscuiterie', 'bourguiba'],
+        'Hann Bel-Air': ['hann', 'bel air', 'bel-air'],
+        'Sicap-Liberté': ['liberte', 'sicap karack', 'sicap rue'],
+        'Dieuppeul-Derklé': ['dieuppeul', 'derkle'],
+        'Mermoz-Sacré Cœur': ['mermoz', 'sacre coeur', 'sacre-coeur'],
+        'Golf Sud': ['golf'],
+        'Wakhinane Nimzatt': ['wakhinane', 'nimzatt'],
+        'Keur Massar Nord': ['keur massar'],
+        'Keur Massar Sud': ['keur massar'],
+        'Yeumbeul Nord': ['yeumbeul'],
+        'Yeumbeul Sud': ['yeumbeul'],
+        'Rufisque Est': ['rufisque'],
+        'Rufisque Ouest': ['rufisque'],
+        'Tivaouane Peulh-Niaga': ['tivaouane', 'niaga']
+      };
+      // Termes de recherche pour un lieu choisi : ses alias s'il en a, sinon son
+      // propre nom (cas d'un arrêt précis choisi dans la seconde liste).
+      var stopQueries = function (label) {
+        var al = QUARTIER_ALIASES[label];
+        return (al && al.length ? al : [label]).map(normStop).filter(Boolean);
+      };
+      // Ne proposer que les quartiers réellement atteignables : « Médina
+      // Gounass » et « Sébikotane » n'ont aucun arrêt dans le réseau importé,
+      // les laisser dans la liste ne fait qu'offrir une recherche vouée à
+      // « aucun résultat ». Calculé sur les données chargées, donc auto-corrigé
+      // si de nouvelles lignes sont importées.
+      var tataQuartiers = React.useMemo(function () {
+        if (!tataIndexed.length) return DAKAR_QUARTIERS;
+        return DAKAR_QUARTIERS.filter(function (q) {
+          var qs = stopQueries(q);
+          return tataIndexed.some(function (e) { return stopMatches(e.norm, qs).length > 0; });
+        });
+      }, [tataIndexed]);
+
+      // Un segment de trajet sur UNE ligne : monter à `board`, descendre à
+      // `alight`. `towards` donne le sens à chercher sur le pare-brise du bus :
+      // monter à une position supérieure à celle où l'on descend signifie
+      // prendre la ligne dans le sens retour.
+      var makeLeg = function (entry, fromIdx, toIdx) {
+        var fwd = toIdx >= fromIdx;
+        var slice = fwd ? entry.stops.slice(fromIdx, toIdx + 1)
+                        : entry.stops.slice(toIdx, fromIdx + 1).slice().reverse();
+        return {
+          line: entry.line,
+          board: entry.stops[fromIdx],
+          alight: entry.stops[toIdx],
+          stops: Math.abs(toIdx - fromIdx),
+          towards: fwd ? (entry.line.arrival_gare || entry.line.destination_main || '')
+                       : (entry.line.origin_gare || ''),
+          path: slice
+        };
+      };
+
+      // Meilleure façon de parcourir un bout de trajet sur une ligne donnée :
+      // parmi toutes les paires (montée, descente) possibles, celle qui minimise
+      // le nombre d'arrêts. null si la ligne ne relie pas les deux points.
+      var bestOnLine = function (entry, fromIdxs, toIdxs) {
+        var best = null;
+        for (var i = 0; i < fromIdxs.length; i++) {
+          for (var j = 0; j < toIdxs.length; j++) {
+            if (fromIdxs[i] === toIdxs[j]) continue;   // même arrêt : pas un trajet
+            var n = Math.abs(toIdxs[j] - fromIdxs[i]);
+            if (!best || n < best.n) best = { from: fromIdxs[i], to: toIdxs[j], n: n };
+          }
+        }
+        return best;
+      };
+
+      // Meilleur point de changement entre deux lignes : celui qui minimise le
+      // nombre total d'arrêts, pas le premier venu (l'ancien code prenait
+      // `common[0]`, un point de correspondance arbitraire qui pouvait imposer
+      // de traverser toute une ligne pour rien).
+      // Deux arrêts peuvent porter le même nom SANS être le même endroit :
+      // « Cite ASECNA » est à Ouakam sur la ligne 3 (entre Les Mamelles et
+      // Village De Ouakam) et à Guédiawaye sur la ligne 45 (entre Station
+      // Yeumbeul et Terminus 49). Changer de bus « à Cite ASECNA » entre ces
+      // deux lignes est impossible — et c'est ce que proposait un simple
+      // rapprochement par nom. Faute de coordonnées par arrêt-de-ligne (la
+      // table n'en a qu'une par NOM), on compare les arrêts VOISINS géocodés de
+      // part et d'autre : s'ils sont à plus de 6 km, c'est un homonyme.
+      // Fail-open : sans coordonnées connues (51 % des arrêts le sont), la
+      // correspondance est laissée telle quelle plutôt que supprimée à tort.
+      var HOMONYM_KM = 6;
+      var kmBetween = function (p, q) {
+        var R = 6371, t = Math.PI / 180;
+        var dLat = (q.lat - p.lat) * t, dLng = (q.lng - p.lng) * t;
+        var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(p.lat * t) * Math.cos(q.lat * t) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+      };
+      // Positions connues autour d'un arrêt d'une ligne (l'arrêt lui-même est
+      // ignoré : c'est justement son nom qui est ambigu). On en collecte
+      // PLUSIEURS, car certains noms génériques sont mal géocodés — « Autoroute »
+      // pointe sur Diamniadio, à 25 km du pont de Colobane où la ligne 50 passe.
+      // S'appuyer sur un seul voisin faisait rejeter de bonnes correspondances.
+      var anchorsNear = function (geo, entry, idx) {
+        var out = [];
+        for (var d = 1; d <= 3 && out.length < 3; d++) {
+          var a = entry.norm[idx - d], b = entry.norm[idx + d];
+          if (a && geo[a]) out.push(geo[a]);
+          if (b && geo[b]) out.push(geo[b]);
+        }
+        return out;
+      };
+      var transferOk = function (geo, e1, i1, e2, i2) {
+        if (!geo) return true;
+        var ps = anchorsNear(geo, e1, i1), qs = anchorsNear(geo, e2, i2);
+        if (!ps.length || !qs.length) return true;   // inconnu → on ne tranche pas
+        // Il suffit qu'UNE paire de voisins soit proche pour conclure que les
+        // deux lignes passent bien au même endroit ; rejeter demande que TOUS
+        // les repères soient éloignés, ce qu'un seul géocodage fautif ne peut
+        // pas provoquer.
+        for (var i = 0; i < ps.length; i++) {
+          for (var j = 0; j < qs.length; j++) {
+            if (kmBetween(ps[i], qs[j]) <= HOMONYM_KM) return true;
+          }
+        }
+        return false;
+      };
+      var bestTransfer = function (e1, fromIdxs, e2, toIdxs, geo) {
+        var pos2 = {};
+        for (var k = 0; k < e2.norm.length; k++) {
+          if (!(e2.norm[k] in pos2)) pos2[e2.norm[k]] = [];
+          pos2[e2.norm[k]].push(k);
+        }
+        var best = null;
+        for (var i = 0; i < e1.norm.length; i++) {
+          var cand = pos2[e1.norm[i]];
+          if (!cand) continue;
+          var leg1 = bestOnLine(e1, fromIdxs, [i]);
+          if (!leg1) continue;
+          var leg2 = bestOnLine(e2, cand, toIdxs);
+          if (!leg2) continue;
+          if (!transferOk(geo, e1, i, e2, leg2.from)) continue;
+          var total = leg1.n + leg2.n;
+          if (!best || total < best.total) best = { total: total, leg1: leg1, leg2: leg2 };
+        }
+        return best;
+      };
+
+      // Index arrêt normalisé → lignes qui le desservent. Sert à la recherche à
+      // deux correspondances, qui serait sinon quadratique sur 82 lignes.
+      var tataStopIndex = React.useMemo(function () {
+        var idx = {};
+        tataIndexed.forEach(function (e, ei) {
+          var seen = {};
+          e.norm.forEach(function (s) { if (!seen[s]) { seen[s] = 1; (idx[s] = idx[s] || []).push(ei); } });
+        });
+        return idx;
+      }, [tataIndexed]);
+
+      // Itinéraires classés : direct d'abord, puis 1 changement, puis 2 — ces
+      // derniers seulement si rien d'autre n'existe (deux correspondances en
+      // ville, ce n'est pas ce qu'on propose de gaieté de cœur).
+      var tataJourneys = React.useMemo(function () {
+        if (!tataSearched || !tataIndexed.length || !tataDepart || !tataDest) return [];
+        var d = stopQueries(tataDepart), a = stopQueries(tataDest);
+        var from = [], to = [], toByEi = {};
+        tataIndexed.forEach(function (e, ei) {
+          var b = stopMatches(e.norm, d), c = stopMatches(e.norm, a);
+          if (b.length) from.push({ ei: ei, idxs: b });
+          if (c.length) { to.push({ ei: ei, idxs: c }); toByEi[ei] = c; }
+        });
+
+        var out = [];
+        // 0 changement — une seule ligne dessert les deux points.
+        from.forEach(function (f) {
+          if (!(f.ei in toByEi)) return;
+          var b = bestOnLine(tataIndexed[f.ei], f.idxs, toByEi[f.ei]);
+          if (b) out.push({ transfers: 0, total: b.n, legs: [makeLeg(tataIndexed[f.ei], b.from, b.to)] });
+        });
+
+        // 1 changement.
+        from.forEach(function (f) {
+          to.forEach(function (t) {
+            if (f.ei === t.ei) return;
+            var bt = bestTransfer(tataIndexed[f.ei], f.idxs, tataIndexed[t.ei], t.idxs, tataStopGeo);
+            if (!bt) return;
+            out.push({
+              transfers: 1, total: bt.total,
+              legs: [makeLeg(tataIndexed[f.ei], bt.leg1.from, bt.leg1.to),
+                     makeLeg(tataIndexed[t.ei], bt.leg2.from, bt.leg2.to)]
+            });
           });
         });
-        return out.slice(0, 5);
-      }, [tataSearched, tataResults, tataLines, tataDepart, tataDest]);
+
+        // 2 changements — dernier recours, et borné : on part des lignes de
+        // départ, on passe par les lignes qui partagent un arrêt avec elles, et
+        // on cherche à retomber sur une ligne desservant l'arrivée.
+        if (!out.length) {
+          for (var fi = 0; fi < from.length && out.length < 4; fi++) {
+            var f2 = from[fi], e1 = tataIndexed[f2.ei], midSeen = {};
+            for (var si = 0; si < e1.norm.length && out.length < 4; si++) {
+              var leg1 = bestOnLine(e1, f2.idxs, [si]);
+              if (!leg1) continue;
+              var mids = tataStopIndex[e1.norm[si]] || [];
+              for (var mi = 0; mi < mids.length && out.length < 4; mi++) {
+                var mEi = mids[mi];
+                if (mEi === f2.ei || (mEi in toByEi) || midSeen[mEi]) continue;
+                midSeen[mEi] = 1;
+                var eM = tataIndexed[mEi];
+                var entryIdxs = stopMatches(eM.norm, [e1.norm[si]]).filter(function (ix) {
+                  return transferOk(tataStopGeo, e1, si, eM, ix);
+                });
+                if (!entryIdxs.length) continue;
+                for (var ti = 0; ti < to.length && out.length < 4; ti++) {
+                  var t2 = to[ti], eT = tataIndexed[t2.ei];
+                  var bt2 = bestTransfer(eM, entryIdxs, eT, t2.idxs, tataStopGeo);
+                  if (!bt2) continue;
+                  out.push({
+                    transfers: 2, total: leg1.n + bt2.total,
+                    legs: [makeLeg(e1, leg1.from, leg1.to),
+                           makeLeg(eM, bt2.leg1.from, bt2.leg1.to),
+                           makeLeg(eT, bt2.leg2.from, bt2.leg2.to)]
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Classement (moins de changements, puis trajet le plus court) puis
+        // dédoublonnage sur la suite de lignes empruntées — deux points de
+        // changement différents sur les deux mêmes lignes ne font qu'une seule
+        // proposition, la plus courte, qui est en tête après le tri.
+        out.sort(function (x, y) { return x.transfers - y.transfers || x.total - y.total; });
+        var seen = {}, uniq = [];
+        out.forEach(function (j) {
+          var sig = j.legs.map(function (g) { return g.line.id; }).join('>');
+          if (seen[sig]) return;
+          seen[sig] = 1; uniq.push(j);
+        });
+        return uniq.slice(0, 8);
+      }, [tataSearched, tataIndexed, tataStopIndex, tataStopGeo, tataDepart, tataDest]);
+
+      var tataDirect = React.useMemo(function () {
+        return tataJourneys.filter(function (j) { return j.transfers === 0; });
+      }, [tataJourneys]);
+      var tataWithChange = React.useMemo(function () {
+        return tataJourneys.filter(function (j) { return j.transfers > 0; });
+      }, [tataJourneys]);
       var tataLineLabel = function (l) {
         // Numéro classique ("Ligne 12 : ...") ou identifiant texte ("Ligne TAF TAF
         // OUAKAM (TO1) : ...") — les deux formats existent selon l'opérateur.
@@ -6260,13 +6527,13 @@ window.addEventListener('unhandledrejection', function(event) {
       // Mode "Par arrêt" : toutes les lignes desservant l'arrêt/quartier choisi,
       // sans besoin d'une seconde extrémité — même test de sous-chaîne normalisée.
       var tataStopResults = React.useMemo(function () {
-        if (!tataSingleSearched || !tataLines || !tataSingleStop) return [];
-        var s = normTxt(tataSingleStop);
-        return tataLines.filter(function (l) {
-          var stops = (l.escales || '').split('|').map(function (x) { return normTxt(x); });
-          return stops.some(function (x) { return x.indexOf(s) !== -1; });
-        }).sort(tataLineSort);
-      }, [tataSingleSearched, tataLines, tataSingleStop]);
+        if (!tataSingleSearched || !tataIndexed.length || !tataSingleStop) return [];
+        // Mêmes alias de quartier que le mode "Trajet" : sans eux, choisir
+        // "Plateau" ici ne renvoyait rien non plus.
+        var qs = stopQueries(tataSingleStop);
+        return tataIndexed.filter(function (e) { return stopMatches(e.norm, qs).length > 0; })
+          .map(function (e) { return e.line; }).sort(tataLineSort);
+      }, [tataSingleSearched, tataIndexed, tataSingleStop]);
       // Carte de résultat (numéro, opérateur, trajet, itinéraire+carte dépliables)
       // — un seul rendu réutilisé par les 3 modes (od/stop/line), aucune
       // logique dupliquée entre les configurations de recherche.
@@ -6302,6 +6569,70 @@ window.addEventListener('unhandledrejection', function(event) {
               },
               className: 'nexus-map', style: { height: 200 }
             }) : E('p', { style: { fontSize: '.72rem', color: '#999', textAlign: 'center' } }, 'Trajet non localisable sur la carte pour cette ligne (arrêts non reconnus) — la liste ci-dessus reste exacte.')
+          )
+        );
+      };
+
+      // Carte d'itinéraire : la réponse à « quel bus je prends ? » — les bus à
+      // emprunter dans l'ordre, où monter, dans quel sens, où descendre, et où
+      // changer. Remplace l'ancien affichage, qui se contentait de lister les
+      // lignes desservant les deux extrémités sans dire quoi en faire.
+      var STEP_NUM = ['①', '②', '③'];
+      var renderJourney = function (j, ji) {
+        var key = j.legs.map(function (g) { return g.line.id; }).join('>');
+        var open = tataJExpanded === key;
+        var head = j.transfers === 0 ? '✅ Direct'
+                 : j.transfers === 1 ? '🔁 1 changement'
+                 : '🔁 ' + j.transfers + ' changements';
+        return E('div', { key: key + '-' + ji, style: { border: j.transfers === 0 ? '2px solid #006d40' : '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
+          E('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '.5rem' } },
+            E('span', { style: { fontWeight: 800, fontSize: '.82rem', color: j.transfers === 0 ? '#006d40' : '#B45309' } }, head),
+            E('span', { style: { fontSize: '.74rem', color: '#888' } }, j.total + ' arrêt' + (j.total > 1 ? 's' : '') + ' au total')
+          ),
+          j.legs.map(function (g, gi) {
+            return E('div', { key: gi },
+              gi > 0 && E('div', { style: { fontSize: '.75rem', color: '#B45309', fontWeight: 700, margin: '.45rem 0 .45rem .2rem' } },
+                '🔁 Changez à « ', g.board, ' »'),
+              E('div', { style: { display: 'flex', gap: '.5rem', alignItems: 'flex-start' } },
+                E('span', { style: { fontSize: '1rem', lineHeight: 1.2 } }, STEP_NUM[gi] || '•'),
+                E('div', { style: { flex: 1 } },
+                  E('div', { style: { fontWeight: 700, fontSize: '.85rem' } }, '🚌 ', tataLineLabel(g.line)),
+                  E('div', { style: { fontSize: '.72rem', color: '#1D4ED8', fontWeight: 700 } },
+                    g.line.operator, g.towards ? ' · direction ' + g.towards : ''),
+                  E('div', { style: { fontSize: '.78rem', color: '#333', marginTop: 3 } },
+                    'Montez à ', E('b', null, g.board), ' → descendez à ', E('b', null, g.alight)),
+                  E('div', { style: { fontSize: '.72rem', color: '#888' } },
+                    g.stops + ' arrêt' + (g.stops > 1 ? 's' : ''))
+                )
+              )
+            );
+          }),
+          E('div', { style: { display: 'flex', gap: 12, marginTop: '.6rem', flexWrap: 'wrap' } },
+            E('button', {
+              onClick: function () { setTataJExpanded(open ? null : key); },
+              style: { fontSize: '.75rem', color: '#006d40', fontWeight: 700, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }
+            }, open ? '▲ Masquer les arrêts' : '📍 Voir les arrêts'),
+            j.legs.map(function (g, gi) {
+              return E('a', { key: 'f' + gi, href: '/ligne/' + g.line.id, target: '_blank', rel: 'noopener', style: { fontSize: '.75rem', color: '#1D4ED8', fontWeight: 700 } },
+                'Fiche ' + tataLineLabel(g.line) + ' →');
+            })
+          ),
+          open && E('div', { style: { marginTop: '.6rem', paddingTop: '.6rem', borderTop: '1px solid #eee' } },
+            j.legs.map(function (g, gi) {
+              return E('div', { key: 'p' + gi, style: { marginBottom: '.6rem' } },
+                E('div', { style: { fontWeight: 700, fontSize: '.75rem', marginBottom: '.25rem' } },
+                  (STEP_NUM[gi] || '•') + ' ' + tataLineLabel(g.line)),
+                E('ol', { style: { fontSize: '.73rem', color: '#444', paddingLeft: '1.1rem', margin: 0, maxHeight: 140, overflowY: 'auto' } },
+                  // Les arrêts dans le SENS DU TRAJET (path est déjà retourné
+                  // quand on prend la ligne dans le sens retour) — pas l'ordre
+                  // brut de la colonne escales, qui induirait en erreur.
+                  g.path.map(function (s, i) {
+                    var edge = i === 0 || i === g.path.length - 1;
+                    return E('li', { key: i, style: edge ? { fontWeight: 700, color: '#111' } : null }, s);
+                  })
+                )
+              );
+            })
           )
         );
       };
@@ -6477,12 +6808,12 @@ window.addEventListener('unhandledrejection', function(event) {
                   E('div', { style: { display: 'flex', gap: 6, marginBottom: '.7rem' } },
                     E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDepart, onChange: function (e) { setTataDepart(e.target.value); setTataSearched(false); } },
                       E('option', { value: '' }, 'Départ…'),
-                      E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'dq-' + q, value: q }, q); })),
+                      E('optgroup', { label: 'Quartiers' }, tataQuartiers.map(function (q) { return E('option', { key: 'dq-' + q, value: q }, q); })),
                       E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'ds-' + s, value: s }, s); }))
                     ),
                     E('select', { style: Object.assign({}, inp, { marginBottom: 0 }), value: tataDest, onChange: function (e) { setTataDest(e.target.value); setTataSearched(false); } },
                       E('option', { value: '' }, 'Destination…'),
-                      E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'aq-' + q, value: q }, q); })),
+                      E('optgroup', { label: 'Quartiers' }, tataQuartiers.map(function (q) { return E('option', { key: 'aq-' + q, value: q }, q); })),
                       E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'as-' + s, value: s }, s); }))
                     )
                   ),
@@ -6490,26 +6821,25 @@ window.addEventListener('unhandledrejection', function(event) {
                     onClick: function () { setTataSearched(true); }, disabled: !tataDepart || !tataDest,
                     style: { width: '100%', padding: '.65rem', background: (!tataDepart || !tataDest) ? '#9ca3af' : '#006d40', color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '.85rem', cursor: (!tataDepart || !tataDest) ? 'default' : 'pointer', marginBottom: '1rem' }
                   }, '🔎 Trouver mon bus'),
-                  !tataSearched ? null : tataResults.length === 0 ? (
-                    tataConnections.length === 0 ? E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucune ligne directe ni correspondance trouvée entre ces deux arrêts — essayez des arrêts plus proches.') :
-                    E('div', null,
-                      E('p', { style: { fontSize: '.78rem', color: '#888', marginBottom: '.6rem' } }, 'Aucune ligne directe, mais une correspondance est possible :'),
-                      E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
-                        tataConnections.map(function (c, i) {
-                          return E('div', { key: i, style: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '.85rem' } },
-                            E('div', { style: { fontWeight: 700, fontSize: '.9rem' } }, '🚌 ', tataLineLabel(c.from), ' → 🔁 → 🚌 ', tataLineLabel(c.to)),
-                            E('div', { style: { fontSize: '.78rem', color: '#666', marginTop: 4 } }, c.from.origin_gare, ' → ', E('b', null, c.transfer), ' → ', c.to.arrival_gare),
-                            E('div', { style: { fontSize: '.74rem', color: '#888', marginTop: 4 } }, 'Changement à « ', c.transfer, ' »'),
-                            E('div', { style: { display: 'flex', gap: 12, marginTop: 6 } },
-                              E('a', { href: '/ligne/' + c.from.id, target: '_blank', rel: 'noopener', style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700 } }, 'Ligne 1 →'),
-                              E('a', { href: '/ligne/' + c.to.id, target: '_blank', rel: 'noopener', style: { fontSize: '.74rem', color: '#1D4ED8', fontWeight: 700 } }, 'Ligne 2 →')
-                            )
-                          );
-                        })
-                      )
+                  !tataSearched ? null : tataJourneys.length === 0 ? (
+                    E('p', { style: { textAlign: 'center', color: '#888', fontSize: '.85rem' } }, 'Aucun trajet trouvé entre ces deux arrêts, même avec deux changements — essayez un quartier plutôt qu\'un arrêt précis, ou un point de départ voisin.')
+                  ) : E('div', null,
+                    E('p', { style: { fontSize: '.78rem', color: '#666', marginBottom: '.6rem' } },
+                      tataDirect.length
+                        ? '✅ ' + tataDirect.length + ' ligne' + (tataDirect.length > 1 ? 's' : '') + ' directe' + (tataDirect.length > 1 ? 's' : '') + ' — pas besoin de changer de bus.'
+                        : '🔁 Pas de ligne directe : voici le trajet avec le moins de changements.'),
+                    E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } },
+                      (tataDirect.length ? tataDirect : tataWithChange).map(renderJourney)),
+                    // Les options avec changement restent accessibles même quand
+                    // un direct existe : le direct peut faire le tour de la ville
+                    // là où une correspondance coupe au plus court.
+                    tataDirect.length > 0 && tataWithChange.length > 0 && E('details', { style: { marginTop: '.8rem' } },
+                      E('summary', { style: { fontSize: '.76rem', color: '#666', cursor: 'pointer', fontWeight: 700 } },
+                        'Autres options avec correspondance (' + Math.min(tataWithChange.length, 3) + ')'),
+                      E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem', marginTop: '.6rem' } },
+                        tataWithChange.slice(0, 3).map(renderJourney))
                     )
-                  ) :
-                  E('div', { style: { display: 'flex', flexDirection: 'column', gap: '.7rem' } }, tataResults.map(renderTataLineCard))
+                  )
                 ),
 
                 // ── Mode "Par arrêt" (un seul point) ──────────────────────
@@ -6517,7 +6847,7 @@ window.addEventListener('unhandledrejection', function(event) {
                   E('p', { style: { fontSize: '.76rem', color: '#888', marginBottom: '.6rem' } }, 'Choisissez un arrêt ou quartier : toutes les lignes qui y passent.'),
                   E('select', { style: Object.assign({}, inp, { marginBottom: '.7rem' }), value: tataSingleStop, onChange: function (e) { setTataSingleStop(e.target.value); setTataSingleSearched(false); } },
                     E('option', { value: '' }, 'Arrêt ou quartier…'),
-                    E('optgroup', { label: 'Quartiers' }, DAKAR_QUARTIERS.map(function (q) { return E('option', { key: 'sq-' + q, value: q }, q); })),
+                    E('optgroup', { label: 'Quartiers' }, tataQuartiers.map(function (q) { return E('option', { key: 'sq-' + q, value: q }, q); })),
                     E('optgroup', { label: 'Arrêts de bus (détaillé)' }, tataStops.map(function (s) { return E('option', { key: 'ss-' + s, value: s }, s); }))
                   ),
                   E('button', {
