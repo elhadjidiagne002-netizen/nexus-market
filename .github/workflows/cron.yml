@@ -7,6 +7,7 @@ on:
     - cron: '*/5 * * * *'    # dispatch — toutes les 5 min (puis boucle interne → ~1/min)
     - cron: '30 * * * *'     # abandoned-cart — horaire (décalé de 30 min pour ne pas cumuler avec expire)
     - cron: '0 10 * * *'     # review-request — 1×/jour à 10h UTC (heure ouvrable au Sénégal)
+    - cron: '15 * * * *'     # wa-campaign — horaire (décalé de 15 min ; le job filtre lui-même la fenêtre 8h-19h)
   workflow_dispatch:
     inputs:
       job:
@@ -14,7 +15,7 @@ on:
         required: true
         default: 'both'
         type: choice
-        options: [expire, cleanup, dispatch, abandoned-cart, review-request, both]
+        options: [expire, cleanup, dispatch, abandoned-cart, review-request, wa-campaign, both]
 
 env:
   SITE_URL: https://nexus-market-asb.pages.dev
@@ -23,7 +24,9 @@ jobs:
   cron-expire:
     name: Expiration annonces & boosts (horaire)
     # Schedule horaire uniquement (ou déclenchement manuel expire/both)
-    if: github.event.schedule == '0 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'cleanup' && github.event.inputs.job != 'dispatch' && github.event.inputs.job != 'abandoned-cart' && github.event.inputs.job != 'review-request')
+    # `!= 'wa-campaign'` indispensable : cette condition liste les jobs à EXCLURE,
+    # donc sans lui, choisir « wa-campaign » déclencherait aussi celui-ci.
+    if: github.event.schedule == '0 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'cleanup' && github.event.inputs.job != 'dispatch' && github.event.inputs.job != 'abandoned-cart' && github.event.inputs.job != 'review-request' && github.event.inputs.job != 'wa-campaign')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/expire
@@ -38,7 +41,8 @@ jobs:
   cron-cleanup:
     name: Nettoyage base de données (hebdomadaire)
     # Schedule hebdomadaire uniquement (ou déclenchement manuel cleanup/both)
-    if: github.event.schedule == '0 3 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'expire' && github.event.inputs.job != 'dispatch' && github.event.inputs.job != 'abandoned-cart' && github.event.inputs.job != 'review-request')
+    # idem : liste d'exclusion → « wa-campaign » doit y figurer.
+    if: github.event.schedule == '0 3 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'expire' && github.event.inputs.job != 'dispatch' && github.event.inputs.job != 'abandoned-cart' && github.event.inputs.job != 'review-request' && github.event.inputs.job != 'wa-campaign')
     runs-on: ubuntu-latest
     steps:
       - name: Trigger /cron/cleanup
@@ -95,6 +99,27 @@ jobs:
         run: |
           BODY=$(curl -s -w "\n%{http_code}" \
             "$SITE_URL/cron/review-request?token=${{ secrets.NEXUS_CRON_TOKEN }}")
+          STATUS=$(echo "$BODY" | tail -n1)
+          echo "$BODY" | sed '$d'
+          echo "HTTP Status: $STATUS"
+          test "$STATUS" = "200"
+
+  # Campagne WhatsApp en goutte-à-goutte. Passe TOUTES LES HEURES, mais
+  # n'envoie que si une campagne est en `status='running'` : tant qu'elle est
+  # en 'paused' (état à la création), ce job ne fait rien. C'est le cron
+  # lui-même qui applique la fenêtre horaire et les plafonds — pas ce YAML,
+  # pour que les garde-fous restent modifiables en base sans redéploiement.
+  # `both` NE le déclenche PAS : un envoi à de vraies personnes ne doit jamais
+  # partir d'un déclenchement manuel générique.
+  cron-wa-campaign:
+    name: Campagne WhatsApp — lot horaire
+    if: github.event.schedule == '15 * * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'wa-campaign')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /cron/wa-campaign
+        run: |
+          BODY=$(curl -s -w "\n%{http_code}" \
+            "$SITE_URL/cron/wa-campaign?token=${{ secrets.NEXUS_CRON_TOKEN }}")
           STATUS=$(echo "$BODY" | tail -n1)
           echo "$BODY" | sed '$d'
           echo "HTTP Status: $STATUS"
