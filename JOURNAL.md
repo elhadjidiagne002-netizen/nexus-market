@@ -6,6 +6,91 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (cinquante et unième) — Campagne WhatsApp autonome (goutte-à-goutte) + réparation WAHA
+
+**Demande** : « je ne peux pas faire de lancement en masse à cause des
+contraintes, trouve un moyen de lancement que tu feras toi-même ».
+
+**Constat** : 3618 prospects avec téléphone, mais **53 messages envoyés depuis
+le début du projet** (16 sur 30 jours) — l'envoi manuel depuis le dashboard ne
+passe pas à l'échelle.
+
+**Solution** : un cron `/cron/wa-campaign` qui vide une file d'attente par
+petits lots, déclenché toutes les heures par le workflow GitHub Actions déjà en
+place. Le token reste dans les secrets GitHub : rien ne transite par la
+conversation, et personne n'a à cliquer.
+
+⚠ **La contrainte dimensionnante n'est PAS le quota Green API mais WhatsApp**,
+qui bannit un numéro envoyant en masse à des gens qui ne l'ont jamais contacté.
+D'où : plafond par passage ET sur 24 h glissantes, fenêtre 8 h-19 h, délai
+aléatoire entre envois, et un disjoncteur qui passe la campagne en `stopped`
+au-delà de 50 % d'échecs sur un lot. Cadence retenue : ~80/jour.
+
+**Tables** `wa_campaigns` / `wa_campaign_targets` / `wa_opt_outs`
+(service_role uniquement — elles contiennent des numéros de tiers). Une
+campagne naît en `paused` : déployer le code n'envoie rien.
+
+### Cinq défauts trouvés PAR les tests, pas par la lecture
+
+1. **42 % de la liste était inutilisable** : 1176 cibles sur 2828 étaient des
+   numéros **fixes** (préfixe 33), sans WhatsApp. Elles auraient échoué en bloc,
+   fait sauter le disjoncteur en permanence, et surtout : un fort taux d'envois
+   vers des numéros absents de WhatsApp est le signal qui fait classer un compte
+   comme spam — ça aurait *accéléré* le bannissement. Filtre `isSenegalMobile()`
+   (préfixes 70/75/76/77/78) + marquage `skipped` en base.
+2. **« Bonjour Dakar »** : prendre le 1er mot comme prénom marche pour une
+   personne (« Bonjour Fall », usage courant au Sénégal) mais produisait
+   « Bonjour Dakar » pour l'entreprise *Dakar Rapid Pare-Brise*, « Bonjour
+   Immobilière », « Bonjour SAHEL ». Règle corrigée : nom en un seul mot = nom
+   de personne, nom composé = raison sociale saluée en entier.
+3. **Ma détection du STOP désinscrivait « arrêtez-vous au marché ? »** — un
+   prospect intéressé, perdu par erreur. Le mot-clé doit désormais constituer
+   l'essentiel du message (25/25 cas de test).
+4. **Filtre `promoted` à contresens** : mon 1er remplissage n'a trouvé que
+   25 cibles au lieu de 2828. `status='promoted'` ne veut pas dire « déjà
+   client » mais « fiche déjà créée sur le site » — c'est justement la cible
+   principale du message (« votre fiche est en ligne »).
+5. **Faille de sécurité dans mon propre code** : `requireAdmin` renvoie un
+   TUPLE `[user, errResponse]`, pas une `Response`. Le test
+   `if (guard instanceof Response)` que j'avais écrit sur
+   `/api/admin/waha-session` n'aurait bloqué personne → endpoint d'appairage
+   WhatsApp **public**. Attrapé à la relecture avant déploiement.
+
+### Robustesse sans infrastructure payante
+
+`wa_opt_outs` + traitement du STOP dans le webhook entrant, **avant** le
+coupe-circuit du bot (même bot désactivé, un désabonnement doit être
+enregistré). Écritures de statut post-envoi avec réessai : leur perte
+laisserait la cible en `pending` et provoquerait un **doublon** chez une vraie
+personne. Lectures critiques (plafond 24 h, liste d'opt-out) : en cas d'échec
+on suspend plutôt que d'envoyer à l'aveugle.
+
+**Remise en file automatique** des échecs transitoires (466 quota, 5xx, 429,
+408, réseau) avec backoff 3 h puis 12 h, 3 tentatives max. Les échecs
+définitifs (400 numéro invalide, 404, 401) ne sont jamais repris — insister
+gaspille le budget et aggrave le signal spam. ⚠ Bug évité : « aucune cible
+**due** » ≠ « file **vide** » — marquer `done` aurait abandonné les cibles en
+attente de réessai.
+
+### WAHA (fournisseur de secours)
+
+`GET /api/whatsapp` remontait `404 Session not found` : le secours était mort
+sans que rien ne le signale. Cause : disque éphémère sur Render, un
+redémarrage efface la session appairée. Nouvel endpoint admin
+`/api/admin/waha-session` (list/status/qr/start/stop) — il ne peut pas scanner
+le QR (action physique sur le téléphone, et c'est très bien ainsi) mais
+automatise tout le reste.
+
+**Piste gratuite pour régler la cause racine** : WAHA Core sait stocker ses
+sessions en **PostgreSQL** (`WHATSAPP_SESSIONS_POSTGRESQL_URL`) au lieu du
+disque — vérifié dans la doc WAHA, disponible en version gratuite. Vérifié
+aussi sur notre base : le rôle `postgres` a bien `rolcreatedb = true` (WAHA
+crée ses propres bases `waha_*`), test `CREATE DATABASE` / `DROP DATABASE`
+réellement effectué puis nettoyé. Reste à poser la variable côté Render
+(demande le mot de passe de la base, donc action utilisateur).
+
+---
+
 ## 2026-09-05 (cinquantième) — Vérification du sitemap en production + 2 correctifs
 
 **Demande** : vérifier que le sitemap se génère bien en prod après les
