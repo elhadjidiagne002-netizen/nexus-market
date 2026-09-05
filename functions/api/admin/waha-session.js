@@ -83,27 +83,28 @@ export async function onRequestGet({ request, env }) {
     }
 
     if (action === 'qr') {
-      // WAHA renvoie le QR en image. On le transmet en base64 : le JSON reste
-      // lisible depuis n'importe quel client, sans dépendre d'un rendu binaire.
+      /* On demande la VALEUR BRUTE du QR (quelques centaines d'octets), pas
+         l'image. Renvoyer le PNG encodé en base64 faisait tomber la réponse en
+         502 côté Cloudflare (constaté 2026-09-05) — et un 502 voit son corps
+         remplacé par la page générique Cloudflare, donc sans message utile.
+         Le rendu de l'image est fait par l'appelant, c'est trivial. */
       const { base, key, session } = conf;
-      const r = await fetch(`${base}/api/${encodeURIComponent(session)}/auth/qr?format=image`, {
-        headers: { 'X-Api-Key': key },
+      const r = await fetch(`${base}/api/${encodeURIComponent(session)}/auth/qr?format=raw`, {
+        headers: { 'X-Api-Key': key, Accept: 'application/json' },
       });
+      const text = await r.text();
       if (!r.ok) {
-        const t = await r.text().catch(() => '');
         return json({
-          action, httpStatus: r.status, ok: false, detail: t.slice(0, 400),
-          aide: "Pas de QR disponible. La session doit être démarrée (?action=start) et en état SCAN_QR_CODE. Si elle est déjà WORKING, il n'y a rien à scanner.",
-        }, r.status === 404 ? 404 : 502);
+          action, httpStatus: r.status, ok: false, detail: text.slice(0, 300),
+          aide: "Pas de QR disponible. La session doit être en état SCAN_QR_CODE (?action=status). Si elle est WORKING, il n'y a rien à scanner.",
+        }, r.status === 404 ? 404 : 500);
       }
-      const buf = await r.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      let bin = '';
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      let value = text;
+      try { const j = JSON.parse(text); value = j.value || j.qr || text; } catch { /* déjà brut */ }
       return json({
         action, session, ok: true,
-        qr_data_url: 'data:image/png;base64,' + btoa(bin),
-        mode_emploi: "Ouvrir cette data-URL dans un navigateur, puis dans WhatsApp : Paramètres → Appareils connectés → Connecter un appareil, et scanner. Le QR expire vite : régénérer si besoin.",
+        qr_value: String(value).slice(0, 2000),
+        mode_emploi: "Encoder cette valeur en QR code, puis dans WhatsApp : Paramètres → Appareils connectés → Connecter un appareil. Le QR expire en ~20 s : regénérer si besoin.",
       });
     }
 
