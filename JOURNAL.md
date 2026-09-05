@@ -6,6 +6,50 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (cinquante-quatrième) — WAHA : session persistante via Neon, vérifiée après redémarrage
+
+### Le problème
+
+WAHA tourne sur Render, dont le disque est éphémère : chaque redémarrage effaçait
+la session WhatsApp appairée et `GET /api/whatsapp` remontait `404 Session not
+found`. Constaté deux fois dans la journée — la session réparée en début
+d'après-midi avait disparu en moins de deux heures, et j'avais eu le tort
+d'annoncer « réparé » sur cette seule base. Sans ce point réglé, aucune campagne
+WhatsApp ne peut aboutir : WAHA n'est pas un secours mais le seul canal viable,
+le plan gratuit Green API ne permettant que 3 chats par mois.
+
+### Ce qui a été fait
+
+- **Stockage des sessions déplacé sur Neon** (Postgres gratuit, IPv4 natif) via
+  `WHATSAPP_SESSIONS_POSTGRESQL_URL`, disponible en WAHA **Core**. Pas Supabase :
+  sa connexion directe est IPv6 seulement (l'IPv4 est un add-on payant) et Render
+  sort en IPv4. Piège rencontré : l'exemple de la doc WAHA utilise
+  `sslmode=disable`, que **Neon rejette** — il faut `sslmode=require`.
+- **Réappairage** : cycle stop → start → qr via `/api/admin/waha-session`, QR rendu
+  en PNG et scanné. Deux tentatives ont échoué avant : un QR expiré (~20 s de
+  validité), puis une entrée fantôme de l'ancienne session encore présente dans
+  « Appareils connectés » du téléphone, qu'il a fallu déconnecter.
+
+### État final — vérifié, pas supposé
+
+Session `WORKING` (compte `221776254895`, moteur NOWEB, `cappingStatus: NONE`).
+Puis **redémarrage du service Render** : toujours `WORKING`, **sans nouveau QR**.
+Les logs Render le montrent explicitement (`Restarting STOPPED session`,
+`logging in... username 221776254895`, `PreKey validation passed - Server: 404,
+Current prekey 812 exists`, `opened connection to WA`). Les clés cryptographiques
+ont bien été relues depuis Neon après effacement du disque. C'est le seul contrôle
+qui prouve quelque chose, et il passe.
+
+Le pilote (`eb8dc354-…`, 8 cibles restantes) est repassé en `running`. La fenêtre
+d'envoi étant 8 h–19 h et la bascule faite à 21 h, le cron `nexus-wa-campaign`
+(toutes les 15 min) reprendra les envois le lendemain à 8 h. La campagne
+principale (`2d616787-…`, 1602 cibles) reste en **`paused`** — elle ne sera lancée
+qu'après un pilote concluant et accord explicite.
+
+Runbook complet : `docs/WAHA_SESSION_PERSISTANTE.md`.
+
+---
+
 ## 2026-09-05 (cinquante-troisième) — Campagne publicitaire Facebook + verdict du pilote WhatsApp
 
 ### A. Pilote WhatsApp : le disjoncteur a coupé, et il a eu raison
@@ -5419,7 +5463,7 @@ restée saine (`ACTIVE_HEALTHY`, données intactes) tout du long.
 
 | Intégration | État | Notes |
 |---|---|---|
-| WhatsApp | ✅ Green API + repli WAHA | Généralisé à tous les événements |
+| WhatsApp | ✅ WAHA (canal principal) + Green API | Green API = 3 chats/mois (gratuit), donc WAHA porte tout. Session persistante sur Neon, vérifiée après redémarrage Render (2026-09-05) |
 | SMS | 🔧 httpSMS configuré, 502 à diagnostiquer | Providers payants retirés |
 | Images | ✅ Proxy `/img` + Imagor (Render Free) | WebP/AVIF + resize |
 | Vidéos stories | ✅ Proxy `/stories/media` | Cache + Range |

@@ -75,19 +75,32 @@ curl -s https://nexusmarket.sn/api/whatsapp
 `wahaSession.state` doit valoir **`WORKING`**.
 
 Le vrai test est le redémarrage : relancer le service Render, puis rappeler
-la commande ci-dessus. Si l'état reste `WORKING` **après** redémarrage, la
-persistance fonctionne. C'est le seul contrôle qui prouve quelque chose —
-l'état juste après appairage ne prouve rien, on l'a déjà vu tenir deux heures
-avant de retomber.
+la commande ci-dessus. L'état juste après appairage ne prouve rien — on l'a
+déjà vu tenir deux heures avant de retomber.
+
+### ✅ Vérifié le 2026-09-05 à 21 h
+
+Appairage → `WORKING` (compte `221776254895`, moteur NOWEB). Redémarrage du
+service Render → **toujours `WORKING`, sans nouveau QR**. Les logs Render le
+montrent explicitement :
+
+```
+Restarting STOPPED session...
+logging in... {"username":"221776254895"}
+PreKey validation passed - Server: 404, Current prekey 812 exists
+opened connection to WA
+Reconnection with existing sync data, skipping history sync wait.
+```
+
+Les clés cryptographiques ont donc bien été relues depuis Neon après effacement
+du disque éphémère. La persistance fonctionne.
 
 ## Ensuite
 
-La campagne pilote est en `stopped` (disjoncteur), la principale en `paused`.
-Une fois WAHA stable :
-```sql
--- reprendre le pilote (8 cibles restantes)
-UPDATE wa_campaigns SET status='running'
- WHERE id='eb8dc354-3634-4c37-815d-b4c657121463';
-```
-La campagne principale (1612 cibles) ne doit être lancée qu'après un pilote
-concluant.
+Le pilote (`eb8dc354-…`, 8 cibles restantes) a été **remis en `running`** le
+2026-09-05 à 21 h, une fois la persistance prouvée. La fenêtre d'envoi étant
+8 h–19 h, le cron `nexus-wa-campaign` (toutes les 15 min) reprendra les envois
+le lendemain matin à 8 h.
+
+La campagne principale (`2d616787-…`, 1602 cibles restantes) reste en `paused`
+et ne doit être lancée qu'après un pilote concluant **et** accord explicite.
