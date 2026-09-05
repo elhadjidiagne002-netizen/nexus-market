@@ -78,14 +78,34 @@ export async function sendWhatsAppDirect(env, { phone, message }) {
   const chatId = toChatId(phone);
   let result = null;
   let providerUsed = null;
+  let primaryError = null;   // erreur de Green API, avant toute bascule
 
   if (greenConfigured) {
     result = await sendViaGreenApi(env, { chatId, message });
     providerUsed = 'green-api';
+    if (!result.ok) {
+      primaryError = { provider: 'green-api', error: result.error, httpStatus: result.httpStatus };
+    }
   }
   if ((!result || !result.ok) && wahaConfigured) {
-    result = await sendViaWaha(env, { chatId, message });
+    const waha = await sendViaWaha(env, { chatId, message });
     providerUsed = 'waha';
+    result = waha;
+    /* [DIAGNOSTIC 2026-09-05] Quand les DEUX fournisseurs échouent, l'erreur de
+       WAHA écrasait celle de Green API : l'exploitant ne voyait que « WAHA 422 »
+       et diagnostiquait le mauvais fournisseur (constaté sur le 1er lot du
+       pilote — la vraie cause était côté Green API). On conserve les deux.
+       `httpStatus` reste celui du fournisseur PRINCIPAL : c'est lui qui doit
+       gouverner la décision de réessai (un 466 « quota » se retente plus tard,
+       un 422 du secours cassé n'apprend rien sur le destinataire). */
+    if (!waha.ok && primaryError) {
+      result = {
+        ...waha,
+        error: `green-api: ${primaryError.error} | waha: ${waha.error}`,
+        httpStatus: primaryError.httpStatus != null ? primaryError.httpStatus : waha.httpStatus,
+        primaryError,
+      };
+    }
   }
 
   return { ...(result || { ok: false, error: 'Échec de l\'envoi WhatsApp' }), provider: providerUsed, chatId };
