@@ -129,6 +129,47 @@ tard. `_with_retry()` rejoue **uniquement** les refus pour dépassement de quota
 ou une image refusée échoue immédiatement, insister ne changerait rien.
 6/6 cas de test conformes.
 
+### B-quater. L'API Graph est un cul-de-sac : Meta n'offre plus le cas d'usage « publier sur une Page »
+
+⚠ **Le script `publier_facebook.py` n'a finalement pas pu servir.** Le token de
+page est impossible à générer sur ce compte, et la cause est structurelle.
+
+Chaîne de diagnostic, dans l'ordre :
+1. Erreur à la génération : `Invalid Scopes: manage_pages, pages_show_list`.
+   `manage_pages` est bien supprimée depuis 2020 — mais `pages_show_list` est
+   **parfaitement valide**. Qu'elle soit refusée aussi disqualifiait la piste
+   « mauvais nom de permission » et pointait vers l'application elle-même.
+2. Inventaire des 2 apps du compte : `NEXUS Market` (aucun portefeuille
+   business, cas d'usage = publicités + Facebook Login) et
+   `NEXUS Market Messenger` (portefeuille OK, cas d'usage = Messenger). **Aucune
+   n'a de cas d'usage Pages** → d'où l'absence de l'option « Token d'accès de
+   Page » dans l'Explorateur.
+3. Tentative de créer une 3e app de type Business : en parcourant les filtres
+   de la page de création (« Tout (20) », « Gestion du contenu (5) »), les cas
+   d'usage réellement proposés sont Marketing API, publicités d'installation,
+   Threads, jeu instantané, Facebook Login, WhatsApp Business. **Aucun ne
+   couvre la publication sur une Page.** Meta l'a réservé aux apps passées par
+   App Review avec accès avancé.
+
+**Erreur de méthode de ma part, notée pour la suite** : j'ai construit le
+script AVANT de vérifier que le cas d'usage existait. La vérification prenait
+5 minutes et aurait évité une heure d'essais infructueux à l'utilisateur.
+Réflexe à garder : pour toute intégration tierce, **vérifier la disponibilité
+de la capacité sur LE compte concerné avant d'écrire le code**.
+
+**Repli livré** : `publicite/PLANNING_SAISIE_MANUELLE.md` — 105 publications
+sur 14 jours pour le Planificateur Meta Business Suite (aucune app développeur
+requise). Groupé par jour, chaque entrée portant l'heure, le chemin absolu du
+fichier et la légende copiable.
+Optimisation décisive pour les 64 carrousels (288 slides) : le champ « Nom du
+fichier » de Windows accepte plusieurs fichiers entre guillemets — la ligne
+fournie sélectionne les 5 à 10 slides **en une opération**. Vérifié en réel via
+PowerShell. Contrôle final : 105 publications, 64 carrousels, 14 jours, aucun
+fichier référencé manquant.
+
+`publier_facebook.py` est conservé et reste testé : utilisable tel quel si
+l'accès avancé à l'API est obtenu un jour.
+
 ### C. Automa — campagne de messages Facebook réparée
 
 Le workflow s'arrêtait à la 17e page sur 278, sur l'erreur Chrome « message
