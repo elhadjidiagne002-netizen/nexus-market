@@ -6,6 +6,53 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (cinquantième) — Vérification du sitemap en production + 2 correctifs
+
+**Demande** : vérifier que le sitemap se génère bien en prod après les
+chantiers SEO des deux entrées précédentes.
+
+**Résultat** — `/sitemap-listings.xml` répond 200, XML valide, **1090 URLs** :
+721 produits · 206 pros · 154 lignes de transport · 9 vendeurs. Déclaré dans
+`robots.txt` et `sitemap_index.xml`. Les 206 pros = **106 hubs** (exactement
+le nombre calculé) + **100 fiches individuelles**, qui correspondent
+précisément aux 100 pros ayant une description ≥ 60 caractères (revérifié en
+base) : le filtre `proHasSubstance` fait donc exactement ce qui était prévu.
+Avant ce chantier, ce sitemap déclarait les 2695 fiches vides.
+
+**Pages testées une par une en prod** : `/pro/plombier-dakar` et
+`/pro/macon-dakar` → 200 avec 60 artisans listés, 14 liens inter-hubs et
+JSON-LD `ItemList` ; slug inexistant → 404 ; fiche sans contenu →
+`noindex, follow` ; fiche avec description → `index, follow` ;
+`/vendeur/<acheteur>` → **410** ; `/vendeur/<vrai vendeur>` → **200**.
+
+**Deux défauts trouvés PAR cette vérification (commit `a3ed00a`)** :
+1. La page annonçait « 60 plombiers » alors que la base en compte **63** —
+   l'écart venait du plafond d'affichage (`limit=60`), pas des données. Titre
+   et description utilisent désormais le total réel (`hub.count`), avec mention
+   explicite quand la liste est plafonnée. `numberOfItems` du JSON-LD reste le
+   nombre réellement listé (règle Schema.org) : l'écart est assumé et commenté.
+2. Lien fiche → hub bancal : « Voir tous les mécanicien moto à dakar »
+   (singulier + ville en minuscule). Reformulé de façon robuste pour les 48
+   libellés métiers, dont aucun ne se pluralise proprement (« Garage /
+   Mécanicien », « Menuisier (bois) »).
+
+⚠ **Correction d'un chiffre annoncé dans l'entrée précédente** : « 192
+descriptions d'une longueur moyenne de 5 caractères » était la moyenne
+calculée sur les 2695 fiches **vides comprises**, ce qui laissait croire que
+les 192 descriptions faisaient 5 caractères. En réalité, **quand une
+description existe elle fait 64 caractères en moyenne**, et 100 dépassent 60.
+Le diagnostic de fond ne change pas (0 photo, 0 avis, ~2600 fiches sans
+contenu propre), mais ces 100 fiches ont une vraie substance — d'où leur
+maintien à l'index.
+
+⚠ **Piège de vérification** : les pages hub sont en cache 30 min
+(`Cache-Control: public, max-age=1800`). Après un déploiement, l'URL nue
+renvoie encore l'ancienne version (constaté : `Age: 415` pendant 6 tentatives,
+d'où une fausse conclusion « pas déployé »). Ajouter `?cb=<aléa>` pour
+interroger l'origine. Même réflexe que pour le bundle immuable et le SW.
+
+---
+
 ## 2026-09-05 (quarante-neuvième) — 245 URLs /vendeur/ mortes : c'était NOUS qui les déclarions
 
 **Demande** : corriger les 245 URLs `/vendeur/` mortes repérées dans l'export
