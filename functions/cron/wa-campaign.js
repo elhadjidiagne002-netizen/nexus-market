@@ -49,6 +49,31 @@ const MIN_FOR_BREAKER = 4;
 const GAP_MIN_MS = 4000;
 const GAP_MAX_MS = 15000;
 
+// ── Réessai des échecs ──────────────────────────────────────────────────────
+// Toutes les pannes ne se valent pas. Retenter un numéro qui n'existe pas sur
+// WhatsApp ne réussira JAMAIS : cela gaspille le budget quotidien et aggrave
+// le signal « envois vers des numéros absents », celui-là même qui fait
+// classer un compte comme spam. On ne remet donc en file que les échecs
+// TRANSITOIRES : fournisseur injoignable, quota mensuel, erreur serveur.
+const MAX_ATTEMPTS = 3;
+// Attente croissante avant chaque nouvelle tentative. Réessayer à l'heure
+// suivante ne sert à rien : si le fournisseur est en panne ou en quota, il le
+// sera encore. Indices = numéro de la tentative déjà effectuée.
+const RETRY_BACKOFF_H = [3, 12];
+
+function isTransientFailure(res) {
+  const status = res && res.httpStatus;
+  if (status) {
+    // 466 = quota mensuel Green API (se réinitialise), 408/429 = charge,
+    // 5xx = panne serveur. Tout autre 4xx désigne la requête elle-même
+    // (numéro invalide, absent de WhatsApp) : inutile d'insister.
+    if (status === 466 || status === 408 || status === 429) return true;
+    return status >= 500;
+  }
+  // Pas de statut HTTP : erreur réseau côté Worker (fetch qui a levé).
+  return /injoignable|timeout|network|fetch failed/i.test(String(res && res.error || ''));
+}
+
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const jitter = () => GAP_MIN_MS + Math.floor(Math.random() * (GAP_MAX_MS - GAP_MIN_MS));
 
@@ -134,7 +159,8 @@ function fillTemplate(tpl, t) {
 async function run(env, { dry }) {
   const out = {
     run_at: new Date().toISOString(), dry: !!dry,
-    campaign: null, sent: 0, failed: 0, skipped: 0, remaining: null, note: null, errors: [],
+    campaign: null, sent: 0, failed: 0, skipped: 0, requeued: 0,
+    remaining: null, scheduled_later: null, note: null, errors: [],
   };
   if (!env.SUPABASE_SERVICE_KEY) return { ...out, note: 'SUPABASE_SERVICE_KEY manquante' };
 
@@ -168,14 +194,30 @@ async function run(env, { dry }) {
   }
 
   // 4. Le lot à traiter.
+  // `next_attempt_at` null (jamais tentée) OU déjà échue : sans ce filtre, une
+  // cible remise en file repartirait immédiatement au passage suivant et la
+  // temporisation ne servirait à rien.
+  const nowIsoSel = new Date().toISOString();
   const targets = await safe(() => sb.from('wa_campaign_targets').select('*',
-    `campaign_id=eq.${camp.id}&status=eq.pending&order=created_at.asc&limit=${budget}`), null);
+    `campaign_id=eq.${camp.id}&status=eq.pending`
+    + `&or=(next_attempt_at.is.null,next_attempt_at.lte.${nowIsoSel})`
+    + `&order=next_attempt_at.asc.nullsfirst,created_at.asc&limit=${budget}`), null);
   if (targets === null) return { ...out, note: 'Lecture de la file impossible — rien envoyé.' };
   if (!Array.isArray(targets) || !targets.length) {
-    if (!dry) {
+    // ⚠ Aucune cible DUE ne veut pas dire aucune cible RESTANTE : des échecs
+    // transitoires peuvent être reprogrammés plus tard. Marquer 'done' ici les
+    // abandonnerait définitivement. On ne clôt que si la file est vraiment vide.
+    const later = await safe(() => sb.from('wa_campaign_targets').select('id',
+      `campaign_id=eq.${camp.id}&status=eq.pending&limit=1000`), null);
+    const nbLater = Array.isArray(later) ? later.length : null;
+    if (nbLater === 0 && !dry) {
       await safe(() => sb.from('wa_campaigns').update({ status: 'done', updated_at: new Date().toISOString() }, `id=eq.${camp.id}`));
+      return { ...out, remaining: 0, note: 'File vide — campagne terminée.' };
     }
-    return { ...out, note: 'File vide — campagne terminée.' };
+    return { ...out, remaining: nbLater, scheduled_later: nbLater,
+      note: nbLater === null
+        ? 'Aucune cible due ; reste indéterminé (lecture impossible) — campagne laissée ouverte.'
+        : `Aucune cible due maintenant ; ${nbLater} en attente de leur heure de réessai.` };
   }
 
   // 5. Liste noire : un « STOP » vaut pour toutes les campagnes.
@@ -232,7 +274,23 @@ async function run(env, { dry }) {
       out.failed++; failures++;
       const msg = String((res && res.error) || 'échec inconnu').slice(0, 300);
       out.errors.push(msg);
-      await markSafe(sb, t.id, { status: 'failed', error_msg: msg, attempts: (t.attempts || 0) + 1 }, out);
+      const tries = (t.attempts || 0) + 1;
+      const retriable = isTransientFailure(res) && tries < MAX_ATTEMPTS;
+      if (retriable) {
+        // Reste 'pending' mais invisible jusqu'à next_attempt_at.
+        const waitH = RETRY_BACKOFF_H[Math.min(tries - 1, RETRY_BACKOFF_H.length - 1)];
+        const when = new Date(Date.now() + waitH * 3600 * 1000).toISOString();
+        out.requeued++;
+        await markSafe(sb, t.id, {
+          status: 'pending', attempts: tries, next_attempt_at: when,
+          error_msg: `${msg} — nouvelle tentative dans ${waitH} h (${tries}/${MAX_ATTEMPTS})`,
+        }, out);
+      } else {
+        await markSafe(sb, t.id, {
+          status: 'failed', attempts: tries,
+          error_msg: msg + (isTransientFailure(res) ? ` — abandon après ${tries} tentatives` : ' — échec définitif (non retentable)'),
+        }, out);
+      }
     }
 
     // Journal partagé avec le reste du système (panneau admin WhatsApp).
