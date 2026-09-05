@@ -6,6 +6,44 @@ non chronologique). Mis à jour après chaque session de travail avec Claude.
 
 ---
 
+## 2026-09-05 (quarante-neuvième) — 245 URLs /vendeur/ mortes : c'était NOUS qui les déclarions
+
+**Demande** : corriger les 245 URLs `/vendeur/` mortes repérées dans l'export
+Search Console de la session précédente.
+
+**Diagnostic — l'hypothèse de départ était fausse.** Je supposais des vendeurs
+supprimés. Vérification faite : sur un échantillon des IDs concernés, les
+profils **existent tous en base**, avec le rôle **`buyer`** et **0 produit**.
+Ce ne sont pas des fiches disparues, ce sont des **acheteurs**.
+(Piège au passage : un premier test via la clé anon renvoyait « 242
+introuvables », mais c'était la RLS — lecture publique de `profiles` limitée
+aux vendeurs. Il a fallu re-vérifier en service_role pour trancher.)
+
+**Cause racine** : le SPA posait un `<link rel="canonical">` vers
+`/vendeur/<id>` pour **n'importe quel profil** ouvert via `?vendor=`, sans
+vérifier son rôle. Un canonical étant un signal fort de découverte, c'était
+donc le site lui-même qui réclamait à Google l'indexation de 245 pages
+répondant 404. Aucune donnée n'était corrompue : c'était un bug d'émission
+de liens.
+
+**Fix, aux deux bouts** :
+- **Bundle** : un nouvel état `vendorCanonOk` vérifie le rôle avant de poser le
+  canonical ; sinon il reste sur l'accueil. La RLS aide (une lecture publique
+  de `profiles` ne remonte que les vendeurs), mais le rôle est vérifié
+  explicitement pour le cas du self-read (un acheteur lisant son propre profil).
+- **Serveur** (`functions/vendeur/[id].js`) : un profil qui existe mais n'est
+  pas vendeur répond désormais **410 Gone** au lieu de 404 — Google retire
+  l'URL plus vite et cesse d'y revenir. Le 404 reste pour un id totalement
+  inconnu, qui lui pourrait correspondre à un futur vendeur.
+  `render404()` accepte un paramètre `status` optionnel (défaut inchangé).
+
+**Vérifié en local** (bundle réel, IDs réels de l'export) : avec un ID
+acheteur, le canonical vaut désormais `/` ; avec un vrai vendeur
+(TechZone Sénégal), il vaut bien `/vendeur/<id>`. Bundle renommé
+`app.28ddbe4e63.js`, `sw.js` bumpé en `nexus-v30`.
+
+---
+
 ## 2026-09-05 (quarante-huitième) — Search Console : 1352 pages « Détectée, non indexée » → hubs métier × ville
 
 **Déclencheur** : export Search Console fourni par l'utilisateur

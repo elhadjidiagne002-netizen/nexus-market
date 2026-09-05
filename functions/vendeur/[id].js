@@ -15,7 +15,21 @@ async function handle({ request, env, params }) {
   const id = params.id;
 
   const v = await sbGetOne(env, `profiles?select=id,name,avatar,bio,rating,shop_category,role&id=eq.${encodeURIComponent(id)}&limit=1`);
-  if (!v || (v.role !== 'vendor' && v.role !== 'admin')) return render404(origin, "Ce vendeur n'existe pas.");
+  /* [SEO 2026-09-05] Search Console listait 245 URLs /vendeur/<uuid> découvertes
+     pour seulement 9 vendeurs réels. Vérifié en base sur un échantillon : ces
+     profils EXISTENT bien, mais avec le rôle `buyer` et 0 produit — ce ne sont
+     pas des vendeurs supprimés. Origine : le SPA posait un `<link rel=canonical>`
+     vers /vendeur/<id> pour n'importe quel profil ouvert via `?vendor=`, sans
+     vérifier son rôle (corrigé côté bundle) ; un canonical est un signal fort de
+     découverte, d'où l'indexation demandée pour des pages en 404.
+     Un profil qui existe mais n'est pas vendeur ne le deviendra pas par cette
+     URL : on répond 410 (Gone) plutôt que 404, pour que Google la retire vite et
+     cesse d'y revenir. 404 reste la réponse pour un id totalement inconnu, qui
+     lui pourrait correspondre à un futur vendeur. */
+  if (!v) return render404(origin, "Ce vendeur n'existe pas.");
+  if (v.role !== 'vendor' && v.role !== 'admin') {
+    return render404(origin, "Ce compte n'est pas une boutique NEXUS.", 410);
+  }
 
   const rows = await sbGet(env, `products?select=id,name,image_url,price&active=eq.true&vendor_id=eq.${encodeURIComponent(id)}&order=created_at.desc&limit=100`);
   const items = (rows || []).map(p => ({

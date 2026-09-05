@@ -34629,6 +34629,29 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
   };
 
   const [showVendorPagePub, setShowVendorPagePub] = useState(null);
+  /* [SEO 2026-09-05] `<link rel=canonical>` vers /vendeur/<id> UNIQUEMENT si le
+     profil est vraiment une boutique. Avant, le canonical était posé pour tout
+     profil ouvert via `?vendor=`, y compris un acheteur : Search Console a fini
+     avec 245 URLs /vendeur/ découvertes pour 9 vendeurs réels, toutes en 404
+     (vérifié en base : ces profils existent, rôle `buyer`, 0 produit). Un
+     canonical est un signal fort de découverte — c'était donc nous qui
+     demandions l'indexation de pages inexistantes.
+     La RLS joue ici en notre faveur : la lecture publique de `profiles` est
+     limitée aux vendeurs, donc une réponse vide vaut « pas une boutique ». On
+     vérifie quand même le rôle, pour le cas où l'utilisateur lit son PROPRE
+     profil (self-read autorisé) sans être vendeur. */
+  const [vendorCanonOk, setVendorCanonOk] = useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    setVendorCanonOk(false);
+    const vid = showVendorPagePub && showVendorPagePub.id;
+    if (!vid || !DataService._sb) return;
+    DataService._sb.from('profiles').select('role').eq('id', vid).maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled && data && (data.role === 'vendor' || data.role === 'admin')) setVendorCanonOk(true);
+      }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [showVendorPagePub && showVendorPagePub.id]);
   // [URL PARTAGEABLE — BOUTIQUE] Même patron que le produit, sur l'état showVendorPagePub
   // (vitrine /vendeur/:id). Paramètre ?vendor indépendant → gère l'overlap produit↔boutique.
   // Déclaré ICI (après le state) pour éviter la zone morte temporelle (TDZ).
@@ -34644,7 +34667,9 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
           u.searchParams.set('vendor', vid);
           window.history.pushState({ nxVendor: vid }, '', u.pathname + u.search + u.hash);
         }
-        if (canon) canon.setAttribute('href', u.origin + '/vendeur/' + encodeURIComponent(vid));
+        // Canonical seulement si c'est bien une boutique (cf. vendorCanonOk) ;
+        // sinon on laisse l'accueil, jamais une URL /vendeur/ qui répondra 410.
+        if (canon) canon.setAttribute('href', vendorCanonOk ? (u.origin + '/vendeur/' + encodeURIComponent(vid)) : (u.origin + '/'));
         _prevVendorRef.current = vid;
       } else {
         if (_prevVendorRef.current) {
@@ -34657,7 +34682,7 @@ const PublicCatalog = ({ addToast, onLoginClick, onRegisterClick, cartTrigger, c
         _prevVendorRef.current = null;
       }
     } catch (_) {}
-  }, [showVendorPagePub && showVendorPagePub.id]);
+  }, [showVendorPagePub && showVendorPagePub.id, vendorCanonOk]);
   // [UX #5] Réinitialiser la quantité modale à chaque nouveau produit sélectionné
   useEffect(() => { setModalQty(1); }, [selectedProduct?.id]);
   // [RECHERCHE 2026-08-27] Dérivé de NEXUS_CAT_TREE (source unique — voir sa

@@ -278,7 +278,10 @@ export function buildFaqBlock(faq) {
 }
 
 // Page 404 SEO-friendly (noindex) : utilisée quand une fiche n'existe plus.
-export function render404(origin, message) {
+// `status` : 404 par défaut ; passer 410 (Gone) quand on SAIT que l'URL ne
+// deviendra jamais valide — Google la retire plus vite et cesse d'y revenir,
+// là où un 404 est re-tenté longtemps.
+export function render404(origin, message, status = 404) {
   return new Response(`<!DOCTYPE html><html lang="fr"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Introuvable · NEXUS Market</title>
@@ -289,7 +292,7 @@ export function render404(origin, message) {
 <p>${esc(message || "Cette page n'existe plus ou a été retirée.")}</p>
 <p><a href="${esc(origin)}/">← Retour à NEXUS Market</a></p>
 </body></html>`, {
-    status: 404,
+    status: (status === 410 ? 410 : 404),
     headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
   });
 }

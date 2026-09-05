@@ -13,7 +13,7 @@
 //   - [NOUVEAU] message SW_SKIP_WAITING (alias de SKIP_WAITING — rétro-compat)
 //   - Tout le reste de v5 conservé : BYPASS_HOSTS, Background Sync, IndexedDB…
 
-const CACHE_NAME = "nexus-v29"; // v29 (2026-09-05) → nouveau hash de bundle app.8939f172e4.js (bandeau « EN DIRECT » : clic ouvre l'annonce + outils admin) — bump obligatoire pour forcer un re-précache frais de "/" (sinon un client avec le SW déjà installé garde l'ancien index.html référençant l'ancien hash).
+const CACHE_NAME = "nexus-v30"; // v30 (2026-09-05) → nouveau hash de bundle app.28ddbe4e63.js (canonical /vendeur/ posé seulement pour un vrai vendeur — cause des 245 URLs mortes vues en Search Console) — bump obligatoire pour forcer un re-précache frais de "/" (sinon un client avec le SW déjà installé garde l'ancien index.html référençant l'ancien hash).
 const PRECACHE   = ["/", "/index.html", "/sw.js"];
 
 // ── Domaines à ne JAMAIS intercepter ─────────────────────────────────────────
